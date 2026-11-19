@@ -117,16 +117,16 @@ intern site's sidebar and top bar; its own header links back to the intern site.
   credited can be turned off; those about one's own uploads and requests, approvals and drafts always
   appear in the app, and only their push can be switched off.
 - Only the uploader and administrators see a draft. A draft never published is deleted with its files
-  90 days after the day it was uploaded; the edit page and `Mine videoer` show the date.
+  90 days after the day it was uploaded (or made a draft again); the edit page and `Mine videoer` show the date.
 - Every Monday, each uploader is reminded of their drafts more than a week old, and the administrators
   get an overview of all of them. The day before a draft is deleted, its uploader and the
   administrators are warned. Administrators see every draft under `Kladder`.
 
 ## Premieres
 
-- Beside `Udgivelsesdato` is a `Premiere` box. Ticked, the release is a whole moment — day, month,
-  year and a time to the minute, all required — and may lie up to a year ahead. Only a premiere has a
-  time. A video already out cannot be given a premiere in the future.
+- Beside `Udgivelsesdato` is a `Premiere` box. Ticked, the release is a whole moment — year, month,
+  day and a time to the minute, all required — and may lie up to a year ahead. Only a premiere has a
+  time. A video out for more than a day cannot be given a premiere in the future.
 - A premiere chooses how its thumbnail is shown until then: `Ikke sløret`, `Lidt sløret`, `Middel
   sløret` or `Meget sløret`. The edit page previews it.
 - Published before its premiere, a video is upcoming: it is listed in `Kommer snart`, its series and
@@ -138,7 +138,18 @@ intern site's sidebar and top bar; its own header links back to the intern site.
   notified, as at publishing (`Premiere på GAHKFlix: …`); the history notes it. A premiere already
   past when the video is published is out at once. Once out, its page shows the date only, not the
   time.
+- Every day at 10.20, an uploader with drafts whose premiere is still ahead is warned they are not
+  published (urgent within the last day): unpublished, there is no premiere.
 - The time windows (editing, new versions, binning) still run from the upload.
+
+## Taking a video back
+
+- For a day after a video comes out (its premiere, else its publishing), its uploader or an
+  administrator may make it a draft again (`Gør til kladde igen`), or give it a premiere later. An
+  upcoming premiere may be made a draft again at any time.
+- Either way, the notifications that it was out, and to its cast, are taken back (a push already shown
+  cannot be), and it is announced again when it comes out. Views counted meanwhile stay.
+- A draft again counts its 90 days, and its reminders, from then rather than from the upload.
 
 ## Series
 
@@ -171,7 +182,8 @@ intern site's sidebar and top bar; its own header links back to the intern site.
 
 - Every video has a `Historik`, for its uploader and the administrators: who did what and when —
   uploads and new versions, processing finished (with the date it guessed) or failed, every change
-  to the details and the pictures with before and after, publishing, binning and restoring. An
+  to the details and the pictures with before and after, publishing, premieres, being made a draft
+  again, binning and restoring. An
   approved proposal is the proposer's change, marked as approved. A video uploaded before there was
   a history has only what happened since.
 - Every thumbnail and banner a video has had is kept as long as the video is. The edit page offers

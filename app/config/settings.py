@@ -390,6 +390,12 @@ CELERY_BEAT_SCHEDULE = {
         "task": "gahkflix.tasks.warn_expiring_drafts",
         "schedule": crontab(minute=15, hour=10),
     },
+    # Daily, after the draft warnings: a draft with a premiere ahead is not published yet, and will
+    # have no premiere unless it is (gahkflix.services.warn_unpublished_premieres).
+    "gahkflix-warn-unpublished-premieres": {
+        "task": "gahkflix.tasks.warn_unpublished_premieres",
+        "schedule": crontab(minute=20, hour=10),
+    },
     "purge-worker-job-logs": {
         "task": "core.tasks.purge_worker_job_logs",
         "schedule": crontab(minute=40, hour=4),

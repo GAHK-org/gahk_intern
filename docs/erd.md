@@ -832,6 +832,7 @@ erDiagram
         datetime premiere_at
         string premiere_blur
         datetime announced_at
+        datetime draft_since
         int series_id FK
         int season
         int episode
@@ -1595,6 +1596,7 @@ erDiagram
         datetime premiere_at
         string premiere_blur
         datetime announced_at
+        datetime draft_since
         int series_id FK
         int season
         int episode

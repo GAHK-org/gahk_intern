@@ -9,6 +9,7 @@ from django.utils.formats import date_format
 
 from notifications import categories
 from notifications.categories import Importance
+from notifications.models import Notification
 from notifications.services import everyone, notify
 from residents.models import Resident
 
@@ -49,6 +50,37 @@ def credited(video: Video, residents: Iterable[int], by: Resident) -> None:
         title=f"Du medvirker i {video.title}",
         body=f"{by.full_name} har krediteret dig på GAHKFlix.",
         url=_video_url(video),
+    )
+
+
+def withdraw_announcement(video: Video) -> int:
+    """It is not out after all — a draft again, or a premiere later: the notifications that said it was,
+    and that told its cast, are taken back. A push already shown on a phone cannot be."""
+    deleted, _ = Notification.objects.filter(
+        url=_video_url(video), category__in=(categories.GAHKFLIX_NEW, categories.GAHKFLIX_CAST)
+    ).delete()
+    return deleted
+
+
+def premieres_unpublished(drafts: list[Video], *, now: datetime) -> None:
+    """The daily warning to one uploader about their drafts with a premiere ahead, the soonest first:
+    unpublished, they will have no premiere. Urgent within the last day."""
+    first = drafts[0]
+    assert first.premiere_at is not None  # noqa: S101  # nosec B101 — services.warn_unpublished_premieres
+    if len(drafts) == 1:
+        title = f"{first.title} er ikke udgivet"
+        url = _edit_url(first)
+    else:
+        title = f"{len(drafts)} videoer med premiere er ikke udgivet"
+        url = reverse("gahkflix:mine")
+    notify(
+        [first.uploaded_by_id],
+        category=categories.GAHKFLIX_UPLOADS,
+        title=title,
+        body=f"{first.title} har premiere {first.premiere_label}, men får ingen premiere, hvis den ikke er udgivet inden.",
+        url=url,
+        importance=Importance.HOEJ if first.premiere_at - now < timedelta(days=1) else None,
+        expires_at=min(now + timedelta(days=1), first.premiere_at),
     )
 
 

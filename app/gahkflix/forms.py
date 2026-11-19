@@ -180,8 +180,11 @@ class VideoDetailsForm(forms.Form):
         now = timezone.now()
         if moment > now + PREMIERE_MAX_AHEAD:
             self.add_error("premiere", "Premieren kan højst ligge et år ude i fremtiden.")
-        elif moment > now and self.video.is_released:
-            self.add_error("premiere", "Videoen er allerede ude, så premieren kan ikke flyttes frem i tiden.")
+        elif moment > now and self.video.is_released and not self.video.can_be_taken_back:
+            self.add_error(
+                "premiere",
+                "Videoen har været ude i mere end et døgn, så den kan ikke længere få premiere senere.",
+            )
         else:
             self.premiere_at = moment
             self.release = PartialDate(moment.date(), DatePrecision.DAY)

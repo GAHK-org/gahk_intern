@@ -892,6 +892,7 @@ def _edit_page(request: HttpRequest, video: Video, form: VideoDetailsForm) -> Ht
                 for picture in services.past_pictures(video, kind)[:PAST_PICTURES_SHOWN]
             ],
             "can_upload_revision": access.can_upload_revision(request, video),
+            "can_unpublish": access.can_unpublish(request, video),
             "can_delete": access.can_delete_directly(request, video),
             "can_request_deletion": access.can_request_deletion(request, video),
             "days_left": {"edit": max(0, (video.edit_window_ends - now).days)},
@@ -1021,6 +1022,24 @@ def publish(request: HttpRequest, pk: int) -> HttpResponse:
     else:
         messages.success(request, f"{video.title} er udgivet.")
     return redirect("gahkflix:detail", video.pk)
+
+
+@access.access_required
+@require_POST
+def unpublish(request: HttpRequest, pk: int) -> HttpResponse:
+    """Make a video a draft again: an upcoming premiere, or one out for less than a day."""
+    video = _editable(request, pk)
+    if not access.can_unpublish(request, video):
+        messages.error(
+            request, "Videoen har været ude i mere end et døgn og kan ikke gøres til en kladde igen."
+        )
+        return redirect("gahkflix:edit", video.pk)
+    services.unpublish(video, current_resident(request))
+    messages.success(
+        request,
+        f"{video.title} er en kladde igen: kun du og administratorerne kan se den. Udgiv den, når den er klar.",
+    )
+    return redirect("gahkflix:edit", video.pk)
 
 
 # --- History ------------------------------------------------------------------------------------

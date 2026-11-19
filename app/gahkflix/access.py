@@ -113,6 +113,11 @@ def can_edit(request: HttpRequest, video: Video) -> bool:
     return not video.is_binned and _owns_or_administers(request, video)
 
 
+def can_unpublish(request: HttpRequest, video: Video) -> bool:
+    """Make it a draft again: an upcoming premiere, or a video out for less than a day."""
+    return can_edit(request, video) and video.can_be_taken_back
+
+
 def edit_needs_approval(video: Video, now: datetime | None = None) -> bool:
     """After 30 days a change is a proposal, which one other administrator must accept."""
     return video.is_published and _now(now) >= video.edit_window_ends

@@ -853,6 +853,7 @@ def apply_changes(
     A picture replaced is kept, not deleted: the history names it, so it can be brought back.
     """
     details_before = snapshot(video) if any(key in DETAIL_FIELDS for key in changes) else {}
+    was_out = video.is_released
     pictures_before = {
         kind: {"key": key_of(getattr(video, kind)), "frame": getattr(video, f"{kind}_frame_id")}
         for kind in PICTURE_KINDS
@@ -874,6 +875,11 @@ def apply_changes(
     if "premiere_at" in changes:
         video.premiere_at = parse_premiere(changes["premiere_at"])
         fields.append("premiere_at")
+        if was_out and video.is_upcoming:
+            # Out, and now a premiere later (only within TAKE_BACK_WINDOW, forms.py): told again then.
+            video.announced_at = None
+            fields.append("announced_at")
+            transaction.on_commit(lambda: notify.withdraw_announcement(video))
     if "series" in changes:
         series = Series.objects.filter(pk=changes["series"]).first() if changes["series"] else None
         if changes["series"] and series is None:
@@ -989,6 +995,22 @@ def _announce(video: Video) -> None:
         notify.credited(video, credited, video.uploaded_by)
 
     transaction.on_commit(tell)
+
+
+def unpublish(video: Video, resident: Resident) -> None:
+    """Make a video a draft again: an upcoming premiere, or one out for less than TAKE_BACK_WINDOW.
+    What everybody was told about it is withdrawn, and its days as a draft count from now."""
+    if not video.can_be_taken_back:
+        raise ValidationError(
+            "Videoen har været ude i mere end et døgn og kan ikke gøres til en kladde igen."
+        )
+    video.published_at = None
+    video.announced_at = None
+    video.draft_since = _now()
+    video.draft_warned_at = None
+    video.save(update_fields=["published_at", "announced_at", "draft_since", "draft_warned_at"])
+    record_event(video, VideoEvent.Kind.UNPUBLISHED, resident)
+    transaction.on_commit(lambda: notify.withdraw_announcement(video))
 
 
 def announce_released(now: datetime | None = None) -> int:
@@ -1184,11 +1206,18 @@ def _start_of(day: date) -> datetime:
     return timezone.make_aware(datetime.combine(day, time.min))
 
 
+def _drafts_since_before(moment: datetime) -> QuerySet[Video]:
+    """Drafts that became one before `moment`: uploaded, or last made a draft again (Video.draft_since)."""
+    return Video.objects.drafts().filter(
+        Q(draft_since__lt=moment) | Q(draft_since__isnull=True, created_at__lt=moment)
+    )
+
+
 def expired_drafts(today: date | None = None) -> QuerySet[Video]:
-    """Drafts whose deletion date (Video.draft_deleted_on) has come: uploaded DRAFT_TTL_DAYS or more
-    calendar days ago."""
+    """Drafts whose deletion date (Video.draft_deleted_on) has come: drafts for DRAFT_TTL_DAYS or more
+    calendar days."""
     today = today or timezone.localdate()
-    return Video.objects.drafts().filter(created_at__lt=_start_of(today - timedelta(days=DRAFT_TTL_DAYS - 1)))
+    return _drafts_since_before(_start_of(today - timedelta(days=DRAFT_TTL_DAYS - 1)))
 
 
 def purge(now: datetime | None = None) -> tuple[int, int]:
@@ -1218,10 +1247,9 @@ def drafts_to_remind(now: datetime | None = None) -> list[Video]:
     """Unpublished drafts more than a week old, the one to be deleted first first."""
     moment = now or _now()
     return list(
-        Video.objects.drafts()
-        .filter(created_at__lt=moment - DRAFT_REMINDER_AFTER)
+        _drafts_since_before(moment - DRAFT_REMINDER_AFTER)
         .select_related("uploaded_by")
-        .order_by("created_at", "pk")
+        .order_by(Coalesce("draft_since", "created_at"), "pk")
     )
 
 
@@ -1249,6 +1277,24 @@ def warn_expiring_drafts(now: datetime | None = None) -> int:
             notify.draft_expiring(video)
             count += 1
     return count
+
+
+def warn_unpublished_premieres(now: datetime | None = None) -> int:
+    """Daily: each uploader with a draft whose premiere is still ahead is told it is not published —
+    unpublished, it will have no premiere. Returns how many uploaders were told."""
+    moment = now or _now()
+    waiting = (
+        Video.objects.drafts()
+        .filter(premiere_at__gt=moment)
+        .select_related("uploaded_by")
+        .order_by("premiere_at", "pk")
+    )
+    by_uploader: dict[int, list[Video]] = defaultdict(list)
+    for video in waiting:
+        by_uploader[video.uploaded_by_id].append(video)
+    for own in by_uploader.values():
+        notify.premieres_unpublished(own, now=moment)
+    return len(by_uploader)
 
 
 # --- Files nothing refers to --------------------------------------------------------------------

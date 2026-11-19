@@ -59,6 +59,20 @@
       </div>
     {% endif %}
 
+    {% if can_unpublish %}
+      <div class="flix-panel">
+        <h2>Træk udgivelsen tilbage</h2>
+        {% if video.is_upcoming %}
+          <p>Videoen har ikke haft premiere endnu, så du kan gøre den til en kladde igen. Så bliver den ikke vist som kommende premiere, og der er ingen premiere, før du udgiver den igen.</p>
+        {% else %}
+          <p>Videoen kom ud {{ video.out_at|date:"j. F \k\l. H.i" }}. Indtil {{ video.take_back_until|date:"j. F \k\l. H.i" }} kan du gøre den til en kladde igen eller give den premiere senere under Udgivelsesdato. Beskeden om den til alle trækkes tilbage; en push, der allerede er vist, kan ikke.</p>
+        {% endif %}
+        <form method="post" action="{% url 'gahkflix:unpublish' video.pk %}" data-flix-confirm="Gør videoen til en kladde igen? Kun du og administratorerne kan så se den.">{% csrf_token %}
+          <button class="flix-btn flix-btn-small flix-btn-quiet" type="submit">Gør til kladde igen</button>
+        </form>
+      </div>
+    {% endif %}
+
     {% if needs_approval %}
       <p class="flix-banner-note" style="margin:0 0 18px">
         Videoen blev uploadet for mere end 30 dage siden. Ændringer – også af billederne – sendes til godkendelse hos en anden administrator.

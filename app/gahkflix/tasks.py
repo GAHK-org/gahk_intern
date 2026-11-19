@@ -148,6 +148,12 @@ def announce_released() -> int:
 
 
 @shared_task
+def warn_unpublished_premieres() -> int:
+    """Daily: tell uploaders about their drafts with a premiere ahead that are not published."""
+    return services.warn_unpublished_premieres()
+
+
+@shared_task
 def weekly_draft_reminders() -> int:
     """Mondays: remind uploaders of their unpublished drafts, and give the administrators an overview."""
     return services.send_weekly_draft_reminders()

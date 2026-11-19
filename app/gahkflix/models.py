@@ -57,6 +57,9 @@ DRAFT_TTL_DAYS = 90
 DRAFT_REMINDER_AFTER = timedelta(days=7)
 # How many unpublished drafts one resident may have at a time; uploads still being processed count.
 MAX_DRAFTS = 10
+# How long after a video comes out its uploader may still take it back: make it a draft again, or
+# give it a premiere later. Counted from when it came out: its premiere, else its publishing.
+TAKE_BACK_WINDOW = timedelta(hours=24)
 # How far ahead a premiere may be set: a typo should not hide a film for decades.
 PREMIERE_MAX_AHEAD = timedelta(days=366)
 # Approvals needed, from administrators other than the one who asked.
@@ -252,6 +255,9 @@ class Video(models.Model):
     )
     # When everybody was told it is out: when it was published, or at its premiere (services.announce).
     announced_at = models.DateTimeField(null=True, blank=True)
+    # When it was last made a draft again (services.unpublish). Its time as a draft — the deletion date,
+    # the reminders — runs from here rather than from the upload.
+    draft_since = models.DateTimeField(null=True, blank=True)
     series = models.ForeignKey(
         Series, null=True, blank=True, on_delete=models.PROTECT, related_name="videos", verbose_name="Serie"
     )
@@ -320,6 +326,26 @@ class Video(models.Model):
         return self.is_published and not self.is_upcoming
 
     @property
+    def out_at(self) -> datetime | None:
+        """When it came out: its premiere, or its publishing if that was later. None before."""
+        if not self.is_released or self.published_at is None:
+            return None
+        return max(self.published_at, self.premiere_at or self.published_at)
+
+    @property
+    def take_back_until(self) -> datetime | None:
+        """Until when it may be made a draft again, or given a premiere later; None while nobody has
+        seen it (a draft, or an upcoming premiere, which may be taken back at any time)."""
+        out_at = self.out_at
+        return out_at + TAKE_BACK_WINDOW if out_at else None
+
+    @property
+    def can_be_taken_back(self) -> bool:
+        """An upcoming premiere, or a video out for less than TAKE_BACK_WINDOW."""
+        until = self.take_back_until
+        return self.is_upcoming or (until is not None and timezone.now() < until)
+
+    @property
     def premiere_label(self) -> str:
         """ "24. december 2026 kl. 20.00"."""
         return premiere_label(self.premiere_at)
@@ -343,7 +369,7 @@ class Video(models.Model):
     @property
     def draft_deleted_on(self) -> date:
         """The night a draft that is still unpublished is deleted (services.purge)."""
-        return timezone.localdate(self.created_at) + timedelta(days=DRAFT_TTL_DAYS)
+        return timezone.localdate(self.draft_since or self.created_at) + timedelta(days=DRAFT_TTL_DAYS)
 
     @property
     def release(self) -> PartialDate | None:
@@ -676,6 +702,7 @@ class VideoEvent(models.Model):
         EDITED = "edited", "Ændret"
         PUBLISHED = "published", "Udgivet"
         PREMIERED = "premiered", "Havde premiere"
+        UNPUBLISHED = "unpublished", "Gjort til kladde igen"
         BINNED = "binned", "Lagt i papirkurven"
         RESTORED = "restored", "Hentet tilbage fra papirkurven"
 

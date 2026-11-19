@@ -42,6 +42,7 @@ from gahkflix.models import (
 )
 from gahkflix.storage import get_video_storage
 from notifications import categories
+from notifications.categories import Importance
 from notifications.models import Notification
 from residents.models import Resident, Role
 
@@ -1252,14 +1253,119 @@ def test_a_premiere_taken_away_is_announced_by_the_next_round(
     assert not video.events.filter(kind=VideoEvent.Kind.PREMIERED).exists()
 
 
-def test_a_video_already_out_cannot_premiere_later(admin: Resident) -> None:
-    video = make_video(admin)
+def test_a_video_out_for_more_than_a_day_cannot_premiere_later(admin: Resident) -> None:
+    video = make_video(admin, days_old=2)
     response = client_for(admin).post(
         reverse("gahkflix:edit", args=[video.pk]), details(video, premiere_at=evening(2))
     )
-    assert response.status_code == 200 and "allerede ude" in response.content.decode()
+    assert response.status_code == 200 and "mere end et døgn" in response.content.decode()
     video.refresh_from_db()
     assert video.premiere_at is None
+
+
+def publish_now(client: Client, video: Video, capture: Callable[..., Any], **changes: Any) -> None:  # noqa: ANN401
+    with capture(execute=True):
+        assert (
+            client.post(reverse("gahkflix:publish", args=[video.pk]), details(video, **changes)).status_code
+            == 302
+        )
+    video.refresh_from_db()
+
+
+def test_a_video_out_less_than_a_day_can_be_made_a_draft_again(
+    admin: Resident,
+    admin2: Resident,
+    member: Resident,
+    django_capture_on_commit_callbacks: Callable[..., Any],
+) -> None:
+    video = make_video(admin, title="Revyen", published=False, days_old=120)  # uploaded long ago
+    services.apply_changes(video, {"cast": [{"resident": member.pk, "name": "", "role": ""}]}, admin)
+    client = client_for(admin)
+    publish_now(client, video, django_capture_on_commit_callbacks)
+    assert notified(admin2, categories.GAHKFLIX_NEW) and notified(member, categories.GAHKFLIX_CAST)
+    edit = client.get(reverse("gahkflix:edit", args=[video.pk])).content.decode()
+    assert "Gør til kladde igen" in edit and "Træk udgivelsen tilbage" in edit
+
+    with django_capture_on_commit_callbacks(execute=True):
+        assert client.post(reverse("gahkflix:unpublish", args=[video.pk])).status_code == 302
+    video.refresh_from_db()
+    assert video.is_draft and video.announced_at is None
+    # What everybody was told is taken back, and it is a draft for 90 days from now, not from its upload.
+    assert not notified(admin2, categories.GAHKFLIX_NEW) and not notified(member, categories.GAHKFLIX_CAST)
+    assert video.draft_deleted_on == timezone.localdate() + timedelta(days=90)
+    assert video not in services.expired_drafts() and video not in services.drafts_to_remind()
+    assert video.events.filter(kind=VideoEvent.Kind.UNPUBLISHED, actor=admin).exists()
+    assert (
+        "gjorde videoen til en kladde igen"
+        in client.get(reverse("gahkflix:history", args=[video.pk])).content.decode()
+    )
+
+    # Published again, it is announced again; a day after it came out, it stays out.
+    publish_now(client, video, django_capture_on_commit_callbacks)
+    assert notified(admin2, categories.GAHKFLIX_NEW)
+    Video.objects.filter(pk=video.pk).update(published_at=timezone.now() - timedelta(hours=25))
+    video.refresh_from_db()
+    assert not video.can_be_taken_back
+    assert "Gør til kladde igen" not in client.get(reverse("gahkflix:edit", args=[video.pk])).content.decode()
+    client.post(reverse("gahkflix:unpublish", args=[video.pk]))
+    video.refresh_from_db()
+    assert video.is_published
+    with pytest.raises(ValidationError):
+        services.unpublish(video, admin)
+
+
+def test_a_video_out_less_than_a_day_can_get_a_premiere_later(
+    admin: Resident, admin2: Resident, django_capture_on_commit_callbacks: Callable[..., Any]
+) -> None:
+    video = make_video(admin, title="Revyen", published=False)
+    client = client_for(admin)
+    publish_now(client, video, django_capture_on_commit_callbacks)
+    assert notified(admin2, categories.GAHKFLIX_NEW)
+    with django_capture_on_commit_callbacks(execute=True):
+        moved = client.post(reverse("gahkflix:edit", args=[video.pk]), details(video, premiere_at=evening(2)))
+    assert moved.status_code == 302
+    video.refresh_from_db()
+    assert video.is_upcoming and video.announced_at is None
+    assert not notified(admin2, categories.GAHKFLIX_NEW)  # it is not out after all
+    # At its premiere, everybody is told again.
+    Video.objects.filter(pk=video.pk).update(premiere_at=timezone.now() - timedelta(seconds=30))
+    with django_capture_on_commit_callbacks(execute=True):
+        assert services.announce_released() == 1
+    [announced] = notified(admin2, categories.GAHKFLIX_NEW)
+    assert announced.title == "Premiere på GAHKFlix: Revyen"
+
+
+def test_an_upcoming_premiere_can_be_made_a_draft_again_at_any_time(admin: Resident) -> None:
+    video = make_video(admin, days_old=10, premiere_at=evening(3))
+    assert video.is_upcoming and video.can_be_taken_back
+    assert client_for(admin).post(reverse("gahkflix:unpublish", args=[video.pk])).status_code == 302
+    video.refresh_from_db()
+    assert video.is_draft and video.premiere_at == evening(3)  # still to premiere, once published
+
+
+def test_uploaders_are_warned_daily_about_unpublished_premieres(
+    admin: Resident, admin2: Resident, member: Resident
+) -> None:
+    soon = make_video(
+        admin, title="Julerevyen", published=False, premiere_at=timezone.now() + timedelta(hours=5)
+    )
+    make_video(admin, title="Nytårsrevyen", published=False, premiere_at=evening(30))
+    make_video(admin2, title="Sommerrevyen", published=False, premiere_at=evening(10))
+    make_video(
+        member, title="Gammel premiere", published=False, premiere_at=evening(-3)
+    )  # past: no premiere to miss
+    make_video(member, title="Udgivet", premiere_at=evening(3))  # published: nothing to warn about
+    make_video(member, title="Uden premiere", published=False)
+    assert tasks.warn_unpublished_premieres() == 2
+    [both] = notified(admin, categories.GAHKFLIX_UPLOADS)
+    assert both.title == "2 videoer med premiere er ikke udgivet"
+    assert soon.premiere_label in both.body and "Julerevyen" in both.body
+    assert both.importance == Importance.HOEJ  # the first is within a day
+    assert both.url == reverse("gahkflix:mine")
+    [one] = notified(admin2, categories.GAHKFLIX_UPLOADS)
+    assert one.title == "Sommerrevyen er ikke udgivet" and one.importance != Importance.HOEJ
+    assert not notified(member, categories.GAHKFLIX_UPLOADS)
+    assert one.expires_at <= timezone.now() + timedelta(days=1)
 
 
 def test_the_blur_levels() -> None:
