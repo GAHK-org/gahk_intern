@@ -11,7 +11,8 @@ import tempfile
 import time
 import zipfile
 from collections import defaultdict
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from contextlib import ExitStack, contextmanager
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from functools import partial
@@ -1045,7 +1046,19 @@ def build_derivatives(media: Media) -> bool:
     media.save(update_fields=["derivative_attempts"])
     with media.original.open("rb") as original:
         source = File(original, name=filename)
-        variants = video_variants(source, filename) if video else image_variants(source, filename)
+        if video:
+            # Stored inside the block: the copies are files in the encode's directory until it ends.
+            with video_variants(source, filename) as variants:
+                return _finish_derivatives(media, variants, filename, video=True)
+        variants = image_variants(source, filename)
+    return _finish_derivatives(media, variants, filename)
+
+
+def _finish_derivatives(
+    media: Media, variants: "Variants | None", filename: str, *, video: bool = False
+) -> bool:
+    """Store what build_derivatives made, or count a source that could not be decoded. A video's
+    storing is reported as the last step of its progress (an image reports none)."""
     if variants is None:
         media.derivative_state = (
             DerivativeState.FAILED
@@ -1099,8 +1112,11 @@ def pending_derivatives() -> "QuerySet[Media]":
 
 @dataclass
 class Variants:
-    high_definition: ContentFile
-    thumbnail: ContentFile
+    """The viewer copy and the grid thumbnail of one item: in memory for a photo, open files on disk
+    for a video (video_variants)."""
+
+    high_definition: File
+    thumbnail: File
     captured_at: datetime | None = None
 
 
@@ -1204,22 +1220,38 @@ def _animated_gif_variant(
     return ContentFile(output.getvalue(), name=name)
 
 
-def video_variants(uploaded_file: File, filename: str) -> Variants | None:
-    """Transcode a video to a viewer-sized MP4 and extract a grid-sized JPEG frame."""
-    try:
-        with job_directory("photo-album-video") as directory:
-            source = _copy_to_disk(uploaded_file, Path(directory), filename, progress=COPY_STAGE)
-            return _encode_video(_ffmpeg(), source, Path(directory), filename)
-    except ImportError:
-        return None
-    except subprocess.CalledProcessError as exc:
-        logger.warning("Could not convert %s: %s", filename, ffmpeg_failure(exc))
-        return None
-    except OSError as exc:
-        logger.warning("Could not convert %s: %s", filename, exc)
-        return None
-    finally:
-        uploaded_file.seek(0)
+@contextmanager
+def video_variants(uploaded_file: File, filename: str) -> Iterator[Variants | None]:
+    """Transcode a video to a viewer-sized MP4 and extract a grid-sized JPEG frame; None if it
+    cannot be converted.
+
+    The two are files in the encode's directory, open for the length of the `with` block and
+    deleted when it ends, so they must be stored inside it. Stored from disk, not from memory: a
+    long film's MP4 is over a gigabyte, and reading one in whole after a three-hour encode is what
+    ran the server out of memory on 2026-11-15.
+    """
+    with ExitStack() as stack:
+        try:
+            directory = Path(stack.enter_context(job_directory("photo-album-video")))
+            source = _copy_to_disk(uploaded_file, directory, filename, progress=COPY_STAGE)
+            encoded: EncodedVideo | None = _encode_video(_ffmpeg(), source, directory, filename)
+        except ImportError:
+            encoded = None
+        except subprocess.CalledProcessError as exc:
+            logger.warning("Could not convert %s: %s", filename, ffmpeg_failure(exc))
+            encoded = None
+        except OSError as exc:
+            logger.warning("Could not convert %s: %s", filename, exc)
+            encoded = None
+        finally:
+            uploaded_file.seek(0)
+        # Outside the try: an error while the caller stores the files is the caller's, not a
+        # video that could not be converted.
+        if encoded is None:
+            yield None
+        else:
+            with encoded.opened(filename) as variants:
+                yield variants
 
 
 def _ffmpeg() -> str:
@@ -1344,8 +1376,27 @@ def probe_video(ffmpeg: str, path: str, data: bytes | None = None) -> VideoProbe
     return VideoProbe(result.stderr.decode("utf-8", errors="replace"))
 
 
-def _encode_video(ffmpeg: str, source: Path, directory: Path, filename: str) -> Variants:
-    """The viewer MP4 and the grid JPEG for a video on disk. Raises CalledProcessError."""
+@dataclass
+class EncodedVideo:
+    """What _encode_video wrote: the viewer MP4 and the grid JPEG, as files in its directory."""
+
+    high_definition: Path
+    thumbnail: Path
+    captured_at: datetime | None
+
+    @contextmanager
+    def opened(self, filename: str) -> Iterator[Variants]:
+        """The two files as Variants to store, read from disk in parts as they are uploaded."""
+        stem = Path(filename).stem
+        with self.high_definition.open("rb") as video, self.thumbnail.open("rb") as thumbnail:
+            yield Variants(
+                File(video, name=f"{stem}.mp4"), File(thumbnail, name=f"{stem}.jpg"), self.captured_at
+            )
+
+
+def _encode_video(ffmpeg: str, source: Path, directory: Path, filename: str) -> EncodedVideo:
+    """Write the viewer MP4 and the grid JPEG for a video on disk to `directory`. Raises
+    CalledProcessError."""
     probe = probe_video(ffmpeg, str(source))
     high_definition = directory / "high-definition.mp4"
     thumbnail = directory / "thumbnail.jpg"
@@ -1386,11 +1437,7 @@ def _encode_video(ffmpeg: str, source: Path, directory: Path, filename: str) -> 
         f"scale={THUMBNAIL_SIZE}:{THUMBNAIL_SIZE}:force_original_aspect_ratio=decrease",
         str(thumbnail),
     )
-    return Variants(
-        ContentFile(high_definition.read_bytes(), name=f"{Path(filename).stem}.mp4"),
-        ContentFile(thumbnail.read_bytes(), name=f"{Path(filename).stem}.jpg"),
-        _video_creation_time(probe.text),
-    )
+    return EncodedVideo(high_definition, thumbnail, _video_creation_time(probe.text))
 
 
 def _add_text_subtitles(
@@ -1476,9 +1523,11 @@ def shrink_enlarged_video(media: Media) -> str:
         if max(dimensions) >= HIGH_DEFINITION_SIZE:
             return f"{name}: the original is {dimensions[0]}x{dimensions[1]}, so its copy is not enlarged; left as it is."
         old_size = media.high_definition.size
-        variants = _encode_video(ffmpeg, source, Path(directory), name)
-    STORE_STAGE(0.0)
-    _store_variants(media, variants)
+        encoded = _encode_video(ffmpeg, source, Path(directory), name)
+        # Inside the block, from disk: the directory and the files in it go when it ends.
+        STORE_STAGE(0.0)
+        with encoded.opened(name) as variants:
+            _store_variants(media, variants)
     return (
         f"{name}: re-encoded at its own {dimensions[0]}x{dimensions[1]} instead of "
         f"{f'{copy[0]}x{copy[1]}' if copy else 'enlarged'}; the copy went from "
@@ -1547,8 +1596,7 @@ def _run_ffmpeg_with_progress(
             stderr=errors,
         )
         try:
-            assert process.stdout is not None  # noqa: S101 — for the type checker: PIPE was asked for
-            for raw in process.stdout:
+            for raw in process.stdout or ():  # never None: PIPE was asked for
                 key, _, value = raw.decode("utf-8", errors="replace").strip().partition("=")
                 if key == "out_time_us" and duration and value.isdigit():  # "N/A" before the first frame
                     on_progress(int(value) / 1_000_000 / duration)

@@ -26,7 +26,7 @@ from residents.models import Resident, Role
 
 from .test_gahkflix import make_video
 
-BOARD = "/intern/opslagstavle/"
+BOARD = "/opslagstavle/"
 START = datetime(2026, 12, 12, 18, tzinfo=UTC)
 pytestmark = pytest.mark.django_db
 
@@ -113,7 +113,7 @@ def textarea(html: str) -> tuple[str, str]:
 
 def body_of(html: str) -> str:
     """The post's own text, as drawn: from its .board-body to its foot."""
-    return html.split('<div class="board-body prose-gahk">')[1].split(
+    return html.split('<div class="board-body prose-gahk" data-highlight-in>')[1].split(
         '<div class="notice-foot">', maxsplit=1
     )[0]
 
@@ -131,7 +131,7 @@ def test_an_album_is_drawn_as_the_photo_albums_own_widget_where_it_is_embedded(b
 
     [widget] = album_widgets(text)
     assert widget.startswith(
-        f'<a class="album-timeline-card album-embed album-embed-n3" href="/intern/fotoalbum/{party.pk}">'
+        f'<a class="album-timeline-card album-embed album-embed-n3" href="/fotoalbum/{party.pk}">'
     )
     assert '<span class="album-eyebrow">Fotoalbum · 2026</span>' in widget
     assert "<strong>Julefrokost 2026</strong>" in widget
@@ -153,7 +153,7 @@ def test_the_feed_shows_the_excerpt_and_the_first_widget_under_it(beboer: Reside
 
     [widget] = album_widgets(feed)
     assert "<strong>Fredag</strong>" in widget
-    excerpt = feed.split('<div class="board-body prose-gahk">')[1].split("</div>")[0]
+    excerpt = feed.split('<div class="board-body prose-gahk" data-highlight-in>')[1].split("</div>")[0]
     assert "Fredag:" in excerpt and "Og lørdag:" in excerpt and "album-embed" not in excerpt
     assert [
         ("<strong>Fredag</strong>" in each, "<strong>Lørdag</strong>" in each) for each in album_widgets(page)
@@ -317,12 +317,12 @@ def test_a_film_is_drawn_as_gahkflixs_own_widget(beboer: Resident, videos_open: 
 
     assert '<div class="flix-embed">' in text
     assert '<span class="flix-embed-logo" aria-hidden="true">GAHKFLIX</span>' in text
-    assert f'<a class="flix-embed-title" href="/intern/gahkflix/v/{film.pk}">Revy 2009</a>' in text
-    assert f'href="/intern/gahkflix/v/{film.pk}/afspil"' in text
+    assert f'<a class="flix-embed-title" href="/gahkflix/v/{film.pk}">Revy 2009</a>' in text
+    assert f'href="/gahkflix/v/{film.pk}/afspil"' in text
     assert '<b aria-hidden="true">G</b>Revyen' in text
     for item in ("Afsnit 3", "13 min", "HD", "Sange og sketches."):
         assert item in text
-    assert re.search(rf'class="flix-embed-img" src="/intern/gahkflix/v/{film.pk}/billede/banner\?v=', text)
+    assert re.search(rf'class="flix-embed-img" src="/gahkflix/v/{film.pk}/billede/banner\?v=', text)
 
 
 def test_the_film_widget_says_how_far_the_reader_got(
@@ -396,8 +396,8 @@ def test_the_widgets_follow_their_pages_to_new_addresses(beboer: Resident, video
     assert f'href="/billeder/{party.pk}"' in text
     assert f'<a class="flix-embed-title" href="/film/v/{film.pk}">' in text
     assert f'href="/film/v/{film.pk}/afspil"' in text
-    assert "/intern/fotoalbum/" not in text
-    assert "/intern/gahkflix/v/" not in text
+    assert "/fotoalbum/" not in text
+    assert "/gahkflix/v/" not in text
 
 
 def test_widgets_cost_the_same_queries_however_many_posts_embed_one(
@@ -603,7 +603,7 @@ def test_the_composer_endpoints_are_for_residents(client: Client, method: str, u
     response = getattr(client, method)(BOARD + url)
 
     assert response.status_code == 302
-    assert response["Location"].startswith("/intern/admin/login")
+    assert response["Location"].startswith("/admin/login")
 
 
 def test_an_albums_widget_in_the_composer_offers_to_pick_its_pictures(
@@ -703,7 +703,7 @@ def test_no_pictures_to_pick_for_an_album_that_is_gone_or_for_the_kitchen(
 def test_the_album_page_offers_to_share_it(beboer: Resident) -> None:
     party = album()
 
-    html = client_for(beboer).get(f"/intern/fotoalbum/{party.pk}").content.decode()
+    html = client_for(beboer).get(f"/fotoalbum/{party.pk}").content.decode()
 
     assert f'<a class="btn-link" href="{BOARD}opret?album={party.pk}">Del på opslagstavlen</a>' in html
 
@@ -713,7 +713,7 @@ def test_no_share_button_for_a_reader_the_board_keeps_out(
 ) -> None:
     monkeypatch.setattr(board_access, "ACCESS_ROLES", (Role.INSPEKTION,))
 
-    html = client_for(beboer).get(f"/intern/fotoalbum/{album().pk}").content.decode()
+    html = client_for(beboer).get(f"/fotoalbum/{album().pk}").content.decode()
 
     assert "Del på opslagstavlen" not in html
 
@@ -725,8 +725,5 @@ def test_a_published_film_offers_to_share_it_and_a_draft_does_not(
     draft = make_video(beboer, title="Kladde", published=False)
     client = client_for(beboer)
 
-    assert (
-        f'href="{BOARD}opret?gahkflix={film.pk}"'
-        in client.get(f"/intern/gahkflix/v/{film.pk}").content.decode()
-    )
-    assert "Del på opslagstavlen" not in client.get(f"/intern/gahkflix/v/{draft.pk}").content.decode()
+    assert f'href="{BOARD}opret?gahkflix={film.pk}"' in client.get(f"/gahkflix/v/{film.pk}").content.decode()
+    assert "Del på opslagstavlen" not in client.get(f"/gahkflix/v/{draft.pk}").content.decode()

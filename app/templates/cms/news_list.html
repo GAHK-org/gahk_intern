@@ -1,0 +1,28 @@
+{% extends "cms/base.html" %}
+{% block cms_title %}Nyheder{% endblock %}
+{% block cms_content %}
+  <div class="page-head">
+    <div>
+      <p class="eyebrow">Hjemmeside</p>
+      <h1>Nyheder</h1>
+      <p class="muted text-sm">Nyhederne står på forsiden og under Begivenheder på gahk.dk, nyeste først.</p>
+    </div>
+    <div class="head-actions"><a class="btn" href="{% url 'cms:news_create' %}">Ny nyhed</a></div>
+  </div>
+  <section class="card-flat cms-section">
+    <ul class="cms-rows">
+      {% for item in page_obj %}
+        <li class="cms-row">
+          <div class="cms-row-main">
+            <a class="cms-row-title" href="{% url 'cms:news_edit' item.pk %}">{{ item.title }}</a>
+            <div class="cms-row-meta muted text-sm">{{ item.body|striptags|truncatewords:24 }}</div>
+          </div>
+          <div class="cms-row-side"><span class="muted text-sm">{{ item.published_at|date:"j. b Y" }}</span></div>
+        </li>
+      {% empty %}
+        <li class="card-pad muted">Ingen nyheder endnu.</li>
+      {% endfor %}
+    </ul>
+  </section>
+  {% include "cms/_pager.html" %}
+{% endblock %}

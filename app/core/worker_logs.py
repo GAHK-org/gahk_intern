@@ -194,7 +194,12 @@ def _finish(task_id: str | None = None, task: Any = None, state: str | None = No
         log.state = state or ""
         log.finished_at = timezone.now()
         if live is not None and live.fraction is not None:
-            log.progress, log.progress_step, log.progressed_at = live.fraction, live.step, log.finished_at
+            # A job that succeeded got all the way, whatever it reported last (GAHKFlix's last report
+            # is 95 %, before its frames). One that failed keeps where it stopped, and doing what.
+            done = state == "SUCCESS"
+            log.progress = 1.0 if done else live.fraction
+            log.progress_step = "" if done else live.step
+            log.progressed_at = log.finished_at
         if live is not None:
             for name, value in job_progress.memory_fields(live).items():
                 setattr(log, name, value)

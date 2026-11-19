@@ -42,8 +42,8 @@ from opslagstavle.models import Category, Notice, NoticeComment
 from reparationer.models import RepairTask
 from residents.models import Resident, Role
 
-FEED_URL = "/intern/den-hurtige/"
-BOARD = "/intern/opslagstavle/"
+FEED_URL = "/den-hurtige/"
+BOARD = "/opslagstavle/"
 
 
 @pytest.fixture(autouse=True)
@@ -532,19 +532,19 @@ def test_the_bell_declares_its_topic_and_its_badge_can_be_reread(client: Client,
     client.force_login(beboer)
     page = client.get(BOARD).content.decode()
     notification_services.notify([beboer.pk], category=categories.GENERAL, title="Hej", url="/")
-    badge = client.get("/intern/notifikationer/taeller").content.decode()
+    badge = client.get("/notifikationer/taeller").content.decode()
 
     assert f'data-live="notifikationer.{beboer.pk}"' in page
     assert 'id="js-notif-badge"' in badge
     assert ">1<" in badge
     assert "<html" not in badge
     client.logout()
-    assert client.get("/intern/notifikationer/taeller").status_code == 204
+    assert client.get("/notifikationer/taeller").status_code == 204
 
 
 # --- the repair board ---------------------------------------------------------------------------
 
-REPAIRS = "/intern/reparationer/"
+REPAIRS = "/reparationer/"
 
 
 def test_every_repair_write_signals_the_board(
@@ -586,7 +586,7 @@ def test_the_board_answers_htmx_with_the_board_alone(client: Client, beboer: Res
 
 # --- an event page ------------------------------------------------------------------------------
 
-EVENTS = "/intern/begivenheder/"
+EVENTS = "/begivenheder/"
 
 
 def make_event(organiser: Resident, **extra: object) -> Event:

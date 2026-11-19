@@ -6,6 +6,15 @@ stays a separate **PHP + MariaDB** app on the same box. No SPA/API — one monol
 
 > Items marked **[you]** need your accounts/credentials (GitHub, Hetzner, Punktum dk) — I can't do them from here.
 
+**Three hosts.** This app is the intranet at the **root of `intern.gahk.dk`** (it used to be
+`gahk.dk/intern/`; here `/intern/…` and `/nyintern/…` are 404s like any unknown path). The public
+site **gahk.dk** is a separate app, `gahk_web`, on Hetzner Webhosting — its own runbook is
+gahk_web's `DEPLOY.md`. This app still holds the website's content and pushes it there; gahk.dk forwards its old intranet paths to intern.gahk.dk with a 308, query
+kept: `gahk.dk/intern/x` goes straight to `intern.gahk.dk/x` (prefix dropped; a GET there gets a page
+that forwards browsers the same way and shows the old installed app how to reinstall), and
+`/admin/…`, `/media/…`, … keep their path. MediaWiki has its own host, **wiki.gahk.dk** (§6), and
+gahk.dk forwards `/wiki/…` there. DNS: §7.
+
 ## 1. Local
 Prereqs: [`uv`](https://docs.astral.sh/uv/) (Python deps) + [`go-task`](https://taskfile.dev) + Node + Docker.
 ```
@@ -40,14 +49,18 @@ All are read from the environment (F-013); rotate everything at cutover (scope �
 ```
 DJANGO_SECRET_KEY=<64+ random chars>
 DJANGO_DEBUG=0
-DJANGO_ALLOWED_HOSTS=www.gahk.dk,gahk.dk
+DJANGO_ALLOWED_HOSTS=intern.gahk.dk
+CSRF_TRUSTED_ORIGINS=https://intern.gahk.dk
+SITE_URL=https://intern.gahk.dk                    # absolute links in mail and push payloads (default when DJANGO_DEBUG=0)
+PUBLIC_SITE_URL=https://gahk.dk                    # the public site, for "Til GAHK-forsiden" (default)
+GAHK_WEB_URL=https://gahk.dk                       # where the sync API is (default when DJANGO_DEBUG=0)
+GAHK_WEB_KEY=<64 random chars>                     # = [sync] key in gahk.dk's config.ini — see §4f
+# EDITOR_HINT_COOKIE_DOMAIN=.gahk.dk                # default; the "gahk_editor" hint cookie for gahk.dk's "Rediger siden"
 DATABASE_URL=postgres://gahk:<pw>@postgres:5432/gahk
-VISIT_COUNTER_HMAC_KEY=<random>
 SMTP_HOST=send.one.com  SMTP_USER=…  SMTP_PASSWORD=…  SMTP_PORT=587
 EMAIL_BACKEND=django.core.mail.backends.smtp.EmailBackend
 DEFAULT_FROM_EMAIL=autosvar@gahk.dk               # ⚠ must be an alias of SMTP_USER — see below
 OELKAELDER_FROM_EMAIL=bierkeller@gahk.dk          # ⚠ second sender, same requirement
-TURNSTILE_SITE_KEY=…  TURNSTILE_SECRET_KEY=…      # Cloudflare Turnstile [you]
 WIFI_PASSWORD=…  GOOGLE_CALENDAR_USER=…  GOOGLE_CALENDAR_PASSWORD=…
 INDSTILLING_EMAIL=indstillingen@gahk.dk           # recipient only, not a sender
 POSTGRES_PASSWORD=<pw>                            # for the compose postgres service
@@ -70,6 +83,17 @@ is not configured. **Rotating the pair invalidates every existing subscription**
 would have to press the button again — settle on one pair before residents start subscribing.
 Push also requires HTTPS, which Traefik already terminates; on iOS the site must be added to the
 home screen before notifications are available at all.
+
+Push is bound to the **origin**. Subscriptions made while the intranet lived at gahk.dk/intern/ keep
+receiving (payload links are absolute, on `SITE_URL`, so a tap opens intern.gahk.dk), until gahk.dk's
+self-unregistering `/sw.js` removes the old worker. Residents then re-enable push on
+intern.gahk.dk, and install the home-screen app again from intern.gahk.dk — an app installed from
+gahk.dk is a different app (a new origin is a new app). The new one is called "GAHK Intern". Its
+manifest id is `/` (https://intern.gahk.dk/, one app for the whole site) and must never change once
+installed, since a new id splits installed apps; its start_url, `/den-hurtige/`, may. `/install`
+(public) has the steps per platform, the old app on gahk.dk shows a notice linking there, and
+logged-in residents on a phone get a banner pointing to it until they install or close it
+(spec/features/gahk-intern-app.md).
 
 **Email — verify the senders, don't assume.** one.com authenticates as `SMTP_USER` and rejects any
 From address that account is not itself or an alias of:
@@ -226,6 +250,9 @@ idempotent, so a retry or an overlapping run is harmless.
 
 | Celery task | Schedule | Why |
 | --- | --- | --- |
+| `cms.tasks.sync_gahk_web` | Every 2 min | Compares gahk.dk's content revision with intern's and publishes again on a mismatch, then pulls gahk.dk's outbox (optagelse applications, visit counts) and acknowledges it. See §4f. |
+| `cms.tasks.rebuild_gahk_web` | Daily 00:05 | gahk.dk renders its pages again, so "kommende begivenheder" drops yesterday's. |
+| `cms.tasks.nudge_gahk_web_update` | Every 15 min, from :01 | Asks the webhost to update its code from GitHub's production release. Its **only** update trigger — there is no cron job on the webhost. |
 | `admissions.tasks.purge_expired_applications` | Daily 03:20 | Enforces the one-year application retention policy. |
 | `opslagstavle.tasks.purge_orphaned_images` | Daily 03:40 | Removes unused compose-toolbar image uploads. |
 | `reparationer.tasks.archive_finished_repairs` | Daily 03:50 | Archives completed repairs after 30 days. |
@@ -308,7 +335,7 @@ Uploads live in an S3-compatible bucket rather than the `media` volume. **`S3_BU
 switch** — there is no second flag and no half-enabled state.
 
 **`MEDIA_URL` stays `/media/`, permanently.** It is a prefix of content stored in the *database*:
-`cms.Page.background_image` is a CharField holding the URL string outright, the CMS toolbar writes
+`cms.Page.background_image` is a CharField holding the URL string outright, the Hjemmeside editor writes
 `<img src="/media/…">` into page bodies, and opslag bodies embed the same in Markdown. Repointing it
 at the bucket host makes those images vanish (the sanitiser drops a src it does not recognise) and
 makes the next edit of an existing opslag release its images for `purge_notices` to delete a day
@@ -331,9 +358,8 @@ docker exec <web> python manage.py check                      # core.E007-E009 s
 docker exec <web> sh -c 'find /app/media -type f | wc -l'     # baseline count
 docker exec <web> python manage.py audit_media --limit 5      # baseline, and note "Present"
 ```
-Then, logged **out**: a public CMS page still shows its images, and `/media/profile_pictures/<real>`
-redirects to the login page. Logged **in**: that same URL returns the image. A missing front-page
-image here is the auth gate's prefix list, not storage.
+Then, logged **out**: `/media/profile_pictures/<real>` redirects to the login page. Logged **in**:
+that same URL returns the image, and so does an image from the Hjemmeside library.
 
 **Stage 2 — migrate, app still serving from disk.** Inject the bucket for the single command:
 ```
@@ -401,7 +427,7 @@ Arkiv and GAHKFlix send files **straight from the browser to Hetzner** (`arkiv/u
 for a ZIP on the import page and for any photo or video of 8 MB or more
 (`photo_album/direct_upload.py`): the proxy cuts an upload that takes more than a minute (§4). They
 share the bucket, so the one rule below covers all three. Those requests are cross-origin, from
-`https://gahk.dk` to `https://<bucket>.<loc>.your-objectstorage.com`, so the bucket has to say the
+`https://intern.gahk.dk` to `https://<bucket>.<loc>.your-objectstorage.com`, so the bucket has to say the
 origin is allowed or the browser refuses to send them. Without the rule the photo album falls back
 to posting the file through the app as before, which works for anything that goes in within the
 minute; Arkiv and GAHKFlix have no such fallback.
@@ -415,7 +441,7 @@ docker exec <web> python manage.py shell -c "
 from django.core.files.storage import storages
 s = storages['default']; c = s.connection.meta.client
 c.put_bucket_cors(Bucket=s.bucket_name, CORSConfiguration={'CORSRules': [
-  {'AllowedOrigins': ['https://gahk.dk', 'https://www.gahk.dk'],
+  {'AllowedOrigins': ['https://intern.gahk.dk'],
    'AllowedMethods': ['POST', 'PUT', 'DELETE'],
    'AllowedHeaders': ['*'],
    'ExposeHeaders': ['ETag'],
@@ -428,7 +454,7 @@ print(c.get_bucket_cors(Bucket=s.bucket_name)['CORSRules'])"
 (`@uppy/aws-s3`) starts and completes itself; `PUT` for their parts; `DELETE` to abort one that
 failed or was cancelled. The server signs each of those requests for the one key it chose
 (`photo_album/direct_upload.py`). `ETag` must be exposed: Uppy reads each part's ETag to complete
-the upload. Only those origins. **Reading needs no
+the upload. Only that origin: gahk.dk does not run this app. **Reading needs no
 CORS** — a download is a top-level navigation to a redirect, not a `fetch`. Widening
 `AllowedMethods` to `GET` or `AllowedOrigins` to `*` would let any page on the internet script
 requests against the bucket with a stolen presigned URL; there is no reason to.
@@ -524,17 +550,18 @@ worse trade than it was, not a comparable one — see §4 on scaling.
 
 It used to be, as the legacy `/public/` images were — so anyone who guessed
 `/media/profile_pictures/IMG_1234.jpg` (a real name: no date, no random suffix) could read a
-resident's photograph. Now only `core.media.PUBLIC_PREFIXES` — just `cms/` — is anonymous.
+resident's photograph. Now only `core.media.PUBLIC_PREFIXES` — the ølkælder till's product photos
+(`oel/`, `public/image/intern/oel/`), which the till shows without a session — is anonymous.
 
-`cms/` is the exception because `cms.CmsImage` uploads are embedded in `Page.body`, `NewsItem.body`
-and `Event.description`, which the logged-out front page renders; `body_media` rewrites only the
-*legacy* `/public/…` paths to `/static/legacy/`, so it never moves these off `/media/`. Every other
-prefix was checked individually and is reachable only from `/intern/` — including `oel/` and
-`public/`, which look public and are not (ølkælder lives under `/intern/oelkaelder/`, and
-`relocate_media` copies only ølkælder and værelsestjek legacy images into `media/public/`).
+The website's images (`cms/`, the Hjemmeside library) used to be anonymous too, while this app
+rendered gahk.dk. They are not any more: gahk.dk serves its own copies at `/images/` (§4f), and only
+logged-in editors load them from here. An old `/media/cms/<name>` link (gahk.dk forwards `/media/`
+here) still works for a picture gahk.dk publishes: an anonymous request goes 301 to
+`https://gahk.dk/images/<sha16>/<name>`; any other `cms/` file needs a login. Every other prefix was
+checked individually and is reachable only from the intranet.
 
-**If a front-page image ever goes missing, this list is the first thing to check.** The gate is a
-blanket `login_required` per prefix, not per-object: any logged-in resident can fetch any non-`cms/`
+**If an image on the till ever goes missing, this list is the first thing to check.** The gate is a
+blanket `login_required` per prefix, not per-object: any logged-in resident can fetch any
 file, so a *private* begivenhed's poster is protected from the public but not from other residents.
 Closing that would mean resolving each path back to its owning row and applying
 `events.access.visible_to`; deliberately not done.
@@ -650,7 +677,7 @@ Two endpoints, both in `app/core/health.py`:
 - **`/healthz`** — liveness only; `web`'s Docker healthcheck in `docker-compose.prod.yml` uses it,
   and Coolify shows that status. It checks nothing beyond the process answering, because Traefik
   drops an unhealthy container from routing: a dead worker must not take the site down with it.
-- **`/health`** — for an external uptime monitor (point it at `https://gahk.dk/health` and alert on
+- **`/health`** — for an external uptime monitor (point it at `https://intern.gahk.dk/health` and alert on
   anything but 200). It returns 503 if the database or the S3 bucket is unreachable, or if any of
   `default`, `media` and `beat` has not sent a heartbeat for 2 minutes. The JSON body names the
   failing check; the reason is in `web`'s log. Renaming a worker's `-n` in the compose file means
@@ -670,6 +697,98 @@ running container without a healthcheck as *unknown*, and a single unknown conta
 whole app as **Running (unknown)**. An unhealthy worker or beat keeps running and nothing
 reroutes, so this is a status to look at, not a fix; alerting stays with the uptime monitor on
 `/health`.
+
+### 4f. gahk.dk (gahk_web)
+
+gahk.dk is static pages on Hetzner Webhosting, rendered by `gahk_web` (its own repo and runbook).
+**This app holds all of the website's content** — pages, menu, news, front-page events, the image
+library — and is edited under Hjemmeside (`cms`). gahk.dk holds nothing durable: it caches the last
+snapshot and its images, and keeps optagelse applications and visit counts in an outbox until intern
+pulls them. Every exchange is started by intern (`cms/tasks.py`), over HTTPS to gahk.dk's `/api/*`,
+signed with `GAHK_WEB_KEY`. gahk.dk has no access to intern's database or to the bucket.
+
+**Settings.** `GAHK_WEB_URL` (prod default `https://gahk.dk`; dev default `http://127.0.0.1:8810`,
+gahk_web's devserver) and `GAHK_WEB_KEY` — the same value as `[sync] key` in the webhost's
+`~/gahk_web/config.ini`. Generate it once (`python -c "import secrets; print(secrets.token_urlsafe(48))"`)
+and set it on both sides. **An empty key switches syncing off**: every gahk.dk task logs one line
+and does nothing, and editing still works — gahk.dk then simply keeps showing what it last got.
+
+**What runs when.** Every content save publishes after its commit. `sync_gahk_web` (every 2 minutes,
+§4b) republishes when gahk.dk reports another revision, so a publish that failed while gahk.dk was
+down heals by itself, and pulls the outbox. `rebuild_gahk_web` at 00:05; `nudge_gahk_web_update`
+every 15 minutes. All on the default queue. Results: Publication rows (each publish: reason,
+revision, pages written, images uploaded, error) and the GahkWebSync row (last status check,
+gahk.dk's code version and revision, last outbox pull, rejected applications, last error, last
+update result) — the Hjemmeside overview shows both, and so does `/admin/worker-jobs`.
+
+**Force a republish:** "Udgiv igen nu" in the Hjemmeside overview (/hjemmeside/), or
+`docker exec <worker> python manage.py shell -c "from cms.tasks import publish_gahk_web; print(publish_gahk_web(reason='manual'))"`.
+A manual publish is never skipped as "already current".
+
+**When gahk.dk shows stale content**, in this order:
+1. The latest Publication rows: a `failed` one carries gahk.dk's answer. `401 bad signature` means
+   the keys differ or a clock is more than five minutes off; a connection error means the webhost
+   is down (gahk.dk keeps serving the old pages meanwhile).
+2. GahkWebSync's `last_error` and `status_checked_at`: if the check is old, beat or the default
+   worker is not running (`/health`).
+3. `GAHK_WEB_KEY` set at all? With it empty nothing is ever sent.
+4. On gahk.dk, `https://gahk.dk/api/health` shows the revision it serves; compare with the newest OK
+   Publication.
+
+**Legacy images.** The old site's content images (77 files, in git under
+`app/static/legacy/image/upload/` until the cutover's cleanup) were moved into the image library (S3)
+once, at the move to intern.gahk.dk, with their old path in `CmsImage.legacy_path`, and the content was pointed at the
+copies. Every snapshot sends gahk.dk the map from each old address (`/static/legacy/image/…`;
+gahk.dk also answers `/public/image/…`) to the library copy, so links from other websites and old
+mails keep working. An old image nothing uses shows as "Ikke i brug" in the library and may be
+deleted; gahk.dk then drops it, and the redirect from its old address, at the next publish.
+`static/legacy/image/elements/` and `image/intern/` stay in the repository: the intranet itself uses
+them.
+
+**Applications** pulled from the outbox are validated with the old form rules, stored once (by
+gahk.dk's id), answered with the usual auto-reply, and then acknowledged so gahk.dk deletes them. One
+that fails the rules is dropped with a log line and counted on GahkWebSync. Spam protection
+(Turnstile, honeypot) is gahk.dk's; its keys live in its config.ini.
+
+### 4g. Memory
+
+The box has 4 GB and 2 vCPUs, and at rest about 3 GB of that is in use: Coolify ~0.6 GB, the two
+databases ~0.4 GB, `web` ~0.3 GB, the workers ~0.3–0.5 GB each. On 2026-11-15 a worker went past
+that, there was no swap and no limit, and the kernel's out-of-memory handling stalled the whole
+box: Postgres went into recovery, the site returned 500s, and only a reboot brought it back.
+
+Three layers keep a runaway job from taking anything else down with it:
+
+1. **Limits on the app's containers** (`docker-compose.prod.yml`, applied by every deploy).
+   `mem_limit` per service, so a job that runs away is killed inside its own container. Swap is
+   off for them (`memswap_limit`). The workers go first if the box still runs short
+   (`oom_score_adj`), and their Celery child is replaced once a job has left it large
+   (`--max-memory-per-child`). `worker-media` also has `cpus: 1.5` and a low `cpu_shares`, so an
+   encode never has the whole CPU while the site wants some.
+2. **The server's own settings**, from `server/setup.sh`: 2 GB of swap for everything that is not
+   limited, `vm.swappiness = 10`, and earlyoom, which stops a worker or ffmpeg before the box
+   stalls and never a database, the proxy or Docker. Run it once on a server, and again after
+   changing it: `ssh root@<server> 'bash -s' < server/setup.sh`. Safe to repeat. A new server
+   gets it from `server/cloud-init.yml`, pasted into Hetzner's "Cloud config" when creating it.
+3. **MariaDB** (MediaWiki), which is a Coolify-managed resource, so its configuration lives in
+   Coolify: paste `server/mariadb.cnf` into the resource's custom MariaDB configuration and
+   restart it. Keep the two the same.
+
+**After a deploy that changes the limits**, check that Coolify passed them on (the values are in
+bytes; 0 means no limit):
+
+```
+docker inspect $(docker ps -q --filter name=worker-media-) \
+  --format '{{.HostConfig.Memory}} {{.HostConfig.MemorySwap}} {{.HostConfig.NanoCpus}} {{.HostConfig.CpuShares}} {{.HostConfig.OomScoreAdj}}'
+```
+
+**When a job is killed at its limit**, `docker inspect` shows `OOMKilled` only if the container's
+main process died. Usually it is ffmpeg or the Celery child, and the container lives on; the job
+log names the job, and `journalctl -k | grep -i oom` the process and its memory.
+
+**More services need more memory.** Roundcube and a Dovecot proxy fit as things are. OnlyOffice's
+Document Server needs about 2 GB on its own and does not: move to an 8 GB server first, with
+Hetzner's "CPU and RAM only" rescale, which keeps the disk so it can be scaled back.
 
 ## 5. Data migration to prod
 ```
@@ -692,16 +811,29 @@ albums in real use are never at risk. Run it with `docker exec -it` — it needs
   Split the `wiki*` tables into their **own MariaDB database** on the new box.
 - **Upgrade to the current LTS (1.43, supported to Dec 2027)**. MediaWiki upgrades span at most two LTS
   releases at a time, so if the current install is old this is **multi-step**; then stay on the LTS track.
-- Serve behind the same proxy at `wiki.gahk.dk` or `/wiki`. Confirm open Q: is wiki login standalone or
-  SSO'd to the members area? (Separate `wiki`-prefixed user tables imply standalone; verify LocalSettings.)
+- Served at the **root of `wiki.gahk.dk`** (`wiki-deploy/`): pages at `/wiki/<title>`, the scripts
+  at `/index.php`, `/load.php`, uploads at `/images/…`. The image's Apache does the short-URL rewrite
+  (`wiki-deploy/apache-wiki.conf`), so in Coolify the wiki app gets the domain `https://wiki.gahk.dk`
+  and nothing else: **no `stripprefix` middleware, no path route**. Set `MW_SERVER=https://wiki.gahk.dk`
+  in its environment.
+- gahk.dk/wiki/… redirects there (gahk_web: `/wiki/index.php?title=X` → `/index.php?title=X`, `/wiki/X`
+  → `/wiki/X`). The intranet's sidebar links to `WIKI_URL` (default `https://wiki.gahk.dk/`), an
+  external link that opens in a new tab, outside the installed GAHK Intern app's scope.
+- Login is standalone (GahkAuthLogin reads the residents table directly); its cookies are host-only
+  on wiki.gahk.dk and `Secure`, so neither gahk.dk nor intern.gahk.dk ever sees them.
+- The wiki image only works at wiki.gahk.dk (`$wgScriptPath` is `""`).
 
-## 7. DNS cutover (.dk via Punktum dk) **[you]**
-1. A **day ahead**, lower the A-record TTL (e.g. 300s).
-2. Repoint the **A record** to the Hetzner IP. **Leave MX on one.com** (email untouched).
-3. Serve **301 redirects** for any changed URLs to protect SEO. The rewrite **preserves** the public URLs
-   (`/`, `/faciliteter`, `/faciliteter/vaerelse`, `/kollegielivet/historie`, `/optagelse`, `/pylon`→ n/a, `/wiki`).
-4. **Rollback** = repoint the A record back. Registrar transfer is optional/separate (MitID + auth code).
-5. Confirm **who the registrant of record is** early — often the slowest item.
+## 7. DNS (.dk via Punktum dk) **[you]**
+Records: **`intern.gahk.dk` and `wiki.gahk.dk` A → the Coolify VM** (no AAAA: gahk.dk has never had
+one); **`gahk.dk` and `www.gahk.dk` → Hetzner Webhosting** (gahk_web, see its `DEPLOY.md`). **Leave
+MX on one.com** (email untouched). In Coolify this app has only the domain `https://intern.gahk.dk`,
+and the wiki app only `https://wiki.gahk.dk`.
+
+The intranet moved here from gahk.dk/intern/ in November 2026. gahk.dk forwards the old addresses
+(`/intern/<rest>` → `https://intern.gahk.dk/<rest>`, `/wiki/…` → wiki.gahk.dk); here `/intern/…` is a
+404. The session cookie is host-only and renamed (`__Host-intern_sessionid`), so an old `.gahk.dk`
+`sessionid` is never read. Home-screen apps and push had to be set up again on intern.gahk.dk: the
+old app shows how, `https://intern.gahk.dk/install` has the steps, and phones get a banner.
 
 ## 8. Cutover checklist
 - [ ] Fresh GitHub repo, CI green, Dependabot on.
@@ -716,10 +848,8 @@ albums in real use are never at risk. Run it with `docker exec -it` — it needs
       phone, through to playback — it uses the same CORS rule, and its encode runs on `worker-media`.
 - [ ] **Before emptying the `media` volume:** bucket versioning `Enabled` **and** the lifecycle rules
       in place (§4d), backups green, and one copy off Hetzner. Until then the volume is the rollback.
-- [ ] After the bucket is live, confirm images still render on a **public CMS page** while logged
-      OUT — that is the live, ETL-populated content, the only prefix the gate leaves anonymous, and
-      the one that actually has something to lose. Then log in and check opslagstavlen and
-      begivenheder. All of these fail silently: the page returns 200 either way.
+- [ ] After the bucket is live, log in and check that images show in the Hjemmeside library,
+      opslagstavlen and begivenheder. All of these fail silently: the page returns 200 either way.
 - [ ] `task etl` + `etl_verify` + `relocate_media` run against a fresh dump; counts sane.
 - [ ] `createsuperuser`; assign initial roles via `/admin/roles`.
 - [ ] `sendtestemail` green for **both** sender addresses (§2); one real "glemt kodeord" round-trip.
@@ -729,13 +859,14 @@ albums in real use are never at risk. Run it with `docker exec -it` — it needs
       the bucket, and one restore rehearsed end-to-end with row counts checked.
 - [ ] Interim hardening done on the *old* box until DNS flips (scope §8: lock KCFinder, gate mass-mailers,
       delete `phpinfo.php`, pull & archive access logs).
-- [ ] MediaWiki migrated + upgraded to 1.43, reachable behind the proxy.
+- [ ] MediaWiki migrated + upgraded to 1.43; switched to `https://wiki.gahk.dk` with this version (§6, §7).
 - [ ] Staging smoke-tested; behavioural diff vs the live PHP site on key pages.
-- [ ] Lower A TTL → repoint A → verify → keep MX on one.com.
-- [ ] 301s live for any changed URLs.
+- [ ] `intern.gahk.dk` live in Coolify and bucket CORS updated; gahk.dk on Hetzner Webhosting with
+      `GAHK_WEB_KEY` set here (§4f, §7); `https://gahk.dk/intern/` → `https://intern.gahk.dk/`;
+      MX kept on one.com.
+- [ ] Uptime monitor on `https://intern.gahk.dk/health`; till, kitchen and Dropbox-script URLs updated.
 
 ## 9. Notes
 - Python: **dev is 3.14, prod image pins 3.13** (Django 5.2's supported range; psycopg wheels).
 - Static: WhiteNoise `CompressedManifestStaticFilesStorage` in prod (hashed/cached); `collectstatic` runs at image build.
-- Fonts (Julius Sans One / Ubuntu) currently load from Google Fonts — self-host for a fully CSP-clean/offline prod.
 - The `gahk_dk` DB account is shared by App A, App B, and MediaWiki — rotating its password touches all three.

@@ -72,18 +72,30 @@ def test_the_log_and_progress_are_written_while_the_job_runs_and_once_at_its_end
     assert (row.progress, row.progress_step, row.finished_at) == (0.25, "Konverterer", None)
 
     logger.info("Encoding clip.mov: 20%")
-    report_progress(1.0, "Gemmer versionerne")
+    report_progress(0.95, "Gemmer versionerne")  # its last report need not be 100 %
     worker_logs._finish(task_id="job-2", task=task, state="SUCCESS")
 
     row.refresh_from_db()
     # Written in full at the end: the line the monitor wrote is not there twice.
     assert [line["message"] for line in row.lines] == ["Encoding clip.mov: 10%", "Encoding clip.mov: 20%"]
-    assert (row.progress, row.progress_step, row.state) == (1.0, "Gemmer versionerne", "SUCCESS")
+    assert (row.progress, row.progress_step, row.state) == (1.0, "", "SUCCESS")  # done, not stuck at 95 %
     # A late write by the monitor cannot overwrite the job's own last word.
     job.lines.append({"at": "", "level": "INFO", "logger": "x", "message": "late"})
     job_progress.write(job, job.started + 2 * FLUSH_INTERVAL)
     row.refresh_from_db()
     assert len(row.lines) == 2
+
+
+@pytest.mark.django_db
+@pytest.mark.django_db
+def test_a_failed_job_keeps_where_it_stopped() -> None:
+    task = SimpleNamespace(name="gahkflix.tasks.process_video_file", request=SimpleNamespace(is_eager=True))
+    worker_logs._start(task_id="job-3", task=task)
+    report_progress(0.4, "Behandler filmen")
+    worker_logs._finish(task_id="job-3", task=task, state="FAILURE")
+
+    row = WorkerJobLog.objects.get(task_id="job-3")
+    assert (row.progress, row.progress_step) == (0.4, "Behandler filmen")
 
 
 @pytest.mark.django_db

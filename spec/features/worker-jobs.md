@@ -50,7 +50,8 @@ ran and how it went, and what is scheduled next. Under Administration → Worker
 - Its result, its traceback, and what it logged. While it runs, the page refreshes itself every 10
   seconds (while the tab is in view), showing its progress and what it has logged so far, at most
   10 seconds old; it stops refreshing when the job ends. A job killed outright keeps what it logged
-  up to then.
+  up to then. A job that succeeded shows 100 %; one that failed shows how far it got and what it was
+  doing.
 
 ## Stuck jobs
 
