@@ -13,7 +13,7 @@ RUN cd frontend && npm run build          # → /build/app/static/dist/{app.css,
 FROM ghcr.io/astral-sh/uv:0.8 AS uv
 
 # --- What the build stages and the final image share (Python 3.13 — Django 5.2's supported range) ---
-FROM python:3.13-slim AS base
+FROM python:3.15-slim AS base
 ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 PATH="/app/.venv/bin:$PATH"
 # exiv2 (the photo album's metadata copying) links against the system's Expat XML parser, which the
 # slim image leaves out.
