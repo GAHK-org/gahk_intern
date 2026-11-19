@@ -1,12 +1,13 @@
 """The kitchen-staff account (Resident.is_kitchen): Den Hurtige's køkken channel, Reparationer and its
 own opslag, nothing else. Also as an administrator previewing it ("Se side som")."""
 
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 
 import pytest
 from django.contrib.sessions.backends.db import SessionStore
 from django.http import HttpRequest
 from django.test import Client
+from django.urls import URLPattern, URLResolver, get_resolver
 
 from core import live
 from core.models import PushSubscription
@@ -17,6 +18,7 @@ from notifications.models import Notification, NotificationPreference
 from opslagstavle import services as opslagstavle_services
 from opslagstavle.models import Notice
 from residents.models import Resident, Role
+from residents.permissions import AccountKind, view_open_to
 
 pytestmark = pytest.mark.django_db
 
@@ -65,8 +67,8 @@ def test_the_rest_of_the_site_is_closed(kitchen: Resident, path: str) -> None:
     assert _client(kitchen).get(path).status_code == 403
 
 
-# With the intranet at the root of intern.gahk.dk the gate is an allowlist: these are what the
-# kitchen's own pages need beside them. None may answer 403 — a 404 for a missing file is fine.
+# Besides its own pages, what they need: the service worker, uploaded files, assets, calendar feeds
+# and the account pages. None may answer 403 — a 404 for a missing file is fine.
 @pytest.mark.parametrize(
     "path",
     [
@@ -74,30 +76,67 @@ def test_the_rest_of_the_site_is_closed(kitchen: Resident, path: str) -> None:
         "/media/quick_posts/2026/09/kaffe.jpg",
         "/static/manifest.json",
         "/kalender/no-such-token.ics",
-        "/admin/password-change",
-        "/admin/password-reset",
+        "/login",
+        "/password-change",
+        "/password-reset",
     ],
 )
 def test_what_its_pages_need_is_not_gated(kitchen: Resident, path: str) -> None:
     assert _client(kitchen).get(path).status_code != 403
 
 
-@pytest.mark.parametrize("path", ["/intern/den-hurtige/koekken/", "/nyintern/", "/intern", "/nyintern"])
-def test_the_old_prefixes_are_gated_like_any_other_path(kitchen: Resident, path: str) -> None:
-    """No special case for the old prefixes: they are not on the allowlist, so the kitchen account
-    gets the gate's 403 there, as on any other path outside it."""
-    from core.middleware import kitchen_may_open
+# Every view it can reach, by URL name. A view is resident-only unless it is marked open_to the
+# kind, so this list changes only when somebody opens a page to the kitchen on purpose.
+OPEN_TO_KITCHEN = {
+    *("login", "logout", "password_change", "password_change_done", "password_reset"),
+    *("password_reset_done", "password_reset_confirm", "password_reset_complete"),
+    *("media", "events_feed", "pwa_service_worker", "install"),
+    *("siteadmin:preview", "siteadmin:preview_set"),
+    *("den_hurtige:feed", "den_hurtige:feed_channel", "den_hurtige:feed_items", "den_hurtige:archive"),
+    *("den_hurtige:channel_menu", "den_hurtige:create_post", "den_hurtige:create_comment"),
+    *("den_hurtige:thread", "den_hurtige:delete_post", "den_hurtige:toggle_reaction"),
+    *("opslagstavle:board", "opslagstavle:create", "opslagstavle:preview", "opslagstavle:embedded"),
+    *("opslagstavle:upload_image", "opslagstavle:delete_comment", "opslagstavle:live_cards"),
+    *("opslagstavle:detail", "opslagstavle:edit", "opslagstavle:live_detail", "opslagstavle:delete"),
+    *("opslagstavle:create_comment", "opslagstavle:toggle_reaction"),
+    *("reparationer:board", "reparationer:archive_list", "reparationer:create", "reparationer:detail"),
+    *("reparationer:create_comment", "reparationer:delete_comment"),
+    *("notifications:index", "notifications:dropdown", "notifications:badge"),
+    *("notifications:mark_all_seen", "notifications:preferences", "notifications:subscription"),
+    *("notifications:open", "notifications:open_batch"),
+}
 
-    assert not kitchen_may_open(path)
+
+def _url_names(patterns: list[URLPattern | URLResolver], namespace: str = "") -> Iterator[tuple[str, object]]:
+    for pattern in patterns:
+        if isinstance(pattern, URLResolver):
+            inner = f"{namespace}{pattern.namespace}:" if pattern.namespace else namespace
+            yield from _url_names(pattern.url_patterns, inner)
+        else:
+            yield f"{namespace}{pattern.name}", pattern.callback
+
+
+def test_the_views_open_to_it_are_exactly_these() -> None:
+    views = list(_url_names(get_resolver().url_patterns))
+    assert {name for name, view in views if view_open_to(view, AccountKind.KITCHEN)} == OPEN_TO_KITCHEN
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "/opslagstavle/indlejr/album",  # the embed pickers: it can embed neither albums nor films
+        "/opslagstavle/indlejr/gahkflix",
+        "/beboere/naevn",  # the @mention lookup lists residents
+    ],
+)
+def test_a_view_not_opened_to_it_is_closed_even_beside_its_pages(kitchen: Resident, path: str) -> None:
     assert _client(kitchen).get(path).status_code == 403
 
 
-def test_a_prefix_that_merely_starts_like_an_allowed_path_is_gated() -> None:
-    from core.middleware import kitchen_may_open
-
-    assert kitchen_may_open("/sw.js") and kitchen_may_open("/health")
-    assert not kitchen_may_open("/sw.jsx") and not kitchen_may_open("/healthcheck")
-    assert not kitchen_may_open("/admin/roles") and not kitchen_may_open("/admin/worker-jobs")
+@pytest.mark.parametrize("path", ["/intern/den-hurtige/koekken/", "/nyintern/", "/admin/login", "/x"])
+def test_a_path_that_is_no_page_is_a_404_as_for_anyone(kitchen: Resident, path: str) -> None:
+    """The gate decides on the view a path resolves to; one that resolves to nothing never reaches it."""
+    assert _client(kitchen).get(path).status_code == 404
 
 
 def test_its_own_profile_is_closed(kitchen: Resident) -> None:

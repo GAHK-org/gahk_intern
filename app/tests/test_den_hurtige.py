@@ -256,7 +256,7 @@ def test_preview_as_a_plain_resident_is_locked_out(
 def test_feed_requires_login(client: Client) -> None:
     response = client.get(FEED_URL)
     assert response.status_code == 302
-    assert "/admin/login" in response["Location"]
+    assert "/login" in response["Location"]
 
 
 def test_the_feed_archives_expired_posts_instead_of_deleting_them(

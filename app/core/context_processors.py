@@ -23,7 +23,9 @@ def _nav_intern(roles: Collection[str], user_pk: int) -> list[NavSection]:
     """Internal menu grouped into sidebar sections, built from the *effective* role set: base items for
     every resident plus each embedsgruppe's admin tools. Each item is (url, label, icon); empty sections
     are dropped. Honors the preview override (roles come from effective_roles)."""
-    if KITCHEN in roles:  # the kitchen account sees only what core.middleware.KitchenAccountGate lets through
+    if (
+        KITCHEN in roles
+    ):  # the kitchen account sees only the views open to it (core.middleware.AccountKindGate)
         return [
             (
                 "Køkkenet",

@@ -29,7 +29,7 @@ from core.emoji import EMOJI_SHORTLIST
 from core.markdown import embed_references, image_sources, render_markdown
 from core.reactions import CREATED, apply_toggle, reaction_rows
 from core.uploads import attached_image, validate_image_upload
-from residents.permissions import current_resident, is_kitchen
+from residents.permissions import AccountKind, current_resident, is_kitchen, open_to
 
 from . import embeds, live, search, services
 from .access import (
@@ -106,6 +106,7 @@ def _list_queryset(request: HttpRequest) -> NoticeQuerySet:
     return _visible(request).select_related("author", "pinned_by").prefetch_related(REACTIONS)
 
 
+@open_to(AccountKind.KITCHEN)
 @access_required
 def board(request: HttpRequest) -> HttpResponse:
     """The board: pinned posts, then a page of the rest.
@@ -182,6 +183,7 @@ def events_allowed(request: HttpRequest) -> bool:
     return request_allowed(request) and not is_kitchen(request)
 
 
+@open_to(AccountKind.KITCHEN)
 @access_required
 def detail(request: HttpRequest, pk: int) -> HttpResponse:
     """One post with its comments. Exists as a stable permalink, which is what a notification can
@@ -226,6 +228,7 @@ MAX_LIVE_CARDS = MAX_PINNED + PAGE_SIZE
 MAX_NEW_SINCE = 99
 
 
+@open_to(AccountKind.KITCHEN)
 def live_cards(request: HttpRequest) -> HttpResponse:
     """The cards for `?id=…&id=…`, drawn exactly as the board draws them.
 
@@ -264,6 +267,7 @@ def live_cards(request: HttpRequest) -> HttpResponse:
     )
 
 
+@open_to(AccountKind.KITCHEN)
 def live_detail(request: HttpRequest, pk: int) -> HttpResponse:
     """The detail page's live region: the post and its comments. 404 once the post is gone, which
     the page answers by saying so (opslagstavle-live.ts)."""
@@ -272,6 +276,7 @@ def live_detail(request: HttpRequest, pk: int) -> HttpResponse:
     return render(request, "opslagstavle/_detail_live.html", _detail_context(request, pk))
 
 
+@open_to(AccountKind.KITCHEN)
 @access_required
 def create(request: HttpRequest) -> HttpResponse:
     """Compose on its own page, not inline: title + category + Markdown + toolbar + preview is a
@@ -302,6 +307,7 @@ def create(request: HttpRequest) -> HttpResponse:
     return _form_page(request, form, None)
 
 
+@open_to(AccountKind.KITCHEN)
 @access_required
 def edit(request: HttpRequest, pk: int) -> HttpResponse:
     """The author fixes their own typos. Moderators may delete but never rewrite — see access.py."""
@@ -340,6 +346,7 @@ def _form_page(request: HttpRequest, form: NoticeForm, notice: Notice | None) ->
     )
 
 
+@open_to(AccountKind.KITCHEN)
 @require_POST
 @access_required
 def delete(request: HttpRequest, pk: int) -> HttpResponseRedirect:
@@ -389,6 +396,7 @@ def toggle_pin(request: HttpRequest, pk: int) -> HttpResponseRedirect:
     return redirect("opslagstavle:detail", pk=notice.pk)
 
 
+@open_to(AccountKind.KITCHEN)
 @require_POST
 @access_required
 def create_comment(request: HttpRequest, pk: int) -> HttpResponseRedirect:
@@ -428,6 +436,7 @@ def create_comment(request: HttpRequest, pk: int) -> HttpResponseRedirect:
     return redirect("opslagstavle:detail", pk=notice.pk)
 
 
+@open_to(AccountKind.KITCHEN)
 @require_POST
 @access_required
 def delete_comment(request: HttpRequest, pk: int) -> HttpResponseRedirect:
@@ -441,6 +450,7 @@ def delete_comment(request: HttpRequest, pk: int) -> HttpResponseRedirect:
     return redirect("opslagstavle:detail", pk=notice_pk)
 
 
+@open_to(AccountKind.KITCHEN)
 @require_POST
 @access_required
 def toggle_reaction(request: HttpRequest, pk: int) -> HttpResponse:
@@ -475,6 +485,7 @@ def toggle_reaction(request: HttpRequest, pk: int) -> HttpResponse:
     )
 
 
+@open_to(AccountKind.KITCHEN)
 @require_POST
 @access_required
 def preview(request: HttpRequest) -> HttpResponse:
@@ -492,6 +503,7 @@ def preview(request: HttpRequest) -> HttpResponse:
     return render(request, "opslagstavle/_preview.html", {"html": render_markdown(body, embeds=widgets)})
 
 
+@open_to(AccountKind.KITCHEN)
 @require_POST
 @access_required
 def embedded(request: HttpRequest) -> HttpResponse:
@@ -530,6 +542,7 @@ def embed_choices(request: HttpRequest, kind: str) -> HttpResponse:
     )
 
 
+@open_to(AccountKind.KITCHEN)
 @require_POST
 @access_required
 def upload_image(request: HttpRequest) -> JsonResponse:

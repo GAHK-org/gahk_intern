@@ -5,6 +5,7 @@ from django.urls import include, path, reverse_lazy
 
 from . import views
 from .forms import EmailAuthenticationForm, ResidentPasswordResetForm
+from .permissions import open_to_every_kind
 
 urlpatterns = [
     path("", views.dashboard, name="dashboard"),
@@ -31,59 +32,74 @@ urlpatterns = [
     path("statistik/", include("stats.urls")),
     path("vaerelsestjek/", include("rooms.urls_vaerelsestjek")),
     path("soegvaerelse/", include("rooms.urls_soegvaerelse")),
+    # Logging in and the password pages are the same for every kind of account (open_to_every_kind).
     path(
-        "admin/login",
-        auth_views.LoginView.as_view(
-            template_name="registration/login.html",
-            authentication_form=EmailAuthenticationForm,
+        "login",
+        open_to_every_kind(
+            auth_views.LoginView.as_view(
+                template_name="registration/login.html",
+                authentication_form=EmailAuthenticationForm,
+            )
         ),
         name="login",
     ),
-    path("admin/logout", auth_views.LogoutView.as_view(), name="logout"),
+    path("logout", open_to_every_kind(auth_views.LogoutView.as_view()), name="logout"),
     path(
-        "admin/password-change",
-        auth_views.PasswordChangeView.as_view(
-            template_name="registration/password_change.html",
-            success_url=reverse_lazy("password_change_done"),
+        "password-change",
+        open_to_every_kind(
+            auth_views.PasswordChangeView.as_view(
+                template_name="registration/password_change.html",
+                success_url=reverse_lazy("password_change_done"),
+            )
         ),
         name="password_change",
     ),
     path(
-        "admin/password-change/done",
-        auth_views.PasswordChangeDoneView.as_view(
-            template_name="registration/password_change_done.html",
+        "password-change/done",
+        open_to_every_kind(
+            auth_views.PasswordChangeDoneView.as_view(
+                template_name="registration/password_change_done.html",
+            )
         ),
         name="password_change_done",
     ),
     # Password reset (F-014) — links expire after 2h (PASSWORD_RESET_TIMEOUT)
     path(
-        "admin/password-reset",
-        auth_views.PasswordResetView.as_view(
-            form_class=ResidentPasswordResetForm,  # also reaches residents who never set a password
-            template_name="registration/password_reset_form.html",
-            email_template_name="registration/password_reset_email.html",
-            subject_template_name="registration/password_reset_subject.txt",
-            success_url=reverse_lazy("password_reset_done"),
+        "password-reset",
+        open_to_every_kind(
+            auth_views.PasswordResetView.as_view(
+                form_class=ResidentPasswordResetForm,  # also reaches residents who never set a password
+                template_name="registration/password_reset_form.html",
+                email_template_name="registration/password_reset_email.html",
+                subject_template_name="registration/password_reset_subject.txt",
+                success_url=reverse_lazy("password_reset_done"),
+            )
         ),
         name="password_reset",
     ),
     path(
-        "admin/password-reset/done",
-        auth_views.PasswordResetDoneView.as_view(template_name="registration/password_reset_done.html"),
+        "password-reset/done",
+        open_to_every_kind(
+            auth_views.PasswordResetDoneView.as_view(template_name="registration/password_reset_done.html")
+        ),
         name="password_reset_done",
     ),
     path(
-        "admin/reset/<uidb64>/<token>/",
-        auth_views.PasswordResetConfirmView.as_view(
-            template_name="registration/password_reset_confirm.html",
-            success_url=reverse_lazy("password_reset_complete"),
+        "password-reset/<uidb64>/<token>/",
+        open_to_every_kind(
+            auth_views.PasswordResetConfirmView.as_view(
+                template_name="registration/password_reset_confirm.html",
+                success_url=reverse_lazy("password_reset_complete"),
+            )
         ),
         name="password_reset_confirm",
     ),
     path(
-        "admin/reset/done",
-        auth_views.PasswordResetCompleteView.as_view(
-            template_name="registration/password_reset_complete.html"
+        "password-reset/complete",
+        open_to_every_kind(
+            auth_views.PasswordResetCompleteView.as_view(
+                template_name="registration/password_reset_complete.html"
+            )
         ),
         name="password_reset_complete",
     ),

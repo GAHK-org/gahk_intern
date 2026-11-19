@@ -18,7 +18,7 @@ from django.views.decorators.http import require_POST
 
 from core import push
 from gahkflix import access as gahkflix_access
-from residents.permissions import current_resident, is_kitchen
+from residents.permissions import AccountKind, current_resident, is_kitchen, open_to
 
 from . import categories, services
 from .categories import IMPORTANCE_CHOICES, Importance
@@ -36,6 +36,7 @@ def _safe(url: str) -> str:
     return url if services.is_site_path(url) else reverse("notifications:index")
 
 
+@open_to(AccountKind.KITCHEN)
 @login_required
 def index(request: HttpRequest) -> HttpResponse:
     """Every active notification, unseen first, then most important, then newest. `?visning=kategori` groups
@@ -65,6 +66,7 @@ def index(request: HttpRequest) -> HttpResponse:
     )
 
 
+@open_to(AccountKind.KITCHEN)
 @login_required
 def dropdown(request: HttpRequest) -> HttpResponse:
     """The bell's panel, fetched by htmx the first time it opens — so a page render costs one COUNT
@@ -74,6 +76,7 @@ def dropdown(request: HttpRequest) -> HttpResponse:
     return render(request, "notifications/_dropdown.html", {"rows": rows})
 
 
+@open_to(AccountKind.KITCHEN)
 def badge(request: HttpRequest) -> HttpResponse:
     """Just the bell's badge, for a live signal (notifications.live) to re-read.
 
@@ -85,6 +88,7 @@ def badge(request: HttpRequest) -> HttpResponse:
     return render(request, "notifications/_badge.html")
 
 
+@open_to(AccountKind.KITCHEN)
 @login_required
 def open_item(request: HttpRequest, pk: int) -> HttpResponseRedirect:
     """Clicking a notification in the app: mark it seen, go where it points."""
@@ -93,6 +97,7 @@ def open_item(request: HttpRequest, pk: int) -> HttpResponseRedirect:
     return redirect(_safe(row.url))
 
 
+@open_to(AccountKind.KITCHEN)
 @login_required
 def open_batch(request: HttpRequest, batch: uuid.UUID) -> HttpResponseRedirect:
     """Tapping a push: the payload is shared by every recipient of one fan-out, so it names the
@@ -105,6 +110,7 @@ def open_batch(request: HttpRequest, batch: uuid.UUID) -> HttpResponseRedirect:
     return redirect(_safe(row.url))
 
 
+@open_to(AccountKind.KITCHEN)
 @require_POST
 @login_required
 def mark_all_seen(request: HttpRequest) -> HttpResponseRedirect:
@@ -112,6 +118,7 @@ def mark_all_seen(request: HttpRequest) -> HttpResponseRedirect:
     return redirect("notifications:index")
 
 
+@open_to(AccountKind.KITCHEN)
 @login_required
 def preferences(request: HttpRequest) -> HttpResponse:
     """The resident's settings: per category in-app / push / vibration, the vibration switches,
@@ -194,6 +201,7 @@ def preferences(request: HttpRequest) -> HttpResponse:
     )
 
 
+@open_to(AccountKind.KITCHEN)
 @require_POST
 @login_required
 def subscription(request: HttpRequest) -> HttpResponse:

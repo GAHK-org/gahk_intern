@@ -37,8 +37,10 @@ from .models import AdminAccessGrant, Resident, Role, RoleAssignment, active_per
 from .permissions import (
     KITCHEN,
     PREVIEW_SESSION_KEY,
+    AccountKind,
     current_resident,
     effective_roles,
+    open_to,
     require_can_preview,
     role_required,
 )
@@ -1201,7 +1203,9 @@ def roles(request: HttpRequest) -> HttpResponse:
 
 
 # ---- Role preview ("view site as role") — gated on the REAL admin role (require_can_preview) so an
-# admin previewing "beboer" can still end the preview. ----
+# admin previewing "beboer" can still end the preview, and open to the kitchen kind so one previewing
+# the kitchen account can too. ----
+@open_to(AccountKind.KITCHEN)
 @require_can_preview
 def preview(request: HttpRequest) -> HttpResponse:
     return render(
@@ -1211,6 +1215,7 @@ def preview(request: HttpRequest) -> HttpResponse:
     )
 
 
+@open_to(AccountKind.KITCHEN)
 @require_POST
 @require_can_preview
 def preview_set(request: HttpRequest) -> HttpResponseRedirect:

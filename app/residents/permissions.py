@@ -12,6 +12,7 @@ the session, so a forged/stale override on a non-admin is silently ignored.
 """
 
 from collections.abc import Callable
+from enum import StrEnum
 from functools import wraps
 
 from django.contrib.auth.base_user import AbstractBaseUser
@@ -143,6 +144,54 @@ def is_kitchen(request: HttpRequest) -> bool:
     if user.is_kitchen:
         return True
     return PREVIEW_SESSION_KEY in request.session and KITCHEN in effective_roles(request)
+
+
+class AccountKind(StrEnum):
+    """What kind of account a request is treated as, which decides which pages exist for it at all.
+
+    Roles add powers on top (moderate, edit gahk.dk); the kind decides the pages. A resident reaches
+    every page; any other kind reaches only the views marked `open_to` it, and gets 403 elsewhere
+    (core.middleware.AccountKindGate). So a page nobody thought about is closed to them, not open.
+    """
+
+    RESIDENT = "resident"
+    KITCHEN = "kitchen"  # the kitchen staff's shared account (Resident.is_kitchen)
+
+
+# The attribute `open_to` sets on a view, read by core.middleware.AccountKindGate.
+OPEN_TO_ATTRIBUTE = "open_to_account_kinds"
+
+
+def account_kind(request: HttpRequest) -> AccountKind:
+    """The kind this request is treated as. Honors the preview, so "Se side som → Køkkenet" shows an
+    administrator what the kitchen account gets."""
+    return AccountKind.KITCHEN if is_kitchen(request) else AccountKind.RESIDENT
+
+
+def open_to[V: Callable[..., object]](*kinds: AccountKind) -> Callable[[V], V]:
+    """Mark a view as open to these kinds of account besides residents.
+
+    Only marks, never wraps: the view's own checks (login, roles, the feature's rules) still run, so
+    opening a view to a kind means "this page exists for them", not "they may do anything on it".
+    Put it above every other decorator, so the mark sits on what the URLconf calls.
+    """
+
+    def decorator(view: V) -> V:
+        setattr(view, OPEN_TO_ATTRIBUTE, frozenset(kinds))
+        return view
+
+    return decorator
+
+
+def open_to_every_kind[V: Callable[..., object]](view: V) -> V:
+    """For pages that are the same for every kind of account: logging in and out, the password
+    pages, uploaded files (served with their own checks), the service worker and the public pages."""
+    return open_to(*AccountKind)(view)
+
+
+def view_open_to(view: Callable[..., object], kind: AccountKind) -> bool:
+    """Whether `kind` may reach `view`. Residents reach every view."""
+    return kind == AccountKind.RESIDENT or kind in getattr(view, OPEN_TO_ATTRIBUTE, ())
 
 
 def has_active_role(user: AnyUser, *roles: str) -> bool:
