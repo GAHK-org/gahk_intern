@@ -98,7 +98,7 @@ def rename_folder(viewer: Viewer, folder: Folder, name: str, actor: Resident) ->
     if folder.deleted_at is not None or not viewer.can_change_folder(folder):
         raise PermissionDenied
     parent = folder.parent
-    assert parent is not None  # noqa: S101 - can_change_folder refuses the roots
+    assert parent is not None  # noqa: S101  # nosec B101 - can_change_folder refuses the roots
     name = services.check_name(parent, name)
     if name == folder.name:
         return
@@ -313,7 +313,7 @@ def binned(viewer: Viewer, folder: Folder) -> list[Binned]:
             continue
         if file.folder_id not in paths:
             paths[file.folder_id] = file.folder.display_path()
-        assert file.deleted_at is not None  # noqa: S101 - filtered above
+        assert file.deleted_at is not None  # noqa: S101  # nosec B101 - filtered above
         found.append(Binned(file, paths[file.folder_id], file.deleted_at + timedelta(days=BIN_DAYS)))
     return found
 
@@ -338,7 +338,7 @@ def restore(viewer: Viewer, file: File, actor: Resident) -> File:
     for folder in [*file.folder.ancestors(), file.folder]:
         if folder.deleted_at is None:
             continue
-        assert folder.parent is not None  # noqa: S101 - the system's folders are never deleted
+        assert folder.parent is not None  # noqa: S101  # nosec B101 - the system's folders are never deleted
         name = folder.name
         if services.taken(folder.parent, folder.name_key):
             name = services.free_name(folder.parent, folder.name, keep_suffix=False)
