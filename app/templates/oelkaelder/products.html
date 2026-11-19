@@ -22,7 +22,7 @@
   </div>
 
   <h2>Sortiment</h2>
-  <div class="grid gap-3 sm:grid-cols-2">
+  <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
     {% for p in products %}
       <form method="post" action="{% url 'oelkaelder:product_update' p.id %}" enctype="multipart/form-data"
             class="card {% if not p.active %}opacity-60{% endif %}">

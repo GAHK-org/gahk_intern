@@ -23,6 +23,7 @@
 
   <form method="post" action="{% url 'vaerelsestjek:besvar' room.number %}" enctype="multipart/form-data">
     {% csrf_token %}
+    <div class="overflow-x-auto">
     <table class="w-full border-collapse">
       <thead><tr class="border-b border-gray-200"><th class="p-2">Kriterie</th><th class="p-2">Score</th><th class="p-2">Kommentar</th><th class="p-2">Billede</th></tr></thead>
       <tbody>
@@ -52,6 +53,7 @@
       {% endfor %}
       </tbody>
     </table>
+    </div>
     <p class="muted mt-2">Store billeder skaleres automatisk ned før upload.</p>
     <p class="mt-4"><button type="submit" class="btn">Gem tilstandsrapport</button></p>
   </form>

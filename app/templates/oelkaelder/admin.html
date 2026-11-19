@@ -2,22 +2,23 @@
 {% load oel_extras ui_extras %}
 {% block title %}Ølkælder-admin - GAHK Intern{% endblock %}
 {% block content %}
-  <div class="flex items-center justify-between">
+  <div class="flex flex-wrap items-center justify-between gap-x-4">
     <h1>Ølkælder - saldi</h1>
-    <span class="flex gap-2">
+    <span class="flex flex-wrap gap-2">
       <a href="{% url 'oelkaelder:all_sales' %}" class="btn">Salgsoverblik</a>
       <a href="{% url 'oelkaelder:person_history' %}" class="btn">Personoversigt</a>
       <a href="{% url 'oelkaelder:products' %}" class="btn">Varer &amp; priser</a>
     </span>
   </div>
 
+  <div class="overflow-x-auto">
   <table cellpadding="6" style="width:100%; border-collapse:collapse">
     <thead><tr style="text-align:left; border-bottom:1px solid #e6e8ec"><th>Alumne</th><th>Saldo</th><th>Indbetal (kr)</th><th></th></tr></thead>
     <tbody>
     {% for shopper, balance in rows %}
       <tr style="border-bottom:1px solid #f0f1f4">
         <td>{{ shopper.resident.full_name }}</td>
-        <td class="{{ balance|sign_class }}">{{ balance|kr }}</td>
+        <td class="{{ balance|sign_class }} whitespace-nowrap">{{ balance|kr }}</td>
         <td>
           <form method="post" action="{% url 'oelkaelder:deposit' shopper.id %}" style="display:flex; gap:.4rem">
             {% csrf_token %}
@@ -35,6 +36,7 @@
     {% empty %}<tr><td colspan="4" class="muted">Ingen alumner.</td></tr>{% endfor %}
     </tbody>
   </table>
+  </div>
 
   <div class="flex flex-wrap gap-6 mt-8">
     <div class="card" style="flex:1; min-width:18rem">
