@@ -165,6 +165,14 @@ def test_a_member_edits_and_the_signed_configuration_names_only_the_resident(
     }
     assert config["editorConfig"]["callbackUrl"].startswith("http://web:8000/drive/office/callback/")
 
+    # OnlyOffice's free edition only reads on a phone, so a phone opens it to read, and says so.
+    phone = Client(headers={"User-Agent": "Mozilla/5.0 (iPhone) Mobile/15E148"})
+    phone.force_login(people["member"])
+    on_phone = _config(phone, file)
+    assert (on_phone["type"], on_phone["editorConfig"]["mode"]) == ("mobile", "view")
+    page = phone.get(reverse("drive:office", args=[file.pk])).content.decode()
+    assert "Rediger det på en computer" in page
+
     # Everyone on the same version shares the session's key.
     assert _config(_client(people["colleague"]), file)["document"]["key"] == config["document"]["key"]
 

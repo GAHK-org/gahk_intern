@@ -801,6 +801,9 @@ signed link to that one version, good for a day (`/drive/office/fetch/…`), and
 a link signed for that file (`/drive/office/callback/…`), whose body it signs with the shared
 secret. The app fetches the edited document back only from the Document Server's own address.
 
+This is the free Community edition. It allows 20 open connections at once, and its phone editor
+only reads, so Drive opens documents to read on a phone and says to edit on a computer.
+
 To switch it off again, unset `ONLYOFFICE_URL`. A Document Server that stops answering switches it
 off by itself, within a minute, until it is back.
 

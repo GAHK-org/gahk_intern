@@ -33,13 +33,17 @@ def editor(request: HttpRequest, pk: int) -> HttpResponse:
     file, viewer = live_file(request, pk)
     if office.document_type(file.name) is None:
         raise Http404("not an office file")
-    edit = office.editable(file.name) and viewer.can_version(file)
+    # OnlyOffice's free edition edits only on a computer: its phone editor opens documents to read.
+    phone = "Mobi" in request.headers.get("User-Agent", "")
+    can_edit = office.editable(file.name) and viewer.can_version(file)
+    edit = can_edit and not phone
     config = office.editor_config(
         file,
         file.latest_version(),
         current_resident(request),
         edit=edit,
         back_url=request.build_absolute_uri(reverse("drive:file", args=[file.pk])),
+        phone=phone,
     )
     return _render(
         request,
@@ -50,6 +54,7 @@ def editor(request: HttpRequest, pk: int) -> HttpResponse:
             "config": config,
             "api_url": f"{settings.ONLYOFFICE_URL}/web-apps/apps/api/documents/api.js",
             "edit": edit,
+            "edit_elsewhere": can_edit and phone,
         },
     )
 

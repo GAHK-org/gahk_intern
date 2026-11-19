@@ -155,6 +155,7 @@ Drive
 - Until OnlyOffice is switched on, office files are downloaded. It is built switched off, to run on the same server once that is upgraded.
 - Everyone who opens the same version edits it together. The edited document becomes a new version when the last of them closes it. If the file was locked or binned while it was open, the work is saved as a new file beside it rather than lost.
 - `Nyt dokument`, `Nyt regneark` and `Ny præsentation` make a blank file, numbered if the name is taken, and open it.
+- On a phone, documents open to be read: OnlyOffice's free edition edits only on a computer, and the page says so.
 - docx, xlsx and pptx can be edited live together in OnlyOffice, showing who else is in the document. Any folder you can write to has `Nyt dokument`, `Nyt regneark` and `Ny præsentation`.
 - Where you cannot write, or the file is locked, OnlyOffice opens in view mode.
 - Older formats (doc, xls, ppt, odt …) open for viewing. `Rediger` makes a docx, xlsx or pptx copy next to the original.

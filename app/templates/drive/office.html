@@ -7,7 +7,7 @@
   <div class="drive-links mb-2">
     <a href="{% url 'drive:file' file.pk %}">{{ file.name }}: versioner og historik</a>
     <a href="{% url 'drive:download' file.pk %}">Hent</a>
-    {% if not edit %}<span class="muted">Kun visning</span>{% endif %}
+    {% if edit_elsewhere %}<span class="muted">På en telefon kan dokumentet kun læses. Rediger det på en computer.</span>{% elif not edit %}<span class="muted">Kun visning</span>{% endif %}
   </div>
   {% comment %}
     drive.ts loads the Document Server's script and opens the editor here, with the configuration

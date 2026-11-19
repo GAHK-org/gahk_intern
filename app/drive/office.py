@@ -209,10 +209,14 @@ def document_key(file: File, version: FileVersion) -> str:
 
 
 def editor_config(
-    file: File, version: FileVersion, resident: Resident, *, edit: bool, back_url: str
+    file: File, version: FileVersion, resident: Resident, *, edit: bool, back_url: str, phone: bool = False
 ) -> dict[str, Any]:
     kind = document_type(file.name)
     config: dict[str, Any] = {
+        # A phone gets OnlyOffice's own mobile editor; the desktop one does not fit.
+        "type": "mobile" if phone else "desktop",
+        "width": "100%",
+        "height": "100%",
         "documentType": kind,
         "document": {
             "fileType": _extension(file.name),
