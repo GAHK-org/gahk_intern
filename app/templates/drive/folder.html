@@ -11,6 +11,8 @@
     </div>
   </div>
 
+  {% include "drive/_search_form.html" %}
+
   {% if folder %}
     {% include "drive/_crumbs.html" with ancestors=ancestors current=folder.name %}
 
@@ -19,6 +21,12 @@
       {% if space_root %}<a href="{% url 'drive:standing_manage' folder.pk %}">Stående mapper</a>{% endif %}
       {% if standing_item %}<a href="{% url 'drive:standing' standing_item.pk %}">{{ standing_item.all_name }}</a>{% endif %}
       <a href="{% url 'drive:folder_history' folder.pk %}">Historik</a>
+      {% if folder.parent_id %}
+        <form method="post" action="{% url 'drive:request_zip' folder.pk %}">
+          {% csrf_token %}
+          <button type="submit" class="btn-link">Hent som zip</button>
+        </form>
+      {% endif %}
       {% if in_bin %}<a href="{% url 'drive:bin' folder.pk %}">Papirkurv ({{ in_bin }})</a>{% endif %}
       {% if can_change_folder %}
         <details class="drive-inline">
@@ -135,6 +143,7 @@
     <div class="drive-selection mb-4" data-drive-selection hidden>
       <span data-selection-count></span>
       {% if can_change_files or can_create_folder %}<button type="button" class="btn btn-secondary" data-selection-op="move">Flyt</button>{% endif %}
+      <button type="button" class="btn btn-secondary" data-selection-op="zip">Hent som zip</button>
       <button type="button" class="btn btn-secondary" data-selection-op="copy">Kopier</button>
       {% if can_change_files or can_create_folder %}<button type="button" class="btn-link-danger" data-selection-op="delete">Slet</button>{% endif %}
     </div>
@@ -188,6 +197,14 @@
   {% endif %}
 
   {% if files %}
+    {% if files|length > 1 %}
+      <nav class="drive-sort mb-2" aria-label="Sortér filerne">
+        <span class="muted">Sortér filerne:</span>
+        {% for link in sort_links %}
+          <a href="?{{ link.query }}"{% if link.active %} aria-current="true"{% endif %}>{{ link.label }}{% if link.active %} <span aria-hidden="true">{% if descending %}↓{% else %}↑{% endif %}</span><span class="sr-only">{% if descending %}(faldende){% else %}(stigende){% endif %}</span>{% endif %}</a>
+        {% endfor %}
+      </nav>
+    {% endif %}
     <ul class="drive-list">
       {% for file in files %}
         <li>

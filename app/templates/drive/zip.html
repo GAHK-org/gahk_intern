@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+{% block title %}{{ download.name }} - Drive - GAHK Intern{% endblock %}
+{% block content_width %}max-w-5xl{% endblock %}
+
+{% block content %}
+  <div class="page-head">
+    <div>
+      <p class="eyebrow">Drive</p>
+      <h1 class="drive-title">{{ download.name }}</h1>
+    </div>
+  </div>
+  <p class="muted mb-4">{{ file_count }} fil{{ file_count|pluralize:"er" }} · {{ download.size|filesizeformat }}</p>
+
+  {% if download.state == "ready" %}
+    <p class="mb-4"><a class="btn btn-primary" href="{% url 'drive:fetch_zip' download.token %}">Hent zip</a></p>
+    <p class="muted">Kun du kan hente den, og den slettes {{ keep_hours }} timer efter, du bad om den.</p>
+  {% elif download.state == "failed" or stalled %}
+    <p class="mb-4">Zip'en kunne ikke laves. Prøv igen fra mappen.</p>
+  {% else %}
+    <p class="mb-4" data-drive-wait>Zip'en bliver lavet … Siden opdaterer sig selv, og du kan også gå og komme tilbage.</p>
+  {% endif %}
+
+  {% if back %}<p class="drive-links"><a href="{% url 'drive:folder' back.pk %}">Tilbage til {{ back.name }}</a></p>{% endif %}
+{% endblock %}

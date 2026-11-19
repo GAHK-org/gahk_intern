@@ -1074,6 +1074,21 @@ erDiagram
         datetime created_at
     }
 
+    drive_ZipDownload {
+        int id PK
+        string token
+        int requested_by_id FK
+        int folder_id FK
+        string name
+        json entries
+        int size
+        string state
+        string archive_key
+        string error
+        datetime created_at
+        datetime completed_at
+    }
+
     regnskab_EconomicLedgerEntry {
         int id PK
         int resident_id FK
@@ -1256,6 +1271,8 @@ erDiagram
     drive_StandingFolder }o--|o core_Workgroup : "workgroup"
     drive_StandingFolder }o--|o residents_Resident : "created_by"
     drive_StandingFolder }o--o{ core_Workgroup : "writer_groups"
+    drive_ZipDownload }o--|| residents_Resident : "requested_by"
+    drive_ZipDownload }o--|o drive_Folder : "folder"
     regnskab_EconomicLedgerEntry }o--|| residents_Resident : "resident"
     regnskab_AlumneregningSend }o--|| residents_Resident : "resident"
 ```
@@ -1734,6 +1751,21 @@ erDiagram
         datetime created_at
     }
 
+    drive_ZipDownload {
+        int id PK
+        string token
+        int requested_by_id FK
+        int folder_id FK
+        string name
+        json entries
+        int size
+        string state
+        string archive_key
+        string error
+        datetime created_at
+        datetime completed_at
+    }
+
     core_Workgroup { }
 
     residents_Resident { }
@@ -1775,6 +1807,8 @@ erDiagram
     drive_StandingFolder }o--|o core_Workgroup : "workgroup"
     drive_StandingFolder }o--|o residents_Resident : "created_by"
     drive_StandingFolder }o--o{ core_Workgroup : "writer_groups"
+    drive_ZipDownload }o--|| residents_Resident : "requested_by"
+    drive_ZipDownload }o--|o drive_Folder : "folder"
 ```
 
 ## events

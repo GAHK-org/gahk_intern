@@ -126,12 +126,43 @@ def home(request: HttpRequest) -> HttpResponse:
     )
 
 
+# The file list's columns: what they sort by, and which way first - a name A to Z, the biggest and the
+# newest first.
+SORTS = {
+    "name": ("Navn", lambda file: file.name_key, False),
+    "size": ("Størrelse", lambda file: file.size, True),
+    "changed": ("Ændret", lambda file: file.changed_at, True),
+}
+
+
+def _sorting(request: HttpRequest) -> tuple[str, bool]:
+    sort = request.GET.get("sort", "")
+    if sort not in SORTS:
+        return "name", False
+    order = request.GET.get("order", "")
+    return sort, order == "desc" if order in ("asc", "desc") else SORTS[sort][2]
+
+
+def _sort_links(sort: str, descending: bool) -> list[dict[str, object]]:
+    """A link per column: the active one turns the order round, the others start their own way."""
+    links = []
+    for key, (label, _, first_descending) in SORTS.items():
+        down = not descending if key == sort else first_descending
+        links.append(
+            {"label": label, "query": f"sort={key}&order={'desc' if down else 'asc'}", "active": key == sort}
+        )
+    return links
+
+
 @access.access_required
 def folder(request: HttpRequest, pk: int) -> HttpResponse:
     ensure_structure_today()
     current, viewer, level = _folder(request, pk)
-    files = list(
-        current.files.filter(deleted_at__isnull=True).select_related("changed_by").order_by("name_key")
+    sort, descending = _sorting(request)
+    files = sorted(
+        current.files.filter(deleted_at__isnull=True).select_related("changed_by"),
+        key=lambda file: (SORTS[sort][1](file), file.name_key),
+        reverse=descending,
     )
     rows = _rows(viewer, _sorted_children(current))
     can_change_files = viewer.can_change_file_in(current)
@@ -172,7 +203,10 @@ def folder(request: HttpRequest, pk: int) -> HttpResponse:
             "selection_config": {
                 "moveUrl": reverse("drive:move", args=[current.pk]),
                 "deleteUrl": reverse("drive:delete", args=[current.pk]),
+                "zipUrl": reverse("drive:request_zip", args=[current.pk]),
             },
+            "sort_links": _sort_links(sort, descending),
+            "descending": descending,
         },
     )
 

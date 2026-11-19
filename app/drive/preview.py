@@ -58,7 +58,7 @@ class Kind(StrEnum):
     OTHER = "other"
 
 
-_KINDS = {
+KIND_OF_EXTENSION = {
     **dict.fromkeys(("jpg", "jpeg", "png", "gif", "webp", "heic", "heif"), Kind.IMAGE),
     "pdf": Kind.PDF,
     **dict.fromkeys(("mp4", "webm", "mov"), Kind.VIDEO),
@@ -99,7 +99,7 @@ def _extension(name: str) -> str:
 
 
 def kind_of(name: str) -> Kind:
-    return _KINDS.get(_extension(name), Kind.OTHER)
+    return KIND_OF_EXTENSION.get(_extension(name), Kind.OTHER)
 
 
 def icon(name: str) -> str:

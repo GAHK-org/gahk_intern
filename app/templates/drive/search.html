@@ -1,0 +1,70 @@
+{% extends "base.html" %}
+{% load drive %}
+{% block title %}Søg - Drive - GAHK Intern{% endblock %}
+{% block content_width %}max-w-5xl{% endblock %}
+
+{% block content %}
+  <div class="page-head">
+    <div>
+      <p class="eyebrow">Drive</p>
+      <h1>Søg</h1>
+    </div>
+  </div>
+  <nav class="drive-crumbs mb-4" aria-label="Sti"><a href="{% url 'drive:home' %}">Drive</a></nav>
+
+  <form class="drive-search-form mb-6" method="get" action="{% url 'drive:search' %}" role="search">
+    <label class="sr-only" for="drive-search">Søg i Drive</label>
+    <input id="drive-search" type="search" name="q" value="{{ q }}" placeholder="Søg efter navne i Drive…" minlength="2" required autofocus>
+    <label class="sr-only" for="drive-search-space">Hvor</label>
+    <select id="drive-search-space" name="space">
+      <option value="">Alle steder</option>
+      {% for value, label in spaces %}<option value="{{ value }}"{% if value == space %} selected{% endif %}>{{ label }}</option>{% endfor %}
+    </select>
+    <label class="sr-only" for="drive-search-kind">Type</label>
+    <select id="drive-search-kind" name="kind">
+      <option value="">Alle typer</option>
+      {% for value, label in kinds %}<option value="{{ value }}"{% if value == kind %} selected{% endif %}>{{ label }}</option>{% endfor %}
+    </select>
+    <label class="sr-only" for="drive-search-period">Periode eller år</label>
+    <select id="drive-search-period" name="period">
+      <option value="">Alle perioder og år</option>
+      {% for value, label in periods %}<option value="{{ value }}"{% if value == period %} selected{% endif %}>{{ label }}</option>{% endfor %}
+    </select>
+    <button type="submit" class="btn btn-primary">Søg</button>
+  </form>
+
+  {% if too_short %}
+    <p class="muted">Skriv mindst to tegn.</p>
+  {% elif q %}
+    {% if results.hits %}
+      <p class="muted mb-2">{% if results.more %}De første {{ result_limit }} navne, der indeholder „{{ q }}“. Gør søgningen mere præcis for at se resten.{% else %}{{ results.hits|length }} navn{{ results.hits|length|pluralize:"e" }}, der indeholder „{{ q }}“.{% endif %}</p>
+      <ul class="drive-list drive-results">
+        {% for hit in results.hits %}
+          <li>
+            {% if hit.folder %}
+              <a href="{% url 'drive:folder' hit.folder.pk %}">
+                <svg class="ni" aria-hidden="true"><use href="#i-{% if hit.folder.kind == 'shared' %}users{% else %}folder{% endif %}"></use></svg>
+                <span class="drive-name">{{ hit.name }}</span>
+              </a>
+              <span class="muted drive-meta drive-where">{{ hit.where }}</span>
+            {% else %}
+              <a href="{% url 'drive:file' hit.file.pk %}">
+                {% if hit.file.thumbnail %}
+                  <img class="drive-thumb" src="{% url 'drive:thumbnail' hit.file.pk %}?v={{ hit.file.thumbnail }}" alt="" loading="lazy" width="36" height="36">
+                {% else %}
+                  <svg class="ni" aria-hidden="true"><use href="#i-{{ hit.name|drive_icon }}"></use></svg>
+                {% endif %}
+                <span class="drive-name">{{ hit.name }}</span>
+              </a>
+              <span class="muted drive-meta drive-where">{{ hit.where }} · {{ hit.file.size|filesizeformat }} · {{ hit.file.changed_at|date:"j. M Y" }}</span>
+            {% endif %}
+          </li>
+        {% endfor %}
+      </ul>
+    {% else %}
+      <p class="muted">Intet, du kan åbne, har et navn med „{{ q }}“.</p>
+    {% endif %}
+  {% else %}
+    <p class="muted">Søgningen finder navne på filer og mapper, du kan åbne. Indholdet af filerne søges der ikke i.</p>
+  {% endif %}
+{% endblock %}

@@ -255,6 +255,7 @@ CELERY_TASK_ROUTES = {
     "core.tasks.remove_abandoned_job_directories": {"queue": "media"},
     "photo_album.tasks.build_media_derivatives": {"queue": "media"},
     "photo_album.tasks.build_album_download": {"queue": "media"},
+    "drive.tasks.build_zip": {"queue": "media"},
     "photo_album.tasks.process_album_import": {"queue": "media"},
     "photo_album.tasks.process_album_merge": {"queue": "media"},
     "photo_album.tasks.backfill_media_hashes": {"queue": "media"},
@@ -474,6 +475,11 @@ CELERY_BEAT_SCHEDULE = {
     "drive-image-previews": {
         "task": "drive.tasks.queue_stranded_previews",
         "schedule": crontab(minute=10, hour=2),
+    },
+    # Drive (drive.zips.expire): a zip can be fetched for a day, then goes with its bytes.
+    "drive-expire-zips": {
+        "task": "drive.tasks.expire_zips",
+        "schedule": crontab(minute=30, hour=3),
     },
 }
 
@@ -787,6 +793,8 @@ DRIVE_MAX_UPLOAD_GB = float(os.environ.get("DRIVE_MAX_UPLOAD_GB", "5"))
 DRIVE_PREVIEW_IMAGE_MAX_MB = int(os.environ.get("DRIVE_PREVIEW_IMAGE_MAX_MB", "50"))
 # Local copies of those previews, in MEDIA_CACHE_DIR/drive/ (drive.preview.cached).
 DRIVE_CACHE_MB = int(os.environ.get("DRIVE_CACHE_MB", "1024"))
+# Drive (drive.zips): the most several files or a folder may come to as one zip.
+DRIVE_MAX_ZIP_GB = float(os.environ.get("DRIVE_MAX_ZIP_GB", "5"))
 GAHKFLIX_PICTURE_MAX_MB = int(os.environ.get("GAHKFLIX_PICTURE_MAX_MB", "15"))
 # Local copies of its thumbnails, banners and frames, in MEDIA_CACHE_DIR/gahkflix/ (gahkflix/cache.py).
 GAHKFLIX_CACHE_MB = int(os.environ.get("GAHKFLIX_CACHE_MB", "1024"))

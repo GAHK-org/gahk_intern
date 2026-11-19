@@ -18,6 +18,7 @@ back.
 
 import unicodedata
 from datetime import date, datetime
+from uuid import uuid4
 
 from django.core.exceptions import ValidationError
 from django.db import models
@@ -626,3 +627,32 @@ class ImagePreview(models.Model):
 
     def __str__(self) -> str:
         return f"{self.key} ({self.state})"
+
+
+class ZipDownload(models.Model):
+    """Files and folders one resident asked for as one zip, built in the background into the bucket
+    (drive/zips.py) and kept for ZIP_KEEP_HOURS. What goes in was decided when it was asked for, from
+    what the resident could read; fetching it checks again."""
+
+    class State(models.TextChoices):
+        QUEUED = "queued", "I kø"
+        BUILDING = "building", "Bygges"
+        READY = "ready", "Klar"
+        FAILED = "failed", "Mislykkedes"
+
+    token = models.UUIDField(default=uuid4, unique=True, editable=False)
+    requested_by = models.ForeignKey("residents.Resident", on_delete=models.CASCADE, related_name="+")
+    # The folder it was asked for from, to go back to.
+    folder = models.ForeignKey(Folder, null=True, blank=True, on_delete=models.SET_NULL, related_name="+")
+    name = models.CharField(max_length=NAME_MAX_LENGTH + 4)
+    # [{"path": "Budget/2026.xlsx", "key": "drive/<uuid>", "file": 12}, {"path": "Budget/Tom/"}, ...]
+    entries = models.JSONField(default=list)
+    size = models.BigIntegerField(default=0)
+    state = models.CharField(max_length=10, choices=State.choices, default=State.QUEUED)
+    archive_key = models.CharField(max_length=150, blank=True)
+    error = models.CharField(max_length=255, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
+    completed_at = models.DateTimeField(null=True, blank=True)
+
+    def __str__(self) -> str:
+        return f"{self.name} ({self.state})"
