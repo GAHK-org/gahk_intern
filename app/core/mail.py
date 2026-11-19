@@ -286,6 +286,19 @@ def held_up_by_server(now: datetime) -> bool:
     ).exists()
 
 
+def rate_window(now: datetime) -> int:
+    """How many mails went out within the last MAIL_RATE_WINDOW — what bulk mail is held to."""
+    return OutgoingMail.objects.filter(last_attempt_at__gt=now - settings.MAIL_RATE_WINDOW).count()
+
+
+def bulk_held_back(now: datetime) -> tuple[int, timedelta | None]:
+    """How many due bulk mails the rate limit holds back now, and how long until they may go on."""
+    wait = quota_wait(now)
+    if wait is None:
+        return 0, None
+    return _due(now, [Kind.BULK]).count(), wait
+
+
 @contextlib.contextmanager
 def _exclusive() -> Iterator[bool]:
     """Whether this process got the delivery lock. Postgres only; elsewhere (SQLite tests) always."""

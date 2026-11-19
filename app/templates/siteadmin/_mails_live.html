@@ -1,0 +1,53 @@
+{% comment %}
+  The top of the mail page: the tiles and the mails waiting again after a failed try. Rendered into
+  the page, and on its own by mails_live for the poll in mails.html, which morphs it in place.
+  Nothing in here may hold state of its own: the next poll would put it back as the server rendered it.
+{% endcomment %}
+{% load ui_extras %}
+<div class="jobs-tiles">
+  <a class="jobs-tile" href="?status=queued#mails">
+    <span class="jobs-tile-k">I kø</span>
+    <span class="jobs-tile-v">{{ waiting }}</span>
+    <span class="jobs-tile-s">{% if oldest_waiting %}ældste venter {{ oldest_waiting|ago:now }}{% else %}ingen venter{% endif %}</span>
+  </a>
+  <a class="jobs-tile{% if bulk_held %} is-alert{% endif %}" href="?kind=bulk&amp;status=queued#mails">
+    <span class="jobs-tile-k">Sendt, seneste {{ rate_window_minutes }} min</span>
+    <span class="jobs-tile-v">{{ window_used }} / {{ rate_limit }}</span>
+    <span class="jobs-tile-s">{% if bulk_held %}{{ bulk_held }} masseudsendelse{{ bulk_held|pluralize:"r" }} venter — fortsætter om {{ bulk_held_for|ahead:now }}{% else %}grænsen for masseudsendelser{% endif %}</span>
+  </a>
+  <a class="jobs-tile{% if not_sent_today %} is-alert{% endif %}" href="?status=not_sent&amp;period=24h#mails">
+    <span class="jobs-tile-k">Ikke sendt, 24 timer</span>
+    <span class="jobs-tile-v">{{ not_sent_today }}</span>
+    <span class="jobs-tile-s">fejlet, udløbet eller ukendt</span>
+  </a>
+  <a class="jobs-tile" href="?status=sent&amp;period=24h#mails">
+    <span class="jobs-tile-k">Sendt, 24 timer</span>
+    <span class="jobs-tile-v">{{ sent_today }}</span>
+    <span class="jobs-tile-s">&nbsp;</span>
+  </a>
+</div>
+
+{% if retrying %}
+  <section class="card-flat jobs-section" id="proeves-igen">
+    <div class="card-head">
+      <h2>Prøves igen ({{ retrying_total }})</h2>
+      <span class="muted text-sm">opdateret {{ now|date:"H:i:s" }}</span>
+    </div>
+    <div class="overflow-x-auto">
+      <table class="zebra jobs-table">
+        <thead><tr><th>Mail</th><th>Type</th><th class="num">Forsøg</th><th>Næste forsøg</th><th>Seneste fejl</th></tr></thead>
+        <tbody>
+          {% for row in retrying %}
+            <tr>
+              <td class="jobs-task-cell"><a class="jobs-name" href="{% url 'siteadmin:mail_detail' row.mail.pk %}">{{ row.mail.subject }}</a><div class="jobs-sub">{{ row.mail.recipients }}</div></td>
+              <td>{{ row.kind_label }}</td>
+              <td class="num">{{ row.mail.attempts }}</td>
+              <td class="jobs-time">{% if row.mail.next_attempt_at > now %}om {{ row.mail.next_attempt_at|ahead:now }}{% else %}nu{% endif %}<div class="jobs-sub">opgives {{ row.mail.expires_at|date:"j. b H:i" }}</div></td>
+              <td class="jobs-sub">{{ row.mail.error|truncatechars:140 }}</td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+{% endif %}

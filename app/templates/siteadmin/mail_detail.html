@@ -1,0 +1,51 @@
+{% extends "base.html" %}
+{% load ui_extras %}
+{% block title %}{{ mail.subject }} - Mails - GAHK{% endblock %}
+{% block content_width %}max-w-6xl{% endblock %}
+{% block content %}
+  <div class="page-head">
+    <div class="min-w-0">
+      <div class="eyebrow"><a href="{% url 'siteadmin:home' %}">Administration</a> › <a href="{% url 'siteadmin:mails' %}">Mails</a></div>
+      <h1 class="jobs-title"><span class="jobs-name">{{ mail.subject|default:"(intet emne)" }}</span> <span class="chip {{ row.state_class }}">{{ row.state_label }}</span></h1>
+      <div class="muted">til {{ mail.recipients }} · {{ row.kind_label }}</div>
+    </div>
+    {% if can_send_again %}
+      <div class="head-actions">
+        <form method="post" action="{% url 'siteadmin:mail_send_again' mail.pk %}">
+          {% csrf_token %}
+          <button type="submit" class="btn">Send igen</button>
+        </form>
+      </div>
+    {% endif %}
+  </div>
+
+  {% if mail.error %}
+    <section class="card-flat jobs-section">
+      <div class="card-head"><h2>{% if mail.status == "queued" %}Seneste fejl — prøves igen{% else %}Fejl{% endif %}</h2></div>
+      <pre class="card-pad jobs-mono whitespace-pre-wrap">{{ mail.error }}</pre>
+      {% if mail.status == "unknown" %}
+        <p class="card-pad jobs-sub">Afsendelsen blev afbrudt, så det er uvist, om mailen kom frem. Den sendes ikke igen af sig selv: spørg modtageren, og send den igen herfra, hvis den ikke kom.</p>
+      {% elif mail.status == "failed" or mail.status == "expired" %}
+        <p class="card-pad jobs-sub">
+          {% if can_send_again %}Ret årsagen, og send den så igen.
+          {% elif not has_content %}Indholdet er slettet, så den kan ikke sendes igen.
+          {% else %}Dens levetid er udløbet, så den sendes ikke igen.{% endif %}
+        </p>
+      {% endif %}
+    </section>
+  {% endif %}
+
+  <section class="card-flat jobs-section">
+    <div class="card-head"><h2>Detaljer</h2></div>
+    <dl class="jobs-facts">
+      <div><dt>Lagt i kø</dt><dd>{{ mail.created_at|date:"j. b Y H:i:s" }}</dd></div>
+      <div><dt>Sendt</dt><dd>{{ mail.sent_at|date:"j. b Y H:i:s"|default:"–" }}</dd></div>
+      <div><dt>Forsøg</dt><dd>{{ mail.attempts }}</dd></div>
+      <div><dt>Seneste forsøg</dt><dd>{{ mail.last_attempt_at|date:"j. b Y H:i:s"|default:"–" }}</dd></div>
+      <div><dt>Næste forsøg</dt><dd>{% if mail.status == "queued" %}{{ mail.next_attempt_at|date:"j. b Y H:i:s" }}{% else %}–{% endif %}</dd></div>
+      <div><dt>Opgives</dt><dd>{{ mail.expires_at|date:"j. b Y H:i:s" }}</dd></div>
+      <div><dt>Type</dt><dd>{{ row.kind_label }}</dd></div>
+      <div><dt>Indhold</dt><dd>{% if has_content %}Gemt{% else %}Slettet{% endif %}</dd></div>
+    </dl>
+  </section>
+{% endblock %}

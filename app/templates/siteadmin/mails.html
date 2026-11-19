@@ -1,0 +1,98 @@
+{% extends "base.html" %}
+{% load ui_extras %}
+{% block title %}Mails - Admin - GAHK{% endblock %}
+{% block content_width %}max-w-6xl{% endblock %}
+{% block content %}
+  <div class="page-head">
+    <div>
+      <div class="eyebrow"><a href="{% url 'siteadmin:home' %}">Administration</a></div>
+      <h1>Mails</h1>
+      <p class="muted">Alle mails intern sender, fra de lægges i kø, til de er sendt eller opgivet. Indholdet vises ikke.</p>
+    </div>
+  </div>
+
+  {% comment %}
+    The tiles and the retries refresh every 10 seconds while the tab is in view; the list stays as it
+    was loaded, so it does not move under somebody reading it.
+  {% endcomment %}
+  <div id="mails-live"
+       hx-get="{% url 'siteadmin:mails_live' %}"
+       hx-trigger="every 10s [document.visibilityState === 'visible']"
+       hx-ext="morph"
+       hx-swap="morph:innerHTML">
+    {% include "siteadmin/_mails_live.html" %}
+  </div>
+
+  <section class="card-flat jobs-section" id="mails">
+    <div class="card-head">
+      <h2>Mails</h2>
+      <span class="muted text-sm">{{ page.paginator.count }} mail{{ page.paginator.count|pluralize:"s" }} · gemmes i 90 dage</span>
+    </div>
+    <form method="get" action="#mails" class="jobs-filters">
+      {% if filters.status %}<input type="hidden" name="status" value="{{ filters.status }}">{% endif %}
+      <label>Søg
+        <input type="search" name="q" value="{{ filters.query }}" placeholder="Modtager eller emne">
+      </label>
+      <label>Type
+        <select name="kind" onchange="this.form.requestSubmit()">
+          <option value="">Alle typer</option>
+          {% for value, label in kinds %}<option value="{{ value }}"{% if filters.kind == value %} selected{% endif %}>{{ label }}</option>{% endfor %}
+        </select>
+      </label>
+      <label>Periode
+        <select name="period" onchange="this.form.requestSubmit()">
+          {% for key, label in periods %}<option value="{{ key }}"{% if filters.period == key %} selected{% endif %}>{{ label }}</option>{% endfor %}
+        </select>
+      </label>
+      <button type="submit" class="btn btn-secondary">Søg</button>
+      {% if filters.status or filters.kind or filters.period or filters.query %}
+        <a class="jobs-reset" href="?#mails">Nulstil filtre</a>
+      {% endif %}
+    </form>
+    <nav class="jobs-states" aria-label="Status">
+      <a class="jobs-pill{% if not filters.status %} is-on{% endif %}" href="{% querystring status=None page=None %}#mails">Alle <b>{{ total }}</b></a>
+      {% if not_sent_count or filters.status == not_sent %}
+        <a class="jobs-pill{% if filters.status == not_sent %} is-on{% endif %}" href="{% querystring status=not_sent page=None %}#mails">Ikke sendt <b>{{ not_sent_count }}</b></a>
+      {% endif %}
+      {% for status, label, count in status_counts %}
+        <a class="jobs-pill{% if filters.status == status %} is-on{% endif %}" href="{% querystring status=status page=None %}#mails">{{ label }} <b>{{ count }}</b></a>
+      {% endfor %}
+    </nav>
+    <div class="overflow-x-auto">
+      <table class="zebra jobs-table">
+        <thead>
+          <tr><th>Mail</th><th>Type</th><th>Status</th><th>Lagt i kø</th><th class="num">Forsøg</th><th>Sendt / opgives</th></tr>
+        </thead>
+        <tbody>
+          {% for row in rows %}
+            <tr>
+              <td class="jobs-task-cell">
+                <a class="jobs-name" href="{% url 'siteadmin:mail_detail' row.mail.pk %}">{{ row.mail.subject|default:"(intet emne)" }}</a>
+                <div class="jobs-sub">{{ row.mail.recipients }}</div>
+                {% if row.mail.error %}<div class="jobs-sub">{{ row.mail.error|truncatechars:120 }}</div>{% endif %}
+              </td>
+              <td>{{ row.kind_label }}</td>
+              <td><span class="chip {{ row.state_class }}">{{ row.state_label }}</span></td>
+              <td class="jobs-time">{{ row.mail.created_at|date:"j. b H:i:s" }}</td>
+              <td class="num">{{ row.mail.attempts }}</td>
+              <td class="jobs-time">
+                {% if row.mail.sent_at %}{{ row.mail.sent_at|date:"j. b H:i:s" }}
+                {% elif row.mail.status == "queued" or row.mail.status == "sending" %}<span class="jobs-sub">opgives {{ row.mail.expires_at|date:"j. b H:i" }}</span>
+                {% else %}–{% endif %}
+              </td>
+            </tr>
+          {% empty %}
+            <tr><td colspan="6" class="muted">{% if total %}Ingen mails med den status.{% else %}Ingen mails matcher filtrene.{% endif %}</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% if page.paginator.num_pages > 1 %}
+      <nav class="jobs-pager" aria-label="Sider">
+        {% if page.has_previous %}<a href="{% querystring page=page.previous_page_number %}#mails">‹ Forrige</a>{% else %}<span></span>{% endif %}
+        <span class="muted">Side {{ page.number }} af {{ page.paginator.num_pages }}</span>
+        {% if page.has_next %}<a href="{% querystring page=page.next_page_number %}#mails">Næste ›</a>{% else %}<span></span>{% endif %}
+      </nav>
+    {% endif %}
+  </section>
+{% endblock %}

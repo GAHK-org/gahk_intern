@@ -558,3 +558,32 @@ def test_a_statement_that_did_not_arrive_is_sent_again(
     assert "Kom ikke frem" in cut_off.error
     send.refresh_from_db()
     assert send.mail is not None and send.mail.status == OutgoingMail.Status.SENT
+
+
+@pytest.mark.django_db
+def test_the_status_page_links_each_mail_for_administrators_only(make_resident: Callable) -> None:
+    """The mail page is the administrators'; regnskab alone would be sent to a 403."""
+    from datetime import date, timedelta
+
+    from django.utils import timezone
+
+    from core.models import OutgoingMail
+    from regnskab.models import AlumneregningSend
+    from residents.models import Role
+
+    alumne = _alumne_in_august("alumne@gahk.dk", 1101, 1)
+    mail = OutgoingMail.objects.create(
+        subject="Alumneregning", recipients=alumne.email, expires_at=timezone.now() + timedelta(days=3)
+    )
+    AlumneregningSend.objects.create(
+        resident=alumne, outcome="sent", date_from=date(2026, 8, 1), date_to=date(2026, 8, 31), mail=mail
+    )
+    link = reverse("siteadmin:mail_detail", args=[mail.pk])
+    query = {"fra": "2026-08-01", "til": "2026-08-31"}
+    c = Client()
+
+    c.force_login(make_resident(email="acc@gahk.dk", roles=("regnskab",)))
+    assert link not in c.get(reverse("regnskab:alumneregninger_status"), query).content.decode()
+
+    c.force_login(make_resident(email="adm@gahk.dk", roles=("regnskab", Role.ADMINISTRATOR)))
+    assert link in c.get(reverse("regnskab:alumneregninger_status"), query).content.decode()
