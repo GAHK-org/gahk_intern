@@ -232,6 +232,14 @@ def test_reading_an_old_intranet_address_shows_how_to_move(path: str) -> None:
     assert public().head(path).status_code == 200
 
 
+def test_the_old_apps_button_says_it_comes_from_the_old_app() -> None:
+    """/install would otherwise take the old app for an installed GAHK Intern; on an iPhone the
+    button tries Safari first (x-safari-https://)."""
+    html = public().get("/intern/").content.decode()
+    assert 'id="install-link" href="https://intern.gahk.dk/install?from=old-app"' in html
+    assert 'location.href = "x-safari-" + button.href.split("?")[0];' in html
+
+
 @pytest.mark.parametrize(
     ("path", "target"),
     [

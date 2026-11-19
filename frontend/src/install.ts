@@ -30,8 +30,29 @@ export function isInstalledApp(): boolean {
   );
 }
 
+/** Opened by the old app's button (gahk.dk/intern, "Den Hurtige"): /install?from=old-app. */
+function fromOldApp(): boolean {
+  return new URLSearchParams(location.search).get("from") === "old-app";
+}
+
+/** In the old app: the way out to the browser for this device, instead of "Du bruger allerede appen". */
+function showOldApp(page: HTMLElement): void {
+  const card = page.querySelector<HTMLElement>("[data-install-old-app]")!;
+  const mine = platform() === "android" ? "android" : "ios";
+  card.querySelectorAll<HTMLElement>("[data-install-old-app-platform]").forEach((part) => {
+    part.hidden = part.dataset.installOldAppPlatform !== mine;
+  });
+  // Safari opens this page itself, without the parameter: there it is not the old app any more.
+  const safari = card.querySelector<HTMLAnchorElement>("[data-install-open-safari]");
+  if (safari) safari.href = `x-safari-${location.origin}${location.pathname}`;
+  card.hidden = false;
+}
+
 function initPage(page: HTMLElement): void {
-  if (isInstalledApp()) {
+  const oldApp = isInstalledApp() && fromOldApp();
+  if (oldApp) {
+    showOldApp(page);
+  } else if (isInstalledApp()) {
     page.querySelector<HTMLElement>("[data-install-installed]")!.hidden = false;
     page.querySelector<HTMLElement>("[data-install-steps]")!.hidden = true;
     return;
@@ -44,6 +65,7 @@ function initPage(page: HTMLElement): void {
     mine.open = true;
     mine.parentElement!.prepend(mine);
   }
+  if (oldApp) return; // the old app installs nothing: no install prompt to offer
 
   // Where the browser offers its own install prompt, a button beats the menu steps. It fires only
   // while the app is not installed and the browser judges it installable, and may never fire at all.
