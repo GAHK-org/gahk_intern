@@ -1,23 +1,24 @@
 from django.contrib import admin
 
+from core.read_only_admin import ReadOnlyAdmin, ReadOnlyTabularInline
+
 from .models import QuickComment, QuickPost
 
 
-class QuickCommentInline(admin.TabularInline):
+class QuickCommentInline(ReadOnlyTabularInline):
     model = QuickComment
-    extra = 0
-    readonly_fields = ("author", "created_at")
 
 
 @admin.register(QuickPost)
-class QuickPostAdmin(admin.ModelAdmin):
+class QuickPostAdmin(ReadOnlyAdmin):
     """The one place a Den Hurtige message can still be destroyed.
 
     Residents cannot delete an archived message and moderators cannot either (den_hurtige.views),
     which is the feature working as specified. This admin deliberately keeps the delete action: an
     archive that nothing on earth can remove a row from is not a retention policy, it is a liability
     the day somebody posts something unlawful. `is_archived` is in the list so whoever is about to
-    use it can see which side of the line the message is on.
+    use it can see which side of the line the message is on. Nothing else is editable: a message
+    changed here would read as its author's words.
 
     `deleted_at` is listed because a tombstone has empty `content`, which otherwise reads as a
     corrupt row rather than a message somebody took back. Deleting one here destroys the placeholder
@@ -30,11 +31,13 @@ class QuickPostAdmin(admin.ModelAdmin):
     # useful question in the admin anyway: it shows leftovers from a retired channel.
     list_filter = ("channel", "created_at")
     search_fields = ("content", "author__first_name", "author__last_name", "author__email")
-    readonly_fields = ("created_at",)
     inlines = [QuickCommentInline]
+    deletable = True
 
 
 @admin.register(QuickComment)
-class QuickCommentAdmin(admin.ModelAdmin):
+class QuickCommentAdmin(ReadOnlyAdmin):
+    """A single reply, removable for the same reason as a message."""
+
     list_display = ("author", "post", "created_at", "notify_everyone")
-    readonly_fields = ("created_at",)
+    deletable = True

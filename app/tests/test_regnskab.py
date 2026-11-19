@@ -116,7 +116,7 @@ def test_economic_account_number_not_editable_via_django_admin_by_regnskab_alone
 
 
 @pytest.mark.django_db
-def test_economic_account_number_editable_via_django_admin_by_approved_administrator(
+def test_resident_django_admin_page_opens_for_approved_administrator(
     make_resident: Callable,
 ) -> None:
     from residents.models import AdminAccessGrant
