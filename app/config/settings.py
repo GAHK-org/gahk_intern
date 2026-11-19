@@ -82,6 +82,7 @@ INSTALLED_APPS = [
     "notifications",
     "gahkflix",
     "regnskab",
+    "search",
 ]
 
 MIDDLEWARE = [
