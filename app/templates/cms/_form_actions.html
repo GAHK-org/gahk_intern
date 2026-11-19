@@ -1,0 +1,11 @@
+{% comment %}
+  Gem + Forhåndsvis. Without JavaScript "Forhåndsvis" posts the form to the preview in a new tab;
+  cms.ts shows it in a dialog instead. Takes: preview_kind, preview_id, cancel_url.
+{% endcomment %}
+<input type="hidden" name="preview_kind" value="{{ preview_kind }}">
+<input type="hidden" name="preview_id" value="{{ preview_id|default:'' }}">
+<div class="cms-form-actions">
+  <button type="submit" class="btn">Gem</button>
+  <button type="submit" class="btn btn-secondary" formaction="{% url 'cms:preview' %}" formtarget="_blank" formnovalidate data-cms-preview>Forhåndsvis</button>
+  <a class="btn btn-secondary" href="{{ cancel_url }}">Annullér</a>
+</div>

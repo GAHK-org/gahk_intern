@@ -2,7 +2,12 @@ import argparse
 
 from django.core.management.base import BaseCommand
 
-from photo_album.services import MAX_DERIVATIVE_ATTEMPTS, build_derivatives, pending_derivatives
+from photo_album.services import (
+    MAX_DERIVATIVE_ATTEMPTS,
+    NotEnoughDiskSpace,
+    build_derivatives,
+    pending_derivatives,
+)
 
 
 class Command(BaseCommand):
@@ -18,13 +23,21 @@ class Command(BaseCommand):
 
     def handle(self, *args: object, **opts: object) -> None:
         limit = int(str(opts["limit"]))
-        built = failed = 0
+        built = failed = waiting = 0
         for media in pending_derivatives()[:limit]:
-            if build_derivatives(media):
+            try:
+                done = build_derivatives(media)
+            except NotEnoughDiskSpace as exc:
+                waiting += 1
+                self.stderr.write(f"{exc} Waiting; not counted as an attempt.")
+                continue
+            if done:
                 built += 1
                 continue
             failed += 1
             remaining = MAX_DERIVATIVE_ATTEMPTS - media.derivative_attempts
             detail = f"{remaining} forsøg tilbage" if remaining > 0 else "opgivet"
             self.stderr.write(f"Kunne ikke behandle medie {media.pk} ({media.title}): {detail}.")
-        self.stdout.write(f"Built derivatives for {built} media item(s); {failed} failed.")
+        self.stdout.write(
+            f"Built derivatives for {built} media item(s); {failed} failed; {waiting} wait for disk space."
+        )
