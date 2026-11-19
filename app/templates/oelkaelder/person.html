@@ -75,7 +75,7 @@
                 <form method="post" action="{% url 'oelkaelder:void_adjustment' a.id %}" style="display:inline"
                       onsubmit="return confirm('Annullér justeringen på {{ a.amount_ore|kr }}?');">
                   {% csrf_token %}
-                  <button type="submit" class="btn bg-red-600!">Annullér</button>
+                  <button type="submit" class="btn btn-danger">Annullér</button>
                 </form>
               {% else %}Annulleret{% endif %}
             </td>
