@@ -37,12 +37,49 @@
   /* --- surfaces, buttons, chips (used across every page) --- */
   .card { background:var(--surface); border:1px solid var(--border); border-radius:var(--radius); box-shadow:var(--shadow); padding:20px; margin:16px 0; }
   .muted { color:var(--muted); }
-  /* core.date_and_time: a date box, "kl." and a 24-hour time box on one line (wrapping on a narrow
-     phone). The time box is text so it is never drawn as AM/PM; see that module. */
+  /* core.date_and_time: a date box, then "kl." and a 24-hour time box, on one line (wrapping on a
+     narrow phone). The time box is text so it is never drawn as AM/PM; see that module. */
   .date-and-time { display:flex; flex-wrap:wrap; align-items:center; gap:6px 10px; }
-  .date-and-time input[type=date] { width:auto; flex:1 1 9rem; max-width:12rem; min-width:0; }
+  .date-and-time input[type=date], .date-and-time .date-picker-box { width:auto; flex:1 1 11rem; max-width:14rem; min-width:0; }
   .date-and-time-clock { display:flex; align-items:center; gap:8px; color:var(--muted); }
   .date-and-time-clock input { width:4.75rem; font-variant-numeric:tabular-nums; }
+
+  /* frontend/src/date-picker.ts: every date box's calendar, and date-and-time.ts's list of times.
+     Both float over the page at the .pop pickers' level, above the sticky top bar. */
+  .date-picker-box { cursor:pointer; padding-right:34px;
+    background:var(--surface) no-repeat right 10px center / 16px
+      url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%236b7a70' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='3' y='4' width='18' height='18' rx='2'/%3E%3Cpath d='M16 2v4M8 2v4M3 10h18'/%3E%3C/svg%3E"); }
+  .date-picker, .time-list { z-index:60; background:var(--surface); border:1px solid var(--border);
+    box-shadow:var(--shadow); color:var(--ink); font-size:14px; font-weight:400; }
+  .date-picker { width:20rem; max-width:calc(100vw - 16px); padding:10px; border-radius:12px; }
+  .date-picker-head { display:flex; align-items:center; gap:6px; margin-bottom:6px; }
+  .date-picker-head select { width:auto; min-width:0; flex:1 1 auto; padding:5px 6px; font-size:14px; }
+  .date-picker-head .date-picker-year { flex:0 0 5.25rem; }
+  .date-picker-step { flex:none; width:34px; height:34px; border:0; border-radius:8px; background:transparent;
+    color:var(--ink); font-size:22px; line-height:1; cursor:pointer; }
+  .date-picker-step:hover:not(:disabled) { background:var(--green-050); }
+  .date-picker-step:disabled { opacity:.3; cursor:default; }
+  .date-picker-grid { width:100%; border-collapse:collapse; table-layout:fixed; }
+  .date-picker-grid th { padding:4px 0; text-align:center; font-size:12px; font-weight:600; color:var(--muted); }
+  .date-picker-grid .date-picker-week { width:1.9rem; font-size:11px; font-weight:400; color:var(--faint, var(--muted)); }
+  .date-picker-grid td { padding:1px; }
+  .date-picker-grid td button { display:block; width:100%; height:36px; border:0; border-radius:8px; background:transparent;
+    color:var(--ink); font:inherit; font-variant-numeric:tabular-nums; cursor:pointer; }
+  .date-picker-grid td button:hover:not(:disabled) { background:var(--green-050); }
+  .date-picker-grid td button.is-outside { color:var(--muted); }
+  .date-picker-grid td button.is-today { box-shadow:inset 0 0 0 1.5px var(--green); font-weight:600; }
+  .date-picker-grid td button[aria-pressed=true] { background:var(--green); color:#fff; font-weight:600; }
+  .date-picker-grid td button:disabled { opacity:.3; cursor:default; }
+  .date-picker-grid td button:focus-visible { outline:2px solid var(--green); outline-offset:1px; }
+  .date-picker-foot { display:flex; justify-content:space-between; margin-top:6px; }
+  .date-picker-foot button { border:0; border-radius:6px; background:transparent; padding:6px 10px;
+    color:var(--green-700); font:inherit; font-weight:600; cursor:pointer; }
+  .date-picker-foot button:hover { background:var(--green-050); }
+  .time-list { width:6.5rem; max-height:15rem; overflow-y:auto; overscroll-behavior:contain; padding:4px;
+    border-radius:10px; font-variant-numeric:tabular-nums; }
+  .time-list [role=option] { padding:7px 10px; border-radius:6px; text-align:center; cursor:pointer; }
+  .time-list [role=option]:hover { background:var(--green-050); }
+  .time-list [role=option][aria-selected=true] { background:var(--green); color:#fff; }
   .errorlist { color:var(--neg); }
   .amount-pos { color:var(--pos); } .amount-neg { color:var(--neg); }
   .num { font-variant-numeric: tabular-nums; }
