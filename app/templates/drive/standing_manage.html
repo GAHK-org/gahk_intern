@@ -1,0 +1,66 @@
+{% extends "base.html" %}
+{% block title %}Stående mapper - {{ folder.name }} - Drive - GAHK Intern{% endblock %}
+{% block content_width %}max-w-3xl{% endblock %}
+
+{% block content %}
+  <div class="page-head">
+    <div>
+      <p class="eyebrow">Drive</p>
+      <h1>Stående mapper</h1>
+    </div>
+  </div>
+  {% include "drive/_crumbs.html" with ancestors=ancestors current="" %}
+  <p class="muted mb-4">
+    En stående mappe oprettes med samme navn i {% if common %}hvert år{% else %}hver periode{% endif %},
+    og har en samlet visning på tværs af dem. En ny gælder fra {% if common %}næste år{% else %}næste periode{% endif %}.
+  </p>
+
+  {% if items %}
+    <ul class="drive-list mb-6">
+      {% for item in items %}
+        <li class="drive-member">
+          <span class="drive-version">
+            <strong>{{ item.name }}</strong>
+            <span class="muted">
+              fra {{ item.starts_on|date:"j. M Y" }}{% if item.item_label %} · knap: Opret {{ item.item_label|lower }}{% endif %}
+              {% if item.limited %} · skrives kun af admins og Inspektionen{% for group in item.writer_groups.all %}{% if forloop.first %} samt {% elif forloop.last %} og {% else %}, {% endif %}{{ group.name }}{% endfor %}{% endif %}
+              {% if item.stopped_at %} · stoppet {{ item.stopped_at|date:"j. M Y" }}{% endif %}
+            </span>
+          </span>
+          {% if item.folders.exists %}<a class="drive-download" href="{% url 'drive:standing' item.pk %}">{{ item.all_name }}</a>{% endif %}
+          {% if can_define and not item.stopped_at %}
+            <form method="post" action="{% url 'drive:standing_stop' folder.pk item.pk %}" data-drive-confirm="Stop {{ item.name }}? Der oprettes ikke flere, men de eksisterende bliver.">
+              {% csrf_token %}
+              <button type="submit" class="btn-link-danger">Stop</button>
+            </form>
+          {% endif %}
+        </li>
+      {% endfor %}
+    </ul>
+  {% else %}
+    <p class="muted mb-6">Ingen stående mapper endnu.</p>
+  {% endif %}
+
+  {% if can_define %}
+    <h2 class="drive-h2">Ny stående mappe</h2>
+    <form method="post" class="drive-form">
+      {% csrf_token %}
+      <label>Navn <input type="text" name="name" maxlength="200" placeholder="Fællesmøder" required></label>
+      <label>Navneregel (valgfri) <input type="text" name="item_label" maxlength="60" placeholder="Fællesmøde"></label>
+      <p class="muted">Med en navneregel får mappen en knap, der spørger om en dato og opretter fx „{{ starts_on|date:"Y-m-d" }} Fællesmøde“.</p>
+      {% if common %}
+        <fieldset data-drive-pick>
+          <legend>Hvem skriver</legend>
+          <label class="drive-choice"><input type="checkbox" name="limited" value="1"> Kun admins og Inspektionen, og grupperne herunder. Alle beboere kan stadig læse.</label>
+          <ul class="drive-pick">
+            {% for group in groups %}
+              <li data-drive-pick-name="{{ group.name|lower }}"><label class="drive-choice"><input type="checkbox" name="writer_groups" value="{{ group.pk }}"> {{ group.name }}</label></li>
+            {% endfor %}
+          </ul>
+        </fieldset>
+      {% endif %}
+      <p class="muted">Oprettes første gang i {% if common %}{{ starts_on|date:"Y" }}{% else %}perioden fra {{ starts_on|date:"j. M Y" }}{% endif %}.</p>
+      <div><button type="submit" class="btn btn-primary">Opret</button></div>
+    </form>
+  {% endif %}
+{% endblock %}

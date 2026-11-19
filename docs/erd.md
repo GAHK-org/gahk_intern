@@ -942,6 +942,7 @@ erDiagram
         int workgroup_id FK
         date period_start
         int shared_id FK
+        int standing_id FK
         string path
         int created_by_id FK
         datetime created_at
@@ -1046,6 +1047,19 @@ erDiagram
         int resident_id FK
         int workgroup_id FK
         bool can_edit
+        int created_by_id FK
+        datetime created_at
+    }
+
+    drive_StandingFolder {
+        int id PK
+        string space
+        int workgroup_id FK
+        string name
+        string item_label
+        bool limited
+        date starts_on
+        datetime stopped_at
         int created_by_id FK
         datetime created_at
     }
@@ -1199,6 +1213,7 @@ erDiagram
     drive_Folder }o--|o drive_Folder : "parent"
     drive_Folder }o--|o core_Workgroup : "workgroup"
     drive_Folder }o--|o drive_SharedFolder : "shared"
+    drive_Folder }o--|o drive_StandingFolder : "standing"
     drive_Folder }o--|o residents_Resident : "created_by"
     drive_Folder }o--|o residents_Resident : "deleted_by"
     drive_File }o--|o residents_Resident : "locked_by"
@@ -1228,6 +1243,9 @@ erDiagram
     drive_Share }o--|o residents_Resident : "resident"
     drive_Share }o--|o core_Workgroup : "workgroup"
     drive_Share }o--|o residents_Resident : "created_by"
+    drive_StandingFolder }o--|o core_Workgroup : "workgroup"
+    drive_StandingFolder }o--|o residents_Resident : "created_by"
+    drive_StandingFolder }o--o{ core_Workgroup : "writer_groups"
     regnskab_EconomicLedgerEntry }o--|| residents_Resident : "resident"
     regnskab_AlumneregningSend }o--|| residents_Resident : "resident"
 ```
@@ -1574,6 +1592,7 @@ erDiagram
         int workgroup_id FK
         date period_start
         int shared_id FK
+        int standing_id FK
         string path
         int created_by_id FK
         datetime created_at
@@ -1682,6 +1701,19 @@ erDiagram
         datetime created_at
     }
 
+    drive_StandingFolder {
+        int id PK
+        string space
+        int workgroup_id FK
+        string name
+        string item_label
+        bool limited
+        date starts_on
+        datetime stopped_at
+        int created_by_id FK
+        datetime created_at
+    }
+
     core_Workgroup { }
 
     residents_Resident { }
@@ -1690,6 +1722,7 @@ erDiagram
     drive_Folder }o--|o drive_Folder : "parent"
     drive_Folder }o--|o core_Workgroup : "workgroup"
     drive_Folder }o--|o drive_SharedFolder : "shared"
+    drive_Folder }o--|o drive_StandingFolder : "standing"
     drive_Folder }o--|o residents_Resident : "created_by"
     drive_Folder }o--|o residents_Resident : "deleted_by"
     drive_File }o--|o residents_Resident : "locked_by"
@@ -1719,6 +1752,9 @@ erDiagram
     drive_Share }o--|o residents_Resident : "resident"
     drive_Share }o--|o core_Workgroup : "workgroup"
     drive_Share }o--|o residents_Resident : "created_by"
+    drive_StandingFolder }o--|o core_Workgroup : "workgroup"
+    drive_StandingFolder }o--|o residents_Resident : "created_by"
+    drive_StandingFolder }o--o{ core_Workgroup : "writer_groups"
 ```
 
 ## events

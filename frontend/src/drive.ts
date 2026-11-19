@@ -19,6 +19,8 @@ type Config = {
   directUrl: string
   maxBytes: number
   versionOf: string
+  // On `Uden periode` / `Uden årstal`: the current period or year, offered first.
+  instead?: { name: string; url: string; beginUrl: string; directUrl: string; createUrl: string } | null
 }
 
 type Dialogs = { conflict: HTMLDialogElement; stale: HTMLDialogElement }
@@ -44,6 +46,18 @@ async function post(url: string, fields: Record<string, string | Blob>): Promise
     headers: { Accept: "application/json", "X-CSRFToken": csrfToken() },
   })
   return { status: response.status, body: ((await response.json().catch(() => null)) ?? {}) as Record<string, unknown> }
+}
+
+/** Directly in `Uden periode` / `Uden årstal`, or in the current period or year? "instead", "here"
+ * or null to cancel. */
+function askTimeless(): Promise<string | null> {
+  const dialog = document.querySelector<HTMLDialogElement>("[data-drive-timeless]")
+  if (!dialog) return Promise.resolve("here")
+  dialog.returnValue = ""
+  dialog.showModal()
+  return new Promise((resolve) => {
+    dialog.addEventListener("close", () => resolve(dialog.returnValue || null), { once: true })
+  })
 }
 
 /** Ask what to do: "replace" (a new version), "keep_both", or null to skip. */
@@ -126,12 +140,25 @@ function initUpload(): void {
   input.addEventListener("change", async () => {
     const files = Array.from(input.files ?? [])
     if (!files.length) return
+    let target = config
+    let after = ""
+    if (config.instead) {
+      const choice = await askTimeless()
+      if (choice === null) {
+        input.value = ""
+        return
+      }
+      if (choice === "instead") {
+        target = { ...config, beginUrl: config.instead.beginUrl, directUrl: config.instead.directUrl }
+        after = config.instead.url
+      }
+    }
     input.disabled = true
     window.addEventListener("beforeunload", guard)
     const problems: string[] = []
     for (const [index, file] of files.entries()) {
       say(`${index + 1} af ${files.length}: ${file.name} …`)
-      const problem = await uploadOne(config, dialogs, file, say)
+      const problem = await uploadOne(target, dialogs, file, say)
       if (problem) problems.push(problem)
     }
     window.removeEventListener("beforeunload", guard)
@@ -139,10 +166,11 @@ function initUpload(): void {
       input.disabled = false
       input.value = ""
       say(problems.join(" "))
-      if (problems.length < files.length) window.setTimeout(() => window.location.reload(), 4000)
+      if (problems.length < files.length) window.setTimeout(() => (after ? window.location.assign(after) : window.location.reload()), 4000)
       return
     }
-    window.location.reload()
+    if (after) window.location.assign(after)
+    else window.location.reload()
   })
 }
 
@@ -214,7 +242,24 @@ function initPicker(): void {
   }
 }
 
+/** A new folder directly in `Uden periode` / `Uden årstal` asks first, like an upload. */
+function initInstead(): void {
+  for (const form of document.querySelectorAll<HTMLFormElement>("form[data-drive-instead]")) {
+    let asked = false
+    form.addEventListener("submit", async (event) => {
+      if (asked) return
+      event.preventDefault()
+      const choice = await askTimeless()
+      if (choice === null) return
+      if (choice === "instead") form.action = form.dataset.driveInstead!
+      asked = true
+      form.requestSubmit()
+    })
+  }
+}
+
 initUpload()
+initInstead()
 initSelection()
 initConfirm()
 initPicker()

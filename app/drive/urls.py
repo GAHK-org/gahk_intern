@@ -1,6 +1,6 @@
 from django.urls import path
 
-from . import views, views_items, views_locks, views_shared, views_sharing
+from . import views, views_items, views_locks, views_shared, views_sharing, views_standing
 
 app_name = "drive"
 
@@ -44,6 +44,10 @@ urlpatterns = [
     path("folder/<int:pk>/shared-with-group", views_sharing.shared_with_group, name="shared_with_group"),
     path("share/<int:pk>/stop", views_sharing.stop, name="stop_share"),
     path("shared-with-me/", views_sharing.shared_with_me, name="shared_with_me"),
+    path("folder/<int:pk>/standing", views_standing.manage, name="standing_manage"),
+    path("folder/<int:pk>/standing/<int:item>/stop", views_standing.stop, name="standing_stop"),
+    path("standing/<int:pk>/", views_standing.combined, name="standing"),
+    path("standing/<int:pk>/new", views_standing.create_item, name="standing_item"),
     path("requests/", views_locks.requests_page, name="requests"),
     path("requests/<int:pk>/decide", views_locks.decide, name="decide"),
 ]

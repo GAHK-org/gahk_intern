@@ -15,6 +15,8 @@
 
     <div class="drive-links mb-4">
       {% if is_space %}<a href="{% url 'drive:activity' folder.pk %}">Aktivitet</a>{% endif %}
+      {% if space_root %}<a href="{% url 'drive:standing_manage' folder.pk %}">Stående mapper</a>{% endif %}
+      {% if standing_item %}<a href="{% url 'drive:standing' standing_item.pk %}">{{ standing_item.all_name }}</a>{% endif %}
       <a href="{% url 'drive:folder_history' folder.pk %}">Historik</a>
       {% if in_bin %}<a href="{% url 'drive:bin' folder.pk %}">Papirkurv ({{ in_bin }})</a>{% endif %}
       {% if can_change_folder %}
@@ -81,7 +83,7 @@
         {% include "drive/_upload.html" with label="Læg filer op" multiple=True %}
       {% endif %}
       {% if can_create_folder %}
-        <form method="post" action="{% url 'drive:create_folder' folder.pk %}" class="drive-newfolder">
+        <form method="post" action="{% url 'drive:create_folder' folder.pk %}" class="drive-newfolder"{% if instead %} data-drive-instead="{{ instead.createUrl }}"{% endif %}>
           {% csrf_token %}
           <label class="sr-only" for="drive-new-folder">Navn på ny mappe</label>
           <input id="drive-new-folder" type="text" name="name" maxlength="200" placeholder="Navn på ny mappe…" required>
@@ -94,6 +96,29 @@
   {% if folder and folder.kind == "folder" %}
     {% url 'drive:share_folder' folder.pk as share_action %}
     {% include "drive/_share_panel.html" with share_action=share_action %}
+  {% endif %}
+
+  {% if instead %}
+    {% comment %} Asked before an upload or a new folder lands directly here (drive.ts). {% endcomment %}
+    <dialog class="drive-dialog" data-drive-timeless aria-labelledby="drive-timeless-text">
+      <form method="dialog">
+        <p id="drive-timeless-text">„{{ instead.here }}“ er til det, der bruges på tværs af perioder, og her kan admins og Inspektionen læse med. Hører det til {{ instead.name }}?</p>
+        <div class="drive-dialog-buttons">
+          <button class="btn btn-primary" value="instead">Læg i {{ instead.name }}</button>
+          <button class="btn btn-secondary" value="here">Læg i {{ instead.here }}</button>
+          <button class="btn-link" value="">Annuller</button>
+        </div>
+      </form>
+    </dialog>
+  {% endif %}
+
+  {% if standing_item and standing_item.item_label and can_create_folder %}
+    <form method="post" action="{% url 'drive:standing_item' standing_item.pk %}" class="drive-inline-form mb-4">
+      {% csrf_token %}
+      <label class="sr-only" for="standing-day">Dato</label>
+      <input id="standing-day" type="date" name="day" required>
+      <button type="submit" class="btn btn-secondary">Opret {{ standing_item.item_label|lower }}</button>
+    </form>
   {% endif %}
 
   {% if not rows and not files and not group_shared %}
