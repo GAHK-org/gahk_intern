@@ -129,7 +129,7 @@ def _above(hit: Hit) -> list[int]:
     folder's path with it."""
     if hit.folder is not None:
         return [int(part) for part in hit.folder.path.strip("/").split("/") if part][:-1]
-    assert hit.file is not None  # noqa: S101 - a hit is one or the other
+    assert hit.file is not None  # noqa: S101  # nosec B101 - a hit is one or the other
     return [int(part) for part in hit.file.folder.path.strip("/").split("/") if part]
 
 
