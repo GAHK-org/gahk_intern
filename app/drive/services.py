@@ -117,6 +117,8 @@ def check_upload(
         return name
     if on_conflict not in CONFLICT_CHOICES:
         raise NameTaken(f"Der er allerede en fil, der hedder „{name}“.")
+    if on_conflict == REPLACE and existing.lock_active():
+        raise ValidationError(f"„{name}“ er låst og kan ikke erstattes. Vælg at beholde begge.")
     if on_conflict == REPLACE and not ignore_stale:
         check_stale(existing, viewer.resident_id)
     return name
@@ -188,6 +190,8 @@ def add_upload(
         .filter(folder=folder, name_key=name_key(name), deleted_at__isnull=True)
         .first()
     )
+    if existing is not None and on_conflict == REPLACE and existing.lock_active():
+        raise PermissionDenied
     if existing is not None and on_conflict == REPLACE:
         number = (existing.versions.order_by("-number").values_list("number", flat=True).first() or 0) + 1
         FileVersion.objects.create(
@@ -215,6 +219,15 @@ def add_upload(
     )
     history.record(Event.Action.CREATED, actor=resident, file=file, name=file.name)
     return Added(file, replaced=False)
+
+
+def drop_unreferenced(keys: set[str]) -> None:
+    """After commit, remove the stored bytes of those keys that no version points at any more. A copy,
+    or a restored version, shares its original's key, so a key can outlive the version that made it."""
+    unreferenced = keys - set(FileVersion.objects.filter(key__in=keys).values_list("key", flat=True))
+    if unreferenced:
+        store = storage()
+        transaction.on_commit(lambda: [store.delete(key) for key in sorted(unreferenced)])
 
 
 def store_local(key: str, content: IO[bytes]) -> None:

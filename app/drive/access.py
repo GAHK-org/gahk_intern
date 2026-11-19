@@ -13,6 +13,10 @@ asking for Inspektionen's covers both).
 
 A resident who has moved out has no access to anything. Nothing is deleted when they move: their
 past months stay in the residency lists, so they get exactly the same access back if they return.
+
+LOCKS narrow writing further (models.Lockable). A folder's lock covers everything below it; a
+file's covers only the file. `may_write` is the table alone, whatever is locked: it says who may
+lock by hand and ask for an unlock, so an unlock never gives anyone more than the table does.
 """
 
 from collections import defaultdict
@@ -22,14 +26,18 @@ from enum import IntEnum
 
 from django.conf import settings
 from django.http import HttpRequest
+from django.utils import timezone
 
 from core.clock import current_date
 from core.rollout import Gate
 from residents.models import Residency, Resident, Role, RoleAssignment, active_period
 from residents.permissions import current_resident, has_active_role, request_has_role
 
-from .models import Folder, Space
+from .models import File, Folder, Space
 from .periods import Period, period_containing
+
+# Where nothing is put directly: residents' things go in the timeless, period and year folders.
+_ROOTS = (Folder.Kind.COMMON_ROOT, Folder.Kind.GROUPS_ROOT, Folder.Kind.GROUP)
 
 # None = every logged-in resident.
 ACCESS_ROLES: tuple[str, ...] | None = (Role.ADMINISTRATOR, Role.INSPEKTION)
@@ -67,6 +75,8 @@ class Viewer:
     groups_now: set[int] = field(default_factory=set)
     groups_next: set[int] = field(default_factory=set)
     months: dict[int, set[tuple[int, int]]] = field(default_factory=dict)
+    # folder id -> the folder whose lock covers it, per request.
+    _locks: dict[int, Folder | None] = field(default_factory=dict, repr=False, compare=False)
 
     @classmethod
     def for_request(cls, request: HttpRequest) -> "Viewer":
@@ -177,22 +187,33 @@ class Viewer:
             oversight = Level.READ if self.oversees else Level.NONE
         return max(mine, oversight)
 
+    def may_write(self, folder: Folder) -> bool:
+        """Write access by the access table alone, whatever is locked."""
+        return folder.kind not in _ROOTS and self.level(folder) >= Level.WRITE
+
+    def lock_holder(self, folder: Folder) -> Folder | None:
+        """The folder whose lock covers `folder` - itself or the topmost locked one above it."""
+        if folder.pk not in self._locks:
+            ids = [int(part) for part in folder.path.strip("/").split("/") if part]
+            now = timezone.now()
+            held = [
+                f for f in Folder.objects.filter(pk__in=ids, locked_at__isnull=False) if f.lock_active(now)
+            ]
+            self._locks[folder.pk] = min(held, key=lambda f: len(f.path)) if held else None
+        return self._locks[folder.pk]
+
     def can_create_in(self, folder: Folder) -> bool:
         """Folders and files go in the timeless, period and year folders and below, never directly in
-        a root or a group folder. The first level of Fælles' `Uden årstal` is admins' and
-        Inspektionen's to arrange."""
-        if folder.kind in (Folder.Kind.COMMON_ROOT, Folder.Kind.GROUPS_ROOT, Folder.Kind.GROUP):
-            return False
-        if self.level(folder) < Level.WRITE:
+        a root or a group folder, and never in a locked folder. The first level of Fælles' `Uden
+        årstal` is admins' and Inspektionen's to arrange."""
+        if not self.can_upload_to(folder):
             return False
         return not (
             folder.space == Space.COMMON and folder.kind == Folder.Kind.TIMELESS and not self.oversees
         )
 
     def can_upload_to(self, folder: Folder) -> bool:
-        if folder.kind in (Folder.Kind.COMMON_ROOT, Folder.Kind.GROUPS_ROOT, Folder.Kind.GROUP):
-            return False
-        return self.level(folder) >= Level.WRITE
+        return self.may_write(folder) and self.lock_holder(folder) is None
 
     def can_change_folder(self, folder: Folder) -> bool:
         """Rename, move or delete a folder: never one the system made, and only where a folder like it
@@ -200,8 +221,13 @@ class Viewer:
         Inspektionen's to arrange."""
         if folder.is_system or folder.parent is None:
             return False
-        return self.can_create_in(folder.parent)
+        return self.lock_holder(folder) is None and self.can_create_in(folder.parent)
 
     def can_change_file_in(self, folder: Folder) -> bool:
-        """Rename, move, delete or restore a file in this folder, or add a version."""
+        """Change the files in this folder, as far as the folder goes (see can_change_file)."""
         return self.can_upload_to(folder)
+
+    def can_change_file(self, file: File) -> bool:
+        """Rename, move, delete or add a version to this file: its folder allows it, and the file
+        itself is not locked."""
+        return not file.lock_active() and self.can_change_file_in(file.folder)

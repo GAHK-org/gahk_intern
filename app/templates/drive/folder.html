@@ -14,6 +14,7 @@
     {% include "drive/_crumbs.html" with ancestors=ancestors current=folder.name %}
 
     <div class="drive-links mb-4">
+      {% if is_space %}<a href="{% url 'drive:activity' folder.pk %}">Aktivitet</a>{% endif %}
       <a href="{% url 'drive:folder_history' folder.pk %}">Historik</a>
       {% if in_bin %}<a href="{% url 'drive:bin' folder.pk %}">Papirkurv ({{ in_bin }})</a>{% endif %}
       {% if can_change_folder %}
@@ -32,7 +33,31 @@
           <button type="submit" class="btn-link-danger">Slet mappe</button>
         </form>
       {% endif %}
+      {% if can_lock_folder %}
+        <form method="post" action="{% url 'drive:lock_folder' folder.pk %}" data-drive-confirm="Lås „{{ folder.name }}“? Så kan intet i den ændres, før en admin eller Inspektionen låser den op.">
+          {% csrf_token %}
+          <button type="submit" class="btn-link">Lås mappe</button>
+        </form>
+      {% endif %}
     </div>
+
+    {% if lock_holder %}
+      <div class="drive-note mb-4">
+        {% if lock_holder.pk == folder.pk %}
+          <p><strong>Mappen er låst</strong> ({% if folder.locked_by %}af {{ folder.locked_by.full_name }}{% else %}efter et år uden ændringer{% endif %}, {{ folder.locked_at|date:"j. M Y" }}). Intet kan lægges i den, og den kan ikke omdøbes, flyttes eller slettes.</p>
+          {% if can_request_folder_unlock %}
+            {% url 'drive:unlock_folder' folder.pk as unlock_url %}
+            {% include "drive/_unlock_form.html" with action=unlock_url %}
+          {% endif %}
+        {% else %}
+          <p><strong>Låst</strong> sammen med <a href="{% url 'drive:folder' lock_holder.pk %}">{{ lock_holder.name }}</a>, som den ligger i.</p>
+        {% endif %}
+      </div>
+    {% endif %}
+  {% else %}
+    {% if oversees %}
+      <p class="drive-links mb-4"><a href="{% url 'drive:requests' %}">Anmodninger{% if pending_requests %} ({{ pending_requests }} venter){% endif %}</a></p>
+    {% endif %}
   {% endif %}
 
   {% if can_write or can_create_folder %}
@@ -84,6 +109,7 @@
             <a href="{% url 'drive:folder' row.folder.pk %}">
               <svg class="ni" aria-hidden="true"><use href="#i-folder"></use></svg>
               <span class="drive-name">{{ row.folder.name }}</span>
+              {% if row.folder.lock_active %}<svg class="ni drive-locked" role="img" aria-label="Låst"><use href="#i-lock"></use></svg>{% endif %}
             </a>
           {% else %}
             {% comment %}
@@ -114,6 +140,7 @@
           <a href="{% url 'drive:file' file.pk %}">
             <svg class="ni" aria-hidden="true"><use href="#i-file"></use></svg>
             <span class="drive-name">{{ file.name }}</span>
+            {% if file.lock_active %}<svg class="ni drive-locked" role="img" aria-label="Låst"><use href="#i-lock"></use></svg>{% endif %}
           </a>
           <span class="muted drive-meta">
             {{ file.size|filesizeformat }} · {{ file.changed_at|date:"j. M Y" }}{% if file.changed_by %} · {{ file.changed_by.full_name }}{% endif %}

@@ -20,9 +20,9 @@ from photo_album import direct_upload
 from photo_album.forms import DirectUploadSignForm
 from residents.permissions import current_resident
 
-from . import access, operations, services
+from . import access, locks, operations, services
 from .access import Level, Viewer
-from .models import File, FileVersion, Folder
+from .models import MAX_UNLOCK_DAYS, ApprovalRequest, File, FileVersion, Folder
 from .periods import period_containing
 from .structure import ensure_structure_today
 
@@ -90,7 +90,17 @@ def home(request: HttpRequest) -> HttpResponse:
     ensure_structure_today()
     viewer = Viewer.for_request(request)
     roots = [f for f in _sorted_children(None) if viewer.level(f) > Level.NONE]
-    return _render(request, "drive/folder.html", {"folder": None, "rows": _rows(viewer, roots), "files": []})
+    return _render(
+        request,
+        "drive/folder.html",
+        {
+            "folder": None,
+            "rows": _rows(viewer, roots),
+            "files": [],
+            "oversees": viewer.oversees,
+            "pending_requests": locks.pending_count() if viewer.oversees else 0,
+        },
+    )
 
 
 @access.access_required
@@ -113,6 +123,8 @@ def folder(request: HttpRequest, pk: int) -> HttpResponse:
             "can_write": level >= Level.WRITE and viewer.can_upload_to(current),
             "can_create_folder": viewer.can_create_in(current),
             "can_change_folder": viewer.can_change_folder(current),
+            **_lock_context(viewer, current),
+            "is_space": current.kind in (Folder.Kind.COMMON_ROOT, Folder.Kind.GROUP),
             # Ticking is for moving, copying and deleting: residents' own folders and the files.
             "can_select": bool(files) or any(row["can_open"] and not row["folder"].is_system for row in rows),
             "can_change_files": can_change_files,
@@ -124,6 +136,25 @@ def folder(request: HttpRequest, pk: int) -> HttpResponse:
             },
         },
     )
+
+
+def _lock_context(viewer: Viewer, folder: Folder) -> dict[str, object]:
+    """Whether the folder is locked (by itself or one above), and what the viewer can do about it."""
+    holder = viewer.lock_holder(folder)
+    own = holder is not None and holder.pk == folder.pk
+    return {
+        "lock_holder": holder,
+        "can_lock_folder": not folder.is_system
+        and holder is None
+        and folder.deleted_at is None
+        and viewer.may_write(folder),
+        "can_request_folder_unlock": own
+        and viewer.may_write(folder)
+        and not ApprovalRequest.objects.filter(
+            kind=ApprovalRequest.Kind.UNLOCK, state=ApprovalRequest.State.PENDING, folder=folder
+        ).exists(),
+        "max_unlock_days": MAX_UNLOCK_DAYS,
+    }
 
 
 def _upload_config(target: Folder, *, version_of: str = "") -> dict[str, object]:
@@ -150,7 +181,8 @@ def file_page(request: HttpRequest, pk: int) -> HttpResponse:
     """A file's versions, its history, and what can be done with it."""
     file, viewer = live_file(request, pk)
     versions = list(file.versions.select_related("created_by").order_by("-number"))
-    can_change = viewer.can_change_file_in(file.folder)
+    can_change = viewer.can_change_file(file)
+    locked = file.lock_active()
     return _render(
         request,
         "drive/file.html",
@@ -162,6 +194,20 @@ def file_page(request: HttpRequest, pk: int) -> HttpResponse:
             "latest": versions[0],
             "events": file.events.select_related("actor")[:200],
             "can_change": can_change,
+            "file_locked": locked,
+            "folder_lock": viewer.lock_holder(file.folder),
+            "can_lock": can_change,
+            "can_request_unlock": locked
+            and viewer.may_write(file.folder)
+            and not ApprovalRequest.objects.filter(
+                kind=ApprovalRequest.Kind.UNLOCK, state=ApprovalRequest.State.PENDING, file=file
+            ).exists(),
+            "purge_pending": set(
+                ApprovalRequest.objects.filter(
+                    kind=ApprovalRequest.Kind.PURGE, state=ApprovalRequest.State.PENDING, file=file
+                ).values_list("version_number", flat=True)
+            ),
+            "max_unlock_days": MAX_UNLOCK_DAYS,
             "upload_config": _upload_config(file.folder, version_of=file.name) if can_change else None,
             "move_query": f"file={file.pk}",
         },
