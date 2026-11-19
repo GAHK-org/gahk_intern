@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% load drive %}
 {% block title %}{% if folder %}{{ folder.name }} - {% endif %}Drive - GAHK Intern{% endblock %}
 {% block content_width %}max-w-5xl{% endblock %}
 
@@ -194,7 +195,11 @@
             <input type="checkbox" class="drive-tick" data-drive-tick="file" value="{{ file.pk }}" aria-label="Vælg {{ file.name }}">
           {% endif %}
           <a href="{% url 'drive:file' file.pk %}">
-            <svg class="ni" aria-hidden="true"><use href="#i-file"></use></svg>
+            {% if file.thumbnail %}
+              <img class="drive-thumb" src="{% url 'drive:thumbnail' file.pk %}?v={{ file.thumbnail }}" alt="" loading="lazy" width="36" height="36">
+            {% else %}
+              <svg class="ni" aria-hidden="true"><use href="#i-{{ file.name|drive_icon }}"></use></svg>
+            {% endif %}
             <span class="drive-name">{{ file.name }}</span>
             {% if file.is_shared %}<svg class="ni drive-locked" role="img" aria-label="Delt"><use href="#i-share"></use></svg>{% endif %}
             {% if file.lock_active %}<svg class="ni drive-locked" role="img" aria-label="Låst"><use href="#i-lock"></use></svg>{% endif %}

@@ -23,7 +23,7 @@ from photo_album import direct_upload
 from photo_album.forms import DirectUploadSignForm
 from residents.permissions import current_resident
 
-from . import access, locks, operations, services, shared, sharing
+from . import access, locks, operations, preview, services, shared, sharing
 from .access import Level, Viewer
 from .models import MAX_UNLOCK_DAYS, ApprovalRequest, File, FileVersion, Folder, SharedMember, Space
 from .periods import period_containing
@@ -138,6 +138,7 @@ def folder(request: HttpRequest, pk: int) -> HttpResponse:
     shared_folder = current.shared if current.kind == Folder.Kind.SHARED else None
     instead = _instead(viewer, current)
     shared_files, shared_folders = sharing.shared_ids(files, [row["folder"] for row in rows])
+    mark_files(files)
     for file in files:
         file.is_shared = file.pk in shared_files  # type: ignore[attr-defined]
     for row in rows:
@@ -280,6 +281,45 @@ def live_file(request: HttpRequest, pk: int, *, at_least: Level = Level.READ) ->
     return file, viewer
 
 
+def mark_files(files: list[File]) -> None:
+    """The version number of each file's thumbnail, where it has one: it goes in the URL."""
+    thumbnails = preview.thumbnails(files)
+    for file in files:
+        file.thumbnail = thumbnails.get(file.pk)  # type: ignore[attr-defined]
+
+
+def _preview_context(viewer: Viewer, file: File, latest: FileVersion) -> dict[str, object]:
+    """What the file's page shows of it (drive/preview.py)."""
+    kind = preview.kind_of(file.name)
+    shown: dict[str, object] = {"kind": kind.value}
+    if kind == preview.Kind.IMAGE:
+        row = preview.ensure(latest, file.name)
+        shown["state"] = row.state if row else "too_big"
+        if viewer.level(file.folder) >= Level.READ:
+            # Next and previous through the folder's images, by name as the list has them.
+            images = [
+                (pk, name)
+                for pk, name in file.folder.files.filter(deleted_at__isnull=True)
+                .order_by("name_key")
+                .values_list("pk", "name")
+                if preview.kind_of(name) == preview.Kind.IMAGE
+            ]
+            at = next(index for index, (pk, _) in enumerate(images) if pk == file.pk)
+            shown["position"] = (at + 1, len(images))
+            shown["previous"] = images[at - 1][0] if at > 0 else None
+            shown["next"] = images[at + 1][0] if at + 1 < len(images) else None
+    elif kind in (preview.Kind.PDF, preview.Kind.VIDEO, preview.Kind.AUDIO):
+        shown["inline"] = preview.inline_type(file.name) is not None
+    elif kind in (preview.Kind.TEXT, preview.Kind.CSV, preview.Kind.MARKDOWN):
+        try:
+            shown["text"] = preview.text(latest, file.name)
+        except OSError:  # the bytes cannot be read just now; the file can still be downloaded
+            shown["text"] = None
+        shown["text_limit"] = preview.TEXT_BYTES
+        shown["csv_rows"] = preview.CSV_ROWS
+    return shown
+
+
 def crumbs(viewer: Viewer, folder: Folder, *, including: bool = True) -> list[Folder]:
     """The path to `folder`, each marked with whether the viewer may open it: a share lets somebody
     in partway down, and the folders above are then names, not links."""
@@ -305,6 +345,7 @@ def file_page(request: HttpRequest, pk: int) -> HttpResponse:
             "ancestors": crumbs(viewer, file.folder),
             "versions": versions,
             "latest": versions[0],
+            "preview": _preview_context(viewer, file, versions[0]),
             "events": file.events.select_related("actor")[:200],
             "can_change": can_change,
             "file_locked": locked,

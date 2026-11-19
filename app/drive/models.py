@@ -603,3 +603,26 @@ class StandingFolder(models.Model):
     def all_name(self) -> str:
         """`Fællesmøder (alle år)`, `Erfaringsrapporter (alle perioder)`."""
         return f"{self.name} (alle {'år' if self.space == Space.COMMON else 'perioder'})"
+
+
+class ImagePreview(models.Model):
+    """What the browser is shown of an image: a viewer copy of at most 1600 px and the list's
+    thumbnail, both JPEG (an animated GIF's viewer copy stays a GIF), made in the background from the
+    stored bytes (drive/preview.py). Keyed by those bytes, which a copy and a restored version share,
+    and removed with them. A HEIC from an iPhone is shown this way in every browser, not just Safari.
+    """
+
+    class State(models.TextChoices):
+        PENDING = "pending", "Venter"
+        READY = "ready", "Klar"
+        FAILED = "failed", "Kan ikke vises"
+
+    key = models.CharField(max_length=100, unique=True)
+    state = models.CharField(max_length=10, choices=State.choices, default=State.PENDING)
+    viewer_key = models.CharField(max_length=150, blank=True)
+    thumbnail_key = models.CharField(max_length=150, blank=True)
+    attempts = models.PositiveSmallIntegerField(default=0)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self) -> str:
+        return f"{self.key} ({self.state})"
