@@ -14,13 +14,13 @@
   {% endcomment %}
   <form method="get" class="mb-4 flex flex-wrap items-end gap-2">
     <input type="search" name="q" value="{{ q }}" placeholder="Søg navn, e-mail, uddannelse, motivation…"
-           class="flex-1 min-w-[16rem] rounded-md border border-gray-300 px-3 py-2 text-sm">
-    <label class="text-sm text-gray-600">Fra
+           class="flex-1 min-w-[16rem] rounded-md border border-line-strong px-3 py-2 text-sm">
+    <label class="text-sm text-muted">Fra
       <input type="date" name="from" value="{{ date_from }}"
-             class="block rounded-md border border-gray-300 px-2 py-1.5 text-sm"></label>
-    <label class="text-sm text-gray-600">Til
+             class="block rounded-md border border-line-strong px-2 py-1.5 text-sm"></label>
+    <label class="text-sm text-muted">Til
       <input type="date" name="to" value="{{ date_to }}"
-             class="block rounded-md border border-gray-300 px-2 py-1.5 text-sm"></label>
+             class="block rounded-md border border-line-strong px-2 py-1.5 text-sm"></label>
     <input type="hidden" name="sort" value="{{ sort }}">
     <input type="hidden" name="dir" value="{{ dir }}">
     {% if show_discarded %}<input type="hidden" name="show_discarded" value="1">{% endif %}
@@ -48,41 +48,41 @@
     <button type="submit" class="btn" formaction="{% url 'admissions:export' %}" name="format" value="xlsx">Eksportér Excel</button>
   </form>
 
-  <div class="rounded-lg border border-gray-200 overflow-x-auto">
+  <div class="rounded-lg border border-line overflow-x-auto">
     <table class="w-full text-sm border-collapse">
       <thead>
-        <tr class="text-left bg-gray-50 border-b border-gray-200 text-gray-600">
+        <tr class="text-left bg-surface-2 border-b border-line text-muted">
           {% for h in headers %}
             {# padding on the link, not the cell, so the whole header cell is clickable #}
             <th class="p-0 font-semibold whitespace-nowrap">
               <a href="{% querystring sort=h.key dir=h.next_dir page=None %}"
-                 class="block px-3 py-2 hover:underline">{{ h.label }} <span class="text-gray-400">{{ h.arrow }}</span></a>
+                 class="block px-3 py-2 hover:underline">{{ h.label }} <span class="text-faint">{{ h.arrow }}</span></a>
             </th>
           {% endfor %}
         </tr>
       </thead>
       <tbody>
       {% for a in page_obj %}
-        <tr class="border-b border-gray-100 hover:bg-gray-50 {% if a.discarded_by %}opacity-60 line-through{% elif not a.received_by %}bg-amber-50{% endif %}">
-          <td class="px-3 py-2 whitespace-nowrap text-gray-500">{{ a.submitted_at|date:"Y-m-d" }}</td>
+        <tr class="border-b border-line hover:bg-surface-2 {% if a.discarded_by %}opacity-60 line-through{% elif not a.received_by %}bg-warn-bg{% endif %}">
+          <td class="px-3 py-2 whitespace-nowrap text-faint">{{ a.submitted_at|date:"Y-m-d" }}</td>
           <td class="px-3 py-2">
             {% if a.type == "rundvisning" %}
-              <span class="inline-block rounded-full bg-emerald-100 text-emerald-800 text-xs px-2 py-0.5">Rundvisning</span>
+              <span class="chip">Rundvisning</span>
             {% else %}
-              <span class="inline-block rounded-full bg-gray-200 text-gray-700 text-xs px-2 py-0.5">Fremleje</span>
+              <span class="chip chip-neutral">Fremleje</span>
             {% endif %}
           </td>
           <td class="px-3 py-2">
-            <a href="{% url 'admissions:show' a.pk %}" class="text-emerald-700 hover:underline font-medium">{{ a.full_name }}</a>
-            {% if a.discarded_by %}<span class="no-underline inline-block rounded-full bg-red-100 text-red-800 text-xs px-2 py-0.5 ml-1">Kasseret</span>{% endif %}
+            <a href="{% url 'admissions:show' a.pk %}" class="text-gahk-green-700 font-medium underline decoration-gahk-green-700/40 underline-offset-2 hover:decoration-gahk-green-700">{{ a.full_name }}</a>
+            {% if a.discarded_by %}<span class="chip chip-neg no-underline ml-1">Kasseret</span>{% endif %}
           </td>
-          <td class="px-3 py-2 text-gray-700">{{ a.university|default:a.occupation|default:"-" }}</td>
+          <td class="px-3 py-2 text-muted">{{ a.university|default:a.occupation|default:"-" }}</td>
           <td class="px-3 py-2 whitespace-nowrap">
             {% if a.received_by %}
-              <span class="text-gray-800">✓ {{ a.received_by.first_name }} {{ a.received_by.last_name|slice:":1" }}.</span>
-              {% if a.received_at %}<span class="text-gray-400 text-xs">· {{ a.received_at|date:"Y-m-d" }}</span>{% endif %}
+              <span class="text-ink">✓ {{ a.received_by.first_name }} {{ a.received_by.last_name|slice:":1" }}.</span>
+              {% if a.received_at %}<span class="text-faint text-xs">· {{ a.received_at|date:"Y-m-d" }}</span>{% endif %}
             {% else %}
-              <span class="inline-block rounded-full bg-amber-200 text-amber-900 text-xs px-2 py-0.5">Afventer</span>
+              <span class="chip chip-brass">Afventer</span>
             {% endif %}
           </td>
         </tr>

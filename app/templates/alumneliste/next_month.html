@@ -17,7 +17,7 @@
   </form>
 
   {% if editing_current %}
-    <p class="card chip-neg" style="border-color:#e7c7c3">
+    <p class="card chip-neg" style="border-color:var(--neg-line)">
       <strong>Du redigerer den liste, der gælder lige nu.</strong> Ændringer træder i kraft med det
       samme — også adgang: fjerner du en beboers privilegerede embedsgruppe, mister vedkommende
       adgangen til gruppens sider øjeblikkeligt.
@@ -49,11 +49,11 @@
         <input type="hidden" name="action" value="save">
       <div class="card overflow-x-auto">
         <table cellpadding="6" style="width:100%; border-collapse:collapse">
-          <thead><tr style="text-align:left; border-bottom:1px solid #e6e8ec">
+          <thead><tr style="text-align:left; border-bottom:1px solid var(--border-strong)">
             <th>Navn</th><th>Værelse</th><th>Embedsgruppe</th><th>Rengøring</th><th>Fjern</th></tr></thead>
           <tbody>
           {% for r in next_rows %}
-            <tr style="border-bottom:1px solid #f0f1f4">
+            <tr style="border-bottom:1px solid var(--border)">
               <td>{{ r.resident.full_name }}</td>
               <td>
                 <select name="room_{{ r.resident_id }}">

@@ -61,12 +61,12 @@
     {% if adjustments %}
       <h2>Manuelle justeringer</h2>
       <table cellpadding="6" class="text-sm" style="width:100%; border-collapse:collapse">
-        <thead><tr style="text-align:left; border-bottom:1px solid #e6e8ec">
+        <thead><tr style="text-align:left; border-bottom:1px solid var(--border-strong)">
           <th>Dato</th><th>Begrundelse</th><th style="text-align:right">Beløb</th><th></th>
         </tr></thead>
         <tbody>
         {% for a in adjustments %}
-          <tr style="border-bottom:1px solid #f0f1f4"{% if not a.is_valid %} class="muted line-through"{% endif %}>
+          <tr style="border-bottom:1px solid var(--border)"{% if not a.is_valid %} class="muted line-through"{% endif %}>
             <td class="whitespace-nowrap">{{ a.created_at|date:"Y-m-d H:i" }}</td>
             <td>{{ a.reason }}</td>
             <td class="text-right whitespace-nowrap {{ a.amount_ore|sign_class }}">{{ a.amount_ore|kr }}</td>
@@ -87,12 +87,12 @@
 
     <h2>Kontoudtog</h2>
     <table cellpadding="6" class="text-sm" style="width:100%; border-collapse:collapse">
-      <thead><tr style="text-align:left; border-bottom:1px solid #e6e8ec">
+      <thead><tr style="text-align:left; border-bottom:1px solid var(--border-strong)">
         <th>Dato</th><th>Tekst</th><th style="text-align:right">Beløb</th>
       </tr></thead>
       <tbody>
       {% for e in entries %}
-        <tr style="border-bottom:1px solid #f0f1f4">
+        <tr style="border-bottom:1px solid var(--border)">
           <td class="whitespace-nowrap">{{ e.created_at|date:"Y-m-d H:i" }}</td>
           <td>{{ e.text }}</td>
           <td class="text-right whitespace-nowrap {{ e.amount_ore|sign_class }}">{{ e.amount_ore|kr }}</td>
