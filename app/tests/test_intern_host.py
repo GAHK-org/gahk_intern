@@ -1,7 +1,7 @@
 """The intranet at the root of intern.gahk.dk, where it lived at gahk.dk/intern/ before.
 
-What has to keep working across the move: the session (host-only now, under new cookie names, with
-the old ".gahk.dk" pair deleted), and stored data that spelled the old address. The old /intern/ and
+What has to keep working across the move: the session (host-only now, under new cookie names, so an
+old ".gahk.dk" one is never read), and stored data that spelled the old address. The old /intern/ and
 /nyintern/ prefixes mean nothing here: gahk.dk forwards its own old /intern/<rest> links straight to
 /<rest> on this host, so a prefixed path is a 404 like any unknown one.
 """
@@ -74,71 +74,36 @@ def test_logging_in_sets_the_renamed_host_only_cookies(make_resident: Callable[.
     response = c.post(reverse("login"), {"username": "beboer@gahk.dk", "password": "hemmelig"})
 
     assert response.status_code == 302
-    session = response.cookies["intern_sessionid"]
+    session = response.cookies[settings.SESSION_COOKIE_NAME]
     assert session.value and not session["domain"]
-    assert "intern_csrftoken" in c.cookies and not c.cookies["intern_csrftoken"]["domain"]
+    csrf = settings.CSRF_COOKIE_NAME
+    assert csrf in c.cookies and not c.cookies[csrf]["domain"]
     assert "sessionid" not in response.cookies and "csrftoken" not in response.cookies
-
-
-def _deletions(response: object, name: str) -> dict[str, dict[str, str]]:
-    """The Set-Cookie deletions for `name`, keyed by Domain ("" = host-only)."""
-    morsels = response.cookies.values()  # type: ignore[attr-defined]
-    return {m["domain"]: dict(m) for m in morsels if m.key == name and m["max-age"] == 0}
-
-
-def test_the_old_cookies_are_deleted_from_both_domains() -> None:
-    c = Client()
-    c.cookies["sessionid"] = "from-gahk.dk"
-    c.cookies["csrftoken"] = "from-gahk.dk"
-    response = c.get(reverse("login"))
-
-    assert response.status_code == 200
-    for name in ("sessionid", "csrftoken"):
-        deletions = _deletions(response, name)
-        assert set(deletions) == {".gahk.dk", ""}, name
-        assert all(
-            d["path"] == "/" and d["expires"].startswith("Thu, 01 Jan 1970") for d in deletions.values()
-        )
-    # Each deletion is a header of its own, under the cookie's real name.
-    headers = [m.output(header="Set-Cookie:") for m in response.cookies.values()]
-    assert any(h.startswith("Set-Cookie: sessionid=") and "Domain=.gahk.dk" in h for h in headers)
-
-
-def test_a_redirect_deletes_the_old_cookies_too() -> None:
-    """The first request after the move is often gahk.dk's forwarded link, which lands on a page that
-    asks for a login first."""
-    c = Client()
-    c.cookies["sessionid"] = "from-gahk.dk"
-    response = c.get("/den-hurtige/")
-    assert response.status_code == 302
-    assert set(_deletions(response, "sessionid")) == {".gahk.dk", ""}
-
-
-def test_a_request_without_the_old_cookies_deletes_nothing() -> None:
-    response = Client().get(reverse("login"))
-    assert not _deletions(response, "sessionid") and not _deletions(response, "csrftoken")
 
 
 def test_an_old_session_cookie_does_not_log_anyone_in(make_resident: Callable[..., Resident]) -> None:
     """The old cookie's value is a real session key on this database. Under the new name nothing
-    reads it, so it is the login page, not the dashboard — and the cookie is deleted."""
+    reads it, so it is the login page, not the dashboard."""
     logged_in = Client()
     logged_in.force_login(make_resident(email="beboer@gahk.dk"))
-    key = logged_in.cookies["intern_sessionid"].value
+    key = logged_in.cookies[settings.SESSION_COOKIE_NAME].value
 
     c = Client()
     c.cookies["sessionid"] = key
     response = c.get(reverse("dashboard"))
     assert response.status_code == 302 and response["Location"].startswith(reverse("login"))
-    assert set(_deletions(response, "sessionid")) == {".gahk.dk", ""}
 
 
 def test_the_frontend_reads_the_renamed_csrf_cookie() -> None:
     """fetch() and htmx send the token from the cookie (frontend/src/htmx-csrf.ts). Reading the old
     name would pick up nothing — or a stale ".gahk.dk" token — and every POST would fail CSRF."""
     source = (Path(settings.BASE_DIR).parent / "frontend" / "src" / "htmx-csrf.ts").read_text()
-    match = re.search(r'const CSRF_COOKIE = "([^"]+)"', source)
-    assert match and match.group(1) == settings.CSRF_COOKIE_NAME
+    match = re.search(r"const CSRF_COOKIES = \[([^\]]+)\]", source)
+    assert match
+    names = re.findall(r'"([^"]+)"', match.group(1))
+    # Production's name first: the __Host- one cannot be planted from gahk.dk, the bare one can.
+    assert names == ["__Host-intern_csrftoken", "intern_csrftoken"]
+    assert settings.CSRF_COOKIE_NAME in names
 
 
 # --- stored data ---------------------------------------------------------------------------------

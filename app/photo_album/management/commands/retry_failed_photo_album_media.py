@@ -4,7 +4,7 @@ from django.core.exceptions import ValidationError
 from django.core.management.base import BaseCommand, CommandError, CommandParser
 
 from photo_album.models import DerivativeState, Media, normalize_name, validate_folder
-from photo_album.tasks import queue_derivatives
+from photo_album.tasks import retry_derivatives
 
 
 class Command(BaseCommand):
@@ -31,15 +31,8 @@ class Command(BaseCommand):
         if options["dry_run"]:
             self.stdout.write(f"{len(items)} failed media item(s); nothing changed (--dry-run).")
             return
-        for media in items:
-            Media.objects.filter(pk=media.pk, derivative_state=DerivativeState.FAILED).update(
-                derivative_state=DerivativeState.PENDING,
-                derivative_attempts=0,
-                derivative_started_at=None,
-                derivative_task_id="",
-            )
-            queue_derivatives(media)
+        queued = retry_derivatives(Media.objects.filter(pk__in=[media.pk for media in items]))
         self.stdout.write(
-            f"Queued {len(items)} media item(s) again, each with three fresh attempts. "
+            f"Queued {queued} media item(s) again, each with three fresh attempts. "
             "Follow them on /admin/worker-jobs."
         )

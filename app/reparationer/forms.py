@@ -98,7 +98,5 @@ class RepairCommentForm(forms.ModelForm):
         }
 
     def clean_body(self) -> str:
-        body = (self.cleaned_data.get("body") or "").strip()
-        if not body:
-            raise forms.ValidationError("Skriv en note.")
-        return body
+        # Blank is allowed: photos alone are a note. views.create_comment refuses one with neither.
+        return (self.cleaned_data.get("body") or "").strip()

@@ -1,0 +1,23 @@
+{% load static %}<!doctype html>
+{% comment %}
+  The preview when gahk.dk cannot render it: the text alone, in the intranet's styling, saying why.
+  Shown in the editor's sandboxed preview frame (no scripts), or on its own without JavaScript.
+{% endcomment %}
+<html lang="da">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Forhåndsvisning: {{ title }}</title>
+  <link rel="stylesheet" href="{% static 'dist/app.css' %}">
+</head>
+<body class="cms-preview-local">
+  <p class="cms-note cms-note-warn">
+    {% if disabled %}intern er ikke forbundet til gahk.dk, så her er kun en enkel forhåndsvisning af teksten.
+    {% else %}gahk.dk kunne ikke nås lige nu, så her er kun en enkel forhåndsvisning af teksten. Menu, baggrund og layout ser anderledes ud på gahk.dk.{% endif %}
+  </p>
+  <article class="card prose-gahk">
+    <h1>{{ title|default:"(uden titel)" }}</h1>
+    {{ body|safe }}
+  </article>
+</body>
+</html>

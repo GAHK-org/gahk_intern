@@ -39,6 +39,7 @@ from .models import (
 from .progress import JobProgress
 from .services import (
     MAX_DERIVATIVE_ATTEMPTS,
+    NotEnoughDiskSpace,
     Progress,
     backfill_hashes,
     backfill_sizes,
@@ -154,9 +155,12 @@ def _stalled(
 
 def _unclaimed(queryset: "QuerySet[Media]") -> "QuerySet[Media]":
     """Rows no worker currently holds — never claimed, or claimed by one that never came back."""
-    return queryset.filter(
-        Q(derivative_started_at__isnull=True)
-        | Q(derivative_started_at__lt=timezone.now() - DERIVATIVE_CLAIM_TTL)
+    return queryset.filter(_unclaimed_q())
+
+
+def _unclaimed_q() -> Q:
+    return Q(derivative_started_at__isnull=True) | Q(
+        derivative_started_at__lt=timezone.now() - DERIVATIVE_CLAIM_TTL
     )
 
 
@@ -201,7 +205,16 @@ def build_media_derivatives(self: Task, media_id: int) -> bool:
     except Media.DoesNotExist:
         return False
     logger.info("Converting %s, in %s.", media.display_name_and_size, media.album)
-    if build_derivatives(media):
+    try:
+        built = build_derivatives(media)
+    except NotEnoughDiskSpace as exc:
+        # Released, so the next pass can take it at once rather than after DERIVATIVE_CLAIM_TTL.
+        # Raised, so the jobs page shows why it is still waiting.
+        Media.objects.filter(pk=media_id, derivative_task_id=task_id).update(derivative_started_at=None)
+        raise DerivativesNotBuilt(
+            f"{exc} Not counted as an attempt; tried again by the nightly process_pending_media."
+        ) from exc
+    if built:
         return True
     if media.derivative_state == DerivativeState.FAILED:
         raise DerivativesNotBuilt(
@@ -228,6 +241,8 @@ def reencode_enlarged_video(media_id: int) -> str:
         raise DerivativesNotBuilt(
             f"{media.display_name_and_size} could not be re-encoded ({ffmpeg_failure(exc)}); its old copy is kept."
         ) from exc
+    except NotEnoughDiskSpace as exc:
+        raise DerivativesNotBuilt(f"{exc} Its old copy is kept; queue it again when there is room.") from exc
     logger.info("%s", outcome)
     return outcome
 
@@ -261,6 +276,40 @@ def process_pending_media(limit: int = 10) -> int:
         queue_derivatives(media)
         dispatched += 1
     return dispatched
+
+
+def retryable_derivatives(queryset: "QuerySet[Media]") -> "QuerySet[Media]":
+    """The items in `queryset` that can be tried again now rather than waiting for the night.
+
+    Every FAILED item, and every PENDING one that a job has had (it has a task id) and that no
+    worker holds now: one that failed a try and waits for the nightly pass. A PENDING item no job
+    has had yet is still in the queue on its own, and one a worker holds is being converted.
+    """
+    return queryset.filter(
+        Q(derivative_state=DerivativeState.FAILED)
+        | (Q(derivative_state=DerivativeState.PENDING) & ~Q(derivative_task_id="") & _unclaimed_q())
+    )
+
+
+def retry_derivatives(queryset: "QuerySet[Media]") -> int:
+    """Give the retryable items in `queryset` three fresh attempts and queue them now. Returns how
+    many were queued.
+
+    Each row is reset by a conditional UPDATE, so one a worker claimed in the meantime is left to
+    that worker. The reset clears the task id, which takes a queued item out of the retryable ones
+    until a worker has had it: a second press, or a second administrator, queues it no second time.
+    """
+    queued = 0
+    for media in list(retryable_derivatives(queryset)):
+        if retryable_derivatives(Media.objects.filter(pk=media.pk)).update(
+            derivative_state=DerivativeState.PENDING,
+            derivative_attempts=0,
+            derivative_started_at=None,
+            derivative_task_id="",
+        ):
+            queue_derivatives(media)
+            queued += 1
+    return queued
 
 
 # How long one night's hash backfill may read originals for. Old rows are hashed in portions, so
