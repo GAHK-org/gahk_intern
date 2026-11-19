@@ -1,9 +1,12 @@
-{% comment %} The path to a folder or file: Drive / … / current. {% endcomment %}
+{% comment %}
+  The path to a folder or file: Drive / … / current. A folder the reader may not open - above
+  something shared with them - is its name, not a link (views.crumbs).
+{% endcomment %}
 <nav class="drive-crumbs mb-4" aria-label="Sti">
   <a href="{% url 'drive:home' %}">Drive</a>
   {% for crumb in ancestors %}
     <span aria-hidden="true">/</span>
-    <a href="{% url 'drive:folder' crumb.pk %}">{{ crumb.name }}</a>
+    {% if crumb.can_open == False %}<span>{{ crumb.name }}</span>{% else %}<a href="{% url 'drive:folder' crumb.pk %}">{{ crumb.name }}</a>{% endif %}
   {% endfor %}
   {% if current %}
     <span aria-hidden="true">/</span>

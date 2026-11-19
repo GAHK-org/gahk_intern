@@ -36,6 +36,7 @@
           <p><strong>Det ændrer, hvem der kan se det.</strong></p>
           <p>Nu: {{ access_before }}</p>
           <p>I {{ at.name }}: {{ access_after }}</p>
+          {% if shares_ending %}<p>Det, der er delt, holder op med at være delt ({{ shares_ending }} deling{{ shares_ending|pluralize:"er" }}).</p>{% endif %}
         </div>
         <input type="hidden" name="confirm" value="1">
       {% endif %}

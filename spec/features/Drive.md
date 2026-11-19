@@ -81,6 +81,9 @@ Drive
 - A share with a group appears in `Delt med <group>` inside the recipient group's matching folder: the item's own period, or `Uden periode` for an item from `Uden periode`. That folder's rules decide who in the recipient group can see it.
 - A share is never more open than the item: editing needs an edit share and write access to the recipient's folder, and a share becomes read-only once the item's own period is read-only or the item is locked.
 - Fælles and Delte mapper cannot be shared.
+- An edit share on a file lets the recipient add versions. Renaming, moving and deleting it stay with those who can write in its folder. An edit share on a folder lets the recipient work inside it, but not rename, move or delete the folder itself.
+- Sharing is for those who can write there by the access rules, so a recipient cannot share further.
+- Where a share lets somebody in partway down, the folders above are shown as names, not links.
 
 ## Standing folders
 

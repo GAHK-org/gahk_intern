@@ -1,0 +1,48 @@
+{% comment %}
+  Who an item is shared with - for everyone who can read it - and, for who can write where it is,
+  the form to share it and the buttons to stop a share (drive/sharing.py).
+{% endcomment %}
+{% if shares or can_share %}
+  <div class="drive-share mb-6">
+    <h2 class="drive-h2">Delt med</h2>
+    {% if shares %}
+      <ul class="drive-history mb-4">
+        {% for row in shares %}
+          <li>
+            <span>{{ row.recipient }}{% if row.workgroup_id %} (gruppe){% endif %}</span>
+            <span class="muted">{% if row.can_edit %}kan redigere{% else %}kan læse{% endif %}</span>
+            {% if can_share %}
+              <form method="post" action="{% url 'drive:stop_share' row.pk %}" class="drive-inline-form">
+                {% csrf_token %}
+                <button type="submit" class="btn-link-danger">Stop deling</button>
+              </form>
+            {% endif %}
+          </li>
+        {% endfor %}
+      </ul>
+    {% else %}
+      <p class="muted mb-4">Ikke delt med nogen.</p>
+    {% endif %}
+    {% if can_share %}
+      <form method="post" action="{{ share_action }}" class="drive-inline-form">
+        {% csrf_token %}
+        <label class="sr-only" for="share-recipient">Del med</label>
+        <select id="share-recipient" name="recipient" required>
+          <option value="">Del med…</option>
+          <optgroup label="Embedsgrupper">
+            {% for group in share_groups %}<option value="group:{{ group.pk }}">{{ group.name }}</option>{% endfor %}
+          </optgroup>
+          <optgroup label="Beboere">
+            {% for resident in share_residents %}{% if resident.pk != request.user.pk %}<option value="resident:{{ resident.pk }}">{{ resident.full_name }}</option>{% endif %}{% endfor %}
+          </optgroup>
+        </select>
+        <label class="sr-only" for="share-access">Adgang</label>
+        <select id="share-access" name="access">
+          <option value="read">kan læse</option>
+          <option value="edit">kan redigere</option>
+        </select>
+        <button type="submit" class="btn btn-secondary">Del</button>
+      </form>
+    {% endif %}
+  </div>
+{% endif %}

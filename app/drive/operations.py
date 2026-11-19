@@ -28,7 +28,7 @@ from django.utils import timezone
 
 from residents.models import Resident
 
-from . import history, services
+from . import history, services, sharing
 from .access import Level, Viewer
 from .models import BIN_DAYS, ApprovalRequest, Event, File, FileVersion, Folder, SharedFolder, Space, name_key
 from .periods import Period
@@ -152,6 +152,14 @@ def access_note(folder: Folder) -> str:
     return f"Medlemmer af {group} i {period} kan se det. Admins og Inspektionen kan se det, når perioden er slut."
 
 
+def ends_shares(selection: Selection, destination: Folder) -> int:
+    """How many shares a move ends: those of items leaving their group's space."""
+    source = selection.source
+    if (source.space, source.workgroup_id) == (destination.space, destination.workgroup_id):
+        return 0
+    return sharing.shares_of(selection.files, selection.folders)
+
+
 def changes_access(selection: Selection, destination: Folder) -> bool:
     source = selection.source
     return (source.space, source.workgroup_id, source.period_start, source.shared_id) != (
@@ -196,6 +204,8 @@ def move(viewer: Viewer, selection: Selection, destination: Folder, actor: Resid
     check_move(viewer, selection, destination)
     origin = selection.source.display_path()
     to = destination.display_path()
+    if ends_shares(selection, destination):
+        sharing.end(selection.files, selection.folders)
     for folder in selection.folders:
         old_path = folder.path
         Folder.objects.filter(pk=folder.pk).update(parent=destination)

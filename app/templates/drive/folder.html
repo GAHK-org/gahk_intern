@@ -69,6 +69,7 @@
       </div>
     {% endif %}
   {% else %}
+    <p class="drive-links mb-4"><a href="{% url 'drive:shared_with_me' %}">Delt med mig</a></p>
     {% if decides %}
       <p class="drive-links mb-4"><a href="{% url 'drive:requests' %}">Anmodninger{% if pending_requests %} ({{ pending_requests }} venter){% endif %}</a></p>
     {% endif %}
@@ -90,7 +91,12 @@
     </div>
   {% endif %}
 
-  {% if not rows and not files %}
+  {% if folder and folder.kind == "folder" %}
+    {% url 'drive:share_folder' folder.pk as share_action %}
+    {% include "drive/_share_panel.html" with share_action=share_action %}
+  {% endif %}
+
+  {% if not rows and not files and not group_shared %}
     <p class="muted">{% if folder %}Mappen er tom.{% else %}Der er ingen mapper, du har adgang til.{% endif %}</p>
   {% endif %}
 
@@ -108,8 +114,18 @@
     </div>
   {% endif %}
 
-  {% if rows %}
+  {% if rows or group_shared %}
     <ul class="drive-list mb-4">
+      {% if group_shared %}
+        {% comment %} What other groups shared with this group from this period (drive/sharing.py). {% endcomment %}
+        <li>
+          {% if can_select %}<span class="drive-tick" aria-hidden="true"></span>{% endif %}
+          <a href="{% url 'drive:shared_with_group' folder.pk %}">
+            <svg class="ni" aria-hidden="true"><use href="#i-share"></use></svg>
+            <span class="drive-name">Delt med {{ folder.workgroup.name }}</span>
+          </a>
+        </li>
+      {% endif %}
       {% for row in rows %}
         <li{% if row.is_current %} class="drive-current"{% endif %}>
           {% if can_select %}
@@ -123,6 +139,7 @@
             <a href="{% url 'drive:folder' row.folder.pk %}">
               <svg class="ni" aria-hidden="true"><use href="#i-{% if row.folder.kind == 'shared' %}users{% else %}folder{% endif %}"></use></svg>
               <span class="drive-name">{{ row.name }}</span>
+              {% if row.is_shared %}<svg class="ni drive-locked" role="img" aria-label="Delt"><use href="#i-share"></use></svg>{% endif %}
               {% if row.folder.lock_active %}<svg class="ni drive-locked" role="img" aria-label="Låst"><use href="#i-lock"></use></svg>{% endif %}
             </a>
           {% else %}
@@ -154,6 +171,7 @@
           <a href="{% url 'drive:file' file.pk %}">
             <svg class="ni" aria-hidden="true"><use href="#i-file"></use></svg>
             <span class="drive-name">{{ file.name }}</span>
+            {% if file.is_shared %}<svg class="ni drive-locked" role="img" aria-label="Delt"><use href="#i-share"></use></svg>{% endif %}
             {% if file.lock_active %}<svg class="ni drive-locked" role="img" aria-label="Låst"><use href="#i-lock"></use></svg>{% endif %}
           </a>
           <span class="muted drive-meta">
