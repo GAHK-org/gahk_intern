@@ -66,6 +66,16 @@ def test_the_install_page_needs_no_login() -> None:
     assert "Søg beboer" not in html
 
 
+def test_the_install_page_has_a_way_out_of_the_old_app() -> None:
+    """Inside the old app the page looks like an installed app: install.ts shows this card instead of
+    "Du bruger allerede appen" when the old app's button opened it (?from=old-app)."""
+    html = Client().get(INSTALL_URL + "?from=old-app").content.decode()
+    card = html.split("data-install-old-app hidden>")[1].split("</div>\n    </div>")[0]
+    assert "Du er stadig i den gamle app" in card
+    assert 'href="x-safari-https://intern.gahk.dk/install" data-install-open-safari' in card
+    assert "Åbn i Chrome" in card
+
+
 def test_the_install_page_links_the_manifest() -> None:
     """Browsers install the app described by the manifest of the page you are on."""
     html = Client().get(INSTALL_URL).content.decode()
