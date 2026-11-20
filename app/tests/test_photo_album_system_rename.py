@@ -1,6 +1,7 @@
 """The import script renaming an album it imported (photo_album.views.system_rename_album)."""
 
 from collections.abc import Callable
+from datetime import timedelta
 
 import pytest
 from django.core.exceptions import ValidationError
@@ -17,16 +18,21 @@ URL = reverse("photo_album:system_rename_album")
 SYSTEM = "system@gahk.dk"
 
 
-def _imported(make_resident: Callable[..., Resident], *albums: Album) -> Resident:
-    """The import script's resident, with an import that made `albums`."""
+def _imported(make_resident: Callable[..., Resident], *albums: Album, made: bool = True) -> Resident:
+    """The import script's resident, with an import that made `albums` (they were created while it
+    ran), or with `made=False` only added to them."""
     script = Resident.objects.filter(email=SYSTEM).first() or make_resident(email=SYSTEM)
-    AlbumImport.objects.create(
+    album_import = AlbumImport.objects.create(
         requested_by=script,
         folder="2014",
         archive_name="GAHK Color Run.zip",
         state=AlbumImportState.READY,
         album_ids=[album.pk for album in albums],
+        completed_at=timezone.now(),
     )
+    if made:
+        began = min(album.created_at for album in albums) - timedelta(minutes=1)
+        AlbumImport.objects.filter(pk=album_import.pk).update(created_at=began)
     return script
 
 
@@ -116,3 +122,16 @@ def test_only_the_script_may_rename_a_locked_album_it_imported(
 
     album.refresh_from_db()
     assert album.name == "GAHK Color Run"
+
+
+@pytest.mark.django_db
+@override_settings(PHOTO_ALBUM_SYSTEM_IMPORT_EMAIL=SYSTEM)
+def test_the_script_may_not_rename_a_locked_album_it_only_added_to(
+    make_resident: Callable[..., Resident],
+) -> None:
+    """An album made on the site stays the site's, even once an import of the script added to it."""
+    album = Album.objects.create(folder="2014", name="Sommerfest", manually_locked_at=timezone.now())
+    script = _imported(make_resident, album, made=False)
+
+    with pytest.raises(ValidationError, match="låst"):
+        rename_album(album, "GAHK Sommerfest", by=script)

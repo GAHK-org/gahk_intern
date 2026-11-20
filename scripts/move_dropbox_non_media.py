@@ -33,7 +33,8 @@ It writes nothing else, and needs none of the import's files: it runs on any mac
 Dropbox credentials. The import's list of what is not on the server (not-on-server.json) is brought
 up to date by its next run, which strikes off what it finds moved to /til_intern_drev.
 
-Setup: the DROPBOX_* variables of import_dropbox_photo_albums.py, whose Dropbox access this uses.
+Setup: the DROPBOX_* variables of import_dropbox_photo_albums.py, whose Dropbox access this uses —
+the sign-in saved by either script serves both.
 
 Usage:
     uv run scripts/move_dropbox_non_media.py                 # list what would move
@@ -315,9 +316,9 @@ def main() -> int:
     args.log.parent.mkdir(parents=True, exist_ok=True)
     archive.out.open_log(args.log, args.log)
 
-    client = archive.dropbox_client()
     archive.out.heading(f"Listing {start} …")
     try:
+        client = archive.dropbox_client()
         files = list_files(client, source_root, start)
     except (archive.AlbumFailed, archive.Fatal) as exc:
         archive.out.error(f"✗ {exc}")
@@ -344,7 +345,8 @@ def main() -> int:
     for move in moves:
         try:
             why_not = move_file(client, move)
-        # A rejected token: nothing after it would move either.
+            already = why_not == GONE and is_at(client, move.target)
+        # A rejected token, or Dropbox not answering: nothing after it would move either.
         except archive.Fatal as exc:
             archive.out.error(f"✗ {exc}")
             failed = len(moves) - moved
@@ -352,7 +354,7 @@ def main() -> int:
         if why_not is None:
             archive.out.info(f"  moved {move.source} → {move.target}")
             moved += 1
-        elif why_not == GONE and is_at(client, move.target):
+        elif already:
             archive.out.info(f"  moved already: {move.source} → {move.target}")
             moved += 1
         else:

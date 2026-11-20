@@ -1,0 +1,8 @@
+{% comment %}
+  One resident's e-conomic kontonr. and the pencil (as on the alumneliste) to the page where regnskab
+  changes it (regnskab:edit_economic_account_number) — never edited inline, so a stray click changes nothing.
+{% endcomment %}
+    <td class="whitespace-nowrap">
+      {{ resident.economic_account_number|default:"–" }}
+      <a href="{% url 'regnskab:edit_economic_account_number' resident.pk %}?next={{ request.get_full_path|urlencode }}" title="Rediger e-conomic kontonr." class="no-underline">✎</a>
+    </td>

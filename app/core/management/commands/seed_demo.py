@@ -22,7 +22,8 @@ Deterministic logins (all password `demo1234`):
 import argparse
 import random
 import unicodedata
-from datetime import timedelta
+from collections import Counter
+from datetime import date, timedelta
 from io import BytesIO
 
 from django.conf import settings
@@ -36,11 +37,11 @@ from ak.models import AkEntry, AkMonthlyCharge
 from ak.services import apply_monthly_charge
 from arkiv.demo import seed as seed_arkiv
 from arkiv.models import ArchiveFile, ArchiveFolder
+from cms.models import ContentChange, NewsItem, Page, PageVersion, PylonEvent
 
 # CmsEvent, never Event: the internal events app has one of the same name, and both are seeded
 # here. See events.models on the three-way collision.
 from cms.models import Event as CmsEvent
-from cms.models import NewsItem, Page, PylonEvent
 from core.models import Cleaning, Room, Workgroup
 from den_hurtige.demo import seed as seed_den_hurtige
 from den_hurtige.models import QuickComment, QuickCommentReaction, QuickPost, QuickReaction
@@ -62,6 +63,7 @@ from oelkaelder.models import (
     TransactionItem,
 )
 from opslagstavle.demo import seed as seed_opslagstavle
+from opslagstavle.demo import seed_embeds as seed_opslagstavle_embeds
 from opslagstavle.models import Notice, NoticeComment, NoticeReaction
 from photo_album.demo import seed as seed_photo_album
 from photo_album.models import Album, Media
@@ -81,7 +83,7 @@ from rooms.models import (
     RoomCriterion,
     RoomOffer,
 )
-from stats.models import DailyVisitCount, VisitTally
+from stats.models import DailyVisitCount, PageViewDay
 
 from .seed_rooms import build_rooms
 
@@ -146,12 +148,14 @@ WIPE_ORDER: list[type[models.Model]] = [
     Application,
     RoleAssignment,
     Residency,
+    ContentChange,
+    PageVersion,
     Page,
     NewsItem,
     CmsEvent,
     PylonEvent,
     DailyVisitCount,
-    VisitTally,
+    PageViewDay,
     QuickReaction,
     QuickCommentReaction,
     QuickComment,
@@ -220,7 +224,9 @@ class Command(BaseCommand):
             rooms = self._seed_rooms()
             workgroups, cleanings = self._seed_lookups(opts["residents"])
             residents = self._seed_residents(opts["residents"])
-            self._seed_residencies(residents, rooms, workgroups, cleanings)
+            # Returns the list plus the newcomer who took over the leaver's room, so the new resident
+            # takes part in the seeding below like everyone else (roles, AK, ølkælder, posts, ...).
+            residents = self._seed_residencies(residents, rooms, workgroups, cleanings)
             self._seed_roles(residents)
             self._seed_profile_pictures(residents)
             self._seed_ak(residents)
@@ -235,6 +241,8 @@ class Command(BaseCommand):
             seed_arkiv(residents, self.now, self.rng)
             seed_photo_album(residents, self.now, self.rng)
             seed_gahkflix(residents, self.now, self.rng)
+            # After both: these posts embed an album and a film seeded just above.
+            seed_opslagstavle_embeds(residents, self.now)
             seed_den_hurtige(residents, self.now, self.rng)
             # Last: its rows link to the events, opslag and Den Hurtige posts seeded above.
             seed_notifications(residents, self.now, self.rng)
@@ -310,6 +318,14 @@ class Command(BaseCommand):
             seen_emails.add(email)
             residents.append(self._make_resident(email, first, last))
 
+        # An e-conomic kontonr. for every alumne, numbered from 4201 like GAHK's real alumne accounts,
+        # except two of them, so the regnskab page's "Mangler e-conomic kontonr." list has someone on
+        # it to try setting one for.
+        without_number = residents[-3:-1] if len(residents) > len(fixtures) + 2 else []
+        for i, r in enumerate(residents):
+            r.economic_account_number = None if r in without_number else 4201 + i
+        Resident.objects.bulk_update(residents, ["economic_account_number"])
+
         # Lineage: give most residents a sponsor (fylgje) picked from someone created earlier.
         for i, r in enumerate(residents):
             if i > 4 and self.rng.random() < 0.8:
@@ -361,7 +377,8 @@ class Command(BaseCommand):
         rooms: list[Room],
         workgroups: list[Workgroup],
         cleanings: list[Cleaning],
-    ) -> None:
+    ) -> list[Resident]:
+        """Fill the three recent months, leaving one leaver plus the newcomer who replaces them."""
         fixed_groups = {
             "ak@gahk.dk": "AK-gruppen",
             "oel@gahk.dk": "Ølkælderen",
@@ -405,9 +422,70 @@ class Command(BaseCommand):
                     },
                 )
 
-        # Sletter den sidst tilføjede beboer i nuværende måned, så næste måned præcis mangler 1 fordeling
         if residents:
-            Residency.objects.filter(resident=residents[-1], year=self.year, month=self.month).delete()
+            leaver = residents[-1]
+            Residency.objects.filter(resident=leaver, year=self.year, month=self.month).delete()
+            leaver.move_out_date = date(self.year, self.month, 1)  # moved out on the 1st of this month
+            leaver.save(update_fields=["move_out_date"])
+            self._seed_successor(residents, rooms, workgroups, cleanings, len(residents))
+        return residents
+
+    def _seed_successor(
+        self,
+        residents: list[Resident],
+        rooms: list[Room],
+        workgroups: list[Workgroup],
+        cleanings: list[Cleaning],
+        account_number: int,
+    ) -> Resident:
+        """Add a new resident this month and put them in the free room and the short embedsgruppe.
+
+        The leaver's old room is not reused: every month gets its own random room assignment, so the
+        room the leaver had last month is usually someone else's now. What has to hold is the month
+        being seeded — one resident per room, and every fixed-size embedsgruppe exactly full — which is
+        what the indstilling "Erstatter" flow does when a resident leaves and another arrives.
+        """
+        taken_emails = set(Resident.objects.values_list("email", flat=True))
+        first, last = self.fake.first_name(), self.fake.last_name()
+        base = f"{_ascii_slug(first)}.{_ascii_slug(last)}"
+        email = f"{base}@gahk.dk"
+        n = 1
+        while email in taken_emails:  # same suffixing rule as _seed_residents
+            n += 1
+            email = f"{base}{n}@gahk.dk"
+
+        newcomer = Resident(
+            email=email,
+            first_name=first,
+            last_name=last,
+            phone=self.fake.phone_number(),
+            birthday=self.fake.date_between(start_date="-30y", end_date="-19y"),
+            move_in_date=date(self.year, self.month, 1),  # arrived the day the leaver left
+            study=self.rng.choice([r.study for r in residents if r.study] or [""]),
+            economic_account_number=4201 + account_number,
+        )
+        newcomer.set_password(DEMO_PASSWORD)
+        newcomer.save()
+
+        this_month = Residency.objects.filter(year=self.year, month=self.month)
+        occupied = set(this_month.values_list("room_id", flat=True))
+        free_rooms = [r for r in rooms if r.id not in occupied]
+        if not free_rooms:  # every room already taken, so there is nowhere to put anyone
+            return newcomer
+        counts = Counter(this_month.values_list("workgroup_id", flat=True))
+        short = [w for w in workgroups if w.size > 0 and counts.get(w.id, 0) < w.size]
+        workgroup = self.rng.choice(short) if short else self.rng.choice(workgroups)
+        Residency.objects.update_or_create(
+            resident=newcomer,
+            year=self.year,
+            month=self.month,
+            defaults={
+                "room": self.rng.choice(free_rooms),
+                "workgroup": workgroup,
+                "cleaning": self.rng.choice(cleanings),
+            },
+        )
+        return newcomer
 
     # --------------------------------------------------------------- roles
     def _seed_roles(self, residents: list[Resident]) -> None:
@@ -572,33 +650,37 @@ class Command(BaseCommand):
 
     # ------------------------------------------------------------------ cms
     def _seed_cms(self) -> None:
-        Page.objects.create(
-            slug="om-kollegiet",
-            header="Om Kollegiet",
+        # The front page is id 1 (cms.models.FRONT_PAGE_ID), the rest follow the seeded menu
+        # (cms migration 0006), including sub-pages, so gahk.dk's section lists and the editor's
+        # "not in the menu" warning both have something to show in dev.
+        Page.put_front_page(
+            slug="velkommen",
+            header="Velkommen",
             body="<p>G. A. Hagemanns Kollegium blev grundlagt i 1908.</p>",
             menu_category=1,
         )
-        Page.objects.create(
-            slug="ansoegning",
-            header="Ansøgning",
-            body="<p>Sådan søger du en plads på kollegiet.</p>",
-            menu_category=2,
-        )
-        # A sub-page, so the section sidebar (cms.views._section_nav) and the CMS overview's
-        # reachability badge are both exercised in dev — with only top-level slugs, neither ever
-        # renders, and the bug that made a renamed page vanish was invisible locally.
-        Page.objects.create(
-            slug="faciliteter",
-            header="Faciliteter",
-            body="<p>Kollegiets faciliteter.</p>",
-            menu_category=1,
-        )
-        Page.objects.create(
-            slug="faciliteter/kokken",
-            header="Køkkenet",
-            body="<p>Fælleskøkkenet på hver gang.</p>",
-            menu_category=1,
-        )
+        pages = [
+            ("kollegielivet", "Kollegielivet", "<p>Livet på kollegiet.</p>"),
+            ("kollegielivet/historie", "Historie", "<p>Kollegiets historie siden 1908.</p>"),
+            ("vision", "Vision", "<p>Kollegiets vision.</p>"),
+            ("faciliteter", "Faciliteter", "<p>Kollegiets faciliteter.</p>"),
+            ("faciliteter/kokken", "Køkkenet", "<p>Fælleskøkkenet på hver gang.</p>"),
+            ("legater", "Legater", "<p>Legater til alumner.</p>"),
+            ("kontakt", "Kontakt", "<p>Skriv til os.</p>"),
+            (
+                "optagelse",
+                "Optagelse",
+                (
+                    '<p>Sådan søger du ind.</p><ul><li><a href="/optagelse/ansoeg">Anmod om rundvisning</a></li>'
+                    '<li><a href="/optagelse/fremlej">Ansøg om fremleje</a></li></ul>'
+                ),
+            ),
+            ("arkiv/gammel-side", "En side uden for menuen", "<p>Kun med et direkte link.</p>"),
+        ]
+        for slug, header, body in pages:
+            Page.objects.update_or_create(
+                slug=slug, defaults={"header": header, "body": body, "menu_category": 1}
+            )
         for _ in range(6):
             NewsItem.objects.create(
                 title=self.fake.sentence(nb_words=6),
@@ -673,13 +755,15 @@ class Command(BaseCommand):
             DailyVisitCount.objects.update_or_create(
                 date=today - timedelta(days=i), defaults={"count": self.rng.randint(5, 120)}
             )
+        # gahk.dk's per-page totals for the last month, so "Mest besøgte sider" has rows.
         for i in range(30):
-            VisitTally.objects.create(
-                ip_hash=f"{i:064x}",
-                count=self.rng.randint(1, 50),
-                first_seen=self.now - timedelta(days=self.rng.randint(30, 120)),
-                last_seen=self.now,
-            )
+            for path in ("", "optagelse", "faciliteter", "kollegielivet", "begivenheder"):
+                views = self.rng.randint(1, 80)
+                PageViewDay.objects.update_or_create(
+                    date=today - timedelta(days=i),
+                    path=path,
+                    defaults={"views": views, "visitors": self.rng.randint(1, views)},
+                )
 
     # ---------------------------------------------------------------- report
     def _report(self, residents: list[Resident]) -> None:
@@ -697,14 +781,15 @@ class Command(BaseCommand):
             ("formand@gahk.dk", "administrator role"),
             ("ak@gahk.dk", "AK role"),
             ("oel@gahk.dk", "Ølkælder role"),
-            ("regnskab@gahk.dk", "Regnskab role — /intern/regnskab/, alumneregninger"),
+            ("regnskab@gahk.dk", "Regnskab role — /regnskab/, alumneregninger"),
             ("beboer@gahk.dk", "plain resident"),
         ]:
             self.stdout.write(f"  {email:22} {desc}")
         self.stdout.write(
-            "\nTo try alumneregninger locally: give a resident an e-conomic kontonr. on the regnskab "
-            "page, then GAHK's real e-conomic credentials need to be in your own .env "
+            "\nTo try alumneregninger locally: set an e-conomic kontonr. for the two residents the "
+            "regnskab page lists as missing one (everyone else has 4201 and up). GAHK's real e-conomic "
+            "credentials also need to be in your own .env "
             '(ECONOMIC_APP_SECRET_TOKEN/ECONOMIC_AGREEMENT_GRANT_TOKEN) — the DEBUG-default "demo" '
             "tokens hit e-conomic's own public demo company, which has none of GAHK's accounts. Without "
-            "real credentials that resident just shows up as failed, not a crash."
+            "real credentials the residents just show up as failed, not a crash."
         )

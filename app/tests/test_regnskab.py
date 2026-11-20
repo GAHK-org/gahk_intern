@@ -10,9 +10,16 @@ from django.utils import timezone
 from ak.models import AkEntry
 from core.models import Room, Workgroup
 from oelkaelder.models import Deposit, Shopper
-from regnskab import economic
-from residents.models import Residency, RoleAssignment, prev_period
+from regnskab import alumneregning, economic, tasks
+from residents.models import Residency, Resident, RoleAssignment, prev_period
 from residents.views import _sync_month_roles
+
+
+@pytest.fixture(autouse=True)
+def _any_account_name_matches(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The e-conomic mocks here use placeholder account names; the name check itself is tested in
+    test_economic_account_number.py."""
+    monkeypatch.setattr(alumneregning, "account_name_matches", lambda resident, name: True)
 
 
 def _setup_leaver_and_stayer(make_resident: Callable) -> None:
@@ -58,9 +65,10 @@ def test_leavers_show_ak_and_oek_status(make_resident: Callable) -> None:
     c.force_login(acc)
 
     html = c.get(reverse("regnskab:overview")).content.decode()
+    leavers = html.split("Slå en beboer op")[0]
 
-    assert "Lea Ver" in html  # the leaver is listed
-    assert "Sta Yer" not in html  # a current resident is NOT a leaver
+    assert "Lea Ver" in leavers  # the leaver is listed
+    assert "Sta Yer" not in leavers  # a current resident is NOT a leaver
     assert "-4 krydser" in html  # AK shown as raw krydser
     assert "70,00 kr" in html  # ØK balance summed across both accounts
     assert "003" in html  # prior-month room number
@@ -90,64 +98,6 @@ def test_view_is_regnskab_gated(make_resident: Callable) -> None:
     admin_c = Client()
     admin_c.force_login(admin)  # administrator implies every role
     assert admin_c.get(reverse("regnskab:overview")).status_code == 200
-
-
-@pytest.mark.django_db
-def test_set_economic_account_number_updates_resident(make_resident: Callable) -> None:
-    acc = make_resident(email="acc@gahk.dk", roles=("regnskab",))
-    target = make_resident(email="target@gahk.dk")
-    c = Client()
-    c.force_login(acc)
-
-    response = c.post(
-        reverse("regnskab:set_economic_account_number", args=[target.pk]),
-        {"economic_account_number": "1101", "next": reverse("regnskab:overview")},
-    )
-
-    target.refresh_from_db()
-    assert target.economic_account_number == 1101
-    assert response.status_code == 302
-    assert response.url == reverse("regnskab:overview")
-
-
-@pytest.mark.django_db
-def test_set_economic_account_number_can_be_cleared(make_resident: Callable) -> None:
-    acc = make_resident(email="acc@gahk.dk", roles=("regnskab",))
-    target = make_resident(email="target@gahk.dk", economic_account_number=1101)
-    c = Client()
-    c.force_login(acc)
-
-    c.post(reverse("regnskab:set_economic_account_number", args=[target.pk]), {"economic_account_number": ""})
-
-    target.refresh_from_db()
-    assert target.economic_account_number is None
-
-
-@pytest.mark.django_db
-def test_set_economic_account_number_requires_regnskab_role(make_resident: Callable) -> None:
-    plain = make_resident(email="plain@gahk.dk")
-    target = make_resident(email="target@gahk.dk")
-    c = Client()
-    c.force_login(plain)
-
-    response = c.post(
-        reverse("regnskab:set_economic_account_number", args=[target.pk]),
-        {"economic_account_number": "1101"},
-    )
-
-    assert response.status_code == 403
-    target.refresh_from_db()
-    assert target.economic_account_number is None
-
-
-@pytest.mark.django_db
-def test_set_economic_account_number_rejects_get(make_resident: Callable) -> None:
-    acc = make_resident(email="acc@gahk.dk", roles=("regnskab",))
-    target = make_resident(email="target@gahk.dk")
-    c = Client()
-    c.force_login(acc)
-
-    assert c.get(reverse("regnskab:set_economic_account_number", args=[target.pk])).status_code == 405
 
 
 @pytest.mark.django_db
@@ -446,3 +396,69 @@ def test_regnskab_workgroup_grants_role(make_resident: Callable) -> None:
     _sync_month_roles(r.id, wg, 2026, 8, is_admin=False)
 
     assert RoleAssignment.objects.filter(resident=r, role="regnskab", year=2026, month=8).exists()
+
+
+def _alumne_in_august(email: str, number: int | None, room: int) -> Resident:
+    alumne = Resident.objects.create(
+        email=email, first_name=email.partition("@")[0], economic_account_number=number
+    )
+    Residency.objects.create(
+        resident=alumne,
+        year=2026,
+        month=8,
+        room=Room.objects.create(legacy_index=room, number=room, floor="stuen", side="mod gaden"),
+    )
+    return alumne
+
+
+@pytest.mark.django_db
+def test_the_overview_lists_who_is_missing_a_kontonr(make_resident: Callable) -> None:
+    _alumne_in_august("harnumber@gahk.dk", 1101, 1)
+    missing = _alumne_in_august("nonumber@gahk.dk", None, 2)
+    acc = make_resident(email="acc@gahk.dk", roles=("regnskab",))
+    c = Client()
+    c.force_login(acc)
+
+    html = c.get(reverse("regnskab:overview"), {"period": "2026-8"}).content.decode()
+    section = html.split("Alumneregninger")[1]
+
+    assert "Mangler e-conomic kontonr. (1)" in section
+    assert "nonumber@gahk.dk" in section
+    assert "harnumber@gahk.dk" not in section
+    assert reverse("regnskab:edit_economic_account_number", args=[missing.pk]) in section
+
+
+@pytest.mark.django_db
+def test_nothing_is_missing_when_everyone_has_a_kontonr(make_resident: Callable) -> None:
+    _alumne_in_august("harnumber@gahk.dk", 1101, 1)
+    acc = make_resident(email="acc@gahk.dk", roles=("regnskab",))
+    c = Client()
+    c.force_login(acc)
+
+    html = c.get(reverse("regnskab:overview"), {"period": "2026-8"}).content.decode()
+    assert "Mangler e-conomic kontonr." not in html
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("method", ["preview", "send"])
+def test_alumneregninger_go_ahead_with_a_warning_when_someone_lacks_a_kontonr(
+    monkeypatch: pytest.MonkeyPatch, make_resident: Callable, method: str
+) -> None:
+    _alumne_in_august("harnumber@gahk.dk", 1101, 1)
+    _alumne_in_august("nonumber@gahk.dk", None, 2)
+    acc = make_resident(email="acc@gahk.dk", roles=("regnskab",))
+    queued: list[tuple[str, str]] = []
+    monkeypatch.setattr(tasks.send_alumneregninger_task, "delay", lambda *a: queued.append(a))
+    monkeypatch.setattr(alumneregning, "preview_alumneregninger", lambda *a: [])
+    c = Client()
+    c.force_login(acc)
+
+    period = {"fra": "2026-08-01", "til": "2026-08-31"}
+    if method == "preview":
+        html = c.get(reverse("regnskab:preview_alumneregninger"), period).content.decode()
+    else:
+        response = c.post(reverse("regnskab:send_alumneregninger"), period)
+        assert queued == [("2026-08-01", "2026-08-31")]
+        html = c.get(response.url).content.decode()
+
+    assert "1 i perioden har intet e-conomic kontonr. og får ingen alumneregning: nonumber" in html

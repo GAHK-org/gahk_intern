@@ -18,6 +18,7 @@ urlpatterns = [
     path("fotoalbum", photo_album_admin.photo_album_dashboard, name="photo_album"),
     path("fotoalbum/datering", photo_album_admin.photo_album_dates, name="photo_album_dates"),
     path("fotoalbum/liste/<slug:kind>", photo_album_admin.photo_album_list, name="photo_album_list"),
+    path("fotoalbum/liste/<slug:kind>/retry", photo_album_admin.photo_album_retry, name="photo_album_retry"),
     path("fotoalbum/maal-lager", photo_album_admin.photo_album_measure, name="photo_album_measure"),
     path("roles", views_admin.roles, name="roles"),
     path("notifikationer", notifications_admin.notifications, name="notifications"),

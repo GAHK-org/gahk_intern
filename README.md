@@ -30,6 +30,18 @@ kan køres igen når som helst (`--fresh` rydder først). Logins (kodeord `demo1
 | `oel@gahk.dk` | Ølkælder-rolle |
 | `beboer@gahk.dk` | almindelig beboer (kan bruge opslagstavlen, men ikke Den Hurtige endnu) |
 
+### Hjemmesiden gahk.dk
+
+Den offentlige hjemmeside er et separat projekt, [gahk_web](https://github.com/GAHK-org/gahk_web), men
+alt dens indhold redigeres her under *Hjemmeside* og sendes derover. Uden `GAHK_WEB_KEY` i `app/.env`
+sendes der intet, og alt andet virker som normalt. Vil du se ændringerne lokalt, så start gahk_webs
+udviklingsserver (`task dev` dér) og sæt `GAHK_WEB_URL` og `GAHK_WEB_KEY` til de værdier, den skriver
+ud. Se `DEPLOY.md` §4f.
+
+Editoren ligger på `/hjemmeside/` (rollerne administrator, indstilling, inspektion og pr). Den visuelle
+teksteditor (Tiptap) hentes kun på redigeringssiderne; byg frontenden (`npm run build` i `frontend/`),
+før du prøver den.
+
 ## Test
 
 ```sh
@@ -60,7 +72,7 @@ næste release, og `main` er det, der kører i produktion.
 | `feature/…`, `fix/…` (og Copilots `copilot/…`) | `dev` | `dev` | **Squash and merge** |
 | `dev` (release) | – | `main` | **Create a merge commit** |
 | `hotfix/…` | `main` | `main` | **Squash and merge** |
-| `automation/sync-main-…` (laves automatisk) | – | `dev` | **Create a merge commit** – aldrig squash |
+| `automation/sync-main-…` (branch og PR laves automatisk) | – | `dev` | **Create a merge commit** – aldrig squash |
 | Dependabot | – | `dev`; sikkerhedsopdateringer: `main` | **Squash and merge** (patch-opdateringer merges automatisk) |
 
 **Release:** Åbn en PR fra `dev` til `main`, og merge med "Create a merge commit". Squash eller rebase
@@ -71,8 +83,10 @@ konflikter igen.
 
 1. Lav branchen fra `main`, ikke `dev`: `git fetch && git switch -c hotfix/kort-navn origin/main`.
 2. Åbn en PR ind i `main`, og squash-merge den.
-3. Workflowet *Sync main to dev* laver en branch med `main` merget ind i `dev`. Åbn PR'en via linket i
-   kørslens opsummering (Actions-fanen), og merge med "Create a merge commit".
+3. Workflowet *Sync main to dev* merger `main` ind i `dev` på en branch og åbner selv PR'en ind i
+   `dev` (som github-actions) og beder den, der mergede hotfixen, om review. På PR'en: klik "Approve
+   workflows to run", så CI kører, godkend den, og merge med "Create a merge commit". Botten har
+   åbnet PR'en, så du må godt godkende den selv.
 
 Indtil sync-PR'en er merget, er PR'er ind i `dev` blokeret – så rettelsen ikke går tabt i næste
 release. Det samme gælder, når Dependabot har merget en sikkerhedsopdatering ind i `main`.
@@ -84,3 +98,7 @@ release. Det samme gælder, når Dependabot har merget en sikkerhedsopdatering i
 - `in-sync`: *"main has changes dev lacks"* – merge sync-PR'en ind i `dev` først.
 - `in-sync`: *"main has moved on"* – klik "Update branch" (på Dependabots PR'er: kommentér
   `@dependabot rebase`).
+
+## Licens
+
+Koden er udgivet under GNU Affero General Public License v3.0 eller senere (AGPL-3.0-or-later) – se [LICENSE](LICENSE).

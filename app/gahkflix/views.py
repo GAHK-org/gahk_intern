@@ -200,7 +200,7 @@ def series_create(request: HttpRequest) -> HttpResponse:
         if wants_json:
             return JsonResponse({"id": series.pk, "title": series.title}, status=201)
         back = request.POST.get("next", "")
-        if back.startswith("/intern/gahkflix/"):
+        if back.startswith(reverse("gahkflix:home")):
             messages.success(request, f"Serien {series.title} er oprettet og valgt herunder. Husk at gemme.")
             return redirect(f"{back}?{urlencode({'serie': series.pk})}")
         messages.success(
@@ -1179,7 +1179,7 @@ def request_vote(request: HttpRequest, pk: int) -> HttpResponse:
             messages.success(request, f"Anmodningen er {change.get_state_display().lower()}.")
     back = request.POST.get("next", "")
     return redirect(
-        back if back.startswith("/intern/gahkflix/") else reverse("gahkflix:request", args=[change.pk])
+        back if back.startswith(reverse("gahkflix:home")) else reverse("gahkflix:request", args=[change.pk])
     )
 
 

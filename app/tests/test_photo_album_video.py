@@ -2,6 +2,7 @@
 
 from collections.abc import Callable
 from io import StringIO
+from pathlib import Path
 
 import pytest
 from django.core.files.base import ContentFile
@@ -54,6 +55,33 @@ def test_a_large_video_is_scaled_down_to_the_viewer_size(make_resident: Callable
     assert build_derivatives(media)
 
     assert stored_video_dimensions(media.high_definition) == (1600, 900)
+
+
+@pytest.mark.django_db
+def test_the_viewer_copy_is_stored_from_disk_not_read_into_memory(
+    make_resident: Callable[..., Resident], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """On 2026-11-15 a 4 GB film encoded for three hours, and then its MP4 was read into memory
+    whole to be stored: the worker died at 1.4 GB, and took the server's memory with it."""
+    from photo_album import services
+
+    media = _video(make_resident, "film.mp4", sized_mp4_bytes(320, 240))
+    stored: list[Path] = []
+    store = services._store_variants
+
+    def store_and_look(media: Media, variants: services.Variants) -> None:
+        # A file still open in the encode's directory, not bytes in memory.
+        path = Path(variants.high_definition.file.name)
+        assert path.is_file()
+        stored.append(path)
+        store(media, variants)
+
+    monkeypatch.setattr(services, "_store_variants", store_and_look)
+
+    assert build_derivatives(media)
+
+    assert stored_video_dimensions(media.high_definition) == (320, 240)
+    assert not stored[0].exists()  # the directory went once the copy was stored
 
 
 @pytest.mark.django_db
@@ -167,7 +195,7 @@ def test_a_failed_re_encode_leaves_the_old_copy_in_place(
 def test_failed_media_can_be_given_fresh_attempts(
     make_resident: Callable[..., Resident], monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from photo_album.management.commands import retry_failed_photo_album_media
+    from photo_album import tasks
 
     failed = _video(make_resident, "broken.mpg", b"not a video")
     elsewhere = _video(make_resident, "broken.avi", b"not a video", folder="2005")
@@ -175,9 +203,7 @@ def test_failed_media_can_be_given_fresh_attempts(
         derivative_state=DerivativeState.FAILED, derivative_attempts=3
     )
     queued: list[int] = []
-    monkeypatch.setattr(
-        retry_failed_photo_album_media, "queue_derivatives", lambda media: queued.append(media.pk)
-    )
+    monkeypatch.setattr(tasks, "queue_derivatives", lambda media: queued.append(media.pk))
 
     call_command("retry_failed_photo_album_media", "--year", "2004", "--dry-run", stdout=StringIO())
     assert Media.objects.get(pk=failed.pk).derivative_state == DerivativeState.FAILED

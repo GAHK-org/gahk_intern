@@ -44,7 +44,7 @@ from notifications import categories
 from notifications.models import Notification, NotificationPreference
 from residents.models import Resident, Role
 
-FEED_URL = "/intern/den-hurtige/"
+FEED_URL = "/den-hurtige/"
 
 # The rollout gate exactly as den_hurtige.access ships it, captured at import — before the autouse
 # fixture below lifts it. Hardcoding a copy here is what made the Inspektionen tests fail when they
@@ -130,7 +130,7 @@ def pushes(monkeypatch: pytest.MonkeyPatch, settings: object) -> list[tuple[list
 
 def test_service_worker_is_served_from_the_site_root(client: Client) -> None:
     """A service worker's scope is capped at its own directory, so only a root-served /sw.js can
-    receive pushes for /intern/. Also proves the CMS slug catch-all does not swallow the path."""
+    receive pushes for /. Also proves the CMS slug catch-all does not swallow the path."""
     response = client.get("/sw.js")
 
     assert response.status_code == 200
@@ -212,10 +212,10 @@ def test_the_sidebar_only_advertises_the_page_to_those_who_can_open_it(
 ) -> None:
     """A visible link that answers 403 is worse than no link."""
     client.force_login(make_resident(email="beboer@gahk.dk"))
-    assert FEED_URL not in client.get("/intern/").content.decode()
+    assert FEED_URL not in client.get("/").content.decode()
 
     client.force_login(make_resident(email="admin@gahk.dk", roles=(Role.ADMINISTRATOR,)))
-    assert FEED_URL in client.get("/intern/").content.decode()
+    assert FEED_URL in client.get("/").content.decode()
 
 
 def test_clearing_access_roles_opens_it_to_every_resident(
@@ -234,7 +234,7 @@ def test_clearing_access_roles_opens_it_to_every_resident(
 
     assert client.get(FEED_URL).status_code == 200
     assert client.get(FEED_URL + "opslag").status_code == 200
-    assert FEED_URL in client.get("/intern/").content.decode()  # and the sidebar follows
+    assert FEED_URL in client.get("/").content.decode()  # and the sidebar follows
 
 
 def test_preview_as_a_plain_resident_is_locked_out(
@@ -257,7 +257,7 @@ def test_preview_as_a_plain_resident_is_locked_out(
 def test_feed_requires_login(client: Client) -> None:
     response = client.get(FEED_URL)
     assert response.status_code == 302
-    assert "/intern/admin/login" in response["Location"]
+    assert "/admin/login" in response["Location"]
 
 
 def test_the_feed_archives_expired_posts_instead_of_deleting_them(
@@ -646,7 +646,7 @@ def test_new_post_notifies_the_room_except_the_author(
     (recipients, payload) = pushes[0]
     assert recipients == [other.pk]
     assert "Der er kage i køkkenet" in payload["body"]
-    assert payload["url"] == FEED_URL
+    assert payload["url"] == push.absolute(FEED_URL)
     row = Notification.objects.get()
     assert row.recipient_id == other.pk
     assert row.category == categories.chat_room_key("generelt")
@@ -883,7 +883,7 @@ def test_reacting_tells_the_author_and_nobody_else(
     assert recipients == [author.pk]
     assert payload["head"] == "Magnus Pedersen reagerede på din besked"
     assert payload["body"] == f"{THUMB} Kaffe"
-    assert payload["url"] == f"{FEED_URL}?traad={post.pk}"
+    assert payload["url"] == push.absolute(f"{FEED_URL}?traad={post.pk}")
     assert payload["tag"] == f"chat.likes:{post.pk}"
     row = Notification.objects.get()
     assert row.recipient_id == author.pk
@@ -1126,7 +1126,7 @@ def test_a_message_notification_is_titled_with_the_sender(
     client: Client, make_resident: Callable[..., Resident], pushes: list
 ) -> None:
     """Every platform already labels a notification with the app it came from — iOS renders
-    "from Den Hurtige" under the title, taken from the manifest name. Repeating it in the title
+    "from GAHK Intern" under the title, taken from the manifest name. Repeating it in the title
     spent the most valuable line on the lock screen saying nothing, and pushed who-said-what into
     the body. Sender in the title, message in the body, as in any chat app."""
     author = make_resident(email="a@gahk.dk", first_name="Magnus", last_name="Pedersen")
@@ -1440,7 +1440,7 @@ def test_the_rest_of_intern_keeps_pinch_zoom(client: Client, make_resident: Call
     CMS pages are exactly where people pinch. The override has to stay scoped to Den Hurtige."""
     client.force_login(make_resident(email="a@gahk.dk"))
 
-    html = client.get("/intern/").content.decode()
+    html = client.get("/").content.decode()
 
     assert "user-scalable=no" not in html
     assert "no-zoom" not in html
@@ -1456,7 +1456,7 @@ def test_inspektionen_can_open_the_chat_during_the_trial(
     client.force_login(make_resident(email="insp@gahk.dk", roles=(Role.INSPEKTION,)))
 
     assert client.get(FEED_URL).status_code == 200
-    assert FEED_URL in client.get("/intern/").content.decode()  # and the sidebar advertises it
+    assert FEED_URL in client.get("/").content.decode()  # and the sidebar advertises it
 
 
 def test_inspektionen_can_delete_someone_elses_message(
@@ -1512,9 +1512,8 @@ OTHER = "tv-rezz"
 def test_the_bare_url_renders_the_default_channel(
     client: Client, make_resident: Callable[..., Resident]
 ) -> None:
-    """static/manifest.json uses /intern/den-hurtige/ as the PWA's `id`, so it must keep answering
-    with a real page forever: a changed id makes every phone treat the next deploy as a *different*
-    installed app. Not a redirect, not an index of channels — the default feed itself."""
+    """static/manifest.json opens the installed app on /den-hurtige/ (its start_url), so it must
+    answer with a real page. Not a redirect, not an index of channels — the default feed itself."""
     client.force_login(make_resident(email="a@gahk.dk"))
 
     response = client.get(FEED_URL)
@@ -1849,8 +1848,10 @@ def test_a_notification_deep_links_to_the_channel_the_message_is_in(
     client.post(FEED_URL + "opret", {"content": "Afgang 21", "kanal": OTHER, "duration": "60"})
 
     payload = pushes[-1][1]
-    assert payload["url"] == f"{FEED_URL}{OTHER}/"
-    assert payload["open"] == reverse("notifications:open_batch", args=[Notification.objects.get().batch])
+    assert payload["url"] == push.absolute(f"{FEED_URL}{OTHER}/")
+    assert payload["open"] == push.absolute(
+        reverse("notifications:open_batch", args=[Notification.objects.get().batch])
+    )
 
 
 def test_a_message_notification_carries_no_tag(
@@ -2554,7 +2555,7 @@ def test_a_reply_notification_deep_links_to_the_thread(
     client.post(f"{FEED_URL}{post.pk}/kommentar", {"content": "Ja"})
 
     (_recipients, payload) = pushes[0]
-    assert payload["url"] == f"{FEED_URL}?traad={post.pk}"
+    assert payload["url"] == push.absolute(f"{FEED_URL}?traad={post.pk}")
 
 
 def test_the_channel_page_pre_opens_a_requested_thread(
@@ -2827,7 +2828,7 @@ def test_an_archived_message_links_to_its_thread_like_any_other(
     body = client.get(ARCHIVE_URL, HTTP_HX_REQUEST="true").content.decode()
 
     assert "1 svar" in body
-    assert f"/intern/den-hurtige/{post.pk}/traad" in body
+    assert f"/den-hurtige/{post.pk}/traad" in body
     assert "Den staar i kaelderen" in body, "the preview, as on the live feed"
     assert "data-reply-url" not in body, "nothing in the archive can be answered"
 
@@ -3101,8 +3102,8 @@ def test_the_archive_offers_no_reply_affordance_on_a_message_nobody_answered(
     # in template whitespace, and "svar" on its own also matches the "1 svar" case.
     assert "Svar på beskeden" not in body, "there is nothing to answer with in the archive"
     assert "1 svar" in body
-    assert f"/intern/den-hurtige/{answered.pk}/traad" in body
-    assert f"/intern/den-hurtige/{lonely.pk}/traad" not in body
+    assert f"/den-hurtige/{answered.pk}/traad" in body
+    assert f"/den-hurtige/{lonely.pk}/traad" not in body
 
 
 def test_the_live_feed_still_offers_it(client: Client, make_resident: Callable[..., Resident]) -> None:
@@ -3282,7 +3283,7 @@ def test_a_tombstone_still_links_to_the_thread_it_started(
     body = client.get(FEED_URL).content.decode()
 
     assert "1 svar" in body
-    assert f"/intern/den-hurtige/{post.pk}/traad" in body
+    assert f"/den-hurtige/{post.pk}/traad" in body
 
 
 def test_a_tombstone_cannot_be_replied_to(client: Client, make_resident: Callable[..., Resident]) -> None:
@@ -3729,7 +3730,7 @@ def test_reacting_to_a_reply_tells_the_reply_author_and_nobody_else(
     assert recipients == [replier.pk]
     assert payload["head"] == "Magnus Pedersen reagerede på dit svar"
     assert payload["body"] == f"{THUMB} Den står i kælderen"
-    assert payload["url"] == f"{FEED_URL}?traad={post.pk}"
+    assert payload["url"] == push.absolute(f"{FEED_URL}?traad={post.pk}")
     row = Notification.objects.get(recipient=replier)
     assert row.category == categories.CHAT_LIKES
     assert row.group_key == f"chat.likes.svar:{reply.pk}"

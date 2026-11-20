@@ -4,17 +4,19 @@ import filecmp
 import hashlib
 import logging
 import re
+import shutil
 import struct
 import subprocess  # nosec B404
+import tempfile
 import zipfile
 from collections import defaultdict
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from contextlib import ExitStack, contextmanager
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from functools import partial
 from io import BytesIO
 from pathlib import Path, PurePosixPath
-from tempfile import TemporaryDirectory
 from types import SimpleNamespace
 from typing import Any
 from uuid import UUID
@@ -30,6 +32,7 @@ from django.template.defaultfilters import filesizeformat
 from django.utils import timezone
 from PIL import ExifTags, Image, ImageFile, ImageOps, ImageSequence, IptcImagePlugin
 
+from core.job_directories import job_directory
 from residents.models import Resident
 
 from . import file_metadata, raw
@@ -208,6 +211,7 @@ def store_upload(
     sha256: str | None = None,
     stored: tuple[str, UUID] | None = None,
     sidecar: bytes = b"",
+    locked_ok: bool = False,
 ) -> UploadOutcome:
     """Store an original and queue its derivatives after the database transaction commits.
 
@@ -218,8 +222,11 @@ def store_upload(
 
     With `stored`, (key, uuid), the original is already at that key, sent straight to the bucket
     (photo_album.direct_upload): `uploaded_file` is a local copy to read, and is not stored again.
+
+    `locked_ok` is for an import adding to an album locked by one of the import script's own albums,
+    which its plan found it may add to (_plan_import).
     """
-    if album.is_locked():
+    if album.is_locked() and not locked_ok:
         raise ValueError("Albummet er låst.")
     filename = normalize_name(Path(uploaded_file.name or "upload").name)
     sha256 = sha256 or file_sha256(uploaded_file)
@@ -337,11 +344,18 @@ def is_import_script(resident: Resident) -> bool:
 
 
 def imported_by_import_script(album: Album, resident: Resident) -> bool:
-    """Whether `resident` is the import script and one of its imports made `album`, or added to it."""
+    """Whether `resident` is the import script and one of its imports made `album`: created it while
+    it ran. An album made on the site stays the site's, even once the script has added to it, or an
+    album merge (merge.py) has put it in an import's `album_ids` in place of the one merged in."""
     if not is_import_script(resident):
         return False
-    imports = AlbumImport.objects.filter(requested_by=resident, state=AlbumImportState.READY)
-    return any(album.pk in album_ids for album_ids in imports.values_list("album_ids", flat=True))
+    return AlbumImport.objects.filter(
+        requested_by=resident,
+        state=AlbumImportState.READY,
+        album_ids__contains=[album.pk],
+        created_at__lte=album.created_at,
+        completed_at__gte=album.created_at,
+    ).exists()
 
 
 # --- Tags ---------------------------------------------------------------------------------------
@@ -533,6 +547,8 @@ class _ImportPlan:
     skipped: list[str] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
     existing_root: Album | None = None  # the album a merging import adds to
+    # The locked albums it may add to all the same: the import script's own (imported_by_import_script).
+    exempt: set[int] = field(default_factory=set)
 
 
 @dataclass
@@ -596,6 +612,7 @@ def _plan_import(
     merge: bool = False,
     root_name: str = "",
     limit_video_size: bool = True,
+    resident: Resident | None = None,
     progress: Progress = no_progress,
 ) -> _ImportPlan:
     """Pass one: read, check and extract everything, collecting EVERY reason to refuse the import."""
@@ -734,11 +751,17 @@ def _plan_import(
     if plan.existing_root is not None:
         # A locked album takes nothing new, and the import does not lift the lock for it: someone
         # unlocks it on purpose first. Checked where each file would land, so a locked sub-album the
-        # archive does not touch is no reason to refuse it.
+        # archive does not touch is no reason to refuse it. The import script may add to an album
+        # one of its own imports made, which it locked itself (as it may rename one):
+        # the rest of a big album it sends in parts, files fixed since, and files new in Dropbox.
         locked: dict[int, Album] = {}
         for folders in {item.folders for item in plan.files}:
             locking = _existing_album(plan.existing_root, folders).locking_album()
-            if locking is not None:
+            if locking is None or locking.pk in plan.exempt:
+                continue
+            if resident is not None and imported_by_import_script(locking, resident):
+                plan.exempt.add(locking.pk)
+            else:
                 locked[locking.pk] = locking
         plan.errors.extend(
             f'Albummet "{album.name}" er låst. Lås det op, før der tilføjes flere filer.'
@@ -765,13 +788,17 @@ def import_zip_album(
     so a refused import leaves nothing behind. Archive paths are never extracted as paths.
 
     With `lock`, the new album is locked in the same transaction, once its last file is stored —
-    so it is never visible unlocked. The Dropbox import uses it for albums that are history.
+    so it is never visible unlocked. The Dropbox import uses it for albums that are history. An
+    album locked already keeps the time of its lock, so adding to it does not move the six months
+    Fotogruppen has to lift it.
 
     With `merge`, a root album of the same name in the folder is not a reason to refuse: the archive
     is added to it, its folders to the sub-albums of the same names (created where missing). Only
     new files are stored — one with the same name AND the same bytes already in that album is left
     out; one that merely shares a name is a different photo and is kept beside it. A locked album
-    is still refused. The Dropbox import uses it to send what an earlier attempt left out.
+    is still refused, unless one of the import script's imports made it (imported_by_import_script). The
+    Dropbox import uses it to send what an earlier attempt left out, the parts of an album too big
+    for one archive, and files new in Dropbox.
 
     With `root_name`, that is the root album's name and the archive's paths are relative to it: the
     import does not descend through single folders. A retry of a few files from one sub-album would
@@ -787,7 +814,7 @@ def import_zip_album(
     """
     archive.seek(0)  # an S3 file is downloaded here, which reports no progress of its own
     progress("reading", 0, 0)
-    with TemporaryDirectory(prefix="photo-album-import-") as directory:
+    with job_directory("photo-album-import") as directory:
         try:
             with zipfile.ZipFile(archive) as zip_archive:
                 plan = _plan_import(
@@ -798,6 +825,7 @@ def import_zip_album(
                     merge=merge,
                     root_name=root_name,
                     limit_video_size=not is_import_script(resident),
+                    resident=resident,
                     progress=progress,
                 )
         except zipfile.BadZipFile as exc:
@@ -835,6 +863,16 @@ def _store_import(
         nonlocal committed
         committed = True
 
+    # Album pk -> whether it is locked by an album the import may add to all the same (plan.exempt).
+    # Any other lock still stops the import, set after its plan was made too.
+    exempt: dict[int, bool] = {}
+
+    def locked_ok(album: Album) -> bool:
+        if album.pk not in exempt:
+            locking = album.locking_album()
+            exempt[album.pk] = locking is not None and locking.pk in plan.exempt
+        return exempt[album.pk]
+
     try:
         with transaction.atomic():
             # First of this transaction's callbacks, so it has run before any other can raise.
@@ -843,6 +881,8 @@ def _store_import(
             if root is None:
                 root = Album(folder=folder, name=plan.root_name)
                 root.save()
+            else:  # read minutes ago, before pass one: a lock since then still stops the import
+                root.refresh_from_db()
             albums[()] = root
             files = sorted(plan.files, key=lambda item: (len(item.folders), item.folders, item.member))
             for index, item in enumerate(files):
@@ -870,6 +910,7 @@ def _store_import(
                         file_time_source=item.modified_from,
                         sha256=item.sha256,
                         sidecar=item.sidecar,
+                        locked_ok=locked_ok(album),
                     )
                 if outcome.duplicate is not None:
                     plan.skipped.append(f"{item.member}: findes allerede i albummet (ignoreret)")
@@ -885,7 +926,9 @@ def _store_import(
                         name for name in (outcome.media.original.name, outcome.media.sidecar.name) if name
                     )
             settle_dates(root)
-            if lock:
+            # Locked as it is done, unless it is locked already: a later import keeps the time of
+            # its lock, from which Fotogruppen has six months to lift it.
+            if lock and root.manually_locked_at is None:
                 root.manually_locked_at = timezone.now()
                 root.save(update_fields=["manually_locked_at"])
     except Exception:
@@ -929,6 +972,39 @@ def is_video_media(media: Media) -> bool:
     return is_video(media) or is_video(media.original)
 
 
+# What a video encode needs free on the disk under /tmp, beyond three times the original: the original
+# downloaded from the bucket (opening it spills it to a temp file, PhotoAlbumS3Storage), its copy in
+# the job's directory, and the viewer copy, at most the original's size but for a rare overshoot the
+# reserve absorbs. The reserve is otherwise for everything else on the server's one disk, the databases included: a job that
+# fills the disk takes them down with it.
+ENCODE_DISK_RESERVE = 2 * 1024**3
+ENCODE_DISK_FACTOR = 3
+
+
+class NotEnoughDiskSpace(Exception):
+    """A video was not encoded because the disk has too little room for it. Nothing was counted."""
+
+
+def check_encode_disk_space(media: Media) -> None:
+    """Raise NotEnoughDiskSpace when encoding this video now could fill the disk.
+
+    An original of unknown size is let through: the encode itself then decides, as before.
+    """
+    size = media.size
+    if size is None:
+        try:
+            size = media.original.size
+        except Exception:  # the build reports a missing original better than this can
+            return
+    needed = ENCODE_DISK_FACTOR * size + ENCODE_DISK_RESERVE
+    free = shutil.disk_usage(tempfile.gettempdir()).free
+    if free < needed:
+        raise NotEnoughDiskSpace(
+            f"{media.display_name_and_size} needs {filesizeformat(needed)} free to be encoded; "
+            f"there is {filesizeformat(free)}."
+        )
+
+
 def build_derivatives(media: Media) -> bool:
     """Build stored image or video derivatives. Returns whether they are now available.
 
@@ -943,6 +1019,9 @@ def build_derivatives(media: Media) -> bool:
     The attempt is counted BEFORE the work, not after: a worker killed mid-encode (out of memory,
     the hard time limit) saves nothing afterwards, and a video that kills its worker every time
     used to stay "Mediet behandles" forever instead of ending FAILED after MAX_DERIVATIVE_ATTEMPTS.
+
+    A video the disk has no room for raises NotEnoughDiskSpace before that, and is left PENDING with
+    no attempt counted: a full disk says nothing about the file, and it should not use up the tries.
     """
     filename = media.display_name or "upload"
     if media.derivative_attempts >= MAX_DERIVATIVE_ATTEMPTS:
@@ -955,12 +1034,23 @@ def build_derivatives(media: Media) -> bool:
             media.derivative_attempts,
         )
         return False
+    video = is_video_media(media)
+    if video:
+        check_encode_disk_space(media)
     media.derivative_attempts += 1
     media.save(update_fields=["derivative_attempts"])
-    video = is_video_media(media)
     with media.original.open("rb") as original:
         source = File(original, name=filename)
-        variants = video_variants(source, filename) if video else image_variants(source, filename)
+        if video:
+            # Stored inside the block: the copies are files in the encode's directory until it ends.
+            with video_variants(source, filename) as variants:
+                return _finish_derivatives(media, variants, filename)
+        variants = image_variants(source, filename)
+    return _finish_derivatives(media, variants, filename)
+
+
+def _finish_derivatives(media: Media, variants: "Variants | None", filename: str) -> bool:
+    """Store what build_derivatives made, or count a source that could not be decoded."""
     if variants is None:
         media.derivative_state = (
             DerivativeState.FAILED
@@ -1010,8 +1100,11 @@ def pending_derivatives() -> "QuerySet[Media]":
 
 @dataclass
 class Variants:
-    high_definition: ContentFile
-    thumbnail: ContentFile
+    """The viewer copy and the grid thumbnail of one item: in memory for a photo, open files on disk
+    for a video (video_variants)."""
+
+    high_definition: File
+    thumbnail: File
     captured_at: datetime | None = None
 
 
@@ -1115,22 +1208,38 @@ def _animated_gif_variant(
     return ContentFile(output.getvalue(), name=name)
 
 
-def video_variants(uploaded_file: File, filename: str) -> Variants | None:
-    """Transcode a video to a viewer-sized MP4 and extract a grid-sized JPEG frame."""
-    try:
-        with TemporaryDirectory(prefix="photo-album-") as directory:
-            source = _copy_to_disk(uploaded_file, Path(directory), filename)
-            return _encode_video(_ffmpeg(), source, Path(directory), filename)
-    except ImportError:
-        return None
-    except subprocess.CalledProcessError as exc:
-        logger.warning("Could not convert %s: %s", filename, ffmpeg_failure(exc))
-        return None
-    except OSError as exc:
-        logger.warning("Could not convert %s: %s", filename, exc)
-        return None
-    finally:
-        uploaded_file.seek(0)
+@contextmanager
+def video_variants(uploaded_file: File, filename: str) -> Iterator[Variants | None]:
+    """Transcode a video to a viewer-sized MP4 and extract a grid-sized JPEG frame; None if it
+    cannot be converted.
+
+    The two are files in the encode's directory, open for the length of the `with` block and
+    deleted when it ends, so they must be stored inside it. Stored from disk, not from memory: a
+    long film's MP4 is over a gigabyte, and reading one in whole after a three-hour encode is what
+    ran the server out of memory on 2026-11-15.
+    """
+    with ExitStack() as stack:
+        try:
+            directory = Path(stack.enter_context(job_directory("photo-album-video")))
+            source = _copy_to_disk(uploaded_file, directory, filename)
+            encoded: EncodedVideo | None = _encode_video(_ffmpeg(), source, directory, filename)
+        except ImportError:
+            encoded = None
+        except subprocess.CalledProcessError as exc:
+            logger.warning("Could not convert %s: %s", filename, ffmpeg_failure(exc))
+            encoded = None
+        except OSError as exc:
+            logger.warning("Could not convert %s: %s", filename, exc)
+            encoded = None
+        finally:
+            uploaded_file.seek(0)
+        # Outside the try: an error while the caller stores the files is the caller's, not a
+        # video that could not be converted.
+        if encoded is None:
+            yield None
+        else:
+            with encoded.opened(filename) as variants:
+                yield variants
 
 
 def _ffmpeg() -> str:
@@ -1228,8 +1337,27 @@ def probe_video(ffmpeg: str, path: str, data: bytes | None = None) -> VideoProbe
     return VideoProbe(result.stderr.decode("utf-8", errors="replace"))
 
 
-def _encode_video(ffmpeg: str, source: Path, directory: Path, filename: str) -> Variants:
-    """The viewer MP4 and the grid JPEG for a video on disk. Raises CalledProcessError."""
+@dataclass
+class EncodedVideo:
+    """What _encode_video wrote: the viewer MP4 and the grid JPEG, as files in its directory."""
+
+    high_definition: Path
+    thumbnail: Path
+    captured_at: datetime | None
+
+    @contextmanager
+    def opened(self, filename: str) -> Iterator[Variants]:
+        """The two files as Variants to store, read from disk in parts as they are uploaded."""
+        stem = Path(filename).stem
+        with self.high_definition.open("rb") as video, self.thumbnail.open("rb") as thumbnail:
+            yield Variants(
+                File(video, name=f"{stem}.mp4"), File(thumbnail, name=f"{stem}.jpg"), self.captured_at
+            )
+
+
+def _encode_video(ffmpeg: str, source: Path, directory: Path, filename: str) -> EncodedVideo:
+    """Write the viewer MP4 and the grid JPEG for a video on disk to `directory`. Raises
+    CalledProcessError."""
     probe = probe_video(ffmpeg, str(source))
     high_definition = directory / "high-definition.mp4"
     thumbnail = directory / "thumbnail.jpg"
@@ -1267,11 +1395,7 @@ def _encode_video(ffmpeg: str, source: Path, directory: Path, filename: str) -> 
         f"scale={THUMBNAIL_SIZE}:{THUMBNAIL_SIZE}:force_original_aspect_ratio=decrease",
         str(thumbnail),
     )
-    return Variants(
-        ContentFile(high_definition.read_bytes(), name=f"{Path(filename).stem}.mp4"),
-        ContentFile(thumbnail.read_bytes(), name=f"{Path(filename).stem}.jpg"),
-        _video_creation_time(probe.text),
-    )
+    return EncodedVideo(high_definition, thumbnail, _video_creation_time(probe.text))
 
 
 def _add_text_subtitles(
@@ -1341,14 +1465,15 @@ def shrink_enlarged_video(media: Media) -> str:
     Returns what it did, for the job log. The item is left exactly as it was — still READY, its old
     copy still served — unless the new copy is made: when the copy turns out not to be enlarged,
     when the original is not smaller than HIGH_DEFINITION_SIZE, and when ffmpeg fails (raises
-    CalledProcessError).
+    CalledProcessError) or the disk has no room for the encode (raises NotEnoughDiskSpace).
     """
     name = media.display_name
     copy = stored_video_dimensions(media.high_definition)
     if copy is not None and max(copy) < HIGH_DEFINITION_SIZE:
         return f"{name}: its copy is {copy[0]}x{copy[1]}, not enlarged; left as it is."
+    check_encode_disk_space(media)
     ffmpeg = _ffmpeg()
-    with media.original.open("rb") as original, TemporaryDirectory(prefix="photo-album-") as directory:
+    with media.original.open("rb") as original, job_directory("photo-album-video") as directory:
         source = _copy_to_disk(File(original, name=name), Path(directory), name)
         dimensions = probe_video(ffmpeg, str(source)).dimensions
         if dimensions is None:
@@ -1356,8 +1481,10 @@ def shrink_enlarged_video(media: Media) -> str:
         if max(dimensions) >= HIGH_DEFINITION_SIZE:
             return f"{name}: the original is {dimensions[0]}x{dimensions[1]}, so its copy is not enlarged; left as it is."
         old_size = media.high_definition.size
-        variants = _encode_video(ffmpeg, source, Path(directory), name)
-    _store_variants(media, variants)
+        encoded = _encode_video(ffmpeg, source, Path(directory), name)
+        # Inside the block, from disk: the directory and the files in it go when it ends.
+        with encoded.opened(name) as variants:
+            _store_variants(media, variants)
     return (
         f"{name}: re-encoded at its own {dimensions[0]}x{dimensions[1]} instead of "
         f"{f'{copy[0]}x{copy[1]}' if copy else 'enlarged'}; the copy went from "

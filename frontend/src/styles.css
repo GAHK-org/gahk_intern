@@ -3,14 +3,31 @@
 /* Scan the Django templates for class names (path is relative to THIS css file: frontend/src/). */
 @source "../../app/templates";
 
+/* The tokens below as Tailwind colours, so a template writes text-neg or border-line instead of reaching for
+   Tailwind's own palette (red-600, gray-200, emerald-700), which is a different green and cool greys
+   beside these warm ones. inline: the utilities read the variable itself. */
+@theme inline {
+  --color-ink: var(--ink); --color-muted: var(--muted); --color-faint: var(--faint);
+  --color-paper: var(--paper); --color-surface: var(--surface); --color-surface-2: var(--surface-2); --color-sunken: var(--sunken);
+  --color-line: var(--border); --color-line-strong: var(--border-strong);
+  --color-gahk-green: var(--green); --color-gahk-green-700: var(--green-700);
+  --color-gahk-green-050: var(--green-050); --color-gahk-green-100: var(--green-100);
+  --color-brass: var(--brass); --color-brass-ink: var(--brass-ink);
+  --color-pos: var(--pos); --color-neg: var(--neg); --color-neg-bg: var(--neg-bg); --color-neg-line: var(--neg-line);
+  --color-warn-bg: var(--warn-bg); --color-warn-line: var(--warn-line);
+}
+
 /* ---- Refined GAHK Green: design tokens (heritage green, warm neutrals, restrained brass) ---- */
 :root {
   --paper:#F6F5F1; --surface:#FFFFFF; --surface-2:#FBFAF7; --sunken:#F1EFE8;
   --border:#E7E4DB; --border-strong:#D8D5CA;
-  --ink:#1A231D; --muted:#616B62; --faint:#8A9188;
+  /* --faint was #8A9188, 2.97:1 on --paper; this clears 4.5:1 on white (4.24:1 on --paper) and stays
+     lighter than --muted, so timestamps and small labels are readable without losing the step. */
+  --ink:#1A231D; --muted:#616B62; --faint:#6F776E;
   --green:#1F5A3A; --green-700:#184A30; --green-050:#EAF2EC; --green-100:#D9E8DD;
   --brass:#A9822F; --brass-ink:#7A5E1E;
   --pos:#2E7D4F; --neg:#B23A3A; --warn:#A9822F; --warn-bg:#F5EEDD; --neg-bg:#F6E7E5;
+  --warn-line:#e7d8b0; --neg-line:#e7c7c3;  /* the border that goes with each tinted background */
   --radius:12px; --radius-sm:9px;
   --shadow:0 1px 2px rgba(24,40,30,.05), 0 8px 24px -12px rgba(24,40,30,.14);
   --shadow-sm:0 1px 2px rgba(24,40,30,.06);
@@ -39,7 +56,6 @@
   .muted { color:var(--muted); }
   .errorlist { color:var(--neg); }
   .amount-pos { color:var(--pos); } .amount-neg { color:var(--neg); }
-  .font-display { font-family: "Julius Sans One", sans-serif; }
   .num { font-variant-numeric: tabular-nums; }
 
   .btn { display:inline-flex; align-items:center; gap:7px; font:inherit; font-size:14px; font-weight:600; line-height:1.1;
@@ -49,7 +65,7 @@
   .btn svg { width:16px; height:16px; }
   .btn-secondary { background:var(--surface); border-color:var(--border-strong); color:var(--ink); }
   .btn-secondary:hover { background:var(--surface-2); border-color:var(--faint); color:var(--ink); }
-  .btn-danger { background:var(--neg-bg); border-color:#e7c7c3; color:var(--neg); }
+  .btn-danger { background:var(--neg-bg); border-color:var(--neg-line); color:var(--neg); }
   .btn-danger:hover { background:#f0d7d3; color:var(--neg); }
   /* A small busy ring for a .btn whose request takes a while (regnskab's alumneregninger). Takes the
      button's text colour, so it reads on any variant. */
@@ -61,8 +77,9 @@
 
   .chip { display:inline-flex; align-items:center; gap:5px; font-size:12px; font-weight:650; line-height:1.4;
     border-radius:999px; padding:2px 10px; background:var(--green-050); color:var(--green-700); border:1px solid var(--green-100); white-space:nowrap; }
-  .chip-brass { background:var(--warn-bg); color:var(--brass-ink); border-color:#e7d8b0; }
-  .chip-neg { background:var(--neg-bg); color:var(--neg); border-color:#e7c7c3; }
+  .chip-brass { background:var(--warn-bg); color:var(--brass-ink); border-color:var(--warn-line); }
+  .chip-neg { background:var(--neg-bg); color:var(--neg); border-color:var(--neg-line); }
+  .chip-neutral { background:var(--sunken); color:var(--muted); border-color:var(--border-strong); }
   /* An icon inside a chip. There is no base `.ni` rule anywhere in this stylesheet — every use is
      sized by whatever encloses it — so a chip that carried one had an <svg> with no width, no
      height and no viewport-derived size, which is 300x150 by CSS default. The lock on "Kun
@@ -107,8 +124,12 @@
   .nav-item.active .ni { color:var(--green); }
   .nav-item.active::before { content:""; position:absolute; left:0; top:8px; bottom:8px; width:3px; border-radius:0 3px 3px 0; background:var(--green); }
   .side-foot { margin-top:auto; padding:10px 6px 4px; }
-  .side-foot .clock { display:flex; align-items:center; gap:7px; background:var(--warn-bg); color:var(--brass-ink); border:1px solid #e7d8b0; border-radius:8px; padding:7px 9px; font-weight:600; font-size:12px; }
+  .side-foot .clock { display:flex; align-items:center; gap:7px; background:var(--warn-bg); color:var(--brass-ink); border:1px solid var(--warn-line); border-radius:8px; padding:7px 9px; font-weight:600; font-size:12px; }
   .backdrop { display:none; }
+  /* Nobody logged in (/install): no menu, so main also takes the sidebar's column. Before the
+     phone media query below, whose single-column .app wins over this. */
+  .app-no-nav { grid-template-areas:"brand top" "main main"; }
+  .app-no-nav .sidebar, .app-no-nav .hamburger { display:none; }
 
   .main { grid-area:main; overflow:auto; }
   .content { padding:26px 30px 48px; }
@@ -645,7 +666,7 @@
      way into the thread too, as "Svar" or a "3 svar" pill in this same row; the thread now has the
      reply preview under the message for that (.thread-preview below), so this is only the action
      and stays quiet. --muted rather than --faint because it is an interactive control: --faint
-     (#8A9188) is 2.97:1 on the ground, under the 4.5:1 a 12.5px link needs, and --muted is 5.08:1.
+     lands at 4.24:1 on --paper, still under the 4.5:1 a 12.5px link needs, and --muted is 5.08:1.
 
      line-height:1 and 4px of vertical padding are .reaction's, so it is exactly as tall as the
      pills it shares the row with and a message carrying reactions does not grow by a pixel. */
@@ -1236,8 +1257,13 @@
   .banner { display:flex; align-items:center; justify-content:space-between; gap:12px; padding:8px 18px; font-size:13.5px; font-weight:500; }
   .banner form { display:flex; gap:12px; align-items:center; }
   .banner a, .banner button { color:inherit; text-decoration:underline; background:none; border:0; font:inherit; font-weight:600; cursor:pointer; }
-  .banner-preview { background:var(--warn-bg); color:var(--brass-ink); border-bottom:1px solid #e7d8b0; }
+  .banner-preview { background:var(--warn-bg); color:var(--brass-ink); border-bottom:1px solid var(--warn-line); }
   .banner-dev { background:#3730a3; color:#fff; }
+  /* "Installér GAHK Intern som app" on phones (base.html, install.ts). */
+  .banner-install { background:var(--green-050); color:var(--green-700); border-bottom:1px solid var(--green-100); }
+  .banner-install .banner-close { flex:none; display:grid; place-items:center; width:36px; height:36px; margin:-6px -10px -6px 0;
+    border-radius:50%; font-size:22px; font-weight:400; line-height:1; text-decoration:none; }
+  .banner-install .banner-close:hover { background:var(--green-100); }
 
   @media (max-width:960px) {
     /* The rows have to be redeclared with the areas: the desktop grid is two rows (auto 1fr) and
@@ -1269,7 +1295,7 @@
   @media (prefers-reduced-motion:reduce) { * { transition:none !important; } }
 
   /* Readable rendering for migrated CMS body HTML. */
-  .prose-gahk { @apply leading-relaxed text-gray-800; }
+  .prose-gahk { @apply leading-relaxed text-ink; }
   .prose-gahk p { @apply my-3; }
   .prose-gahk h2 { @apply text-xl font-semibold mt-6 mb-2; }
   .prose-gahk h3 { @apply text-lg font-semibold mt-4 mb-1; }
@@ -1278,15 +1304,15 @@
   /* overflow-wrap, because a link is now the one thing in here that can be unbreakable: linkify
      turns a bare pasted URL into an <a>, and its shortened TEXT is still 42 characters with no
      space in it. Without this a long one pushes the card wider than the column on a phone. */
-  .prose-gahk a { @apply text-emerald-700 underline; overflow-wrap:anywhere; }
+  .prose-gahk a { @apply text-gahk-green-700 underline; overflow-wrap:anywhere; }
   .prose-gahk img { @apply max-w-full h-auto rounded my-3; }
-  .prose-gahk blockquote { @apply border-l-4 border-emerald-700 pl-4 my-4 italic text-gray-700; }
+  .prose-gahk blockquote { @apply border-l-4 border-gahk-green-700 pl-4 my-4 italic text-muted; }
   /* Added for rendered Markdown (opslagstavlen). Migrated CMS pages get them too, which is a bonus
      rather than a coincidence: they were always allowed by cms/sanitize.py and simply unstyled. */
   .prose-gahk h4 { @apply text-base font-semibold mt-4 mb-1; }
   .prose-gahk hr { @apply my-6 border-t; border-color: var(--border); }
   .prose-gahk code { @apply px-1 py-0.5 rounded text-[0.9em]; background: var(--green-050); }
-  .prose-gahk pre { @apply p-3 my-3 rounded overflow-x-auto text-sm; background: #f6f8fa; }
+  .prose-gahk pre { @apply p-3 my-3 rounded overflow-x-auto text-sm; background: var(--sunken); }
   .prose-gahk pre code { @apply p-0 bg-transparent; }
   /* Tables are why the Markdown parser keeps the table plugin: the værelsesrunde results are one.
      Scrolls inside its own box so a wide table never makes the page scroll sideways. */
@@ -1361,12 +1387,12 @@
   .rsvp-actions .btn { flex: 1; justify-content: center; padding: 13px 15px; font-size: 15px; }
   .rsvp-nej { flex: 0 0 auto; }
   .rsvp-ja.is-chosen { box-shadow: inset 0 0 0 2px var(--green-700); }
-  .rsvp-nej.is-chosen { background: var(--neg-bg); border-color: #e7c7c3; color: var(--neg); }
+  .rsvp-nej.is-chosen { background: var(--neg-bg); border-color: var(--neg-line); color: var(--neg); }
   .rsvp-deadline, .rsvp-waiting, .rsvp-promoted { display: flex; align-items: center; gap: 7px;
     font-size: 12.5px; margin: 0; border-radius: 9px; padding: 8px 11px; }
-  .rsvp-deadline { color: var(--brass-ink); background: var(--warn-bg); border: 1px solid #e7d8b0; }
+  .rsvp-deadline { color: var(--brass-ink); background: var(--warn-bg); border: 1px solid var(--warn-line); }
   .rsvp-deadline .ni { width: 15px; height: 15px; stroke: currentColor; fill: none; flex: none; }
-  .rsvp-waiting { color: var(--brass-ink); background: var(--warn-bg); border: 1px solid #e7d8b0; }
+  .rsvp-waiting { color: var(--brass-ink); background: var(--warn-bg); border: 1px solid var(--warn-line); }
   .rsvp-promoted { color: var(--green-700); background: var(--green-050); border: 1px solid var(--green-100); }
   .rsvp-locked { display: flex; align-items: flex-start; gap: 10px; color: var(--muted);
     background: var(--sunken); border: 1px solid var(--border); border-radius: 9px; padding: 11px 12px; }
@@ -1441,7 +1467,7 @@
   .cal-legend span { display: inline-flex; align-items: center; gap: 6px; }
   .cal-key { width: 11px; height: 11px; border-radius: 3px; flex: none; }
   .cal-key-going { background: var(--green); }
-  .cal-key-waiting { background: var(--warn-bg); border: 1px solid #e7d8b0; }
+  .cal-key-waiting { background: var(--warn-bg); border: 1px solid var(--warn-line); }
   .cal-key-open { background: var(--surface); border: 1px solid var(--border-strong); }
 
   .cal-grid { display: flex; flex-direction: column; gap: 8px; }
@@ -1464,8 +1490,8 @@
     text-overflow: ellipsis; white-space: nowrap; }
   /* The same three colours as the list's chips, so the two views teach each other. */
   .cal-kommer { background: var(--green); color: #fff; }
-  .cal-venteliste { background: var(--warn-bg); color: var(--brass-ink); border: 1px solid #e7d8b0; }
-  .cal-nej { background: var(--neg-bg); color: var(--neg); border: 1px solid #e7c7c3; }
+  .cal-venteliste { background: var(--warn-bg); color: var(--brass-ink); border: 1px solid var(--warn-line); }
+  .cal-nej { background: var(--neg-bg); color: var(--neg); border: 1px solid var(--neg-line); }
   .cal-open { background: var(--surface); color: var(--ink); border: 1px solid var(--border-strong); }
   .cal-event.is-cancelled { text-decoration: line-through; opacity: .7; }
 
@@ -1528,7 +1554,7 @@
      a brass label in the cell and a brass frame round it, so the day stands out at any width. */
   .cal-cell.is-maerkedag { border-color: var(--brass); box-shadow: inset 0 0 0 1px var(--brass); }
   .cal-maerkedag { display: flex; align-items: center; gap: 5px; min-width: 0; padding: 3px 6px;
-    border-radius: 6px; background: var(--warn-bg); border: 1px solid #e7d8b0; color: var(--brass-ink);
+    border-radius: 6px; background: var(--warn-bg); border: 1px solid var(--warn-line); color: var(--brass-ink);
     font-size: 11.5px; font-weight: 700; line-height: 1.3; }
   .cal-maerkedag-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .cal-key-maerkedag { background: var(--warn-bg); border: 1px solid var(--brass); }
@@ -1544,7 +1570,7 @@
     border-top: 1px solid var(--border); color: var(--ink); text-decoration: none; }
   .agenda li:first-child .agenda-row { border-top: 0; }
   a.agenda-row:hover { background: var(--surface-2); }
-  .agenda-row.is-maerkedag { background: var(--warn-bg); border: 1px solid #e7d8b0; border-radius: 9px;
+  .agenda-row.is-maerkedag { background: var(--warn-bg); border: 1px solid var(--warn-line); border-radius: 9px;
     color: var(--brass-ink); }
   li:has(.is-maerkedag) + li .agenda-row { border-top: 0; }
   .agenda-date { flex: none; width: 40px; display: flex; flex-direction: column; align-items: center;
@@ -1590,7 +1616,7 @@
   .feed-url { margin: 0; padding: 11px 13px; border-radius: 9px; background: var(--sunken);
     border: 1px solid var(--border); font-size: 13px; overflow-wrap: anywhere; }
   .feed-warn { display: flex; align-items: flex-start; gap: 10px; padding: 11px 13px;
-    border-radius: 9px; background: var(--warn-bg); border: 1px solid #e7d8b0; color: var(--brass-ink); }
+    border-radius: 9px; background: var(--warn-bg); border: 1px solid var(--warn-line); color: var(--brass-ink); }
   .feed-warn .ni { width: 17px; height: 17px; stroke: currentColor; fill: none; flex: none; margin-top: 2px; }
   .feed-warn p { margin: 3px 0 0; font-size: 12.5px; }
 
@@ -1608,9 +1634,44 @@
      does NOT reuse the .chat, .msg and .composer families: those encode a one-viewport-tall chat
      shell with its own internal scroller, and a paginated document list wants the normal page
      scroll. */
+  /* One row: the field takes the slack, the period sits beside it. 16px text so iOS does not zoom
+     into the field on focus. */
+  .board-search { display:flex; gap:8px; margin-bottom:12px; }
+  .board-search-field { position:relative; flex:1; min-width:0; }
+  .board-search-field input[type="search"] { height:42px; padding:0 38px 0 40px; font-size:16px;
+    border-radius:999px; }
+  .board-search-field input[type="search"]::-webkit-search-cancel-button { display:none; }
+  .board-search-go, .board-search-clear { position:absolute; top:50%; transform:translateY(-50%);
+    display:grid; place-items:center; width:32px; height:32px; border:0; border-radius:50%;
+    background:none; color:var(--faint); cursor:pointer; text-decoration:none; }
+  .board-search-go { left:5px; }
+  .board-search-go svg { width:18px; height:18px; }
+  .board-search-clear { right:5px; font-size:14px; }
+  .board-search-go:hover, .board-search-clear:hover { color:var(--ink); background:var(--surface-2); }
+  .board-period { width:auto; flex:none; height:42px; padding:0 12px; font-size:15px; border-radius:999px;
+    max-width:44%; }
+  .board-period.is-active { background:var(--green-050); border-color:var(--green); color:var(--green-700);
+    font-weight:600; }
+  /* A search's matches, in the card text and the author's name. */
+  mark.search-hit { background:#f6e3a1; color:inherit; border-radius:3px; padding:0 1px; }
+  .notice-match { margin:6px 0 0; padding:6px 10px; border-left:3px solid var(--brass); background:var(--surface-2);
+    color:var(--muted); font-size:14px; border-radius:0 6px 6px 0; }
+  .board-result { display:flex; flex-wrap:wrap; align-items:baseline; justify-content:space-between;
+    gap:4px 12px; margin:0 0 12px; font-size:14px; color:var(--muted); }
+  .board-result strong { color:var(--ink); }
+  .board-result q { color:var(--ink); font-weight:600; }
+  .board-result a, .board-empty a { color:var(--green-700); font-weight:600; text-decoration:underline;
+    text-underline-offset:2px; }
   .board-filters { @apply flex flex-wrap gap-2 mb-4; }
   .board-filters .chip { @apply no-underline; }
   .board-filters .chip.is-active { background: var(--green); color: #fff; border-color: var(--green); }
+  /* Phones: the chips scroll sideways in one row instead of wrapping into three. */
+  @media (max-width: 720px) {
+    .board-filters { flex-wrap:nowrap; overflow-x:auto; scrollbar-width:none; margin-inline:-18px;
+      padding-inline:18px; }
+    .board-period { max-width:none; padding:0 6px 0 12px; font-size:16px; }
+    .board-filters::-webkit-scrollbar { display:none; }
+  }
   /* Vertical rhythm: the feed is scanned, so the gap only has to say "separate card" -- the card
      border does most of the separating work -- but 8px was under the point where it said it, and
      cards ran together into one column of text. 12px reads as separate posts.
@@ -1684,6 +1745,112 @@
     border: 1px solid var(--border);
   }
   .notice-gallery-count { @apply text-sm; }
+
+  /* The composer's embeds (opslagstavle/_embedded.html): the widgets as the post will show them, a
+     "Fjern" on each, and the buttons that open the pickers. */
+  .board-embeds { display: grid; gap: 10px; margin-top: 14px; }
+  .board-embed { position: relative; }
+  .board-embed > .album-embed, .board-embed > .flix-embed { margin-top: 0; }
+  .board-embed-actions { position: absolute; top: 10px; right: 10px; z-index: 2; display: flex; gap: 6px; }
+  .board-embed-action { padding: 5px 12px; border: 0; border-radius: 999px; background: rgb(0 0 0 / .62);
+    color: #fff; font-size: 13px; font-weight: 600; cursor: pointer; }
+  .board-embed-action:hover { background: rgb(0 0 0 / .82); }
+  .board-embed-buttons { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 12px;
+    font-size: 14px; color: var(--muted); }
+  .board-embed-button { display: inline-flex; align-items: center; gap: 8px; padding: 6px 14px 6px 8px;
+    border: 1px solid var(--border-strong); border-radius: 999px; background: var(--surface);
+    color: var(--ink); font-size: 14px; font-weight: 600; cursor: pointer; }
+  .board-embed-button:hover { border-color: var(--green-100); background: var(--green-050); }
+  .board-embed-button .ni { width: 20px; height: 20px; stroke: var(--brass); fill: none; }
+  /* GAHKFlix's red G on its black, as on the film's own kicker. */
+  .board-embed-button.is-gahkflix b { display: inline-grid; place-items: center; width: 20px; height: 20px;
+    border-radius: 4px; background: #141414; color: #e50914; font-family: "Bebas Neue", Impact,
+    "Arial Narrow Bold", sans-serif; font-size: 17px; font-weight: 400; line-height: 1; }
+
+  /* The pickers (form.html): a search over the albums or the films, newest first. The film's picker
+     is GAHKFlix-dark, as everything of GAHKFlix's is. */
+  /* margin:auto puts back the centring the browser gives a modal dialog, which the reset's margin:0
+     takes away. */
+  .board-picker { width: min(540px, calc(100vw - 24px)); max-height: min(620px, calc(100dvh - 48px));
+    margin: auto; padding: 0; overflow: hidden; border: 0; border-radius: 14px; background: var(--surface);
+    color: var(--ink); box-shadow: 0 24px 60px rgb(0 0 0 / .28); }
+  .board-picker[open] { display: flex; flex-direction: column; }
+  .board-picker::backdrop { background: rgb(20 28 23 / .5); }
+  .board-picker-head { display: flex; align-items: center; justify-content: space-between; gap: 12px;
+    padding: 16px 14px 10px 18px; }
+  .board-picker-head h2 { margin: 0; font-family: Georgia, serif; font-size: 20px; }
+  .board-picker-close { width: 34px; height: 34px; border: 0; border-radius: 50%; background: transparent;
+    color: inherit; font-size: 24px; line-height: 1; cursor: pointer; }
+  .board-picker-close:hover { background: var(--surface-2); }
+  /* width:auto, stretched by the column: the site's inputs are 100% wide, which with these margins
+     made the dialog scroll sideways once the search took focus. */
+  .board-picker-search { align-self: stretch; width: auto; min-width: 0; margin: 0 18px 10px;
+    padding: 9px 12px; border: 1px solid var(--border-strong); border-radius: 10px; font-size: 15px; }
+  .board-picker-results { flex: 1; display: grid; align-content: start; gap: 2px; min-height: 120px;
+    overflow: auto; padding: 0 10px 12px; }
+  .board-choice { display: flex; align-items: center; gap: 12px; width: 100%; padding: 8px; border: 0;
+    border-radius: 10px; background: transparent; color: inherit; font: inherit; text-align: left;
+    cursor: pointer; }
+  .board-choice:hover, .board-choice:focus-visible { background: var(--green-050); outline: none; }
+  .board-choice-img { flex: none; width: 56px; height: 56px; overflow: hidden; border-radius: 8px;
+    background: var(--sunken); }
+  .board-choice-img img { display: block; width: 100%; height: 100%; object-fit: cover; }
+  .board-choice-text { display: grid; gap: 2px; min-width: 0; }
+  .board-choice-text strong, .board-choice-text small { overflow: hidden; text-overflow: ellipsis;
+    white-space: nowrap; }
+  .board-choice-text strong { font-weight: 650; }
+  .board-choice.is-album strong { font-family: Georgia, serif; font-size: 16.5px; font-weight: 700; }
+  .board-choice-text small { color: var(--muted); font-size: 12.5px; }
+  .board-choice-none { padding: 18px 10px; margin: 0; color: var(--muted); text-align: center; }
+  .board-picker.is-gahkflix { background: #141414; color: #e5e5e5; }
+  .board-picker.is-gahkflix .board-picker-head h2 { display: flex; align-items: baseline; gap: 10px;
+    font-family: "Helvetica Neue", Helvetica, Arial, sans-serif; font-size: 18px; font-weight: 800; }
+  .board-picker.is-gahkflix .board-picker-head b { font-family: "Bebas Neue", Impact, "Arial Narrow Bold",
+    sans-serif; font-size: 26px; font-weight: 400; color: #e50914; letter-spacing: .02em; }
+  .board-picker.is-gahkflix .board-picker-close:hover,
+  .board-picker.is-gahkflix .board-choice:hover,
+  .board-picker.is-gahkflix .board-choice:focus-visible { background: #2a2a2a; }
+  .board-picker.is-gahkflix .board-picker-search { border-color: #3a3a3a; background: #2a2a2a; color: #fff; }
+  .board-picker.is-gahkflix .board-choice-img { width: 96px; height: 54px; border-radius: 4px; background: #2a2a2a; }
+  .board-picker.is-gahkflix .board-choice-text small, .board-picker.is-gahkflix .board-choice-none { color: #a3a3a3; }
+
+  /* "Vælg billeder" (opslagstavle/_embed_pictures.html): the picks in a strip, in order, over the
+     album's pictures; each picked one in the grid wears its place. Once seven are picked the rest
+     fade, since another would not fit the mosaic. */
+  .board-pictures { width: min(760px, calc(100vw - 24px)); max-height: min(760px, calc(100dvh - 48px)); }
+  .board-pictures-body { flex: 1; min-height: 160px; overflow: auto; padding: 0 18px 12px; }
+  .board-pictures-picked { position: sticky; top: 0; z-index: 1; padding: 4px 0 12px;
+    border-bottom: 1px solid var(--border); background: var(--surface); }
+  .board-pictures-picked-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+  .board-pictures-picked-head strong { font-size: 15px; }
+  .board-pictures-clear { padding: 0; border: 0; background: none; color: var(--muted); font-size: 14px;
+    text-decoration: underline; cursor: pointer; }
+  .board-pictures-auto, .board-pictures-hint { margin: 4px 0 0; color: var(--muted); font-size: 13px; }
+  .board-pictures-strip { display: flex; gap: 6px; margin-top: 8px; }
+  .board-pictures-strip:empty { display: none; }
+  .board-pictures-strip .board-picture { width: 64px; flex: none; }
+  /* The first pick is the mosaic's large picture. */
+  .board-pictures-strip .board-picture:first-child { width: 132px; aspect-ratio: auto; }
+  .board-pictures-album { margin: 14px 0 8px; font-family: Georgia, serif; font-size: 16px; font-weight: 700; }
+  .board-pictures-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(88px, 1fr)); gap: 6px; }
+  .board-picture { position: relative; aspect-ratio: 1; padding: 0; overflow: hidden; border: 0;
+    border-radius: 8px; background: var(--sunken); cursor: pointer; }
+  .board-picture img { display: block; width: 100%; height: 100%; object-fit: cover; }
+  .board-picture:focus-visible { outline: 3px solid var(--green-100); outline-offset: 2px; }
+  .board-picture-video { position: absolute; left: 6px; bottom: 6px; padding: 1px 6px; border-radius: 4px;
+    background: rgb(0 0 0 / .62); color: #fff; font-size: 11px; }
+  .board-picture[data-place]::before { content: ""; position: absolute; inset: 0; border: 3px solid var(--brass);
+    border-radius: 8px; }
+  .board-picture[data-place]::after { content: attr(data-place); position: absolute; top: 6px; right: 6px;
+    display: grid; place-items: center; width: 24px; height: 24px; border-radius: 50%; background: var(--brass);
+    color: #fff; font-size: 13px; font-weight: 700; line-height: 1; }
+  .board-pictures-grid.is-full .board-picture:not([data-place]) { opacity: .4; cursor: not-allowed; }
+  .board-pictures-more { grid-column: 1 / -1; justify-self: center; margin-top: 6px; padding: 7px 16px;
+    border: 1px solid var(--border-strong); border-radius: 999px; background: var(--surface); color: var(--ink);
+    font: inherit; font-size: 14px; font-weight: 600; cursor: pointer; }
+  .board-pictures-foot { display: flex; justify-content: flex-end; align-items: center; gap: 14px;
+    padding: 12px 18px; border-top: 1px solid var(--border); }
+  .board-pictures-cancel { padding: 0; border: 0; background: none; color: inherit; font: inherit; cursor: pointer; }
   .notice-head { @apply flex items-start justify-between gap-3; flex-wrap: nowrap; }
   .notice-headline { flex: 1; min-width: 0; }
   .notice-tags { @apply flex flex-wrap items-center gap-2; margin-bottom: 6px; }
@@ -1699,7 +1866,7 @@
   .chip-embedsgruppe { display: inline-block; background: var(--surface-2); color: var(--muted);
     border-color: var(--border-strong); font-size: 11px; padding: 1px 8px; min-width: 0;
     overflow: hidden; text-overflow: ellipsis; }
-  .chip-event { background: var(--warn-bg); color: var(--brass-ink); border-color: #e7d8b0;
+  .chip-event { background: var(--warn-bg); color: var(--brass-ink); border-color: var(--warn-line);
     display: inline-flex; align-items: center; gap: 5px; text-decoration: none; max-width: 100%;
     overflow: hidden; text-overflow: ellipsis; }
   .chip-event:hover { border-color: var(--brass); }
@@ -1813,23 +1980,23 @@
     white-space: nowrap;
     margin: 3px 0;
     padding: 3px 12px;
-    border: 1px solid #e2e8f0;
+    border: 1px solid var(--border-strong);
     border-radius: 9999px;
-    background: #fff;
+    background: var(--surface);
     font-size: 0.875rem;
-    color: #1f2937;
+    color: var(--ink);
   }
   .lineage li > ul { margin-left: 2rem; }
   /* stub from a parent node to its children's vertical bar */
   .lineage li:has(> ul) > .node::after {
-    content: ""; position: absolute; left: 100%; top: 50%; width: 1rem; border-top: 1px solid #cbd5e1;
+    content: ""; position: absolute; left: 100%; top: 50%; width: 1rem; border-top: 1px solid var(--border-strong);
   }
   /* per-child: horizontal stub + shared vertical bar */
   .lineage li > ul > li::before {
-    content: ""; position: absolute; left: -1rem; top: 50%; width: 1rem; border-top: 1px solid #cbd5e1;
+    content: ""; position: absolute; left: -1rem; top: 50%; width: 1rem; border-top: 1px solid var(--border-strong);
   }
   .lineage li > ul > li::after {
-    content: ""; position: absolute; left: -1rem; top: 0; bottom: 0; border-left: 1px solid #cbd5e1;
+    content: ""; position: absolute; left: -1rem; top: 0; bottom: 0; border-left: 1px solid var(--border-strong);
   }
   .lineage li > ul > li:first-child::after { top: 50%; }
   .lineage li > ul > li:last-child::after { bottom: 50%; }
@@ -1879,7 +2046,7 @@
   .kanban-move button { @apply text-xs; background: var(--surface-2); border: 1px solid var(--border-strong);
     border-radius: 6px; padding: 3px 7px; cursor: pointer; }
   .kanban-move button:hover { background: var(--green-050); border-color: var(--green); color: var(--green-700); }
-  .kanban-danger { color: var(--neg); border-color: #e7c7c3 !important; }
+  .kanban-danger { color: var(--neg); border-color: var(--neg-line) !important; }
   .kanban-danger:hover { background: var(--neg-bg) !important; border-color: var(--neg) !important; color: var(--neg) !important; }
 
   /* ---- Dragging a card (frontend/src/reparationer.ts) -----------------------------------------
@@ -1907,6 +2074,16 @@
      than the card snapping back a moment later with an explanation. */
   .kanban-col.is-drop-refused { border-color: var(--neg); background: var(--neg-bg); }
   .kanban-note { font-size: 13px; }
+  /* Column age (models.RepairTask.column_age): a left edge and a tint, so the colour reads at a glance
+     across a full board without drowning the card's own text. */
+  .kanban-card[data-age="stale"] { border-color: var(--warn-line); border-left: 4px solid var(--warn); background: var(--warn-bg); }
+  .kanban-card[data-age="overdue"] { border-color: var(--neg-line); border-left: 4px solid var(--neg); background: var(--neg-bg); }
+  .kanban-card[data-age="done"] { border-color: #bfd8c8; border-left: 4px solid var(--pos); background: #E6F2EA; }
+  .kanban-age { font-size: 12px !important; font-weight: 600; }
+  .kanban-card[data-age="stale"] .kanban-age { color: var(--brass-ink); }
+  .kanban-card[data-age="overdue"] .kanban-age { color: var(--neg); }
+  .repair-photos { display: flex; flex-wrap: wrap; gap: 8px; margin: 8px 0; }
+  .repair-photos img { width: 120px; height: 120px; object-fit: cover; border-radius: 8px; border: 1px solid var(--border); display: block; }
 
   /* --- Arkiv -------------------------------------------------------------------------------
      A file browser is a list, not a grid: names are the thing being scanned, they are long and of
@@ -2026,6 +2203,31 @@
      .album-timeline-label strong { font-size:24px; }
    }
    @media (prefers-reduced-motion:reduce) { .album-timeline-mosaic img { transition:none; } }
+   /* A post's album on opslagstavlen (opslagstavle/_album_widget.html): the tile above, with the
+      album's own newest pictures. Fewer than seven get a layout that fills the tile instead of the
+      index's dark empty cells: n1 one picture, n2 two halves, n3 one large and two, n4 four, n5 one
+      large and four, n6 six. On a phone everything from three up is one large and two, as above. */
+   .album-embed { margin:10px 0 0; box-shadow:none; line-height:1.35; }
+   /* Drawn inside a post's text (core.embeds), where .prose-gahk styles every link and picture. */
+   .prose-gahk .album-embed { color:#fffdf7; text-decoration:none; }
+   .prose-gahk .album-embed img { max-width:none; margin:0; border-radius:0; }
+   .album-embed-n1 .album-timeline-mosaic { grid-template-columns:1fr; }
+   .album-embed-n2 .album-timeline-mosaic, .album-embed-n4 .album-timeline-mosaic { grid-template-columns:repeat(2, 1fr); }
+   .album-embed-n3 .album-timeline-mosaic, .album-embed-n6 .album-timeline-mosaic { grid-template-columns:repeat(3, 1fr); }
+   .album-embed-n5 .album-timeline-mosaic { grid-template-columns:repeat(4, 1fr); }
+   .album-embed-n1 .album-timeline-mosaic > span:first-child { grid-column:auto; }
+   .album-embed-n2 .album-timeline-mosaic > span { grid-row:span 2; grid-column:auto; }
+   .album-embed-n4 .album-timeline-mosaic > span:first-child,
+   .album-embed-n6 .album-timeline-mosaic > span:first-child { grid-row:auto; grid-column:auto; }
+   @media (max-width:720px) {
+     /* Taller than the index's 92 px rows: on a phone the band would otherwise cover most of them,
+        and on the board the pictures are the point. */
+     .album-embed .album-timeline-mosaic { grid-template-rows:repeat(2, 118px); }
+     .album-embed-n4 .album-timeline-mosaic, .album-embed-n5 .album-timeline-mosaic,
+     .album-embed-n6 .album-timeline-mosaic { grid-template-columns:repeat(3, 1fr); }
+     .album-embed-n4 .album-timeline-mosaic > span:first-child,
+     .album-embed-n6 .album-timeline-mosaic > span:first-child { grid-row:span 2; grid-column:span 2; }
+   }
    .album-folder { border-top:1px solid var(--border); padding-top:16px; }
    .album-folder h2 { display:flex; align-items:center; gap:8px; margin:0 0 12px; font-size:16px; }
    .album-folder h2 svg, .album-subtitle svg { width:19px; height:19px; color:var(--brass); fill:none; stroke:currentColor; }
@@ -2488,7 +2690,7 @@
   .jobs-tile { display:block; padding:14px 16px; background:var(--surface); border:1px solid var(--border);
     border-radius:var(--radius); box-shadow:var(--shadow-sm); color:var(--ink); text-decoration:none; }
   a.jobs-tile:hover { border-color:var(--green-100); background:var(--green-050); color:var(--ink); }
-  .jobs-tile.is-alert { border-color:#e7c7c3; box-shadow:inset 4px 0 0 var(--neg), var(--shadow-sm); }
+  .jobs-tile.is-alert { border-color:var(--neg-line); box-shadow:inset 4px 0 0 var(--neg), var(--shadow-sm); }
   .jobs-tile-k { display:block; font-size:11px; font-weight:700; letter-spacing:.09em; text-transform:uppercase; color:var(--faint); }
   .jobs-tile-v { display:block; margin-top:4px; font-size:30px; font-weight:700; line-height:1.15; font-variant-numeric:tabular-nums; }
   .jobs-tile-s { display:block; margin-top:2px; font-size:12.5px; color:var(--muted); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
@@ -2640,7 +2842,9 @@
     background:var(--sunken); font-size:10.5px; color:var(--muted); text-align:center; line-height:1.2; }
   .pad-name { display:flex; align-items:center; flex-wrap:wrap; gap:4px 8px; font-size:14px; overflow-wrap:anywhere; }
   .pad-why { margin-top:2px; font-size:13px; }
-  .pad-actions { align-self:center; }
+  .pad-actions { align-self:center; display:flex; flex-wrap:wrap; gap:8px; justify-content:flex-end; }
+  .pad-retry { display:flex; flex-wrap:wrap; gap:8px 16px; align-items:center; justify-content:space-between; }
+  .pad-retry p { margin:0; }
   .pad-details { grid-column:2 / -1; font-size:13px; }
   .pad-details summary { cursor:pointer; color:var(--muted); }
   .pad-details .jobs-facts { padding:10px 0 4px; }
@@ -2661,9 +2865,30 @@
   /* @mentions: the rendered link (core/mentions.py) and the composer's picker (mention.ts). */
   [data-mention] { font-weight:600; color:var(--green); text-decoration:none; }
   a[data-mention]:hover { text-decoration:underline; }
-  .mention-picker { position:fixed; z-index:90; box-sizing:border-box; margin:0; padding:4px; list-style:none; background:var(--surface); border:1px solid var(--border-strong); border-radius:var(--radius-sm); box-shadow:var(--shadow); max-height:260px; overflow:auto; overscroll-behavior:contain; }
+  .mention-picker { position:absolute; top:0; left:0; z-index:90; box-sizing:border-box; margin:0; padding:4px; list-style:none; background:var(--surface); border:1px solid var(--border-strong); border-radius:var(--radius-sm); box-shadow:var(--shadow); max-height:260px; overflow:auto; overscroll-behavior:contain; }
   .mention-picker li { display:flex; align-items:center; gap:8px; padding:7px 10px; border-radius:6px; cursor:pointer; font-size:14px; color:var(--ink); }
   .mention-picker li[aria-selected="true"], .mention-picker li:hover { background:var(--green-050); }
   .mention-picker img { width:22px; height:22px; border-radius:50%; object-fit:cover; }
   .mention-picker small { margin-left:auto; color:var(--faint); font-size:12px; }
+  .mention-picker li.mention-empty { cursor:default; color:var(--muted); background:none; }
+
+  /* --- /install (install.html, install.ts): one collapsible .card per platform --- */
+  .install-page > p { margin:0 0 10px; }
+  .install-page a:not(.btn) { color:var(--green-700); font-weight:600; text-decoration:underline; }
+  .install-installed p + p, .install-installed > div { margin-top:12px; }
+  .install-page ol { list-style:decimal; padding-left:22px; margin:10px 0; display:grid; gap:8px; }
+  .install-page .card h2 { margin-top:0; }
+  .install-platform { padding:0; }
+  .install-platform > summary { display:flex; align-items:center; justify-content:space-between; gap:12px;
+    padding:16px 20px; font-size:16px; font-weight:700; cursor:pointer; list-style:none; }
+  .install-platform > summary::-webkit-details-marker { display:none; }
+  .install-platform > summary::after { content:"▾"; color:var(--muted); transition:rotate .15s ease; }
+  .install-platform[open] > summary::after { rotate:180deg; }
+  .install-platform > :not(summary) { margin-left:20px; margin-right:20px; }
+  .install-platform > :last-child { margin-bottom:18px; }
+  .install-offer p { margin:10px 0 0; }
+  .install-icon { display:inline-block; width:18px; height:18px; vertical-align:-3px; color:var(--green-700);
+    fill:none; stroke:currentColor; stroke-width:1.8; stroke-linecap:round; stroke-linejoin:round; }
+  .install-done { margin:16px 0; padding:10px 14px; border:1px solid var(--green-100); border-radius:10px;
+    background:var(--green-050); color:var(--green-700); font-weight:600; }
 }

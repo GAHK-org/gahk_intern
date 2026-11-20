@@ -20,6 +20,13 @@ from residents.models import Residency, Resident
 AUGUST = (date(2026, 8, 1), date(2026, 8, 31))
 
 
+@pytest.fixture(autouse=True)
+def _any_account_name_matches(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The e-conomic mocks here use placeholder account names; the name check itself is tested in
+    test_economic_account_number.py."""
+    monkeypatch.setattr(alumneregning, "account_name_matches", lambda resident, name: True)
+
+
 def _account(balance: float, name: str = "Alumne") -> economic.EconomicAccount:
     return economic.EconomicAccount(account_number=1101, name=name, balance=balance)
 
