@@ -41,7 +41,7 @@
     <form method="post" action="{% url 'soegvaerelse:create_offer' %}" class="flex gap-2 items-end flex-wrap">
       {% csrf_token %}
       <div><label>Værelse (nr.)</label><input type="number" name="room" class="w-28"></div>
-      <button type="submit">Opret</button>
+      <button type="submit" class="btn">Opret</button>
     </form>
   </div>
 
@@ -50,7 +50,7 @@
     {% if offer_rows %}
       <form method="post" action="{% url 'soegvaerelse:end_round' %}" class="inline"
             onsubmit="return confirm('Afslut runden? Vinderne tildeles værelserne på næste måneds liste, og runden ryddes.');">
-        {% csrf_token %}<button type="submit">Afslut runde</button>
+        {% csrf_token %}<button type="submit" class="btn btn-secondary">Afslut runde</button>
       </form>
     {% endif %}
   </div>
@@ -71,7 +71,7 @@
         <td class="p-2">
           <a href="{% url 'soegvaerelse:applicants' offer.id %}">Ansøgere</a>
           <form method="post" action="{% url 'soegvaerelse:close_offer' offer.id %}" class="inline">
-            {% csrf_token %}<button type="submit" class="bg-red-600! ml-2">Luk</button>
+            {% csrf_token %}<button type="submit" class="btn btn-danger ml-2">Luk</button>
           </form>
         </td>
       </tr>
