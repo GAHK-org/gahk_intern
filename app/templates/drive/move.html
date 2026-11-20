@@ -42,7 +42,7 @@
       {% if problem %}
         <p class="muted">{{ problem }}</p>
       {% else %}
-        <button type="submit" class="btn btn-primary">{% if op == "copy" %}Kopier{% else %}Flyt{% endif %} til {{ at.name }}</button>
+        <button type="submit" class="btn">{% if op == "copy" %}Kopier{% else %}Flyt{% endif %} til {{ at.name }}</button>
       {% endif %}
       <a class="btn-link" href="{% url 'drive:folder' source.pk %}">Annuller</a>
     </form>
