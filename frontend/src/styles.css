@@ -2064,7 +2064,8 @@
   .drive-newfolder input[type=text] { width:auto; flex:1 1 200px; max-width:320px; margin:0; }
   /* A folder's or file's own links: history, bin, rename, delete. */
   .drive-links { display:flex; align-items:center; gap:8px 18px; flex-wrap:wrap; font-size:13px; }
-  .drive-links > a { color:var(--brass); }
+  .drive-links > a { color:var(--brass); text-decoration:none; }
+  .drive-links > a:hover { text-decoration:underline; }
   .drive-links form { margin:0; }
   .drive-links .btn-link, .drive-links .btn-link-danger { font-size:13px; }
   .drive-inline summary { cursor:pointer; color:var(--brass); }
