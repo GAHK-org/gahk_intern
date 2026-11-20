@@ -6,14 +6,14 @@
   <p class="muted mb-3">Rangeret efter K (højest først), derefter prioritet. Ansøgningstidspunkt afgør
     <strong>ikke</strong> K-lige ansøgninger — det gør indstillingen (lodtrækning).</p>
   {% if contested_app_ids %}
-    <p class="card border-amber-400">Uafgjort — flere ansøgere har samme K. Vælg en vinder (lodtrækning
+    <p class="card border-brass">Uafgjort — flere ansøgere har samme K. Vælg en vinder (lodtrækning
       i huset), så tildeles værelset til dem, når runden afsluttes.</p>
   {% endif %}
   <table class="w-full border-collapse">
-    <thead><tr class="border-b border-gray-200"><th class="p-2">#</th><th class="p-2">Beboer</th><th class="p-2">K</th><th class="p-2">Prioritet</th><th class="p-2">Sendt</th><th class="p-2"></th></tr></thead>
+    <thead><tr class="border-b border-line"><th class="p-2">#</th><th class="p-2">Beboer</th><th class="p-2">K</th><th class="p-2">Prioritet</th><th class="p-2">Sendt</th><th class="p-2"></th></tr></thead>
     <tbody>
     {% for p in prios %}
-      <tr class="border-b border-gray-100">
+      <tr class="border-b border-line">
         <td class="p-2">{{ forloop.counter }}</td>
         <td class="p-2"><a href="{% url 'soegvaerelse:detail' p.application.id %}">{{ p.application.resident.full_name }}</a>
           {% if p.application.id == winner_app_id %}<span title="Ville vinde værelset">🏆</span>{% endif %}

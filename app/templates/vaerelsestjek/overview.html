@@ -23,11 +23,11 @@
       <div class="card">
         <h2>{{ floor.grouper|capfirst }}</h2>
         <img src="{% static floor.list.0.0.plan_image %}" alt="Plantegning, {{ floor.grouper }}"
-             class="max-w-full h-auto rounded border border-gray-200" loading="lazy">
+             class="max-w-full h-auto rounded border border-line" loading="lazy">
         <div class="flex flex-wrap gap-1 mt-2">
           {% for room, cond in floor.list %}
             <a href="{% url 'vaerelsestjek:besvar' room.number %}"
-               class="btn {% if not cond %}bg-gray-400!{% endif %}"
+               class="btn{% if not cond %} btn-secondary{% endif %}"
                title="{% if cond %}Sidst tjekket {{ cond.recorded_at|date:'Y-m-d' }}{% else %}Aldrig tjekket{% endif %}">{{ room.number|stringformat:"03d" }}</a>
           {% endfor %}
         </div>
@@ -37,10 +37,10 @@
 
   <h2 class="mt-6">Alle værelser</h2>
   <table class="w-full border-collapse">
-    <thead><tr class="border-b border-gray-200"><th class="p-2">Værelse</th><th class="p-2">Etage</th><th class="p-2">Seneste tjek</th><th class="p-2"></th></tr></thead>
+    <thead><tr class="border-b border-line"><th class="p-2">Værelse</th><th class="p-2">Etage</th><th class="p-2">Seneste tjek</th><th class="p-2"></th></tr></thead>
     <tbody>
     {% for room, cond in rows %}
-      <tr class="border-b border-gray-100">
+      <tr class="border-b border-line">
         <td class="p-2">{{ room.number|stringformat:"03d" }}</td>
         <td class="p-2">{{ room.floor }} · {{ room.side }}</td>
         <td class="p-2">{% if cond %}{{ cond.recorded_at|date:"Y-m-d" }} ({{ cond.recorded_by_name }}){% else %}<span class="muted">—</span>{% endif %}</td>
