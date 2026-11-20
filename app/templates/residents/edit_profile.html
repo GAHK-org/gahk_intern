@@ -20,7 +20,7 @@
           {% endif %}
           {% if user.profile_picture %}
             <button type="button" id="pp-clear-btn"
-                    style="position:absolute;top:-3px;right:-3px;width:22px;height:22px;border-radius:50%;background:#c53030;color:#fff;border:2px solid #fff;cursor:pointer;font-size:14px;line-height:1;display:flex;align-items:center;justify-content:center;padding:0"
+                    style="position:absolute;top:-3px;right:-3px;width:22px;height:22px;border-radius:50%;background:var(--neg);color:#fff;border:2px solid #fff;cursor:pointer;font-size:14px;line-height:1;display:flex;align-items:center;justify-content:center;padding:0"
                     title="Slet billede" aria-label="Slet billede">×</button>
           {% endif %}
         </div>
@@ -29,7 +29,7 @@
       <input type="file" name="profile_picture" id="id_profile_picture" accept="image/*,.heic,.heif" style="display:none">
       <input type="checkbox" name="profile_picture-clear" id="id_profile_picture-clear_id" style="display:none">
       {% if form.profile_picture.errors %}
-        <p class="text-red-600 text-sm mt-1">{{ form.profile_picture.errors|striptags }}</p>
+        <p class="text-neg text-sm mt-1">{{ form.profile_picture.errors|striptags }}</p>
       {% endif %}
     </div>
 
@@ -39,7 +39,7 @@
           <label for="{{ field.id_for_label }}" class="font-semibold block mb-1">{{ field.label }}</label>
           {{ field }}
           {% if field.help_text %}<p class="muted text-sm mt-1">{{ field.help_text }}</p>{% endif %}
-          {% if field.errors %}<p class="text-red-600 text-sm mt-1">{{ field.errors|striptags }}</p>{% endif %}
+          {% if field.errors %}<p class="text-neg text-sm mt-1">{{ field.errors|striptags }}</p>{% endif %}
         </div>
       {% endif %}
     {% endfor %}

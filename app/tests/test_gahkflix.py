@@ -130,7 +130,11 @@ def make_video(
         video.published_at = timezone.now() - timedelta(days=days_old)
     video.save()
     if days_old:
-        Video.objects.filter(pk=video.pk).update(created_at=timezone.now() - timedelta(days=days_old))
+        # Calendar days in Copenhagen, as a draft's deletion date counts them: localtime() keeps the
+        # wall-clock time across a DST change. From UTC, 89 days before 23:30 in winter is 00:30 in
+        # summer, a day later, so the draft tests failed every evening between 23:00 and midnight.
+        created_at = timezone.localtime() - timedelta(days=days_old)
+        Video.objects.filter(pk=video.pk).update(created_at=created_at)
         video.refresh_from_db()
     return video
 
