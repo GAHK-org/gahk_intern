@@ -2542,6 +2542,8 @@
   .jobs-meter > span { display:block; height:100%; border-radius:2px; background:var(--green); }
   .jobs-meter.is-near { background:var(--warn-bg); }
   .jobs-meter.is-near > span { background:var(--brass); }
+  .jobs-progress { height:8px; margin-top:10px; border-radius:4px; background:var(--green-100); overflow:hidden; }
+  .jobs-progress > span { display:block; height:100%; border-radius:4px; background:var(--green); transition:width .4s ease; }
   .jobs-stale { padding:11px 18px; border-bottom:1px solid var(--border); background:var(--neg-bg); font-size:13px; }
   .jobs-stale a { font-weight:600; color:var(--neg); }
 
@@ -2626,6 +2628,7 @@
   .jobs-facts dd { margin:2px 0 0; }
   .jobs-pre { margin:0; padding:14px 18px; overflow-x:auto; font-size:12.5px; line-height:1.5; }
   .jobs-log td { padding:6px 14px; }
+  .jobs-log td:first-child { white-space:nowrap; }
   .jobs-log .jobs-message { white-space:pre-wrap; overflow-wrap:anywhere; }
   .jobs-log tr.is-warning td { background:var(--warn-bg); }
   .jobs-log tr.is-error td, .jobs-log tr.is-critical td { background:var(--neg-bg); }

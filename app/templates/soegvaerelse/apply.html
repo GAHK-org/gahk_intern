@@ -59,7 +59,7 @@
           {% for room in offered_rooms %}<option value="{{ room.id }}"{% if room.id == slot %} selected{% endif %}>{{ room.number|stringformat:"03d" }} ({{ room.floor }})</option>{% endfor %}
         </select>
       {% endfor %}
-      <p class="mt-4"><button type="submit">{% if existing %}Gem ændringer{% else %}Send ansøgning{% endif %}</button></p>
+      <p class="mt-4"><button type="submit" class="btn">{% if existing %}Gem ændringer{% else %}Send ansøgning{% endif %}</button></p>
     {% else %}
       <p class="muted mt-4">Der er ingen værelser i udbud lige nu, men du kan altid se din kvotient her.</p>
     {% endif %}

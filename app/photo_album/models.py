@@ -46,13 +46,13 @@ JOB_STALLED_AFTER = timedelta(minutes=15)
 # A QUEUED job has no progress to measure, and waiting is not a symptom: the media queue runs one
 # job at a time, so a ZIP can honestly queue behind a run of hour-long video encodes. Its message
 # is only lost if a worker was killed after taking it off the broker and before starting it.
-JOB_QUEUED_TOO_LONG = timedelta(hours=12)
+# A day: longer than two of the longest encodes (tasks.ENCODE_TASK_TIME_LIMIT) back to back.
+JOB_QUEUED_TOO_LONG = timedelta(hours=24)
 
 # How long one worker's claim on a media row keeps others off it. Equal to the transcode's time
-# limit (tasks.MEDIA_TASK_TIME_LIMIT): it has to outlast the longest honest transcode, because
-# expiring early is what would let a second worker in beside the first. Four hours, not one: a long
-# video on this box's few cores honestly takes more than an hour.
-DERIVATIVE_CLAIM_TTL = timedelta(hours=4)
+# limit (tasks.ENCODE_TASK_TIME_LIMIT): it has to outlast the longest honest transcode, because
+# expiring early is what would let a second worker in beside the first.
+DERIVATIVE_CLAIM_TTL = timedelta(hours=12)
 
 
 # An album and everything under it may be at most five levels deep: depth 0 (a root album in a
