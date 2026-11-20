@@ -5,7 +5,7 @@
   <h1>Værelsesfordeling (indstilling)</h1>
 
   {% if round_summary %}
-    <div class="card border-emerald-400">
+    <div class="card border-gahk-green">
       <h2>Seneste runde: ændringer</h2>
       {% if round_summary.moves %}
         <p class="font-semibold mt-2">Tildelte værelser</p>
@@ -57,10 +57,10 @@
   <p class="muted mb-2">«Fører» er den beboer med højest kvotient, der aktuelt ville vinde værelset
     (global fordeling — hver beboer vinder højst ét værelse).</p>
   <table class="w-full border-collapse">
-    <thead><tr class="border-b border-gray-200"><th class="p-2">Værelse</th><th class="p-2">Måned</th><th class="p-2">Fører</th><th class="p-2"></th></tr></thead>
+    <thead><tr class="border-b border-line"><th class="p-2">Værelse</th><th class="p-2">Måned</th><th class="p-2">Fører</th><th class="p-2"></th></tr></thead>
     <tbody>
     {% for offer, leader, contested in offer_rows %}
-      <tr class="border-b border-gray-100">
+      <tr class="border-b border-line">
         <td class="p-2">{{ offer.room.number|stringformat:"03d" }}</td>
         <td class="p-2">{{ offer.month|maaned }}</td>
         <td class="p-2">
