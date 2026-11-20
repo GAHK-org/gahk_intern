@@ -9,15 +9,15 @@
 
   <div class="overflow-x-auto mb-8">
     <table cellpadding="6" class="text-sm" style="width:100%; border-collapse:collapse">
-      <thead><tr style="text-align:left; border-bottom:1px solid #e6e8ec; white-space:nowrap">
+      <thead><tr style="text-align:left; border-bottom:1px solid var(--border-strong); white-space:nowrap">
         <th>Navn</th><th>E-mail</th><th>Status</th><th>Detalje</th>
       </tr></thead>
       <tbody>
         {% for resident, send in rows %}
-          <tr style="border-bottom:1px solid #f0f1f4">
+          <tr style="border-bottom:1px solid var(--border)">
             <td>{{ resident.full_name }}</td>
             <td>{{ resident.email }}</td>
-            <td class="whitespace-nowrap {% if send.outcome == 'failed' %}text-red-600 font-semibold{% endif %}">
+            <td class="whitespace-nowrap {% if send.outcome == 'failed' %}text-neg font-semibold{% endif %}">
               {% if not send %}Venter…
               {% elif send.outcome == 'sent' %}Sendt
               {% else %}Fejlede{% endif %}
