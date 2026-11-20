@@ -1,7 +1,7 @@
 """The Hjemmeside editor (/hjemmeside/): where gahk.dk's content is edited.
 
-Every write goes through cms.services, which cleans the input, keeps page versions, records a
-ContentChange and publishes to gahk.dk after the commit. The views only check who may do what, shape
+Every write goes through cms.services, which cleans the input, keeps page versions, records an
+audit event and publishes to gahk.dk after the commit. The views only check who may do what, shape
 the forms' input into the services' `data`, and show the result.
 
 Who: CMS_EDITOR_ROLES (administrator, indstilling, inspektion, pr) and superusers, through the same
@@ -35,18 +35,20 @@ from django.utils import dateformat, timezone
 from django.utils.dateparse import parse_datetime
 from django.views.decorators.http import require_POST
 
+from audit import presentation, trail
+from audit.models import AuditEntity, AuditEvent
 from residents.models import Resident, Role
 from residents.permissions import CMS_EDITOR_ROLES, current_resident, request_has_role, role_required
 
 from . import live as cms_live
 from . import presence, services
+from .auditing import PUBLISHED_KINDS
 from .diff import DiffRow, html_diff
 from .forms import CaptionForm, EventForm, NewsForm, PageForm, RedirectForm, SiteSettingsForm
 from .gahk_web import GahkWebDisabled, GahkWebError
 from .models import (
     FRONT_PAGE_ID,
     CmsImage,
-    ContentChange,
     Event,
     GahkWebSync,
     MenuItem,
@@ -119,17 +121,6 @@ def _pending(request: HttpRequest, key: str, done: Callable[[datetime.datetime],
     return "waiting"
 
 
-# The kinds of change that alter what gahk.dk shows (an image only does so through a page using it).
-PUBLISHED_KINDS = (
-    ContentChange.Kind.PAGE,
-    ContentChange.Kind.NEWS,
-    ContentChange.Kind.EVENT,
-    ContentChange.Kind.MENU,
-    ContentChange.Kind.REDIRECT,
-    ContentChange.Kind.SETTINGS,
-)
-
-
 def _in_sync(sync: GahkWebSync) -> bool:
     """gahk.dk shows the newest content: it reports the revision of the last settled publish (sent,
     or skipped as already there), and no content change has been saved since that publish began.
@@ -142,11 +133,7 @@ def _in_sync(sync: GahkWebSync) -> bool:
     ).first()
     if settled is None or not sync.remote_revision or sync.remote_revision != settled.revision:
         return False
-    return not (
-        ContentChange.objects.filter(at__gt=settled.started_at, kind__in=PUBLISHED_KINDS)
-        .exclude(action=ContentChange.Action.PUBLISH)
-        .exists()
-    )
+    return not AuditEntity.objects.filter(event__at__gt=settled.started_at, kind__in=PUBLISHED_KINDS).exists()
 
 
 def _status_context(request: HttpRequest) -> dict[str, Any]:
@@ -189,7 +176,7 @@ def _status_context(request: HttpRequest) -> dict[str, Any]:
 def overview(request: HttpRequest) -> HttpResponse:
     context = _status_context(request)
     context.update(
-        changes=ContentChange.objects.all()[:10],
+        changes=_log_rows(list(_cms_events()[:10]), with_fields=False),
         unreachable=services.unreachable_pages(),
         counts={
             "pages": Page.objects.count(),
@@ -318,7 +305,7 @@ def _page_initial(page: Page | None) -> dict[str, Any]:
 
 
 # ------------------------------------------------------------------------- two editors at once
-Kind = ContentChange.Kind
+Kind = cms_live.Kind
 
 # What the messages call each kind of thing ("Ada har gemt siden …").
 EDITED_THING: dict[str, str] = {
@@ -336,8 +323,8 @@ def _when(moment: datetime.datetime) -> str:
     return clock if local.date() == timezone.localdate() else f"{dateformat.format(local, 'j. b')} {clock}"
 
 
-def _who(change: ContentChange | None) -> str:
-    return (change.by_name if change else "") or "En anden"
+def _who(change: AuditEvent | None) -> str:
+    return (change.actor_name if change else "") or "En anden"
 
 
 def _posted_version(request: HttpRequest) -> str | None:
@@ -1032,23 +1019,6 @@ def redirect_delete(request: HttpRequest, pk: int) -> HttpResponse:
 # -------------------------------------------------------------------------------------- the log
 # Fields holding HTML (or long text), shown as a diff rather than before → after.
 DIFF_FIELDS = {"body", "description"}
-FIELD_LABELS = {
-    "slug": "Adresse",
-    "header": "Titel",
-    "title": "Titel",
-    "body": "Tekst",
-    "description": "Beskrivelse",
-    "background_image": "Baggrundsbillede",
-    "published_at": "Udgivet",
-    "starts_on": "Dato",
-    "caption": "Beskrivelse",
-    "file": "Fil",
-    "menu": "Menu",
-    "old_path": "Gammel adresse",
-    "page": "Side",
-    "default_background": "Standardbaggrund",
-    "version": "Version",
-}
 
 
 @dataclass
@@ -1060,65 +1030,118 @@ class ChangeField:
     menu: tuple[list[Any], list[Any]] | None = None
 
 
-def _text(value: object) -> str:
-    if value is None or value == "":
-        return "–"
-    return str(value)
+# The log's "Type" filter, and the kinds of the audit trail each stands for.
+LOG_KINDS: dict[str, tuple[str, tuple[str, ...]]] = {
+    "page": ("Side", ("cms.page",)),
+    "news": ("Nyhed", ("cms.news",)),
+    "event": ("Begivenhed", ("cms.event",)),
+    "image": ("Billede", ("cms.image",)),
+    "menu": ("Menu", ("cms.menu", "cms.menu_item")),
+    "redirect": ("Omdirigering", ("cms.redirect",)),
+    "settings": ("Indstillinger", ("cms.settings",)),
+    "site": ("Hjemmesiden", ("cms.site",)),
+}
+LINKED_KINDS: dict[str, tuple[type[Page | NewsItem | Event | CmsImage], str]] = {
+    "cms.page": (Page, "cms:page_edit"),
+    "cms.news": (NewsItem, "cms:news_edit"),
+    "cms.event": (Event, "cms:event_edit"),
+    "cms.image": (CmsImage, "cms:image_detail"),
+}
 
 
-def change_fields(change: ContentChange) -> list[ChangeField]:
+@dataclass
+class LogRow:
+    """One line of the Hjemmeside's change log: an audit event as the editors read it."""
+
+    event: AuditEvent
+    what: str
+    kind_label: str
+    label: str
+    link: str = ""
+    object_id: int | None = None
+    fields: list[ChangeField] = field(default_factory=list)
+
+
+def _cms_events(kinds: Iterable[str] = ()) -> Any:  # noqa: ANN401 - a QuerySet[AuditEvent]
+    """The trail's events that touched the website's content, newest first."""
+    entities = (
+        AuditEntity.objects.filter(kind__in=kinds)
+        if kinds
+        else AuditEntity.objects.filter(kind__startswith="cms.")
+    )
+    return (
+        AuditEvent.objects.filter(pk__in=entities.values("event_id"))
+        .prefetch_related("entities__changes")
+        .order_by("-at", "-id")
+    )
+
+
+def _log_fields(entity: AuditEntity, own: bool, values: presentation.Values) -> list[ChangeField]:
     fields = []
-    for name, pair in (change.changes or {}).items():
-        before, after = ([*pair, None, None])[:2] if isinstance(pair, list) else (None, pair)
-        label = FIELD_LABELS.get(name, name)
-        if name == "menu":
+    prefix = "" if own else f"{trail.kind_label(entity.kind)} {entity.name}: "
+    for change in entity.changes.all():
+        label = prefix + values.label(entity.kind, change.field)
+        before, after = change.before, change.after
+        if change.field == "menu":
             fields.append(ChangeField(label, menu=(before or [], after or [])))
-        elif name in DIFF_FIELDS and (before or after):
+        elif change.field in DIFF_FIELDS and (before or after):
             fields.append(ChangeField(label, diff=html_diff(str(before or ""), str(after or ""))))
         else:
-            fields.append(ChangeField(label, _text(before), _text(after)))
+            fields.append(
+                ChangeField(
+                    label,
+                    values.text(entity.kind, change.field, before),
+                    values.text(entity.kind, change.field, after),
+                )
+            )
     return fields
 
 
-LINKED_KINDS: dict[str, tuple[type[Page | NewsItem | Event | CmsImage], str]] = {
-    ContentChange.Kind.PAGE: (Page, "cms:page_edit"),
-    ContentChange.Kind.NEWS: (NewsItem, "cms:news_edit"),
-    ContentChange.Kind.EVENT: (Event, "cms:event_edit"),
-    ContentChange.Kind.IMAGE: (CmsImage, "cms:image_detail"),
-}
+def _log_rows(events: list[AuditEvent], *, with_fields: bool = True) -> list[LogRow]:
+    values = presentation.Values()
+    rows = []
+    for event in events:
+        entities = [e for e in event.entities.all() if e.kind.startswith("cms.")]
+        subject = next((e for e in entities if e.role == "subject"), entities[0] if entities else None)
+        row = LogRow(
+            event=event,
+            what=trail.action_label(event.action),
+            kind_label=trail.kind_label(subject.kind) if subject else "",
+            label=subject.name if subject else "",
+        )
+        if subject is not None and subject.kind in LINKED_KINDS:
+            row.object_id = subject.entity_id
+            row.link = LINKED_KINDS[subject.kind][1]
+        if with_fields:
+            for entity in entities:
+                row.fields += _log_fields(entity, entity is subject, values)
+            if "version_from" in (event.details or {}):
+                row.fields.append(
+                    ChangeField("Version", "–", f"versionen fra {event.details['version_from']}")
+                )
+        rows.append(row)
+    # Link only to what is still there.
+    for kind, (model, _url) in LINKED_KINDS.items():
+        ids = {r.object_id for r in rows if r.link == LINKED_KINDS[kind][1] and r.object_id}
+        alive = set(model.objects.filter(pk__in=ids).values_list("pk", flat=True)) if ids else set()
+        for r in rows:
+            if r.link == LINKED_KINDS[kind][1] and r.object_id not in alive:
+                r.link = ""
+    return rows
 
 
 @editor_view
 def change_log(request: HttpRequest) -> HttpResponse:
-    changes = ContentChange.objects.select_related("by")
     kind = request.GET.get("type", "")
-    if kind in ContentChange.Kind.values:
-        changes = changes.filter(kind=kind)
+    events = _cms_events(LOG_KINDS[kind][1] if kind in LOG_KINDS else ())
     person = request.GET.get("person", "")
     if person == "system":
-        # Every automatic change: "System", and the variants that say which job it was (the
-        # legacy image import's "System (gamle billeder …)"). A resident deleted since keeps their
-        # by_name, so by__isnull alone would count their edits as the system's.
-        changes = changes.filter(by__isnull=True, by_name__startswith=services.SYSTEM_NAME)
+        events = events.filter(actor_id__isnull=True)
     elif person.isdigit():
-        changes = changes.filter(by_id=int(person))
-    page_obj = Paginator(changes, 50).get_page(request.GET.get("page"))
-    existing: dict[str, set[int]] = {}
-    for kind_value, (model, _url) in LINKED_KINDS.items():
-        ids = {c.object_id for c in page_obj.object_list if c.kind == kind_value and c.object_id}
-        existing[kind_value] = (
-            set(model.objects.filter(pk__in=ids).values_list("pk", flat=True)) if ids else set()
-        )
-    rows = []
-    for change in page_obj.object_list:
-        link = ""
-        if change.kind in LINKED_KINDS and change.object_id in existing.get(change.kind, set()):
-            link = LINKED_KINDS[change.kind][1]
-        rows.append((change, link, change_fields(change)))
-    people = (
-        Resident.objects.filter(cms_content_changes__isnull=False)
-        .distinct()
-        .order_by("first_name", "last_name")
+        events = events.filter(actor_id=int(person))
+    page_obj = Paginator(events, 50).get_page(request.GET.get("page"))
+    people = Resident.objects.filter(pk__in=_cms_events().values("actor_id")).order_by(
+        "first_name", "last_name"
     )
     query = request.GET.copy()
     query.pop("page", None)
@@ -1127,8 +1150,8 @@ def change_log(request: HttpRequest) -> HttpResponse:
         "cms/change_log.html",
         {
             "page_obj": page_obj,
-            "rows": rows,
-            "kinds": ContentChange.Kind.choices,
+            "rows": _log_rows(list(page_obj.object_list)),
+            "kinds": [(key, label) for key, (label, _kinds) in LOG_KINDS.items()],
             "people": people,
             "kind": kind,
             "person": person,

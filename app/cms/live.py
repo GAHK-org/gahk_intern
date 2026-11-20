@@ -7,6 +7,7 @@ by reading itself again; only a deletion is shown without asking.
 """
 
 import re
+from enum import StrEnum
 
 from django.http import HttpRequest
 
@@ -19,11 +20,18 @@ FEATURE = "cms"
 TARGET = re.compile(r"^(?:(?:page|news|event)-[1-9][0-9]{0,17}|menu)$")
 
 
-def target(kind: str, pk: int | None = None) -> str:
-    """The editor's name for a thing: "page-41" for a page, "menu" for the menu.
+class Kind(StrEnum):
+    """What an editor can be open on. Each is also the change log's "type" filter for it, and
+    "cms.<kind>" is its kind in the audit trail."""
 
-    `kind` is a ContentChange.Kind value.
-    """
+    PAGE = "page"
+    NEWS = "news"
+    EVENT = "event"
+    MENU = "menu"
+
+
+def target(kind: str, pk: int | None = None) -> str:
+    """The editor's name for a thing: "page-41" for a page, "menu" for the menu (`kind` a Kind)."""
     return kind if pk is None else f"{kind}-{pk}"
 
 

@@ -7,6 +7,38 @@
 
 ```mermaid
 erDiagram
+    audit_AuditEvent {
+        int id PK
+        datetime at
+        string action
+        int actor_id FK
+        string actor_name
+        string source
+        string correlation_id
+        string ip
+        json details
+        bool unclaimed
+    }
+
+    audit_AuditEntity {
+        int id PK
+        int event_id FK
+        string kind
+        int entity_id
+        string name
+        string operation
+        string role
+    }
+
+    audit_AuditChange {
+        int id PK
+        int entity_id FK
+        string field
+        json before
+        json after
+        bool redacted
+    }
+
     core_Room {
         int id PK
         int legacy_index
@@ -230,18 +262,6 @@ erDiagram
     cms_SiteSettings {
         int id PK
         string default_background
-    }
-
-    cms_ContentChange {
-        int id PK
-        datetime at
-        int by_id FK
-        string by_name
-        string action
-        string kind
-        string object_id
-        string label
-        json changes
     }
 
     cms_OpenEditor {
@@ -996,6 +1016,9 @@ erDiagram
         datetime sent_at
     }
 
+    audit_AuditEvent }o--|o residents_Resident : "actor"
+    audit_AuditEntity }o--|| audit_AuditEvent : "event"
+    audit_AuditChange }o--|| audit_AuditEntity : "entity"
     core_PushSubscription }o--|| residents_Resident : "user"
     residents_Resident }o--|o residents_Resident : "sponsor"
     residents_Residency }o--|| residents_Resident : "resident"
@@ -1014,7 +1037,6 @@ erDiagram
     cms_PageRedirect }o--|o residents_Resident : "created_by"
     cms_PageVersion }o--|o cms_Page : "page"
     cms_PageVersion }o--|o residents_Resident : "created_by"
-    cms_ContentChange }o--|o residents_Resident : "by"
     cms_OpenEditor }o--|| residents_Resident : "resident"
     cms_Publication }o--|o residents_Resident : "triggered_by"
     ak_AkEntry }o--|| residents_Resident : "resident"
@@ -1237,6 +1259,49 @@ erDiagram
     arkiv_ArchiveFile }o--|o residents_Resident : "deleted_by"
 ```
 
+## audit
+
+```mermaid
+erDiagram
+    audit_AuditEvent {
+        int id PK
+        datetime at
+        string action
+        int actor_id FK
+        string actor_name
+        string source
+        string correlation_id
+        string ip
+        json details
+        bool unclaimed
+    }
+
+    audit_AuditEntity {
+        int id PK
+        int event_id FK
+        string kind
+        int entity_id
+        string name
+        string operation
+        string role
+    }
+
+    audit_AuditChange {
+        int id PK
+        int entity_id FK
+        string field
+        json before
+        json after
+        bool redacted
+    }
+
+    residents_Resident { }
+
+    audit_AuditEvent }o--|o residents_Resident : "actor"
+    audit_AuditEntity }o--|| audit_AuditEvent : "event"
+    audit_AuditChange }o--|| audit_AuditEntity : "entity"
+```
+
 ## cms
 
 ```mermaid
@@ -1319,18 +1384,6 @@ erDiagram
         string default_background
     }
 
-    cms_ContentChange {
-        int id PK
-        datetime at
-        int by_id FK
-        string by_name
-        string action
-        string kind
-        string object_id
-        string label
-        json changes
-    }
-
     cms_OpenEditor {
         int id PK
         string target
@@ -1375,7 +1428,6 @@ erDiagram
     cms_PageRedirect }o--|o residents_Resident : "created_by"
     cms_PageVersion }o--|o cms_Page : "page"
     cms_PageVersion }o--|o residents_Resident : "created_by"
-    cms_ContentChange }o--|o residents_Resident : "by"
     cms_OpenEditor }o--|| residents_Resident : "resident"
     cms_Publication }o--|o residents_Resident : "triggered_by"
 ```

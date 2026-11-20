@@ -8,7 +8,7 @@ from django.db import migrations, models
 
 class Migration(migrations.Migration):
     dependencies = [
-        ("cms", "0011_delete_legacy_image_failure"),
+        ("cms", "0013_delete_contentchange"),
         migrations.swappable_dependency(settings.AUTH_USER_MODEL),
     ]
 

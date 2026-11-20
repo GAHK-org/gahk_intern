@@ -6,14 +6,14 @@ Each write does the same four things, in one transaction:
   1. cleans its input (HTML through cms.sanitize, plain text collapsed to one line, addresses
      through cms.paths) and raises a ValidationError keyed by field when something is wrong;
   2. saves, keeping a full PageVersion for pages so any earlier version can be restored;
-  3. records a ContentChange — who, what, and the values before and after;
+  3. runs inside an audit event (audit.trail) naming what it does — "cms.page.updated" — whose
+     fields, before and after, the trail captures as they are saved;
   4. publishes to gahk.dk once the transaction has committed (cms.tasks.publish_gahk_web).
 
-Versions and changes are written **explicitly**, never from a `post_save` signal. A signal would
-also fire for `etl_cms`, `seed_demo` and every `save()` typed into a shell, producing author-less
-history with no way to tell a real edit from an import. The cost is that a shell write leaves no
-trail of its own; the first edit afterwards still snapshots the database state before it changes
-anything, so what an editor overwrites can always be got back.
+Versions are written **explicitly**, never from a `post_save` signal: an import or a shell `save()`
+must not look like an edit. The audit trail does record a shell or Django-admin write, as one with
+no named action ("Uden handling"); the first edit afterwards still snapshots the database state
+before it changes anything, so what an editor overwrites can always be got back.
 
 Permissions are the caller's business (the views check CMS_EDITOR_ROLES, and administrator for
 deleting a page); these functions trust `by`.
@@ -35,6 +35,8 @@ from django.db import transaction
 from django.utils import timezone
 from django.utils.dateparse import parse_date, parse_datetime
 
+from audit import trail
+from audit.models import AuditEntity, AuditEvent
 from core.uploads import validate_image_upload
 from residents.models import Resident
 
@@ -43,7 +45,6 @@ from .images import ImageRejected, PreparedImage, prepare_image, stored_stem
 from .models import (
     FRONT_PAGE_ID,
     CmsImage,
-    ContentChange,
     Event,
     MenuItem,
     NewsItem,
@@ -63,63 +64,10 @@ logger = logging.getLogger(__name__)
 # looping over `save_page()` cannot quietly grow the table without limit.
 VERSIONS_PER_PAGE_CAP = 100
 
-SYSTEM_NAME = "System"
 MAX_MENU_ITEMS = 30
 MENU_URL_FORBIDDEN = re.compile(r"[\x00-\x20\x7f\"'<>\\`]")
 
-Action = ContentChange.Action
-Kind = ContentChange.Kind
-
-
-# ---------------------------------------------------------------------------------------- audit
-def editor_name(by: Resident | None) -> str:
-    if by is None:
-        return SYSTEM_NAME
-    return by.full_name or by.email
-
-
-def _jsonable(value: Any) -> Any:  # noqa: ANN401 — any field value
-    if isinstance(value, datetime.datetime):
-        return timezone.localtime(value).isoformat() if timezone.is_aware(value) else value.isoformat()
-    if isinstance(value, datetime.date):
-        return value.isoformat()
-    if isinstance(value, list | tuple):
-        return [_jsonable(item) for item in value]
-    if isinstance(value, dict):
-        return {key: _jsonable(item) for key, item in value.items()}
-    return value
-
-
-def field_changes(before: Mapping[str, Any], after: Mapping[str, Any]) -> dict[str, list[Any]]:
-    """{field: [before, after]} for every field whose value differs (None for a missing side)."""
-    changes: dict[str, list[Any]] = {}
-    for key in (*before.keys(), *(k for k in after if k not in before)):
-        old, new = _jsonable(before.get(key)), _jsonable(after.get(key))
-        if old != new:
-            changes[key] = [old, new]
-    return changes
-
-
-def record_change(
-    *,
-    action: str,
-    kind: str,
-    object_id: int | None = None,
-    label: str = "",
-    changes: Mapping[str, Any] | None = None,
-    by: Resident | None = None,
-    by_name: str | None = None,
-) -> ContentChange:
-    """Append one entry to the content audit trail. `by` None means an automatic (system) change."""
-    return ContentChange.objects.create(
-        by=by,
-        by_name=(by_name if by_name is not None else editor_name(by))[:255],
-        action=action,
-        kind=kind,
-        object_id=object_id,
-        label=label[:255],
-        changes=_jsonable(dict(changes or {})),
-    )
+SITE = ("cms.site", None, "gahk.dk")
 
 
 # ----------------------------------------------------------------------------------- publishing
@@ -145,13 +93,15 @@ def publish_on_commit(reason: str = "save", by: Resident | None = None) -> None:
 
 def request_publish(by: Resident | None) -> None:
     """The overview's "Udgiv nu": publish even if gahk.dk already reports the current revision."""
-    record_change(action=Action.PUBLISH, kind=Kind.SITE, label="Udgiv gahk.dk nu", by=by)
-    publish_on_commit("manual", by)
+    with trail.event("cms.site.published", actor=by) as event:
+        event.involve_kind(*SITE, role="subject")
+        publish_on_commit("manual", by)
 
 
 def request_gahk_web_update(by: Resident | None) -> None:
     """The overview's "Opdatér gahk.dk nu" (administrators): ask the webhost to update its code now."""
-    record_change(action=Action.UPDATE, kind=Kind.SITE, label="Opdatér gahk.dk's kode nu", by=by)
+    with trail.event("cms.site.update_requested", actor=by) as event:
+        event.involve_kind(*SITE, role="subject")
 
     def _enqueue() -> None:
         from .tasks import nudge_gahk_web_update
@@ -210,6 +160,18 @@ def _image_url(value: object, field_name: str, current: str) -> str:
 
 
 # ------------------------------------------------------------------------------- edit conflicts
+def _jsonable(value: Any) -> Any:  # noqa: ANN401 — any field value
+    if isinstance(value, datetime.datetime):
+        return timezone.localtime(value).isoformat() if timezone.is_aware(value) else value.isoformat()
+    if isinstance(value, datetime.date):
+        return value.isoformat()
+    if isinstance(value, list | tuple):
+        return [_jsonable(item) for item in value]
+    if isinstance(value, dict):
+        return {key: _jsonable(item) for key, item in value.items()}
+    return value
+
+
 def edit_version(state: object) -> str:
     """A fingerprint of what an editor was shown. The form carries it back, and if what is stored no
     longer has the same fingerprint, somebody else saved in between and saving would overwrite it.
@@ -225,17 +187,22 @@ class EditConflict(Exception):
     """Somebody saved after the editor was opened, so nothing was saved.
 
     `version` is what is stored now: the form takes it, so saving once more overwrites knowingly.
-    `change` is the last recorded change to the thing (who and when), None if there is none.
+    `change` is the last recorded save of the thing (who and when), None if there is none.
     """
 
-    def __init__(self, version: str, change: ContentChange | None) -> None:
+    def __init__(self, version: str, change: AuditEvent | None) -> None:
         super().__init__("Saved by somebody else since the editor was opened")
         self.version = version
         self.change = change
 
 
-def last_change(kind: str, object_id: int | None) -> ContentChange | None:
-    return ContentChange.objects.filter(kind=kind, object_id=object_id).first()
+def last_change(kind: str, object_id: int | None) -> AuditEvent | None:
+    """The audit trail's last save of what an editor is open on (`kind` a live_signals.Kind): the
+    newest event that created or changed it, not one it merely took part in."""
+    saves = AuditEntity.objects.filter(kind=f"cms.{kind}", entity_id=object_id).exclude(
+        operation=AuditEntity.Operation.INVOLVED
+    )
+    return AuditEvent.objects.filter(pk__in=saves.values("event_id")).order_by("-at", "-id").first()
 
 
 def _check_opened(opened: str | None, state: object, kind: str, object_id: int | None) -> None:
@@ -351,8 +318,9 @@ def save_page(
     read under a row lock, not the object passed in. `opened` is the page_version the editor was
     opened with: EditConflict if the page has been saved since (and this save would change it).
     """
-    with transaction.atomic():
-        creating = page is None or page.pk is None
+    creating = page is None or page.pk is None
+    action = "cms.page.created" if creating else "cms.page.updated"
+    with trail.event(action, actor=by, subject=page, only_if_changed=True) as event:
         if page is None:
             page = Page()
         previous = None if creating else Page.objects.select_for_update().get(pk=page.pk)
@@ -362,7 +330,7 @@ def save_page(
         if previous is not None:
             if {**before, **cleaned} == before:
                 return previous
-            _check_opened(opened, before, Kind.PAGE, previous.pk)
+            _check_opened(opened, before, live_signals.Kind.PAGE, previous.pk)
             # First edit of a page that predates version history: capture what it said beforehand,
             # or that one save would be unrecoverable.
             if not previous.versions.exists():
@@ -380,16 +348,9 @@ def save_page(
         snapshot_page(page, by, note="Oprettet" if creating else "Redigeret")
         if previous is not None:
             record_slug_change(page, before["slug"], by)
-        record_change(
-            action=Action.CREATE if creating else Action.UPDATE,
-            kind=Kind.PAGE,
-            object_id=page.pk,
-            label=page.header,
-            changes=field_changes(before, page_state(page)),
-            by=by,
-        )
+        event.involve(page, "subject")
         publish_on_commit("save", by)
-        live_signals.changed(live_signals.target(Kind.PAGE, page.pk), page.pk)
+        live_signals.changed(live_signals.target(live_signals.Kind.PAGE, page.pk), page.pk)
     return page
 
 
@@ -397,17 +358,9 @@ def delete_page(page: Page, by: Resident | None) -> None:
     """Delete a page. Its versions stay (PageVersion.page is SET_NULL), so it can be recreated."""
     if page.pk == FRONT_PAGE_ID:
         raise ValidationError("Forsiden kan ikke slettes.")
-    with transaction.atomic():
+    with trail.event("cms.page.deleted", actor=by, subject=page):
         snapshot_page(page, by, note="Før sletning")
-        record_change(
-            action=Action.DELETE,
-            kind=Kind.PAGE,
-            object_id=page.pk,
-            label=page.header,
-            changes=field_changes(page_state(page), {}),
-            by=by,
-        )
-        live_signals.deleted(live_signals.target(Kind.PAGE, page.pk), page.pk)
+        live_signals.deleted(live_signals.target(live_signals.Kind.PAGE, page.pk), page.pk)
         page.delete()
         publish_on_commit("save", by)
 
@@ -451,9 +404,10 @@ def restore_version(page: Page, version: PageVersion, by: Resident | None) -> Re
     if version.page_id != page.pk:
         raise ValidationError("Versionen hører ikke til denne side.")
     warnings: list[str] = []
-    with transaction.atomic():
+    stamp = timezone.localtime(version.created_at).strftime("%d-%m-%Y %H:%M")
+    details = {"version": version.pk, "version_from": stamp}
+    with trail.event("cms.page.restored", actor=by, subject=page, details=details):
         page = Page.objects.select_for_update().get(pk=page.pk)
-        before = page_state(page)
         # Snapshot first: a restore is itself an edit, and undoing an unwanted restore has to be
         # possible too. History only ever grows.
         snapshot_page(page, by, note="Før gendannelse")
@@ -473,18 +427,9 @@ def restore_version(page: Page, version: PageVersion, by: Resident | None) -> Re
 
         # So the address it is being moved away from also keeps working.
         record_slug_change(page, old_slug, by)
-        stamp = timezone.localtime(version.created_at).strftime("%d-%m-%Y %H:%M")
         snapshot_page(page, by, note=f"Gendannet fra version af {stamp}")
-        record_change(
-            action=Action.RESTORE,
-            kind=Kind.PAGE,
-            object_id=page.pk,
-            label=page.header,
-            changes={**field_changes(before, page_state(page)), "version": [None, version.pk]},
-            by=by,
-        )
         publish_on_commit("save", by)
-        live_signals.changed(live_signals.target(Kind.PAGE, page.pk), page.pk)
+        live_signals.changed(live_signals.target(live_signals.Kind.PAGE, page.pk), page.pk)
     return RestoreResult(page=page, warnings=warnings)
 
 
@@ -530,7 +475,8 @@ def save_news(
     news_version the editor was opened with: EditConflict if it has been saved since.
     """
     creating = item is None or item.pk is None
-    with transaction.atomic():
+    action = "cms.news.created" if creating else "cms.news.updated"
+    with trail.event(action, actor=by, subject=item, only_if_changed=True) as event:
         if item is None:
             item = NewsItem()
         elif not creating:
@@ -550,36 +496,20 @@ def save_news(
                 item.published_at = published_at
         elif creating:
             item.published_at = timezone.now()
-        changes = field_changes(before, news_state(item))
-        if not creating and not changes:
+        if not creating and before == news_state(item):
             return item
         if not creating:
-            _check_opened(opened, before, Kind.NEWS, item.pk)
+            _check_opened(opened, before, live_signals.Kind.NEWS, item.pk)
         item.save()
-        record_change(
-            action=Action.CREATE if creating else Action.UPDATE,
-            kind=Kind.NEWS,
-            object_id=item.pk,
-            label=item.title,
-            changes=changes,
-            by=by,
-        )
+        event.involve(item, "subject")
         publish_on_commit("save", by)
-        live_signals.changed(live_signals.target(Kind.NEWS, item.pk), item.pk)
+        live_signals.changed(live_signals.target(live_signals.Kind.NEWS, item.pk), item.pk)
     return item
 
 
 def delete_news(item: NewsItem, by: Resident | None) -> None:
-    with transaction.atomic():
-        record_change(
-            action=Action.DELETE,
-            kind=Kind.NEWS,
-            object_id=item.pk,
-            label=item.title,
-            changes=field_changes(news_state(item), {}),
-            by=by,
-        )
-        live_signals.deleted(live_signals.target(Kind.NEWS, item.pk), item.pk)
+    with trail.event("cms.news.deleted", actor=by, subject=item):
+        live_signals.deleted(live_signals.target(live_signals.Kind.NEWS, item.pk), item.pk)
         item.delete()
         publish_on_commit("save", by)
 
@@ -601,7 +531,8 @@ def save_event(
     event_version the editor was opened with: EditConflict if it has been saved since.
     """
     creating = item is None or item.pk is None
-    with transaction.atomic():
+    action = "cms.event.created" if creating else "cms.event.updated"
+    with trail.event(action, actor=by, subject=item, only_if_changed=True) as event:
         if item is None:
             item = Event()
         elif not creating:
@@ -613,36 +544,20 @@ def save_event(
             item.description = _html(data["description"])
         if "starts_on" in data or creating:
             item.starts_on = _date(data.get("starts_on"), "starts_on")
-        changes = field_changes(before, event_state(item))
-        if not creating and not changes:
+        if not creating and before == event_state(item):
             return item
         if not creating:
-            _check_opened(opened, before, Kind.EVENT, item.pk)
+            _check_opened(opened, before, live_signals.Kind.EVENT, item.pk)
         item.save()
-        record_change(
-            action=Action.CREATE if creating else Action.UPDATE,
-            kind=Kind.EVENT,
-            object_id=item.pk,
-            label=item.title,
-            changes=changes,
-            by=by,
-        )
+        event.involve(item, "subject")
         publish_on_commit("save", by)
-        live_signals.changed(live_signals.target(Kind.EVENT, item.pk), item.pk)
+        live_signals.changed(live_signals.target(live_signals.Kind.EVENT, item.pk), item.pk)
     return item
 
 
 def delete_event(item: Event, by: Resident | None) -> None:
-    with transaction.atomic():
-        record_change(
-            action=Action.DELETE,
-            kind=Kind.EVENT,
-            object_id=item.pk,
-            label=item.title,
-            changes=field_changes(event_state(item), {}),
-            by=by,
-        )
-        live_signals.deleted(live_signals.target(Kind.EVENT, item.pk), item.pk)
+    with trail.event("cms.event.deleted", actor=by, subject=item):
+        live_signals.deleted(live_signals.target(live_signals.Kind.EVENT, item.pk), item.pk)
         item.delete()
         publish_on_commit("save", by)
 
@@ -655,7 +570,7 @@ def store_prepared_image(
     by: Resident | None,
     legacy_path: str | None = None,
 ) -> CmsImage:
-    """Save already-prepared bytes as a library image (no audit; the callers record their own)."""
+    """Save already-prepared bytes as a library image (inside the caller's audit event)."""
     stem = stored_stem(name)
     image = CmsImage(
         caption=plain_text(caption)[:255],
@@ -683,16 +598,9 @@ def upload_image(upload: Any, caption: str, by: Resident | None) -> CmsImage:  #
         raise ValidationError({"file": exc.messages}) from exc
     except ImageRejected as exc:
         raise ValidationError({"file": str(exc)}) from exc
-    with transaction.atomic():
+    with trail.event("cms.image.uploaded", actor=by) as event:
         image = store_prepared_image(prepared, getattr(upload, "name", "") or "image", caption, by)
-        record_change(
-            action=Action.UPLOAD,
-            kind=Kind.IMAGE,
-            object_id=image.pk,
-            label=str(image),
-            changes={"file": [None, image.file.name], "caption": [None, image.caption]},
-            by=by,
-        )
+        event.involve(image, "subject")
     return image
 
 
@@ -701,18 +609,9 @@ def update_image(image: CmsImage, caption: str, by: Resident | None) -> CmsImage
     new_caption = _optional_text(caption, "caption", 255)
     if new_caption == image.caption:
         return image
-    with transaction.atomic():
-        before = image.caption
+    with trail.event("cms.image.updated", actor=by, subject=image):
         image.caption = new_caption
         image.save(update_fields=["caption"])
-        record_change(
-            action=Action.UPDATE,
-            kind=Kind.IMAGE,
-            object_id=image.pk,
-            label=str(image),
-            changes={"caption": [before, new_caption]},
-            by=by,
-        )
     return image
 
 
@@ -761,15 +660,7 @@ def delete_image(image: CmsImage, by: Resident | None) -> None:
     For an image from the old site, gahk.dk drops the redirect from its old address too, at the next
     publish.
     """
-    with transaction.atomic():
-        record_change(
-            action=Action.DELETE,
-            kind=Kind.IMAGE,
-            object_id=image.pk,
-            label=str(image),
-            changes={"file": [image.file.name, None], "caption": [image.caption, None]},
-            by=by,
-        )
+    with trail.event("cms.image.deleted", actor=by, subject=image):
         image.delete()
         publish_on_commit("save", by)
 
@@ -825,23 +716,29 @@ def save_menu(
     if errors:
         raise ValidationError({"items": errors})
 
-    with transaction.atomic():
-        # The menu has no row of its own to lock, so two saves queue up on the settings singleton.
-        SiteSettings.load()
+    with trail.event("cms.menu.updated", actor=by, only_if_changed=True) as event:
+        # The menu has no row of its own to lock, so two saves queue up on the settings singleton
+        # (made first if need be: a row to lock, not a change to the settings).
+        with trail.unaudited():
+            SiteSettings.load()
         SiteSettings.objects.select_for_update().get(pk=1)
         before = menu_state()
         if before == cleaned:
             return list(MenuItem.objects.all())
-        _check_opened(opened, before, Kind.MENU, None)
-        MenuItem.objects.all().delete()
-        MenuItem.objects.bulk_create(
-            [MenuItem(label=e["label"], url=e["url"], order=index * 10) for index, e in enumerate(cleaned)]
-        )
-        record_change(
-            action=Action.MENU, kind=Kind.MENU, label="Menu", changes={"menu": [before, cleaned]}, by=by
-        )
+        _check_opened(opened, before, live_signals.Kind.MENU, None)
+        # The menu is one thing to the editor: one change, the list before and after, rather than a
+        # deleted and a created row for every entry.
+        with trail.unaudited():
+            MenuItem.objects.all().delete()
+            MenuItem.objects.bulk_create(
+                [
+                    MenuItem(label=e["label"], url=e["url"], order=index * 10)
+                    for index, e in enumerate(cleaned)
+                ]
+            )
+        event.change_kind("cms.menu", None, "Menu", "menu", before, cleaned)
         publish_on_commit("save", by)
-        live_signals.changed(live_signals.target(Kind.MENU), None)
+        live_signals.changed(live_signals.target(live_signals.Kind.MENU), None)
     return list(MenuItem.objects.all())
 
 
@@ -918,32 +815,17 @@ def save_redirect(
     after = {"old_path": redirect.old_path, "page": redirect.page_id}
     if not creating and before == after:
         return redirect
-    with transaction.atomic():
+    action = "cms.redirect.created" if creating else "cms.redirect.updated"
+    with trail.event(action, actor=by, subject=redirect):
         if creating:
             redirect.created_by = by
         redirect.save()
-        record_change(
-            action=Action.CREATE if creating else Action.UPDATE,
-            kind=Kind.REDIRECT,
-            object_id=redirect.pk,
-            label=f"/{old_path}",
-            changes=field_changes(before, after),
-            by=by,
-        )
         publish_on_commit("save", by)
     return redirect
 
 
 def delete_redirect(redirect: PageRedirect, by: Resident | None) -> None:
-    with transaction.atomic():
-        record_change(
-            action=Action.DELETE,
-            kind=Kind.REDIRECT,
-            object_id=redirect.pk,
-            label=f"/{redirect.old_path}",
-            changes={"old_path": [redirect.old_path, None], "page": [redirect.page_id, None]},
-            by=by,
-        )
+    with trail.event("cms.redirect.deleted", actor=by, subject=redirect):
         redirect.delete()
         publish_on_commit("save", by)
 
@@ -1002,18 +884,17 @@ def render_preview(
 # -------------------------------------------------------------------------------- site settings
 def save_site_settings(data: Mapping[str, Any], by: Resident | None) -> SiteSettings:
     """Change the website-wide settings (today: the default background image)."""
-    with transaction.atomic():
+    with trail.event("cms.settings.updated", actor=by, only_if_changed=True) as event:
         SiteSettings.load()
         site = SiteSettings.objects.select_for_update().get(pk=1)
-        before = {"default_background": site.default_background}
+        before = site.default_background
         if "default_background" in data:
             site.default_background = _image_url(
                 data["default_background"], "default_background", site.default_background
             )
-        changes = field_changes(before, {"default_background": site.default_background})
-        if not changes:
+        if site.default_background == before:
             return site
         site.save()
-        record_change(action=Action.UPDATE, kind=Kind.SETTINGS, label="Indstillinger", changes=changes, by=by)
+        event.involve(site, "subject")
         publish_on_commit("save", by)
     return site

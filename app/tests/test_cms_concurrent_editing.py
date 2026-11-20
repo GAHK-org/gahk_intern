@@ -129,7 +129,7 @@ def test_the_service_refuses_a_stale_version_and_names_the_last_save(
     with pytest.raises(services.EditConflict) as caught:
         services.save_page(page, {"body": "<p>Min</p>"}, editor, opened=opened)
 
-    assert caught.value.change is not None and caught.value.change.by == admin
+    assert caught.value.change is not None and caught.value.change.actor == admin
     page.refresh_from_db()
     assert caught.value.version == services.page_version(page)
     assert page.body == "<p>Andens rettelse</p>"

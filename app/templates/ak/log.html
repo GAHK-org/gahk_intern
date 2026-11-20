@@ -18,10 +18,10 @@
   </div>
 
   <table cellpadding="6" style="width:100%; border-collapse:collapse">
-    <thead><tr style="text-align:left; border-bottom:1px solid #e6e8ec"><th>Dato</th><th>Ændring</th><th>Type</th><th>Note</th><th></th></tr></thead>
+    <thead><tr style="text-align:left; border-bottom:1px solid var(--border-strong)"><th>Dato</th><th>Ændring</th><th>Type</th><th>Note</th><th></th></tr></thead>
     <tbody>
     {% for e in entries %}
-      <tr style="border-bottom:1px solid #f0f1f4">
+      <tr style="border-bottom:1px solid var(--border)">
         <td>{{ e.created_at|date:"Y-m-d" }}</td>
         <td class="{{ e.delta|sign_class }}">{{ e.delta }}</td>
         <td>{{ e.get_kind_display }}</td><td>{{ e.reason }}</td>

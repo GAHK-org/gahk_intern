@@ -1,5 +1,5 @@
 """The Hjemmeside editor's screens (/hjemmeside/): who gets in, and that every write goes through
-cms.services (a ContentChange row per write, versions for pages, a publish queued)."""
+cms.services (an audit event per write, versions for pages, a publish queued)."""
 
 from collections.abc import Callable
 from io import BytesIO
@@ -12,11 +12,11 @@ from django.urls import reverse
 from django.utils import timezone
 from PIL import Image
 
+from audit import trail
 from cms import services
 from cms.middleware import EDITOR_HINT_COOKIE
 from cms.models import (
     CmsImage,
-    ContentChange,
     Event,
     GahkWebSync,
     MenuItem,
@@ -28,6 +28,8 @@ from cms.models import (
 )
 from cms.views import with_base
 from residents.models import Resident
+
+from .audit_support import actions, events
 
 
 def client_for(resident: Resident | None) -> Client:
@@ -189,9 +191,7 @@ def test_only_an_administrator_may_delete_a_page(
     assert response.status_code == 302
     assert not Page.objects.filter(pk=objects["page"]).exists()
     assert not PageRedirect.objects.filter(old_path="vision").exists()
-    assert ContentChange.objects.filter(
-        action="delete", kind="page", object_id=objects["page"], by=admin
-    ).exists()
+    assert events("cms.page.deleted", kind="cms.page", entity_id=objects["page"], actor=admin).exists()
 
 
 @pytest.mark.django_db
@@ -227,7 +227,7 @@ def test_creating_a_page_goes_through_the_services(
     assert response.status_code == 302 and response["Location"] == reverse("cms:page_edit", args=[page.pk])
     assert page.body == "<p>Stort</p>" and page.updated_by == editor
     assert page.versions.count() == 1
-    assert ContentChange.objects.filter(action="create", kind="page", object_id=page.pk, by=editor).exists()
+    assert events("cms.page.created", kind="cms.page", entity_id=page.pk, actor=editor).exists()
     assert published == [{"reason": "save", "triggered_by_id": editor.pk}]
 
 
@@ -248,7 +248,7 @@ def test_renaming_a_page_leaves_a_redirect_and_says_so(editor: Resident, objects
 
     assert PageRedirect.objects.get(old_path="vores-vision").page_id == page.pk
     assert "/vores-vision sender nu besøgende videre til /visionen" in response.content.decode()
-    assert ContentChange.objects.filter(action="update", kind="page", object_id=page.pk).count() == 2
+    assert events("cms.page.updated", kind="cms.page", entity_id=page.pk).count() == 2
 
 
 @pytest.mark.django_db
@@ -268,14 +268,14 @@ def test_bad_addresses_are_refused_on_the_address_field(
 ) -> None:
     Page.objects.create(slug="optagelse", header="Optagelse")
     Page.objects.create(slug="faciliteter", header="Faciliteter")
-    before = ContentChange.objects.count()
+    before = events("cms.").count()
     response = client_for(editor).post(
         reverse("cms:page_create"),
         {"header": "Ny", "path_parent": parent, "path_segment": segment, "body": ""},
     )
     assert response.status_code == 200
     assert message in str(response.context["form"].errors.get("path_segment"))
-    assert ContentChange.objects.count() == before
+    assert events("cms.").count() == before
 
 
 @pytest.mark.django_db
@@ -329,7 +329,7 @@ def test_history_shows_a_diff_and_restores_through_the_services(
     assert response.status_code == 302
     page.refresh_from_db()
     assert page.body == "<p>Første afsnit</p><p>Andet</p>"
-    assert ContentChange.objects.filter(action="restore", object_id=page.pk, by=editor).exists()
+    assert events("cms.page.restored", kind="cms.page", entity_id=page.pk, actor=editor).exists()
 
 
 @pytest.mark.django_db
@@ -356,7 +356,7 @@ def test_preview_shows_gahk_dk_s_rendering_with_a_base_and_no_scripts(
         return "<!doctype html><html><head><title>x</title></head><body>gahk.dk</body></html>"
 
     monkeypatch.setattr("cms.gahk_web.GahkWebClient.preview", fake_preview)
-    before = ContentChange.objects.count()
+    before = events("cms.").count()
 
     response = client_for(editor).post(
         reverse("cms:preview"),
@@ -376,7 +376,7 @@ def test_preview_shows_gahk_dk_s_rendering_with_a_base_and_no_scripts(
     assert response["Content-Security-Policy"].startswith("sandbox")
     assert sent[0]["kind"] == "page" and sent[0]["item"]["title"] == "Ny titel"
     assert sent[0]["item"]["body"] == "<p>Kladde</p>"
-    assert ContentChange.objects.count() == before  # nothing saved
+    assert events("cms.").count() == before  # nothing saved
 
 
 @pytest.mark.django_db
@@ -434,8 +434,7 @@ def test_news_are_created_edited_and_deleted_through_the_services(editor: Reside
     client.post(reverse("cms:news_delete", args=[item.pk]))
 
     assert not NewsItem.objects.exists()
-    actions = list(ContentChange.objects.filter(kind="news").order_by("id").values_list("action", flat=True))
-    assert actions == ["create", "update", "delete"]
+    assert actions("cms.news.") == ["cms.news.created", "cms.news.updated", "cms.news.deleted"]
 
 
 @pytest.mark.django_db
@@ -460,7 +459,7 @@ def test_saving_a_news_item_untouched_keeps_its_time_and_writes_nothing(
 
     item.refresh_from_db()
     assert item.published_at == stored
-    assert ContentChange.objects.filter(kind="news", action="update").count() == 0 and published == []
+    assert not events("cms.news.updated").exists() and published == []
 
 
 @pytest.mark.django_db
@@ -474,7 +473,7 @@ def test_events_need_a_date_and_are_deleted_through_the_services(editor: Residen
     client.post(reverse("cms:event_delete", args=[event.pk]))
 
     assert not Event.objects.exists()
-    assert ContentChange.objects.filter(kind="event", action="delete").exists()
+    assert events("cms.event.deleted").exists()
 
 
 # ----------------------------------------------------------------------------------------- images
@@ -486,7 +485,7 @@ def test_images_are_uploaded_into_the_library(editor: Resident) -> None:
     )
     assert response.status_code == 302
     assert CmsImage.objects.filter(caption="Haven").count() == 2
-    assert ContentChange.objects.filter(kind="image", action="upload", by=editor).count() == 2
+    assert events("cms.image.uploaded", actor=editor).count() == 2
 
 
 @pytest.mark.django_db
@@ -531,14 +530,14 @@ def test_an_image_in_use_cannot_be_deleted(editor: Resident, objects: dict[str, 
     services.save_page(page, {"body": "<p>uden</p>"}, editor)
     client_for(editor).post(reverse("cms:image_delete", args=[image.pk]))
     assert not CmsImage.objects.filter(pk=image.pk).exists()
-    assert ContentChange.objects.filter(kind="image", action="delete", object_id=image.pk).exists()
+    assert events("cms.image.deleted", kind="cms.image", entity_id=image.pk).exists()
 
 
 @pytest.mark.django_db
 def test_an_image_caption_is_edited_through_the_services(editor: Resident, objects: dict[str, int]) -> None:
     client_for(editor).post(reverse("cms:image_detail", args=[objects["image"]]), {"caption": "Gården"})
     assert CmsImage.objects.get(pk=objects["image"]).caption == "Gården"
-    assert ContentChange.objects.filter(kind="image", action="update").exists()
+    assert events("cms.image.updated").exists()
 
 
 # ------------------------------------------------------------------------------- menu and settings
@@ -564,7 +563,7 @@ def test_the_menu_is_reordered_extended_and_trimmed(editor: Resident) -> None:
     client.post(reverse("cms:menu"), _menu_post([*rows, ("", "")], "remove-0"))
 
     assert list(MenuItem.objects.values_list("label", flat=True)) == ["Kontakt", "Vision", "Legater"]
-    assert ContentChange.objects.filter(kind="menu").count() == 3
+    assert events("cms.menu.").count() == 3
 
 
 @pytest.mark.django_db
@@ -582,7 +581,7 @@ def test_the_default_background_is_picked_from_the_library(editor: Resident, obj
     image = CmsImage.objects.get(pk=objects["image"])
     client_for(editor).post(reverse("cms:site_settings"), {"default_background": image.url})
     assert SiteSettings.load().default_background == image.url
-    assert ContentChange.objects.filter(kind="settings").exists()
+    assert events("cms.settings.").exists()
 
 
 # -------------------------------------------------------------------------------------- redirects
@@ -597,9 +596,7 @@ def test_redirects_are_created_and_deleted_through_the_services(
     client.post(reverse("cms:redirect_delete", args=[created.pk]))
 
     assert not PageRedirect.objects.filter(pk=created.pk).exists()
-    assert list(
-        ContentChange.objects.filter(kind="redirect").order_by("id").values_list("action", flat=True)
-    ) == ["create", "delete"]
+    assert actions("cms.redirect.") == ["cms.redirect.created", "cms.redirect.deleted"]
 
 
 # ------------------------------------------------------------------------------------ overview
@@ -660,7 +657,7 @@ def test_the_overview_says_when_gahk_dk_is_not_connected(editor: Resident) -> No
     response = client_for(editor).get(reverse("cms:overview"))
     assert "Ikke forbundet" in response.content.decode()
     assert client_for(editor).post(reverse("cms:publish_now")).status_code == 302
-    assert not ContentChange.objects.filter(kind="site").exists()
+    assert not events("cms.site.").exists()
 
 
 @pytest.mark.django_db
@@ -699,6 +696,11 @@ def test_the_overview_is_up_to_date_only_until_the_next_save(
 
 
 # ----------------------------------------------------------------------------------- change log
+def _record(action: str, kind: str, name: str, actor: Resident | None) -> None:
+    with trail.event(action, actor=actor) as event:
+        event.involve_kind(kind, None, name, role="subject")
+
+
 @pytest.mark.django_db
 def test_the_change_log_filters_and_diffs_bodies(
     editor: Resident, admin: Resident, objects: dict[str, int]
@@ -710,31 +712,28 @@ def test_the_change_log_filters_and_diffs_bodies(
     rows = client.get(reverse("cms:change_log"), {"type": "page", "person": admin.pk}).context["rows"]
 
     assert len(rows) == 1
-    change, link, fields = rows[0]
-    assert change.by == admin and link == "cms:page_edit"
-    body = next(f for f in fields if f.label == "Tekst")
+    row = rows[0]
+    assert row.event.actor_id == admin.pk and row.link == "cms:page_edit" and row.what == "Rettede siden"
+    body = next(f for f in row.fields if f.label == "Tekst")
     assert ("add", "<p>To</p>") in (body.diff or [])
 
     system = client.get(reverse("cms:change_log"), {"person": "system"}).context["rows"]
     assert system == []
 
-    # Every automatic change counts as the system's, whichever job made it.
-    services.record_change(action="update", kind="page", label="A", by_name=services.SYSTEM_NAME)
-    services.record_change(
-        action="upload",
-        kind="image",
-        label="B",
-        by_name="System (gamle billeder flyttet til billedbiblioteket)",
-    )
-    services.record_change(action="update", kind="page", label="C", by_name="Slettet Beboer")
+    # Every automatic change counts as the system's; a resident since deleted is still a person.
+    _record("cms.page.updated", "cms.page", "A", actor=None)
+    _record("cms.image.uploaded", "cms.image", "B", actor=None)
+    gone = Resident.objects.create(email="slettet@gahk.dk", first_name="Slettet", last_name="Beboer")
+    _record("cms.page.updated", "cms.page", "C", actor=gone)
+    gone.delete()
     system = client.get(reverse("cms:change_log"), {"person": "system"}).context["rows"]
-    assert sorted(change.label for change, _link, _fields in system) == ["A", "B"]
+    assert sorted(row.label for row in system) == ["A", "B"]
 
 
 @pytest.mark.django_db
 def test_the_change_log_pages_with_page_and_keeps_its_filters(editor: Resident) -> None:
     for number in range(51):
-        services.record_change(action="update", kind="page", label=f"P{number}", by_name=services.SYSTEM_NAME)
+        _record("cms.page.updated", "cms.page", f"P{number}", actor=None)
     client = client_for(editor)
 
     first = client.get(reverse("cms:change_log"), {"person": "system"})
@@ -748,7 +747,7 @@ def test_the_change_log_pages_with_page_and_keeps_its_filters(editor: Resident) 
 @pytest.mark.django_db
 def test_saving_a_page_unchanged_says_so_and_writes_nothing(editor: Resident, front: Page) -> None:
     client_for(editor).post(reverse("cms:page_edit", args=[front.pk]), {"header": "Velkommen!", "body": ""})
-    before = ContentChange.objects.count()
+    before = events("cms.").count()
     front.refresh_from_db()
 
     response = client_for(editor).post(
@@ -758,4 +757,4 @@ def test_saving_a_page_unchanged_says_so_and_writes_nothing(editor: Resident, fr
     )
 
     assert "Der var ingen ændringer at gemme." in response.content.decode()
-    assert ContentChange.objects.count() == before
+    assert events("cms.").count() == before

@@ -23,10 +23,10 @@
         </div>
         {% if changes %}
           <ul class="cms-changes">
-            {% for change in changes %}
+            {% for row in changes %}
               <li>
-                <span class="cms-when" title="{{ change.at|date:'j. b Y, H:i' }}">{{ change.at|date:"j. b, H:i" }}</span>
-                <span><b>{{ change.by_name|default:"System" }}</b> {{ change.get_action_display|lower }} {{ change.get_kind_display|lower }}{% if change.label %} <q>{{ change.label }}</q>{% endif %}</span>
+                <span class="cms-when" title="{{ row.event.at|date:'j. b Y, H:i' }}">{{ row.event.at|date:"j. b, H:i" }}</span>
+                <span><b>{{ row.event.actor_name|default:"System" }}</b> {{ row.what|lower }}{% if row.label %} <q>{{ row.label }}</q>{% endif %}</span>
               </li>
             {% endfor %}
           </ul>

@@ -17,7 +17,6 @@ from PIL import Image
 from cms import services
 from cms.models import (
     CmsImage,
-    ContentChange,
     Event,
     MenuItem,
     NewsItem,
@@ -28,6 +27,8 @@ from cms.models import (
 )
 from cms.paths import validate_page_path
 from residents.models import Resident
+
+from .audit_support import actions, changes, events
 
 
 @pytest.fixture
@@ -103,15 +104,15 @@ def test_creating_a_page_cleans_versions_audits_and_publishes(
     assert page.description == "Kort tekst"
     assert page.updated_by == editor
     assert page.versions.count() == 1
-    change = ContentChange.objects.get()
-    assert (change.action, change.kind, change.object_id, change.by, change.by_name) == (
-        "create",
-        "page",
-        page.pk,
-        editor,
+    event = events().get()
+    assert (event.action, event.actor_id, event.actor_name) == (
+        "cms.page.created",
+        editor.pk,
         "Rita Redaktør",
     )
-    assert change.changes["body"][0] is None and "<p>Hej</p>" in change.changes["body"][1]
+    subject = event.entities.get(role="subject")
+    assert (subject.kind, subject.entity_id, subject.operation) == ("cms.page", page.pk, "created")
+    assert "<p>Hej</p>" in changes(event)["body"][1]
     assert published == [{"reason": "save", "triggered_by_id": editor.pk}]
 
 
@@ -132,18 +133,17 @@ def test_editing_snapshots_the_old_content_first_and_records_before_and_after(ed
         ("Før første redigering (forfatter ukendt)", "<p>gammel</p>"),
         ("Redigeret", "<p>ny</p>"),
     ]
-    change = ContentChange.objects.get()
-    assert change.changes == {"body": ["<p>gammel</p>", "<p>ny</p>"]}
+    assert changes(events().get()) == {"body": ["<p>gammel</p>", "<p>ny</p>"]}
 
 
 @pytest.mark.django_db
 def test_saving_without_a_change_writes_nothing(editor: Resident) -> None:
     page = services.save_page(None, {"header": "Legater", "slug": "legater"}, editor)
-    before = (PageVersion.objects.count(), ContentChange.objects.count())
+    before = (PageVersion.objects.count(), events().count())
 
     services.save_page(page, {"header": "Legater", "slug": "legater"}, editor)
 
-    assert (PageVersion.objects.count(), ContentChange.objects.count()) == before
+    assert (PageVersion.objects.count(), events().count()) == before
 
 
 @pytest.mark.django_db
@@ -192,7 +192,7 @@ def test_restore_puts_content_back_and_explains_a_lost_address(editor: Resident)
     page.refresh_from_db()
     assert (page.header, page.body, page.slug) == ("Før", "<p>1</p>", "ny")
     assert result.warnings and "bruges nu af en anden side" in result.warnings[0]
-    assert ContentChange.objects.filter(action="restore", object_id=page.pk).exists()
+    assert events("cms.page.restored", kind="cms.page", entity_id=page.pk).exists()
     assert page.versions.filter(note="Før gendannelse").exists()
 
 
@@ -216,8 +216,8 @@ def test_deleting_a_page_keeps_its_history_and_the_front_page_cannot_go(editor: 
 
     assert not Page.objects.filter(slug="vaek").exists()
     assert PageVersion.objects.filter(header="Væk", page__isnull=True).count() >= 2
-    deleted = ContentChange.objects.get(action="delete")
-    assert deleted.changes["body"] == ["<p>tekst</p>", None]
+    deleted = events("cms.page.deleted").get()
+    assert changes(deleted)["body"] == ["<p>tekst</p>", None]
     with pytest.raises(ValidationError):
         services.delete_page(front, editor)
 
@@ -233,12 +233,8 @@ def test_news_and_events_are_cleaned_and_audited(editor: Resident) -> None:
 
     assert news.title == "Fest" and "onerror" not in news.body and news.published_at is not None
     assert event.starts_on.isoformat() == "2026-12-01"
-    assert list(ContentChange.objects.order_by("id").values_list("kind", "action")) == [
-        ("news", "create"),
-        ("event", "create"),
-        ("event", "update"),
-    ]
-    assert ContentChange.objects.first().changes == {"title": ["Havedag", "Havedag!"]}  # type: ignore[union-attr]  # newest first
+    assert actions("cms.") == ["cms.news.created", "cms.event.created", "cms.event.updated"]
+    assert changes(events("cms.event.updated").get()) == {"title": ["Havedag", "Havedag!"]}
 
     services.delete_news(news, editor)
     services.delete_event(event, editor)
@@ -266,7 +262,7 @@ def test_an_upload_is_downscaled_stripped_and_hashed(editor: Resident) -> None:
     assert image.sha256 == __import__("hashlib").sha256(data).hexdigest()
     assert (image.content_type, image.size) == ("image/jpeg", len(data))
     assert image.file.name.endswith(".jpg")
-    assert ContentChange.objects.get().action == "upload"
+    assert actions() == ["cms.image.uploaded"]
 
 
 @pytest.mark.django_db
@@ -302,11 +298,7 @@ def test_image_usage_and_delete(editor: Resident) -> None:
     services.update_image(image, "Ny tekst", editor)
     services.delete_image(image, editor)
     assert not CmsImage.objects.exists()
-    assert list(ContentChange.objects.order_by("id").values_list("action", flat=True)) == [
-        "upload",
-        "update",
-        "delete",
-    ]
+    assert actions("cms.") == ["cms.image.uploaded", "cms.image.updated", "cms.image.deleted"]
 
 
 @pytest.mark.django_db
@@ -348,8 +340,9 @@ def test_the_menu_is_replaced_as_a_whole_and_audited(editor: Resident) -> None:
         ("Facebook", "https://facebook.com/gahk"),
         ("Hjem", "/"),
     ]
-    last = ContentChange.objects.filter(kind="menu").first()  # newest first
-    assert last is not None and last.changes["menu"][0][0]["label"] == "Hjem"
+    last = events("cms.menu.updated").last()
+    assert last is not None and changes(last, "cms.menu")["menu"][0][0]["label"] == "Hjem"
+    assert not last.entities.filter(kind="cms.menu_item").exists()  # one change: the whole menu
     services.delete_menu_item(MenuItem.objects.get(label="Hjem"), editor)
     assert MenuItem.objects.count() == 1
 
@@ -398,10 +391,7 @@ def test_redirects_are_validated_and_audited(editor: Resident) -> None:
         services.save_redirect(None, {"old_path": "api", "page": page}, editor)
     assert "old_path" in reserved.value.message_dict
     services.delete_redirect(redirect, editor)
-    assert list(ContentChange.objects.values_list("kind", "action").order_by("id")) == [
-        ("redirect", "create"),
-        ("redirect", "delete"),
-    ]
+    assert actions("cms.redirect.") == ["cms.redirect.created", "cms.redirect.deleted"]
 
 
 @pytest.mark.django_db
@@ -434,7 +424,7 @@ def test_manual_publish_and_update_are_audited(
 
     assert published == [{"reason": "manual", "triggered_by_id": editor.pk}]
     assert nudges == [True]
-    assert ContentChange.objects.filter(kind="site").count() == 2
+    assert actions("cms.site.") == ["cms.site.published", "cms.site.update_requested"]
 
 
 # ------------------------------------------------------------------------------------ migrations
