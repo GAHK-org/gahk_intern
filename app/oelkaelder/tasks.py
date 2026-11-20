@@ -2,7 +2,7 @@ from datetime import date, datetime, time, timedelta
 
 from celery import shared_task
 from django.conf import settings
-from django.core.mail import send_mail
+from django.core.mail import EmailMessage
 from django.db.models import Sum
 from django.utils import timezone
 from django.utils.formats import date_format
@@ -78,10 +78,11 @@ def send_monthly_statements() -> int:
             ]
         )
         with outbox.kind(outbox.Kind.BULK):  # one to every shopper: last, within MAIL_RATE_LIMIT
-            sent += send_mail(
+            sent += EmailMessage(
                 f"Ølkælderoversigt for {_month_name(start)}",
                 body,
-                settings.OELKAELDER_FROM_EMAIL,
+                outbox.sender("GAHK Ølkælderen"),
                 [shopper.resident.email],
-            )
+                reply_to=[settings.OELKAELDER_EMAIL],
+            ).send()
     return sent

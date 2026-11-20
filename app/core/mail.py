@@ -179,10 +179,32 @@ def kind(mail_kind: str, *, lifetime: timedelta | None = None) -> Iterator[None]
         _sending.reset(token)
 
 
+def sender(name: str) -> str:
+    """The From of a group's mail: its name in front of MAIL_SENDER, the one address mail goes out from
+    (settings) — "GAHK Indstillingen <…>". Replies go to the group's own address, given as reply_to."""
+    return f"{name} <{settings.MAIL_SENDER}>"
+
+
+# On every mail: it is sent by a program, so out-of-office and other automatic replies are not sent back
+# (RFC 3834's header, and Exchange/Outlook's own). Without them a month's alumneregninger would fill
+# regnskab@ with holiday replies.
+AUTOMATIC_HEADERS = {"Auto-Submitted": "auto-generated", "X-Auto-Response-Suppress": "All"}
+
+
+def _complete(message: EmailMessage) -> None:
+    """What every mail carries: AUTOMATIC_HEADERS, and DEFAULT_REPLY_TO unless it names its own Reply-To.
+    Here, so mail from third-party code (Django's password reset) gets them too."""
+    if not message.reply_to and settings.DEFAULT_REPLY_TO:
+        message.reply_to = [settings.DEFAULT_REPLY_TO]
+    for header, value in AUTOMATIC_HEADERS.items():
+        message.extra_headers.setdefault(header, value)
+
+
 def queue(message: EmailMessage) -> OutgoingMail:
     """Store the message for delivery, and set it as message.outgoing_mail — how a caller that
     tracks delivery (regnskab.alumneregning) finds its row. Delivery starts once the caller's
     transaction commits; if it rolls back, so does the mail."""
+    _complete(message)
     sending = _sending.get() or _NORMAL
     now = timezone.now()
     mail = OutgoingMail.objects.create(

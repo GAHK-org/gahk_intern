@@ -5,6 +5,7 @@ from collections.abc import Callable, Iterator
 from datetime import timedelta
 
 import pytest
+from django.conf import settings
 from django.core import mail
 from django.core.cache import cache
 from django.core.mail import EmailMessage, EmailMultiAlternatives, send_mail
@@ -85,6 +86,39 @@ def test_the_mail_is_delivered_as_it_was_written() -> None:
     stored = OutgoingMail.objects.get()
     assert stored.status == Status.SENT
     assert stored.payload == {}  # a reset link or a PDF is not kept once delivered
+
+
+@pytest.mark.django_db
+def test_every_mail_says_it_is_automatic_and_where_replies_go() -> None:
+    """Third-party mail too (send_mail is how Django's password reset sends): replies go to
+    DEFAULT_REPLY_TO, and out-of-office replies are not sent back at all."""
+    send_mail("Nulstil kodeord", "Tekst", None, ["beboer@gahk.dk"])
+    outbox.deliver()
+
+    [sent] = mail.outbox
+    assert sent.from_email == f"GAHK Intern <{settings.MAIL_SENDER}>"
+    assert sent.reply_to == [settings.DEFAULT_REPLY_TO]
+    headers = sent.message()
+    assert (headers["Auto-Submitted"], headers["X-Auto-Response-Suppress"]) == ("auto-generated", "All")
+    assert headers["Reply-To"] == settings.DEFAULT_REPLY_TO
+
+
+@pytest.mark.django_db
+def test_a_mail_keeps_its_own_reply_to_and_headers() -> None:
+    EmailMessage(
+        "Alumneregning",
+        "Tekst",
+        outbox.sender("GAHK Regnskabsgruppen"),
+        ["alumne@gahk.dk"],
+        reply_to=["regnskab@gahk.dk"],
+        headers={"Auto-Submitted": "auto-replied"},
+    ).send()
+    outbox.deliver()
+
+    [sent] = mail.outbox
+    assert sent.from_email == f"GAHK Regnskabsgruppen <{settings.MAIL_SENDER}>"
+    assert sent.reply_to == ["regnskab@gahk.dk"]
+    assert sent.message()["Auto-Submitted"] == "auto-replied"
 
 
 @pytest.mark.django_db

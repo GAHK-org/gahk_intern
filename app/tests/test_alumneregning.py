@@ -7,6 +7,7 @@ from collections.abc import Callable
 from datetime import date
 
 import pytest
+from django.conf import settings
 from django.core import mail
 from django.core.files.base import ContentFile
 from fpdf import FPDF
@@ -86,6 +87,8 @@ def test_sends_mail_with_generated_pdf_for_the_period(
     sent = mail.outbox[0]
     assert sent.to == ["alumne@gahk.dk"]
     assert sent.subject == "Alumneregning"
+    assert sent.from_email == f"GAHK Regnskabsgruppen <{settings.MAIL_SENDER}>"
+    assert sent.reply_to == [settings.REGNSKAB_EMAIL]
     assert "250,00 kr" in sent.body
     assert "din gæld til kollegiet" in sent.body
     filename, content, content_type = sent.attachments[0]
