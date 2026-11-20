@@ -35,6 +35,7 @@ from gahkflix.models import (
     VideoEvent,
     VideoFile,
     VideoFrame,
+    VideoSubtitle,
     ViewEvent,
     original_key,
 )
@@ -658,6 +659,21 @@ def test_the_player_config_for_the_overlay(admin: Resident) -> None:
 
 
 # --- Editing ------------------------------------------------------------------------------------
+
+
+def test_subtitle_labels_name_the_language_and_what_else_the_file_says() -> None:
+    from gahkflix.views import _subtitle_label
+
+    def label(**fields: Any) -> str:  # noqa: ANN401
+        return _subtitle_label(VideoSubtitle(position=0, **fields), 3)
+
+    assert label(language="dan") == "Dansk"
+    assert label(language="ENG", title="English") == "Engelsk (English)"
+    assert label(language="eng", title="Engelsk") == "Engelsk"
+    assert label(language="dan", title="Kommentarer") == "Dansk (Kommentarer)"
+    assert label(language="dan", is_forced=True) == "Dansk – kun tvungne"
+    assert label(language="xho") == "xho"  # a language not in the list: its code
+    assert label() == "Spor 3"
 
 
 def test_edits_within_30_days_apply_directly(
@@ -1696,8 +1712,8 @@ def test_the_sound_is_the_track_with_most_channels_not_a_broken_first_one(
     assert encoding.probe(Path(video_file.hd.path)).has_audio
 
 
-def test_text_subtitles_are_kept_as_webvtt(
-    admin: Resident, django_capture_on_commit_callbacks: Callable[..., Any]
+def test_text_subtitles_are_kept_as_webvtt_and_offered(
+    admin: Resident, plain: Resident, django_capture_on_commit_callbacks: Callable[..., Any]
 ) -> None:
     with django_capture_on_commit_callbacks(execute=True):
         upload(client_for(admin), subtitled_mkv_bytes(), name="film.mkv")
@@ -1716,6 +1732,21 @@ def test_text_subtitles_are_kept_as_webvtt(
     assert content.startswith("WEBVTT") and "Hej med dig" in content
     assert danish.track.name.startswith(f"gahkflix/{video.uuid}/{video_file.uuid}/subtitles/")
     assert {danish.track.name, english.track.name} <= services.referenced_keys()
+
+    # The player offers them, by language, from the page's own origin.
+    client = client_for(admin)
+    config = client.get(reverse("gahkflix:play", args=[video.pk]), {"format": "json"}).json()
+    assert [(t["label"], t["language"], t["default"], t["forced"]) for t in config["subtitles"]] == [
+        ("Dansk", "dan", True, False),
+        ("Engelsk", "eng", False, False),
+    ]
+    served = client.get(config["subtitles"][0]["url"])
+    assert served.status_code == 200 and served["Content-Type"].startswith("text/vtt")
+    assert "Hej med dig" in served.content.decode()
+    # Only for the video it belongs to, and only to whoever may see that video.
+    other = make_video(admin, title="Anden")
+    assert client.get(reverse("gahkflix:subtitles", args=[other.pk, danish.pk])).status_code == 404
+    assert client_for(plain).get(config["subtitles"][0]["url"]).status_code in (403, 404)
 
     with django_capture_on_commit_callbacks(execute=True):
         services.delete_permanently(video)

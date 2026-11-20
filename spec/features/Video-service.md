@@ -43,12 +43,30 @@ intern site's sidebar and top bar; its own header links back to the intern site.
   upscaled, cropped or stretched: a video keeps its own shape (portrait, 4:3, 15:9, …) and the player
   shows it whole, with black bars where it does not fill the screen. The player switches quality without losing its place,
   remembers the choice in the browser, and starts phones in HD.
+- The player has its own controls, the same in every browser. At the bottom: a timeline (what has
+  loaded, the moment under the pointer, click or drag to go there), play/pause, 10 seconds back and
+  forward, sound (mute, and a volume slider where there is a mouse), time played of the whole,
+  subtitles, a settings menu with quality and speed (0.5× to 2×), picture-in-picture where the
+  browser has it, and fullscreen. At the top: back, the title and the autoplay switch. Both fade
+  out after 3 seconds of playing undisturbed.
+- A click on the picture plays or pauses, shown for a moment in the middle; a double click is
+  fullscreen. With a finger, a tap shows or hides the controls and a double tap on the left or right
+  third jumps 10 seconds back or forward. Keys: Space or K play/pause, ← → or J L jump 10 seconds,
+  ↑ ↓ volume, F fullscreen, M mute, C subtitles on/off, Escape closes a menu, then the end card,
+  then the player.
+- Sound (volume and mute) is remembered in the browser; speed holds while the player is open (the
+  intro always plays at normal speed).
 - A video keeps one sound track: the one with the most channels, as ffmpeg would choose. A track
   with nothing in it (an old camera's broken one) is never taken, and a video with no usable sound
   is kept silent rather than refused.
 - Text subtitles (SRT, ASS, the MP4 kind) are kept as WebVTT files beside the renditions, each with
-  its language and its default and forced flags, so the player can offer them later; it does not
-  yet. Picture subtitles (DVD, Blu-ray) cannot become text, and only the original keeps them.
+  its language and its default and forced flags. Picture subtitles (DVD, Blu-ray) cannot become text,
+  and only the original keeps them.
+- The subtitles menu names each track by its language in Danish (`Dansk`, `Engelsk (Kommentarer)`),
+  with `Fra` for none. The choice is remembered by language: a film with that language starts with
+  it, any other with the track the file marks as its default, if any. Forced tracks (signs, foreign
+  speech) are not in the menu; they show whenever nothing else is chosen. Subtitles are drawn above
+  the controls while those show, and lower when they fade.
 - Playback resumes where the reader stopped, once they are 10 seconds in. Within the last 5% (at
   least 5 seconds) a video counts as watched and starts from the beginning next time.
 - A view counts after 5 seconds of actual playback, or half of a very short video. Views by the same
@@ -68,9 +86,9 @@ intern site's sidebar and top bar; its own header links back to the intern site.
   watched longest ago.
 - Autoplay can be switched off in the player, remembered per browser; the end card then waits. After
   3 autoplays in a row with no key press or click, it asks `Ser du stadig med?` instead.
-- Fullscreen is always the whole player, so the end card shows there too: the video's own fullscreen
-  button is turned into that. On an iPhone, where fullscreen is the system's player, the video
-  leaves fullscreen when it ends if there is something next.
+- Fullscreen is always the whole player, so the end card shows there too. On an iPhone, where
+  fullscreen is the system's own player (with the chosen subtitles), the video leaves fullscreen
+  when it ends if there is something next.
 
 ## Uploading
 
@@ -189,7 +207,12 @@ intern site's sidebar and top bar; its own header links back to the intern site.
   once. Either way the job is listed as failed on the worker-jobs page with the reason, and a job
   Celery sends again after its worker died says so instead of passing as done.
 - Subtitles are kept as files of their own rather than inside the MP4s: WebVTT is what a browser's
-  player reads, and inside an MP4 only Safari shows them.
+  player reads, and inside an MP4 only Safari shows them. They are served from the app, not
+  redirected to the bucket: a browser loads a subtitle track only from the page's own origin, unless
+  the bucket sends CORS headers.
+- The controls are built by hand rather than taken from a player library: the player already runs its
+  own flow (intro, one video element for intro, film and next episode, the end card), which a library
+  would want to own. The browser's own controls looked different everywhere and sat under ours.
 - A date somebody wrote beats the camera's clock in the guess: an exported or re-encoded film carries
   the day it was exported, while `Revy 2009.mp4` says what it is. A camera's file counter
   (`IMG_1999`) is not taken for a year.

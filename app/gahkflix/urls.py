@@ -34,6 +34,7 @@ urlpatterns = [
     path("v/<int:pk>", views.detail, name="detail"),
     path("v/<int:pk>/afspil", views.play, name="play"),
     path("v/<int:pk>/stream/<str:quality>", views.stream, name="stream"),
+    path("v/<int:pk>/subtitles/<int:track>.vtt", views.subtitles, name="subtitles"),
     path("v/<int:pk>/hent/<str:variant>", views.download, name="download"),
     path("v/<int:pk>/billede/<str:kind>", views.picture, name="picture"),
     path("v/<int:pk>/kandidat/<int:frame>", views.frame_image, name="frame"),

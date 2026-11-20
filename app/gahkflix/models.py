@@ -406,9 +406,9 @@ class VideoFile(models.Model):
 class VideoSubtitle(models.Model):
     """One text subtitle track of an upload, kept as WebVTT, the format a browser's player reads.
 
-    Read from the file when it is processed, in the file's own order. The player does not offer them
-    yet; they are kept so it can without processing every video again. Picture subtitles (DVD,
-    Blu-ray) cannot become text, so only the original keeps those.
+    Read from the file when it is processed, in the file's own order, and offered by the player's
+    subtitles menu (views.subtitles serves them). Picture subtitles (DVD, Blu-ray) cannot become
+    text, so only the original keeps those.
     """
 
     file = models.ForeignKey(VideoFile, on_delete=models.CASCADE, related_name="subtitles")
