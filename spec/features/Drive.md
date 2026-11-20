@@ -159,7 +159,7 @@ Drive
 - docx, xlsx and pptx can be edited live together in the browser, showing who else is in the document. Any folder you can write to has `Nyt dokument`, `Nyt regneark` and `Ny præsentation`.
 - Where you cannot write, or the file is locked, the editor opens in view mode.
 - Older formats (doc, xls, ppt, odt …) open for viewing. `Rediger en kopi` makes a docx, xlsx or pptx copy next to the original.
-- Live editing is switched on and off by a server setting. When off, or not responding, office files download, the new-document buttons are hidden, and nothing opens for live editing; everything else works.
+- Live editing is switched on and off by a server setting. When off, or not responding, office files download and nothing opens for live editing; everything else works. The editing buttons stay, greyed out, with a line saying that live editing is switched off or not answering just now, so residents know it exists.
 - The editing server never receives a resident's login. It only reaches the documents Drive opens in it.
 
 ## Search and the list

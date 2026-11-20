@@ -197,9 +197,12 @@ def folder(request: HttpRequest, pk: int) -> HttpResponse:
             "can_change_files": can_change_files,
             "in_bin": operations.bin_count(viewer, current),
             "upload_config": {**_upload_config(current), "instead": instead},
-            "office_new": office.NEW
-            if level >= Level.WRITE and viewer.can_upload_to(current) and office.enabled()
-            else {},
+            # Shown to whoever may put files here, and switched off with a word on why while live
+            # editing is off or not answering.
+            "office_new": office.NEW if level >= Level.WRITE and viewer.can_upload_to(current) else {},
+            "office_state": office.state()
+            if level >= Level.WRITE and viewer.can_upload_to(current)
+            else None,
             "instead": instead,
             "standing_item": current.standing if current.kind == Folder.Kind.STANDING else None,
             "space_root": current.kind in (Folder.Kind.COMMON_ROOT, Folder.Kind.GROUP),
@@ -358,11 +361,13 @@ def _preview_context(viewer: Viewer, file: File, latest: FileVersion) -> dict[st
     return shown
 
 
-def _office_context(viewer: Viewer, file: File) -> dict[str, bool] | None:
-    """What live editing offers for the file, when it is on and opens the file at all."""
-    if office.document_type(file.name) is None or not office.enabled():
+def _office_context(viewer: Viewer, file: File) -> dict[str, object] | None:
+    """What live editing offers for a file it opens - and, while it is off or not answering, that it
+    would, so the page can say why it does not."""
+    if office.document_type(file.name) is None:
         return None
     return {
+        "state": office.state(),
         "edit": office.editable(file.name) and viewer.can_version(file),
         # An older format: a docx, xlsx or pptx copy beside it, for whoever may put one there.
         "convert": not office.editable(file.name) and viewer.can_upload_to(file.folder),

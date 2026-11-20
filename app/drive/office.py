@@ -95,16 +95,24 @@ def configured() -> bool:
     return bool(settings.ONLYOFFICE_URL and settings.ONLYOFFICE_JWT_SECRET)
 
 
-def enabled() -> bool:
-    """Configured, and answering: a Document Server that is down switches live editing off until it
-    is back, checked at most once a minute."""
+# What state() says, and the pages show: on; switched off on this server; or set up but not
+# answering, which switches it off until it is back.
+ON, OFF, DOWN = "on", "off", "down"
+
+
+def state() -> str:
+    """ON, OFF or DOWN. The Document Server's health is checked at most once a minute."""
     if not configured():
-        return False
+        return OFF
     healthy = cache.get(HEALTH_CACHE_KEY)
     if healthy is None:
         healthy = _healthcheck()
         cache.set(HEALTH_CACHE_KEY, healthy, HEALTH_SECONDS)
-    return bool(healthy)
+    return ON if healthy else DOWN
+
+
+def enabled() -> bool:
+    return state() == ON
 
 
 def _healthcheck() -> bool:
