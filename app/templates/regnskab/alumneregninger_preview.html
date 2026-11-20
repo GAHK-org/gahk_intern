@@ -9,15 +9,15 @@
 
   <div class="overflow-x-auto mb-6">
     <table cellpadding="6" class="text-sm" style="width:100%; border-collapse:collapse">
-      <thead><tr style="text-align:left; border-bottom:1px solid #e6e8ec; white-space:nowrap">
+      <thead><tr style="text-align:left; border-bottom:1px solid var(--border-strong); white-space:nowrap">
         <th>Navn</th><th>E-mail</th><th>Status</th><th>Detalje</th><th></th>
       </tr></thead>
       <tbody>
         {% for row in rows %}
-          <tr style="border-bottom:1px solid #f0f1f4">
+          <tr style="border-bottom:1px solid var(--border)">
             <td>{{ row.resident.full_name }}</td>
             <td>{{ row.resident.email }}</td>
-            <td class="whitespace-nowrap {% if row.status == 'failed' %}text-red-600 font-semibold{% endif %}">
+            <td class="whitespace-nowrap {% if row.status == 'failed' %}text-neg font-semibold{% endif %}">
               {% if row.status == 'ready' %}Vil blive sendt
               {% else %}Fejlede{% endif %}
             </td>
