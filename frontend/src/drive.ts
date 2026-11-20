@@ -328,8 +328,40 @@ function initOffice(): void {
   document.head.append(script)
 }
 
+/** `Ny fil` opens its dialog, with the name box ready to type in. */
+function initNewFile(): void {
+  const dialog = document.querySelector<HTMLDialogElement>("[data-drive-new-file]")
+  if (!dialog) return
+  document.querySelector("[data-drive-new-file-open]")?.addEventListener("click", () => {
+    dialog.showModal()
+    dialog.querySelector<HTMLInputElement>("input[name=name]")?.focus()
+  })
+  dialog.querySelector("[data-drive-new-file-close]")?.addEventListener("click", () => dialog.close())
+}
+
+/** The text editor: Ctrl/Cmd+S saves, and leaving with unsaved text asks first. */
+function initTextEditor(): void {
+  const form = document.querySelector<HTMLFormElement>("[data-drive-text-editor]")
+  const box = form?.querySelector("textarea")
+  if (!form || !box) return
+  const original = box.value
+  let saving = false
+  form.addEventListener("submit", () => { saving = true })
+  window.addEventListener("beforeunload", (event) => {
+    if (!saving && box.value !== original) event.preventDefault()
+  })
+  document.addEventListener("keydown", (event) => {
+    if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "s") {
+      event.preventDefault()
+      form.requestSubmit()
+    }
+  })
+}
+
 initUpload()
 initOffice()
+initNewFile()
+initTextEditor()
 initViewer()
 initInstead()
 initSelection()

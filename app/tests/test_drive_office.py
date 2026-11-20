@@ -136,7 +136,7 @@ def test_off_by_default_office_files_are_downloaded(people: dict[str, Resident],
     page = member.get(reverse("drive:file", args=[file.pk])).content.decode()
     assert "Rediger i browseren</button>" in page and "er slået fra" in page
     folder = member.get(reverse("drive:folder", args=[winter.pk])).content.decode()
-    assert 'value="document" class="btn btn-secondary" disabled' in folder and "er slået fra" in folder
+    assert 'value="document" class="drive-new-file-kind" disabled' in folder and "er slået fra" in folder
     assert member.get(reverse("drive:office", args=[file.pk])).status_code == 404
 
 
@@ -162,7 +162,8 @@ def test_a_member_edits_and_the_signed_configuration_names_only_the_resident(
     winter = _period_folder(group, WINTER)
     file = _docx(member, winter)
     assert ">Rediger</a>" in member.get(reverse("drive:file", args=[file.pk])).content.decode()
-    assert "Nyt regneark" in member.get(reverse("drive:folder", args=[winter.pk])).content.decode()
+    folder = member.get(reverse("drive:folder", args=[winter.pk])).content.decode()
+    assert 'value="spreadsheet" class="drive-new-file-kind">' in folder  # in `Ny fil`, not greyed out
 
     config = _config(member, file)
     signed = office.verify(config.pop("token"))
@@ -307,14 +308,16 @@ def test_new_documents_are_made_blank_and_opened(
 ) -> None:
     member = _client(people["member"])
     winter = _period_folder(group, WINTER)
-    first = member.post(reverse("drive:office_new", args=[winter.pk]), {"kind": "presentation"})
+    first = member.post(reverse("drive:new_file", args=[winter.pk]), {"kind": "presentation"})
     made = File.objects.get(name="Ny præsentation.pptx")
     assert first["Location"] == reverse("drive:office", args=[made.pk])
     assert made.size > 0
-    member.post(reverse("drive:office_new", args=[winter.pk]), {"kind": "presentation"})
+    member.post(reverse("drive:new_file", args=[winter.pk]), {"kind": "presentation"})
     assert File.objects.filter(name="Ny præsentation (2).pptx").exists()
+    member.post(reverse("drive:new_file", args=[winter.pk]), {"kind": "spreadsheet", "name": "Budget 2027"})
+    assert File.objects.filter(name="Budget 2027.xlsx").exists()
     friend = _client(people["friend"])
-    assert friend.post(reverse("drive:office_new", args=[winter.pk]), {"kind": "document"}).status_code == 404
+    assert friend.post(reverse("drive:new_file", args=[winter.pk]), {"kind": "document"}).status_code == 404
 
 
 def test_an_older_format_opens_to_view_and_rediger_makes_a_copy(

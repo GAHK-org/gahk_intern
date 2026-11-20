@@ -313,8 +313,8 @@ def test_a_readme_is_read_from_the_bucket_once(people: dict[str, Resident], grou
 
 
 def test_a_utf8_character_cut_by_the_limit_is_left_out() -> None:
-    assert preview._decode("blåbær".encode()[:3]) == "bl"
-    assert preview._decode("blåbær".encode("cp1252")) == "blåbær"
+    assert preview.decode("blåbær".encode()[:3]) == "bl"
+    assert preview.decode("blåbær".encode("cp1252")) == "blåbær"
 
 
 def test_previews_are_kept_on_the_servers_disk_when_the_cache_is_on(

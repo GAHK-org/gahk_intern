@@ -1,0 +1,31 @@
+{% extends "base.html" %}
+{% block title %}Rediger {{ file.name }} - Drive - GAHK Intern{% endblock %}
+{% block content_width %}max-w-5xl{% endblock %}
+
+{% block content %}
+  <div class="page-head">
+    <div>
+      <p class="eyebrow">Drive</p>
+      <h1>{{ file.name }}</h1>
+    </div>
+  </div>
+  {% include "drive/_crumbs.html" with ancestors=ancestors current=file.name %}
+
+  {% comment %}
+    The text editor (drive/text.py): the whole file, saved as its next version. `base` is the version
+    the text came from; a save after somebody else's is refused, and the text stays here.
+  {% endcomment %}
+  <form method="post" class="drive-text-form" data-drive-text-editor>
+    {% csrf_token %}
+    <input type="hidden" name="base" value="{{ base }}">
+    <label class="sr-only" for="drive-text">Indhold</label>
+    <textarea id="drive-text" name="content" class="drive-text" rows="24"{% if not markdown %} spellcheck="false"{% endif %} autofocus>{{ content }}</textarea>
+    {% if markdown %}
+      <p class="drive-text-hint">Markdown: <code># Overskrift</code> · <code>**fed**</code> · <code>*kursiv*</code> · <code>- punkt</code> · <code>[tekst](https://…)</code></p>
+    {% endif %}
+    <div class="drive-actions">
+      <button type="submit" class="btn btn-primary">Gem{% if conflict %} alligevel{% endif %}</button>
+      <a class="btn btn-secondary" href="{% url 'drive:file' file.pk %}">Annuller</a>
+    </div>
+  </form>
+{% endblock %}

@@ -266,7 +266,7 @@ class Text:
     html: SafeString | None = None
 
 
-def _decode(data: bytes) -> str:
+def decode(data: bytes) -> str:
     """UTF-8, or Windows' Western encoding for what a Danish Excel saved. A UTF-8 character cut in
     half by the TEXT_BYTES limit is left out."""
     try:
@@ -282,7 +282,7 @@ def text(version: FileVersion, name: str) -> Text:
     with _storage().open(version.key, "rb") as source:
         data = source.read(TEXT_BYTES + 1)
     truncated = len(data) > TEXT_BYTES
-    result = Text(_decode(data[:TEXT_BYTES]), truncated)
+    result = Text(decode(data[:TEXT_BYTES]), truncated)
     kind = kind_of(name)
     if kind == Kind.CSV:
         result.rows, result.more_rows = _table(
