@@ -2831,4 +2831,24 @@
     fill:none; stroke:currentColor; stroke-width:1.8; stroke-linecap:round; stroke-linejoin:round; }
   .install-done { margin:16px 0; padding:10px 14px; border:1px solid var(--green-100); border-radius:10px;
     background:var(--green-050); color:var(--green-700); font-weight:600; }
+
+  /* --- a <select> the browser's find (Ctrl+F) can find (alumneliste/next_month.html) ---
+     Find never searches a select's chosen option, so the chosen text is repeated in a span laid over
+     the select's own text, which is hidden. Clicks fall through the span (pointer-events:none), so
+     the select opens and focuses as before; findable-select.ts keeps the span in step.
+     How the select's text is hidden differs, because each way of doing it also hides the arrow in
+     some engine: Chrome and Safari keep theirs under a transparent text fill (the options get their
+     fill back, since Chrome on Windows draws the open list with the select's); Firefox loses it
+     under any of them, so there the span is opaque instead, which works because Firefox draws the
+     select on our own --surface (Safari's shaded native one would show the span's edges). */
+  .findable-select { position:relative; display:block; }
+  .findable-select select { -webkit-text-fill-color:transparent; }
+  .findable-select option { -webkit-text-fill-color:var(--ink); }
+  .findable-select-label { position:absolute; inset:1px 2rem 1px 1px; display:flex; align-items:center;
+    padding:0 calc(.5rem - 1px) 0 .5rem; overflow:hidden; white-space:nowrap; border-radius:5px 0 0 5px;
+    color:var(--ink); pointer-events:none; }
+  @supports (-moz-appearance:none) {
+    .findable-select select { -webkit-text-fill-color:currentColor; }
+    .findable-select-label { background:var(--surface); }
+  }
 }
