@@ -236,6 +236,14 @@ tasks:
      desc: Stop Postgres, S3, Celery worker, and Beat
      cmds: ['docker compose --profile docker stop postgres s3 s3-init worker beat']
 
+  office:up:
+    desc: Start Euro-Office for Drive's live editing (http://localhost:8090, ready after about 30 s)
+    cmds: ['docker compose --profile office up -d office']
+
+  office:down:
+    desc: Stop Euro-Office; Drive then downloads office files instead
+    cmds: ['docker compose --profile office stop office']
+
   s3:up:
     desc: Start the local S3 (SeaweedFS) alone (S3-compatible object storage standing in for Hetzner locally)
     cmds: ['docker compose up -d s3 s3-init']

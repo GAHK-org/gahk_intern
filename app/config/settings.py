@@ -5,6 +5,7 @@ Schema/decisions: see ../02-schema-etl.md. Target DB is PostgreSQL (via DATABASE
 
 import os
 from pathlib import Path
+from urllib.parse import urlsplit
 
 import dj_database_url
 from celery.schedules import crontab
@@ -801,10 +802,19 @@ DRIVE_MAX_ZIP_GB = float(os.environ.get("DRIVE_MAX_ZIP_GB", "5"))
 #   ONLYOFFICE_INTERNAL_URL  where this app reaches it, when not the same (http://onlyoffice)
 #   ONLYOFFICE_APP_URL       where it reaches this app, when not SITE_URL (http://web:8000)
 #   ONLYOFFICE_JWT_SECRET    shared with the Document Server's JWT_SECRET; required
-ONLYOFFICE_URL = os.environ.get("ONLYOFFICE_URL", "").rstrip("/")
+# Under DEBUG they default to docker-compose.yml's `office` service, so `task office:up` and
+# `task office:down` are the switch: while it is not running, the health check keeps live editing
+# off. The app is reached at dev:local's address; the `web` service sets its own.
+OFFICE_DEV_SECRET = "gahk-dev-office-secret-for-local-dev-only-0123456789"  # noqa: S105  # nosec B105 - DEBUG only
+ONLYOFFICE_URL = os.environ.get("ONLYOFFICE_URL", "http://localhost:8090" if DEBUG else "").rstrip("/")
 ONLYOFFICE_INTERNAL_URL = os.environ.get("ONLYOFFICE_INTERNAL_URL", ONLYOFFICE_URL).rstrip("/")
-ONLYOFFICE_APP_URL = os.environ.get("ONLYOFFICE_APP_URL", SITE_URL).rstrip("/")
-ONLYOFFICE_JWT_SECRET = os.environ.get("ONLYOFFICE_JWT_SECRET", "")
+ONLYOFFICE_APP_URL = os.environ.get(
+    "ONLYOFFICE_APP_URL", "http://host.docker.internal:8800" if DEBUG else SITE_URL
+).rstrip("/")
+ONLYOFFICE_JWT_SECRET = os.environ.get("ONLYOFFICE_JWT_SECRET", OFFICE_DEV_SECRET if DEBUG else "")
+# The Document Server calls this app by ONLYOFFICE_APP_URL's host (`web` inside the stack).
+if ONLYOFFICE_URL and (_office_host := urlsplit(ONLYOFFICE_APP_URL).hostname):
+    ALLOWED_HOSTS = [*ALLOWED_HOSTS, _office_host]
 GAHKFLIX_PICTURE_MAX_MB = int(os.environ.get("GAHKFLIX_PICTURE_MAX_MB", "15"))
 # Local copies of its thumbnails, banners and frames, in MEDIA_CACHE_DIR/gahkflix/ (gahkflix/cache.py).
 GAHKFLIX_CACHE_MB = int(os.environ.get("GAHKFLIX_CACHE_MB", "1024"))

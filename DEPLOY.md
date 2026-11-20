@@ -61,7 +61,7 @@ SMTP_HOST=send.one.com  SMTP_USER=…  SMTP_PASSWORD=…  SMTP_PORT=587
 # Drive's live editing in Euro-Office (§4h) - OFF until the server is upgraded; leave these unset until then.
 # ONLYOFFICE_URL=https://office.intern.gahk.dk     # where browsers load the editor
 # ONLYOFFICE_INTERNAL_URL=http://office            # where the app reaches it, inside the stack
-# ONLYOFFICE_APP_URL=http://web:8000               # where it reaches the app (add `web` to DJANGO_ALLOWED_HOSTS)
+# ONLYOFFICE_APP_URL=http://web:8000               # where it reaches the app (its host is then allowed)
 # ONLYOFFICE_JWT_SECRET=<64 random chars>          # = JWT_SECRET of the office service
 EMAIL_BACKEND=django.core.mail.backends.smtp.EmailBackend
 DEFAULT_FROM_EMAIL=autosvar@gahk.dk               # ⚠ must be an alias of SMTP_USER — see below
@@ -796,8 +796,8 @@ It is to run on this server once the server is upgraded to 8 GB. Then:
    `v9.3.8` is the version Drive was tested with (2026-11-19); try a newer one on a scratch stack
    before moving to it.
 2. **Set the app's environment** (§2): `ONLYOFFICE_URL`, `ONLYOFFICE_INTERNAL_URL=http://office`,
-   `ONLYOFFICE_APP_URL`, `ONLYOFFICE_JWT_SECRET` (the same secret the service gets), and add `web`
-   to `DJANGO_ALLOWED_HOSTS`. Redeploy.
+   `ONLYOFFICE_APP_URL=http://web:8000` (its host is then allowed, config/settings.py) and
+   `ONLYOFFICE_JWT_SECRET` (the same secret the service gets). Redeploy.
 3. **Check**: `curl https://office.intern.gahk.dk/healthcheck` says `true`; a docx in Drive has
    `Rediger`, and a folder you can write to has `Nyt dokument`. Try editing on a real phone too.
 
