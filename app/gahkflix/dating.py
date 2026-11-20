@@ -5,7 +5,8 @@ It is stored as the first day of what is known (Video.released_on) with its prec
 travels as ISO 8601 cut to that precision — "2015", "2015-03", "2015-03-12" — wherever it is a
 value: the edit form, a proposal, the history.
 
-THE GUESS, made when a file is processed (`guess`): a date somebody wrote — in the file's name, or
+THE GUESS, made when a file is processed (`guess`) and only offered on the edit page
+(VideoFile.date_guess): a date somebody wrote — in the file's name, or
 in one of its date tags — beats the camera's clock when the two disagree. An exported or
 re-encoded film carries the day it was exported, while "Revy 2009.mp4" says what it is. The file's
 last-modified time comes last: it is as often the day the file was copied.

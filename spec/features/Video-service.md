@@ -93,12 +93,15 @@ intern site's sidebar and top bar; its own header links back to the intern site.
 - An upload is a draft until it is published. While it is processed, the uploader can fill in the
   title, description, release date, series, season and episode, credits (residents, or people from
   outside by name, each with an optional role) and tags (the photo album's tag rules).
-- The release date (`Udgivelsesdato`) is known to the day, the month or only the year: only the year
-  is needed. It cannot lie in the future, unless the video is a premiere (below). It is guessed when the file is processed: a whole date written in the file's name or in
-  its date tags first; else the camera's clock, unless a year (or month) written there disagrees;
-  else that year or month; else the file's last-modified time. The edit page says where the guess
-  came from. Set by hand, it stays as set through a new version of the file; cleared, a new version
-  guesses it again.
+- The release date (`Udgivelsesdato`) is known to the day, the month or only the year, and must be
+  filled in by hand, at least the year: saving the details and publishing both need it. It cannot
+  lie in the future, unless the video is a premiere (below).
+- The date the file suggests is guessed when it is processed and only offered: `Brug videoens dato`
+  puts it in the fields, with where it came from beside it. The guess: a whole date written in the
+  file's name or in its date tags first; else the camera's clock, unless a year (or month) written
+  there disagrees; else that year or month; else the file's last-modified time. A new version of
+  the file brings its own guess and never changes the date.
+- The edit page links to the original file (`Hent originalen`).
 - The thumbnail and the banner are picked from 10 random frames spread over the video, with black and
   flat frames redrawn; `Vis 10 nye billeder` draws another ten, which replace the ones shown without
   the page reloading. Or the uploader picks the moment themselves in a player, a second or a frame at
@@ -184,7 +187,7 @@ intern site's sidebar and top bar; its own header links back to the intern site.
 ## History
 
 - Every video has a `Historik`, for its uploader and the administrators: who did what and when —
-  uploads and new versions, processing finished (with the date it guessed) or failed, every change
+  uploads and new versions, processing finished or failed, every change
   to the details and the pictures with before and after, publishing, premieres, being made a draft
   again, binning and restoring. An
   approved proposal is the proposer's change, marked as approved. A video uploaded before there was
@@ -230,6 +233,8 @@ intern site's sidebar and top bar; its own header links back to the intern site.
   Celery sends again after its worker died says so instead of passing as done.
 - Subtitles are kept as files of their own rather than inside the MP4s: WebVTT is what a browser's
   player reads, and inside an MP4 only Safari shows them.
+- The file's date is offered, not filled in: a guess filled in by itself was saved and published
+  unchecked, and an empty date is a question the uploader must answer.
 - A date somebody wrote beats the camera's clock in the guess: an exported or re-encoded film carries
   the day it was exported, while `Revy 2009.mp4` says what it is. A camera's file counter
   (`IMG_1999`) is not taken for a year.

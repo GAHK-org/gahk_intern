@@ -327,6 +327,9 @@ body.flix-play, body.flix-player-open { overflow: hidden; background: #000; }
 .flix-form .flix-check { display: inline-flex; align-items: center; gap: 6px; margin: 0; font-weight: 600; cursor: pointer; }
 .flix-check input { width: 16px; height: 16px; margin: 0; accent-color: var(--flix-red); }
 .flix-date-fields:has(> .flix-date-time:not([hidden])) { grid-template-columns: minmax(0, 1.2fr) minmax(0, 1.8fr) minmax(0, 1fr) minmax(0, 1.3fr); max-width: 580px; }
+/* "Brug videoens dato" and the date it would put in. */
+.flix-date-guess { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; margin-top: 8px; }
+.flix-date-guess .flix-help { margin: 0; }
 .flix-premiere-blur { display: grid; grid-template-columns: minmax(0, 1fr) 150px; gap: 14px; align-items: end; max-width: 440px; }
 .flix-premiere-blur[hidden] { display: none; }
 .flix-premiere-blur .flix-card-img { max-width: 240px; }

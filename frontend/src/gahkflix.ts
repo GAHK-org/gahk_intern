@@ -962,6 +962,29 @@ function initPremiere(): void {
   sync();
 }
 
+/** "Brug videoens dato": the date the file suggests ("2015", "2015-03" or "2015-03-12") put in the
+ * year, month and day, a part it does not know left empty. Nothing is filled in without it. */
+function initDateGuess(): void {
+  const button = document.querySelector<HTMLButtonElement>("[data-flix-date-guess]");
+  const form = button?.closest("form");
+  if (!button || !form) return;
+  button.addEventListener("click", () => {
+    const [year = "", month = "", day = ""] = (button.dataset.flixDateGuess ?? "").split("-");
+    const parts: [string, string][] = [
+      ["released_year", year],
+      ["released_month", month ? String(Number(month)) : ""],
+      ["released_day", day ? String(Number(day)) : ""],
+    ];
+    for (const [name, value] of parts) {
+      const field = form.elements.namedItem(name) as HTMLInputElement | HTMLSelectElement | null;
+      if (!field) continue;
+      field.value = value;
+      field.dispatchEvent(new Event("input", { bubbles: true }));
+      field.dispatchEvent(new Event("change", { bubbles: true }));
+    }
+  });
+}
+
 /** "Vis 10 nye billeder" without leaving the page: the worker draws them, and the new ones are swapped
  * in from the edit page once its status says they are there. */
 const NEW_FRAMES_WAIT_MS = 3 * 60 * 1000;
@@ -1580,6 +1603,7 @@ if (body.classList.contains("flix")) {
   initProcessing();
   initDetailsKeeper(); // before the editors, which read what it puts back
   initPremiere();
+  initDateGuess();
   initCastEditor();
   initTagEditor();
   initNumberPickers();

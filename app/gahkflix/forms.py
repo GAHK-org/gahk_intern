@@ -23,8 +23,8 @@ NUMBER_ATTRS = {"inputmode": "numeric", "pattern": "[0-9]*", "autocomplete": "of
 class VideoDetailsForm(forms.Form):
     """A video's details as one form. Cast and tags arrive as JSON from their editors (gahkflix.ts).
 
-    The release date is three fields, of which only the year is needed: a month and a day nobody
-    knows are left out rather than made up (dating.py). It cannot be in the future — unless the video
+    The release date is three fields, of which only the year is needed, and that one always: a month
+    and a day nobody knows are left out rather than made up (dating.py). It cannot be in the future — unless the video
     is a premiere (`premiere`), which comes out at a whole moment: the day, month and year, and a
     time (`premiere_time`), which only a premiere has.
     """
@@ -196,10 +196,10 @@ class VideoDetailsForm(forms.Form):
         year, month, day = (data.get(f"released_{part}") for part in ("year", "month", "day"))
         if day and not month:
             self.add_error("released_day", "Vælg også måneden, eller lad dagen stå tom.")
-        elif (month or day) and not year:
+        elif not year:
             if "released_year" not in self.errors:
-                self.add_error("released_year", "Skriv også året.")
-        elif year:
+                self.add_error("released_year", "Udfyld udgivelsesdatoen – mindst året.")
+        else:
             try:
                 self.release = PartialDate.of(year, month, day)
             except ValueError:

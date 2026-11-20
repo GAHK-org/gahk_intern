@@ -106,7 +106,10 @@ def make_video(
     duration: float = 600.0,
     **fields: Any,  # noqa: ANN401
 ) -> Video:
-    """A processed video with stand-in files, without running ffmpeg."""
+    """A processed video with stand-in files, without running ffmpeg. Its release date is a year,
+    as every video's must be (at least) once it is saved through the form."""
+    fields.setdefault("released_on", date(2020, 1, 1))
+    fields.setdefault("release_precision", DatePrecision.YEAR)
     video = Video.objects.create(title=title, uploaded_by=owner, **fields)
     video_file = VideoFile(
         video=video,
@@ -280,11 +283,36 @@ def test_upload_is_encoded_and_offers_frames(
     assert video.file == video_file
     assert video_file.hd and not video_file.full_hd  # a 320x240 source is never upscaled
     assert video_file.duration == pytest.approx(1.0, abs=0.2)
-    # The container says 2021-06-05; the browser's lastModified (2020) is only the fallback.
-    assert video.release == dating.PartialDate(date(2021, 6, 5), DatePrecision.DAY)
-    assert video.release_source == DateSource.METADATA
+    # The container says 2021-06-05; the browser's lastModified (2020) is only the fallback. It is
+    # only offered: the release date stays empty until it is filled in.
+    assert video_file.guessed_date == dating.PartialDate(date(2021, 6, 5), DatePrecision.DAY)
+    assert video_file.date_guess_source == DateSource.METADATA
+    assert video.release is None and video.release_source == ""
     assert 1 <= video.frames.count() <= 10
     assert notified(admin, categories.GAHKFLIX_UPLOADS)
+
+
+def test_the_edit_page_offers_the_files_date_and_the_original(admin: Resident) -> None:
+    """The date the file suggests fills nothing in by itself: a button puts it in the fields."""
+    video = make_video(admin, published=False, released_on=None)
+    client = client_for(admin)
+    edit = reverse("gahkflix:edit", args=[video.pk])
+    page = client.get(edit).content.decode()
+    assert "data-flix-date-guess" not in page
+    assert "uploaddato" not in page
+    assert reverse("gahkflix:download", args=[video.pk, "original"]) in page and "Hent originalen" in page
+
+    assert video.file is not None
+    VideoFile.objects.filter(pk=video.file.pk).update(date_guess="2015-03", date_guess_source=DateSource.NAME)
+    page = client.get(edit).content.decode()
+    assert 'data-flix-date-guess="2015-03"' in page and "marts 2015, fra filnavnet." in page
+    # Nothing in the fields until it is used.
+    assert 'name="released_year" value=' not in page
+
+    response = client.post(edit, details(video, title="Revyen"))
+    assert (
+        response.status_code == 200 and "Udfyld udgivelsesdatoen – mindst året." in response.content.decode()
+    )
 
 
 def test_a_draft_is_published_once_it_has_pictures(
@@ -294,9 +322,11 @@ def test_a_draft_is_published_once_it_has_pictures(
     with django_capture_on_commit_callbacks(execute=True):
         upload(client, mp4_bytes())
     video = Video.objects.get()
+    edit = client.get(reverse("gahkflix:edit", args=[video.pk])).content.decode()
+    assert "Udfyld udgivelsesdatoen – mindst året." in edit and "Vælg en miniature." in edit
     response = client.post(reverse("gahkflix:publish", args=[video.pk]))
     video.refresh_from_db()
-    assert video.is_draft  # no thumbnail or banner yet
+    assert video.is_draft  # no release date, thumbnail or banner yet
     frame = video.frames.first()
     assert frame is not None
     for kind in ("thumbnail", "banner"):
@@ -306,8 +336,16 @@ def test_a_draft_is_published_once_it_has_pictures(
         assert response.status_code == 302
     video.refresh_from_db()
     assert video.thumbnail_frame == frame and video.banner_frame == frame
+    # The release date is typed in the form "Udgiv" sends, so the button does not wait for it.
+    assert (
+        "disabled"
+        not in client.get(reverse("gahkflix:edit", args=[video.pk]))
+        .content.decode()
+        .split('formaction="' + reverse("gahkflix:publish", args=[video.pk]) + '"')[1]
+        .split(">")[0]
+    )
     with django_capture_on_commit_callbacks(execute=True):
-        client.post(reverse("gahkflix:publish", args=[video.pk]))
+        client.post(reverse("gahkflix:publish", args=[video.pk]), details(video, released_on="2021"))
     video.refresh_from_db()
     assert video.is_published
     # Everyone who can open GAHKFlix hears of it; the gate keeps it from a plain resident for now.
@@ -915,7 +953,8 @@ def test_a_release_date_needs_only_its_year(admin: Resident, released_on: str, l
     ("posted", "field", "message"),
     [
         ({"released_year": "2015", "released_day": "12"}, "released_day", "Vælg også måneden"),
-        ({"released_month": "3"}, "released_year", "Skriv også året"),
+        ({}, "released_year", "Udfyld udgivelsesdatoen – mindst året."),
+        ({"released_month": "3"}, "released_year", "mindst året"),
         (
             {"released_year": "2015", "released_month": "2", "released_day": "30"},
             "released_day",
@@ -1504,21 +1543,18 @@ def test_the_history_says_who_did_what_and_when(
         (VideoEvent.Kind.BINNED, admin2.pk),
         (VideoEvent.Kind.RESTORED, admin2.pk),
     ]
-    # The worker dated it from the file; the uploader changed only what they changed.
-    assert video.events.get(kind=VideoEvent.Kind.PROCESSED).changes["released_on"] == {
-        "before": None,
-        "after": "2021-06-05",
-    }
+    # The worker only guessed a date from the file; the uploader filled it in.
+    assert "released_on" not in video.events.get(kind=VideoEvent.Kind.PROCESSED).changes
     details_edit = video.events.filter(kind=VideoEvent.Kind.EDITED).order_by("pk").first()
     assert details_edit is not None
     assert details_edit.changes == {
         "title": {"before": "revy", "after": "Revyen"},
-        "released_on": {"before": "2021-06-05", "after": "2015"},
+        "released_on": {"before": None, "after": "2015"},
         "tags": {"before": [], "after": ["revy"]},
     }
     page = client.get(reverse("gahkflix:history", args=[video.pk])).content.decode()
     assert f"<b>{admin.full_name}</b> uploadede videoen: revy.mp4" in page
-    assert "5. juni 2021" in page and "2021-06-05" not in page  # dates as people write them
+    assert "2015" in page
     assert f"<b>{admin2.full_name}</b> lagde videoen i papirkurven" in page
     assert "før GAHKFlix begyndte at gemme historik" not in page
 

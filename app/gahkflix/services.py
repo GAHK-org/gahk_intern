@@ -507,23 +507,19 @@ def process_file(video_file: VideoFile, rng: random.Random | None = None) -> boo
         video_file.duration = info.duration
         video_file.width, video_file.height = info.width, info.height
         video_file.recorded_at = info.recorded_at
+        _guess_date(video_file, info)
         video_file.save(
             update_fields=[
                 "state", "progress", "error", "completed_at", "duration", "width", "height",
-                "recorded_at", "hd", "full_hd", "hd_size", "full_hd_size",
+                "recorded_at", "date_guess", "date_guess_source", "hd", "full_hd", "hd_size",
+                "full_hd_size",
             ]
         )  # fmt: skip
         video = Video.objects.select_for_update().get(pk=video.pk)
         previous = video.file
-        dated = video.release
         video.file = video_file
-        video.save(update_fields=["file", *_date_from_file(video, video_file, info)])
+        video.save(update_fields=["file"])
         changes: dict[str, Any] = {"file": video_file.original_name, "replaced": previous is not None}
-        if video.release != dated:
-            changes["released_on"] = {
-                "before": dated.iso() if dated else None,
-                "after": video.release.iso() if video.release else None,
-            }
         record_event(video, VideoEvent.Kind.PROCESSED, changes=changes)
         if previous is not None and previous.pk != video_file.pk:
             _delete_keys(_file_keys(previous))
@@ -533,22 +529,17 @@ def process_file(video_file: VideoFile, rng: random.Random | None = None) -> boo
     return True
 
 
-def _date_from_file(video: Video, video_file: VideoFile, info: encoding.Probe) -> list[str]:
-    """Guess the film's release date from its new file (dating.guess), unless it was set by hand.
-    Returns the fields it changed."""
-    if video.release_source == DateSource.MANUAL:
-        return []
+def _guess_date(video_file: VideoFile, info: encoding.Probe) -> None:
+    """Guess the film's release date from the file (dating.guess). It is only offered on the edit
+    page: the release date itself is filled in by hand."""
     found = dating.guess(
         name=video_file.original_name,
         recorded_at=info.recorded_at,
         tags=info.date_tags,
         modified_at=video_file.file_modified_at,
     )
-    if found is None:
-        return []
-    video.released_on, video.release_precision = found.date.start, found.date.precision
-    video.release_source = found.source
-    return ["released_on", "release_precision", "release_source"]
+    video_file.date_guess = found.date.iso() if found else ""
+    video_file.date_guess_source = found.source if found else ""
 
 
 def redraw_frames(video: Video, rng: random.Random | None = None) -> int:
@@ -871,7 +862,6 @@ def apply_changes(
             setattr(video, name, changes[name])
             fields.append(name)
     if "released_on" in changes:
-        # Set by hand now: a new version of the file is no longer dated over it. Cleared, it is.
         release = PartialDate.parse(changes["released_on"])
         video.released_on = release.start if release else None
         video.release_precision = release.precision if release else DatePrecision.DAY
@@ -964,13 +954,16 @@ def _apply_series(series: Series, changes: dict[str, Any]) -> list[str]:
 # --- Publishing ---------------------------------------------------------------------------------
 
 
-def missing_for_publishing(video: Video) -> list[str]:
-    """Why the draft cannot be published yet, in the order the uploader should fix it."""
+def missing_for_publishing(video: Video, *, details: bool = True) -> list[str]:
+    """Why the draft cannot be published yet, in the order the uploader should fix it. Without
+    `details`, only what the details form sent along with "Udgiv" cannot fix (views.publish)."""
     missing = []
     if video.file is None:
         missing.append("Videoen er ikke færdigbehandlet.")
-    if not video.title.strip():
+    if details and not video.title.strip():
         missing.append("Videoen skal have en titel.")
+    if details and video.released_on is None:
+        missing.append("Udfyld udgivelsesdatoen – mindst året.")
     if not video.thumbnail:
         missing.append("Vælg en miniature.")
     if not video.banner:

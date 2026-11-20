@@ -242,12 +242,13 @@ class Video(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
     published_at = models.DateTimeField(null=True, blank=True)
     # The film's own date, as much of it as is known: a day, a month or a year (dating.py), stored
-    # as its first day. Guessed when the file is processed, unless it was set by hand.
+    # as its first day. Filled in by the uploader, at least the year; the file's guess
+    # (VideoFile.date_guess) is only offered. Videos from before that may have a guessed one.
     released_on = models.DateField(null=True, blank=True, verbose_name="Udgivelsesdato")
     release_precision = models.CharField(
         max_length=5, choices=DatePrecision.choices, default=DatePrecision.DAY
     )
-    # Where it came from; "" when there is none.
+    # Where it came from: "manual", or for an older video the guess it was; "" when there is none.
     release_source = models.CharField(max_length=8, choices=DateSource.choices, blank=True)
     # A premiere: the minute it comes out, which may be in the future. Its day is `released_on`.
     premiere_at = models.DateTimeField(null=True, blank=True, verbose_name="Premiere")
@@ -477,6 +478,11 @@ class VideoFile(models.Model):
     height = models.PositiveIntegerField(null=True, blank=True)
     # When the camera says it was recorded (container metadata).
     recorded_at = models.DateTimeField(null=True, blank=True)
+    # The film's release date as guessed from this file when it was processed (dating.guess), as
+    # ISO 8601 cut to its precision ("2015", "2015-03", "2015-03-12"), and where it came from. Only
+    # offered on the edit page ("Brug videoens dato"): the release date is always filled in by hand.
+    date_guess = models.CharField(max_length=10, blank=True)
+    date_guess_source = models.CharField(max_length=8, choices=DateSource.choices, blank=True)
     full_hd = models.FileField(upload_to=full_hd_path, storage=get_video_storage, max_length=500, blank=True)
     hd = models.FileField(upload_to=hd_path, storage=get_video_storage, max_length=500, blank=True)
     # Their sizes in bytes, for the download menu.
@@ -492,6 +498,10 @@ class VideoFile(models.Model):
     @property
     def is_pending(self) -> bool:
         return self.state in (FileState.QUEUED, FileState.PROCESSING)
+
+    @property
+    def guessed_date(self) -> PartialDate | None:
+        return PartialDate.parse(self.date_guess)
 
     @property
     def qualities(self) -> list[str]:

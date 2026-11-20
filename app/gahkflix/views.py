@@ -887,6 +887,8 @@ def _edit_page(request: HttpRequest, video: Video, form: VideoDetailsForm) -> Ht
             "open_edit": services.open_request(video, ChangeRequest.Kind.EDIT),
             "open_delete": services.open_request(video, ChangeRequest.Kind.DELETE),
             "missing": services.missing_for_publishing(video) if video.is_draft else [],
+            # What the details sent with "Udgiv" cannot fix: the button waits for it.
+            "publish_blocked": bool(services.missing_for_publishing(video, details=False)),
             "past_pictures": [
                 picture
                 for kind in PICTURES

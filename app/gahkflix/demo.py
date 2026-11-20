@@ -12,6 +12,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 
 from django.core.files.base import ContentFile
+from django.utils import timezone
 
 from residents.models import Resident
 
@@ -89,10 +90,11 @@ def seed(residents: list[Resident], now: datetime, rng: random.Random) -> None:
             cast = [
                 {"resident": r.pk, "name": "", "role": ""} for r in rng.sample(others, min(3, len(others)))
             ]
-            services.apply_changes(video, {"tags": tags, "cast": cast}, uploader)
+            moment = now - timedelta(days=days)
+            released_on = timezone.localdate(moment).isoformat()
+            services.apply_changes(video, {"tags": tags, "cast": cast, "released_on": released_on}, uploader)
             video.refresh_from_db()
             services.publish(video, uploader)
-            moment = now - timedelta(days=days)
             Video.objects.filter(pk=video.pk).update(created_at=moment, published_at=moment)
             for viewer in rng.sample(residents, min(len(residents), 2 + index * 2)):
                 services.record_view(video, viewer, now - timedelta(hours=rng.randint(1, 100)))
