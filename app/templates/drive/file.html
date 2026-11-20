@@ -30,11 +30,11 @@
     </div>
   {% endif %}
 
-  {% if office.in_use %}<p class="drive-note mb-4">Filen bliver redigeret lige nu. Ændringerne bliver en ny version, når den sidste lukker den.</p>{% endif %}
+  {% if office.state == "on" and office.in_use %}<p class="drive-note mb-4">Filen bliver redigeret lige nu. Ændringerne bliver en ny version, når den sidste lukker den.</p>{% endif %}
   {% include "drive/_preview.html" %}
 
   <div class="drive-actions mb-4">
-    {% if office %}
+    {% if office.state == "on" %}
       <a class="btn btn-primary" href="{% url 'drive:office' file.pk %}">{% if office.edit %}Rediger{% else %}Åbn{% endif %}</a>
       {% if office.convert %}
         <form method="post" action="{% url 'drive:office_convert' file.pk %}" class="drive-inline-form">
@@ -45,11 +45,17 @@
       <a class="btn btn-secondary" href="{% url 'drive:download' file.pk %}">Hent</a>
     {% else %}
       <a class="btn btn-primary" href="{% url 'drive:download' file.pk %}">Hent</a>
+      {% if office %}
+        <button type="button" class="btn btn-secondary" disabled aria-describedby="drive-office-state">{% if office.edit %}Rediger{% else %}Åbn{% endif %} i browseren</button>
+      {% endif %}
     {% endif %}
     {% if can_version %}
       {% include "drive/_upload.html" with label="Upload ny version" multiple=False %}
     {% endif %}
   </div>
+  {% if office and office.state != "on" %}
+    <p id="drive-office-state" class="drive-office-state">{% include "drive/_office_state.html" with state=office.state %}</p>
+  {% endif %}
 
   <div class="drive-links mb-6">
     {% if can_change %}

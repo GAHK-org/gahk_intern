@@ -132,7 +132,11 @@ def test_off_by_default_office_files_are_downloaded(people: dict[str, Resident],
         reverse("drive:office", args=[file.pk])
         not in member.get(reverse("drive:file", args=[file.pk])).content.decode()
     )
-    assert "Nyt dokument" not in member.get(reverse("drive:folder", args=[winter.pk])).content.decode()
+    # It is there, greyed out, with a word on why.
+    page = member.get(reverse("drive:file", args=[file.pk])).content.decode()
+    assert "Rediger i browseren</button>" in page and "er slået fra" in page
+    folder = member.get(reverse("drive:folder", args=[winter.pk])).content.decode()
+    assert 'value="document" class="btn btn-secondary" disabled' in folder and "er slået fra" in folder
     assert member.get(reverse("drive:office", args=[file.pk])).status_code == 404
 
 
@@ -142,10 +146,9 @@ def test_a_server_that_does_not_answer_switches_it_off(
     server.healthy = False
     member = _client(people["member"])
     file = _docx(member, _period_folder(group, WINTER))
-    assert (
-        reverse("drive:office", args=[file.pk])
-        not in member.get(reverse("drive:file", args=[file.pk])).content.decode()
-    )
+    page = member.get(reverse("drive:file", args=[file.pk])).content.decode()
+    assert reverse("drive:office", args=[file.pk]) not in page
+    assert "svarer ikke lige nu" in page
     assert member.get(reverse("drive:office", args=[file.pk])).status_code == 404
 
 

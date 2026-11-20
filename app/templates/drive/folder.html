@@ -96,7 +96,7 @@
         <form method="post" action="{% url 'drive:office_new' folder.pk %}" class="drive-inline-form"{% if instead %} data-drive-instead="{{ instead.officeUrl }}"{% endif %}>
           {% csrf_token %}
           {% for kind, item in office_new.items %}
-            <button type="submit" name="kind" value="{{ kind }}" class="btn btn-secondary">{{ item.0 }}</button>
+            <button type="submit" name="kind" value="{{ kind }}" class="btn btn-secondary"{% if office_state != "on" %} disabled aria-describedby="drive-office-state"{% endif %}>{{ item.0 }}</button>
           {% endfor %}
         </form>
       {% endif %}
@@ -109,6 +109,10 @@
         </form>
       {% endif %}
     </div>
+  {% endif %}
+
+  {% if office_new and office_state != "on" %}
+    <p id="drive-office-state" class="drive-office-state">{% include "drive/_office_state.html" with state=office_state %}</p>
   {% endif %}
 
   {% if folder and folder.kind == "folder" %}
