@@ -2100,6 +2100,8 @@
   .drive-choice input { width:auto; margin:3px 0 0; flex:none; }
   .drive-pick { list-style:none; margin:0; padding:0; max-height:320px; overflow:auto; display:grid; gap:4px; }
   .drive-pick li[hidden] { display:none; }
+  /* Live editing while it is off or not answering (office.state): there, but plainly not to be pressed. */
+  .drive-actions .btn:disabled { opacity:.5; cursor:not-allowed; }
   .drive-office-state { margin:-8px 0 16px; font-size:13px; color:var(--muted); }
   .drive-inline-form { display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin:0; }
   .drive-inline-form select, .drive-inline-form input[type=text] { width:auto; margin:0; max-width:100%; }
