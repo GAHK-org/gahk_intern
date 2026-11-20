@@ -10,7 +10,7 @@
       <div class="mb-3">
         <label for="{{ field.id_for_label }}" class="font-semibold block mb-1">{{ field.label }}</label>
         {{ field }}
-        {% if field.errors %}<p class="text-red-600 text-sm mt-1">{{ field.errors|striptags }}</p>{% endif %}
+        {% if field.errors %}<p class="text-neg text-sm mt-1">{{ field.errors|striptags }}</p>{% endif %}
       </div>
     {% endfor %}
     <div class="flex items-center gap-3 mt-4">
