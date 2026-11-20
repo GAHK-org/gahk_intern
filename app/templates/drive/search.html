@@ -30,7 +30,7 @@
       <option value="">Alle perioder og år</option>
       {% for value, label in periods %}<option value="{{ value }}"{% if value == period %} selected{% endif %}>{{ label }}</option>{% endfor %}
     </select>
-    <button type="submit" class="btn btn-primary">Søg</button>
+    <button type="submit" class="btn">Søg</button>
   </form>
 
   {% if too_short %}

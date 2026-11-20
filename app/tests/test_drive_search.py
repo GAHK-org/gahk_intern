@@ -7,14 +7,16 @@ from datetime import timedelta
 from io import BytesIO
 
 import pytest
+from celery.exceptions import SoftTimeLimitExceeded
 from django.test import Client
 from django.urls import reverse
 from django.utils import timezone
 
-from core.models import Workgroup
+from core.models import WorkerJobLog, Workgroup
 from drive import search, services, sharing, zips
 from drive.access import Viewer
 from drive.models import File, Folder, ZipDownload
+from drive.operations import Selection
 from drive.structure import ensure_structure
 from residents.models import Residency, Resident, Role
 
@@ -237,6 +239,29 @@ def test_a_zip_over_the_limit_is_refused(
     assert not ZipDownload.objects.exists()
 
 
+def test_a_build_stopped_at_its_limit_says_why(
+    people: dict[str, Resident], group: Workgroup, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    member = _client(people["member"])
+    winter = _period_folder(group, WINTER)
+    _upload(member, winter, "Budget.xlsx", b"budget")
+    download = zips.request(
+        Viewer.for_resident(people["member"]),
+        Selection(source=winter, files=list(File.objects.filter(folder=winter)), folders=[]),
+        name="Vinter",
+        actor=people["member"],
+    )
+
+    def stop(*_: object) -> None:
+        raise SoftTimeLimitExceeded
+
+    monkeypatch.setattr(zips._Progress, "__call__", stop)
+    with pytest.raises(SoftTimeLimitExceeded):
+        zips.build(download.pk)
+    download.refresh_from_db()
+    assert (download.state, download.error) == (ZipDownload.State.FAILED, "Stoppet ved tidsgrænsen.")
+
+
 def test_zips_go_after_a_day_and_a_dead_build_says_so(
     people: dict[str, Resident], group: Workgroup, django_capture_on_commit_callbacks: Callable
 ) -> None:
@@ -244,9 +269,27 @@ def test_zips_go_after_a_day_and_a_dead_build_says_so(
     winter = _period_folder(group, WINTER)
     _upload(member, winter, "Budget.xlsx", b"budget")
     download = _zip_of(member, winter, django_capture_on_commit_callbacks)
+    # The build said how far it got, under the zip's own task id.
+    job = WorkerJobLog.objects.get(task_id=zips.task_id(download))
+    assert (job.task_name, job.progress) == ("drive.tasks.build_zip", 1.0)
+
+    def page(zip_download: ZipDownload) -> str:
+        return member.get(reverse("drive:zip", args=[zip_download.token])).content.decode()
+
+    # Queued for hours, behind a long encode on the one media slot: still waiting, not dead.
     stuck = ZipDownload.objects.create(requested_by=people["member"], name="x.zip")
     ZipDownload.objects.filter(pk=stuck.pk).update(created_at=timezone.now() - timedelta(hours=3))
-    assert "kunne ikke laves" in member.get(reverse("drive:zip", args=[stuck.token])).content.decode()
+    assert "bliver lavet" in page(stuck)
+    # Building: alive while its job shows signs of life, dead a quarter of an hour after the last.
+    ZipDownload.objects.filter(pk=stuck.pk).update(state=ZipDownload.State.BUILDING)
+    building = WorkerJobLog.objects.create(
+        task_id=zips.task_id(stuck),
+        started_at=timezone.now() - timedelta(hours=2),
+        progressed_at=timezone.now(),
+    )
+    assert "bliver lavet" in page(stuck)
+    WorkerJobLog.objects.filter(pk=building.pk).update(progressed_at=timezone.now() - timedelta(minutes=20))
+    assert "kunne ikke laves" in page(stuck)
 
     ZipDownload.objects.filter(pk=download.pk).update(created_at=timezone.now() - timedelta(hours=25))
     assert zips.expire() == 1
