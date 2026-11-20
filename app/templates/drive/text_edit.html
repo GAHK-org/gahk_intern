@@ -24,7 +24,7 @@
       <p class="drive-text-hint">Markdown: <code># Overskrift</code> · <code>**fed**</code> · <code>*kursiv*</code> · <code>- punkt</code> · <code>[tekst](https://…)</code></p>
     {% endif %}
     <div class="drive-actions">
-      <button type="submit" class="btn btn-primary">Gem{% if conflict %} alligevel{% endif %}</button>
+      <button type="submit" class="btn">Gem{% if conflict %} alligevel{% endif %}</button>
       <a class="btn btn-secondary" href="{% url 'drive:file' file.pk %}">Annuller</a>
     </div>
   </form>

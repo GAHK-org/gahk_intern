@@ -12,13 +12,18 @@ has since lost access to. Only the one who asked can fetch it, for ZIP_KEEP_HOUR
 
 Names in a folder are unique ignoring case, so the paths in a zip never clash. Files are stored, not
 compressed: most of what is uploaded is already compressed, and storing costs the worker nothing.
+
+The build reports its progress, by bytes read against the zip's size (core/job_progress.py): the
+worker-jobs page shows it, and the watchdog stops one that gets nowhere, so the time limit can be the
+album ZIPs' twelve hours. Whether a build has died is read from the worker's own row for it
+(WorkerJobLog, under the task id `task_id` gives it), as the album's are from their progress.
 """
 
-import logging
 from collections.abc import Iterator
 from dataclasses import dataclass
 from datetime import timedelta
 
+from celery.exceptions import SoftTimeLimitExceeded
 from django.conf import settings
 from django.core.exceptions import ValidationError
 from django.core.files.base import ContentFile
@@ -26,6 +31,9 @@ from django.db import transaction
 from django.utils import timezone
 from zipstream import ZIP_STORED, ZipStream
 
+from core.job_progress import LiveJob, current, stage, stopped_reason
+from core.models import WorkerJobLog
+from photo_album.models import JOB_QUEUED_TOO_LONG, JOB_STALLED_AFTER
 from photo_album.storage import PhotoAlbumS3Storage
 from photo_album.tasks import _ZipReader
 from residents.models import Resident
@@ -35,12 +43,9 @@ from .access import Level, Viewer
 from .models import File, FileVersion, Folder, ZipDownload
 from .operations import Selection
 
-logger = logging.getLogger(__name__)
-
 ZIP_PREFIX = "drive/zips/"
 ZIP_KEEP_HOURS = 24
-# A build not done by then is taken to have died with its worker.
-ZIP_STALLED_AFTER = timedelta(hours=2)
+ZIPPING = stage(0.0, 1.0, "Pakker zip'en")
 
 
 def max_zip_bytes() -> int:
@@ -117,14 +122,41 @@ def request(viewer: Viewer, selection: Selection, *, name: str, actor: Resident)
     )
     from .tasks import build_zip  # tasks imports this module
 
-    transaction.on_commit(lambda: build_zip.delay(download.pk))
+    transaction.on_commit(lambda: build_zip.apply_async((download.pk,), task_id=task_id(download)))
     return download
 
 
-def _chunks(key: str) -> Iterator[bytes]:
+def task_id(download: ZipDownload) -> str:
+    """The build's Celery task id, and so its WorkerJobLog's: one build per zip."""
+    return f"drive-zip-{download.token}"
+
+
+class _Progress:
+    """Bytes read so far against the zip's size. Called from boto3's reading thread, so it holds the
+    job taken in the task's own."""
+
+    def __init__(self, total: int) -> None:
+        self.total, self.done = total, 0
+        self.job: LiveJob | None = current()
+        ZIPPING(0.0, self.job)
+
+    def __call__(self, read: int) -> None:
+        self.done += read
+        ZIPPING(self.done / self.total if self.total else 1.0, self.job)
+
+
+def _chunks(key: str, progress: _Progress) -> Iterator[bytes]:
     with services.storage().open(key, "rb") as source:
         while chunk := source.read(1024 * 1024):
+            progress(len(chunk))
             yield chunk
+
+
+def _failure(exc: Exception) -> str:
+    """The build's error. A stopped build's exception says nothing of its own."""
+    if isinstance(exc, SoftTimeLimitExceeded):
+        return "Stoppet, fordi jobbet ikke kom videre." if stopped_reason() else "Stoppet ved tidsgrænsen."
+    return str(exc)[:255] or type(exc).__name__
 
 
 def build(download_id: int) -> bool:
@@ -136,9 +168,10 @@ def build(download_id: int) -> bool:
     download = ZipDownload.objects.get(pk=download_id)
     key = f"{ZIP_PREFIX}{download.token}.zip"
     archive = ZipStream(compress_type=ZIP_STORED)
+    progress = _Progress(download.size)
     for entry in download.entries:
         if "key" in entry:
-            archive.add(_chunks(str(entry["key"])), arcname=str(entry["path"]))
+            archive.add(_chunks(str(entry["key"]), progress), arcname=str(entry["path"]))
         else:
             archive.mkdir(str(entry["path"]))
     store = services.storage()
@@ -150,11 +183,10 @@ def build(download_id: int) -> bool:
         else:
             store.save(key, ContentFile(b"".join(archive)))
     except Exception as exc:
-        logger.exception("drive: zip %s failed", download.token)
         ZipDownload.objects.filter(pk=download.pk).update(
-            state=ZipDownload.State.FAILED, error=str(exc)[:255], completed_at=timezone.now()
+            state=ZipDownload.State.FAILED, error=_failure(exc), completed_at=timezone.now()
         )
-        return False
+        raise  # the job fails, with its traceback on the worker-jobs page
     ZipDownload.objects.filter(pk=download.pk).update(
         state=ZipDownload.State.READY, archive_key=key, completed_at=timezone.now()
     )
@@ -162,14 +194,19 @@ def build(download_id: int) -> bool:
 
 
 def stalled(download: ZipDownload) -> bool:
-    return (
-        download.state
-        in (
-            ZipDownload.State.QUEUED,
-            ZipDownload.State.BUILDING,
-        )
-        and download.created_at < timezone.now() - ZIP_STALLED_AFTER
-    )
+    """No worker is coming back to it. Queued: not taken in JOB_QUEUED_TOO_LONG, since the media
+    queue runs one job at a time and a zip may honestly wait behind a twelve-hour encode. Building:
+    its job ended without finishing it (a worker killed outright runs no handler), or has shown no
+    sign of life - progress, or else its start - for JOB_STALLED_AFTER."""
+    now = timezone.now()
+    if download.state == ZipDownload.State.QUEUED:
+        return download.created_at < now - JOB_QUEUED_TOO_LONG
+    if download.state != ZipDownload.State.BUILDING:
+        return False
+    job = WorkerJobLog.objects.filter(task_id=task_id(download)).first()
+    if job is None:  # its start went unrecorded: only the zip's own age to go by
+        return download.created_at < now - JOB_STALLED_AFTER
+    return job.finished_at is not None or (job.progressed_at or job.started_at) < now - JOB_STALLED_AFTER
 
 
 def still_readable(viewer: Viewer, download: ZipDownload) -> bool:
