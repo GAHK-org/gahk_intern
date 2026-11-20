@@ -681,3 +681,43 @@ def test_jobs_whose_worker_died_under_them_are_closed_as_failed() -> None:
     assert _status("ancient")[1] is not None
     assert _status("slow")[0] == "STARTED"
     assert _status("done")[0] == "SUCCESS"
+
+
+@pytest.mark.usefixtures("celery_tables")
+def test_a_running_job_shows_how_far_it_has_got_and_its_log_so_far(
+    client: Client, make_resident: Callable[..., Resident]
+) -> None:
+    _admin(client, make_resident)
+    now = timezone.now()
+    _started_row("encoding", DERIVATIVES)
+    record = _record("encoding", now - timedelta(minutes=20), state="STARTED")
+    record.progress, record.progress_step, record.progressed_at = 0.42, "Konverterer", now
+    record.lines = [
+        {
+            "at": now.isoformat(),
+            "level": "INFO",
+            "logger": "photo_album.services",
+            "message": "Encoding a.mov: 40%",
+        }
+    ]
+    record.save()
+
+    listing = client.get(reverse("siteadmin:worker_jobs_live")).content.decode()
+    detail = client.get(reverse("siteadmin:worker_job_detail", args=["encoding"])).content.decode()
+
+    assert 'aria-valuenow="42"' in listing and "Konverterer" in listing
+    assert 'aria-valuenow="42"' in detail and "mindst 10 procentpoint" in detail
+    assert "Encoding a.mov: 40%" in detail
+    assert 'hx-trigger="every 10s' in detail  # refreshes itself while the job runs
+
+
+@pytest.mark.usefixtures("celery_tables")
+def test_a_finished_job_page_does_not_refresh(client: Client, make_resident: Callable[..., Resident]) -> None:
+    _admin(client, make_resident)
+    now = timezone.now()
+    _result("done", now)
+    _record("done", now - timedelta(minutes=5), finished_at=now)
+
+    detail = client.get(reverse("siteadmin:worker_job_detail", args=["done"])).content.decode()
+
+    assert "every 10s" not in detail and "progressbar" not in detail
