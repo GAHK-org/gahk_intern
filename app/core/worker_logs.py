@@ -13,8 +13,9 @@ lose three things:
 
 When a task starts, its row is written with the sent time, the parent and the arguments, so a job
 whose worker dies under it still has one. While it runs, a handler collects the records it emits
-(INFO and up, its own and those of the code it calls); when it finishes, they are appended and the
-row gets its state and finish time.
+(INFO and up, its own and those of the code it calls); the job's monitor (core/job_progress.py)
+writes them to the row as they come, with how far the job has got, and when it finishes the row
+gets the whole log, its state and its finish time.
 
 The buffer is a ContextVar, set in `task_prerun` and taken in `task_postrun`, so records from
 anything else running in the process — or from another thread — never land on a job's log.
@@ -27,6 +28,8 @@ from typing import Any
 
 from celery.signals import before_task_publish, task_postrun, task_prerun
 from django.utils import timezone
+
+from . import job_progress
 
 # Enough for an import's list of left-out files; a task that logs more than this keeps its first
 # lines and a count of the rest, rather than growing one row without bound.
@@ -155,14 +158,21 @@ def _start(task_id: str | None = None, task: Any = None, **_: Any) -> None:  # n
         if not created:
             log.state = "STARTED"
             log.save(update_fields=["state"])
+        earlier = [] if created else list(log.lines)
     except Exception:
         logging.getLogger(__name__).warning("Could not record the start of task %s", task_id, exc_info=True)
+        earlier = []
+    job_progress.start(
+        job_progress.LiveJob(task_id, capture.started_at, capture.lines, earlier),
+        monitor=not getattr(request, "is_eager", False),
+    )
 
 
 @task_postrun.connect
 def _finish(task_id: str | None = None, task: Any = None, state: str | None = None, **_: Any) -> None:  # noqa: ANN401
     capture = _current.get()
     _current.set(None)
+    live = job_progress.finish(task_id) if task_id else None
     if task_id is None or capture is None:
         return
     from .models import WorkerJobLog
@@ -172,12 +182,21 @@ def _finish(task_id: str | None = None, task: Any = None, state: str | None = No
             task_id=task_id,
             defaults={"task_name": getattr(task, "name", "") or "", "started_at": capture.started_at},
         )
-        # A retry's lines follow the earlier attempt's.
-        room = max(0, MAX_LINES - len(log.lines))
-        log.lines = [*log.lines, *capture.lines[:room]]
+        # A retry's lines follow the earlier attempt's. The monitor may have written some of this
+        # run's already: they are written again from the start, not appended a second time.
+        earlier = live.earlier_lines if live is not None else log.lines
+        room = max(0, MAX_LINES - len(earlier))
+        log.lines = [*earlier, *capture.lines[:room]]
         log.omitted += capture.omitted + max(0, len(capture.lines) - room)
         log.state = state or ""
         log.finished_at = timezone.now()
+        if live is not None and live.fraction is not None:
+            # A job that succeeded got all the way, whatever it reported last (GAHKFlix's last report
+            # is 95 %, before its frames). One that failed keeps where it stopped, and doing what.
+            done = state == "SUCCESS"
+            log.progress = 1.0 if done else live.fraction
+            log.progress_step = "" if done else live.step
+            log.progressed_at = log.finished_at
         log.save()
     except Exception:
         logging.getLogger(__name__).warning("Could not store the log of task %s", task_id, exc_info=True)
