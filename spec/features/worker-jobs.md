@@ -13,8 +13,8 @@ ran and how it went, and what is scheduled next. Under Administration → Worker
   and jobs completed in the last 24 hours (with the average run time). Each tile links to its list.
 - **Kører nu:** every running job — what it works on, which worker, how long it waited, how long it
   has run, and how much of its time limit that is. A job that reports its progress (a video's
-  conversion, a GAHKFlix film, an album ZIP imported or built for download, an album merge) also
-  shows how far it has got and what it is doing.
+  conversion, a GAHKFlix film, an album ZIP imported or built for download, an album merge, a Drive
+  zip) also shows how far it has got and what it is doing.
 - A job still marked as running past its time limit is not running: its worker died under it. Such
   jobs are counted separately, in red, with a link to them, until the hourly cleanup marks them as
   failed (ten minutes past their limit at the earliest).
@@ -61,7 +61,7 @@ ran and how it went, and what is scheduled next. Under Administration → Worker
   report (an import's commit, a merge's moves) is not measured, and stopping it there would throw
   away the whole job.
 - So such jobs may run for up to twelve hours: a video conversion, an album ZIP (imported, built
-  for download) or merge, and a GAHKFlix film. Jobs that report no progress keep their own limits.
+  for download) or merge, a Drive zip, and a GAHKFlix film. Jobs that report no progress keep their own limits.
 
 ## Times
 
