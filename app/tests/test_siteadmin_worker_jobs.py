@@ -684,21 +684,63 @@ def test_jobs_whose_worker_died_under_them_are_closed_as_failed() -> None:
 
 
 @pytest.mark.usefixtures("celery_tables")
+def test_a_running_job_shows_how_far_it_has_got_and_its_log_so_far(
+    client: Client, make_resident: Callable[..., Resident]
+) -> None:
+    _admin(client, make_resident)
+    now = timezone.now()
+    _started_row("encoding", DERIVATIVES)
+    record = _record("encoding", now - timedelta(minutes=20), state="STARTED")
+    record.progress, record.progress_step, record.progressed_at = 0.42, "Konverterer", now
+    record.lines = [
+        {
+            "at": now.isoformat(),
+            "level": "INFO",
+            "logger": "photo_album.services",
+            "message": "Encoding a.mov: 40%",
+        }
+    ]
+    record.save()
+
+    listing = client.get(reverse("siteadmin:worker_jobs_live")).content.decode()
+    detail = client.get(reverse("siteadmin:worker_job_detail", args=["encoding"])).content.decode()
+
+    assert 'aria-valuenow="42"' in listing and "Konverterer" in listing
+    assert 'aria-valuenow="42"' in detail and "mindst 10 procentpoint" in detail
+    assert "Encoding a.mov: 40%" in detail
+    assert 'hx-trigger="every 10s' in detail  # refreshes itself while the job runs
+
+
+@pytest.mark.usefixtures("celery_tables")
+def test_a_finished_job_page_does_not_refresh(client: Client, make_resident: Callable[..., Resident]) -> None:
+    _admin(client, make_resident)
+    now = timezone.now()
+    _result("done", now)
+    _record("done", now - timedelta(minutes=5), finished_at=now)
+
+    detail = client.get(reverse("siteadmin:worker_job_detail", args=["done"])).content.decode()
+
+    assert "every 10s" not in detail and "progressbar" not in detail
+
+
+@pytest.mark.usefixtures("celery_tables")
 def test_a_redelivered_job_still_running_is_not_closed_as_lost() -> None:
     """GOPR6565.MP4: the first run's worker died, the message came back under the same id, and
-    the record still said "started 8½ hours ago" — so close_lost_jobs closed the running encode."""
+    the record still said it had started hours ago — so close_lost_jobs closed the running encode.
+    13 hours: past an encode's 12-hour limit plus the grace, so the first run's start would be lost."""
     from celery.app.task import Context
 
-    from core import worker_logs
+    from core import job_progress, worker_logs
     from core.tasks import close_lost_jobs
 
-    first_start = timezone.now() - timedelta(hours=8, minutes=30)
+    first_start = timezone.now() - timedelta(hours=13)
     _record("encode", first_start, state="FAILURE", finished_at=first_start + timedelta(hours=4))
     _started_row("encode", DERIVATIVES)  # Celery's row for the second run
-    task = type("FakeTask", (), {"name": DERIVATIVES, "request": Context()})()
+    task = type("FakeTask", (), {"name": DERIVATIVES, "request": Context(is_eager=True)})()
 
     worker_logs._start(task_id="encode", task=task)
-    worker_logs._current.set(None)
+    worker_logs._current.set(None)  # as _finish would; the job is still running here
+    job_progress.finish("encode")
 
     assert close_lost_jobs.run() == 0
     assert _status("encode")[0] == "STARTED"

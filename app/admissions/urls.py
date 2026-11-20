@@ -1,18 +1,19 @@
-"""Admissions URLs under /optagelse/ — legacy paths preserved (F-001)."""
+"""Admissions review under /optagelse/ on intern.gahk.dk — legacy paths preserved (F-001).
+
+The public pages and forms that used to be here (/optagelse/, /optagelse/ansoeg, /optagelse/fremlej
+and their POST targets) are gahk.dk's own now; gahk.dk forwards these review paths to intern.
+"""
 
 from django.urls import path
+from django.views.generic import RedirectView
 
 from . import views
 
 app_name = "admissions"
 
 urlpatterns = [
-    path("", views.index, name="index"),
-    path("ansoeg", views.ansoeg, name="ansoeg"),
-    path("send_rundvisning", views.ansoeg, name="send_rundvisning"),  # POST target (legacy URL)
-    path("fremlej", views.fremlej, name="fremlej"),
-    path("send_fremleje", views.fremlej, name="send_fremleje"),  # POST target (legacy URL)
-    path("ansoeg/success", views.success, name="success"),
+    # Somebody typing intern.gahk.dk/optagelse lands on the list (which checks the role).
+    path("", RedirectView.as_view(pattern_name="admissions:list"), name="index"),
     path("listansoegninger", views.list_applications, name="list"),
     path("eksport", views.export_applications, name="export"),
     path("showAnsoegning/<int:pk>", views.show_application, name="show"),

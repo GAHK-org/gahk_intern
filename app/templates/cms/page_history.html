@@ -1,0 +1,51 @@
+{% extends "cms/base.html" %}
+{% block cms_title %}Historik for {{ page.header }}{% endblock %}
+{% block cms_content %}
+  <div class="page-head">
+    <div>
+      <p class="eyebrow"><a href="{% url 'cms:page_list' %}">Sider</a> · <a href="{% url 'cms:page_edit' page.pk %}">{{ page.header }}</a></p>
+      <h1>Historik</h1>
+      <p class="muted text-sm">Hver gemt udgave af siden. Gendanner du en, bliver den nuværende også gemt her, så det kan fortrydes.</p>
+    </div>
+  </div>
+
+  {% for entry in entries %}
+    <section class="card-flat cms-section cms-version">
+      <div class="card-head">
+        <h2>{{ entry.version.created_at|date:"j. b Y, H:i" }}
+          <span class="muted cms-version-by">{{ entry.version.created_by.full_name|default:"System" }}{% if entry.version.note %} · {{ entry.version.note }}{% endif %}</span>
+        </h2>
+        {% if forloop.first %}
+          <span class="chip">Nuværende</span>
+        {% else %}
+          <form method="post" action="{% url 'cms:page_restore' page.pk entry.version.pk %}"
+                onsubmit="return confirm('Gendan siden, som den var {{ entry.version.created_at|date:"j. b Y, H:i"|escapejs }}?')">
+            {% csrf_token %}
+            <button type="submit" class="btn btn-secondary">Gendan denne version</button>
+          </form>
+        {% endif %}
+      </div>
+      <div class="card-pad">
+        {% if entry.previous %}
+          {% if entry.changed or entry.body_diff %}
+            {% for label, before, after in entry.changed %}
+              <p class="cms-change"><b>{{ label }}:</b> <del>{{ before }}</del> → <ins>{{ after }}</ins></p>
+            {% endfor %}
+            {% if entry.body_diff %}
+              <details{% if forloop.first %} open{% endif %}>
+                <summary>Ændringer i teksten</summary>
+                {% include "cms/_diff.html" with rows=entry.body_diff %}
+              </details>
+            {% endif %}
+          {% else %}
+            <p class="muted text-sm">Ingen ændringer i forhold til udgaven før.</p>
+          {% endif %}
+        {% else %}
+          <p class="muted text-sm">Den ældste gemte udgave{% if entry.version.slug %} (adresse /{{ entry.version.slug }}){% endif %}.</p>
+        {% endif %}
+      </div>
+    </section>
+  {% empty %}
+    <p class="card muted">Siden har ingen gemte udgaver endnu. Den første gemmes, næste gang siden rettes.</p>
+  {% endfor %}
+{% endblock %}

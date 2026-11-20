@@ -4,17 +4,20 @@ import filecmp
 import hashlib
 import logging
 import re
+import shutil
 import struct
 import subprocess  # nosec B404
+import tempfile
+import time
 import zipfile
 from collections import defaultdict
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from contextlib import ExitStack, contextmanager
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from functools import partial
 from io import BytesIO
 from pathlib import Path, PurePosixPath
-from tempfile import TemporaryDirectory
 from types import SimpleNamespace
 from typing import Any
 from uuid import UUID
@@ -30,6 +33,8 @@ from django.template.defaultfilters import filesizeformat
 from django.utils import timezone
 from PIL import ExifTags, Image, ImageFile, ImageOps, ImageSequence, IptcImagePlugin
 
+from core.job_directories import job_directory
+from core.job_progress import stage
 from residents.models import Resident
 
 from . import file_metadata, raw
@@ -809,9 +814,12 @@ def import_zip_album(
     Returns the albums (root first), the log of files deliberately left out and how many were
     stored. Raises ValidationError carrying every error when the import is refused.
     """
-    archive.seek(0)  # an S3 file is downloaded here, which reports no progress of its own
+    # An S3 file is downloaded here, which reports no progress of its own: the watchdog
+    # (core.job_progress) starts watching at the report below, so the download's time is not held
+    # against the import.
+    archive.seek(0)
     progress("reading", 0, 0)
-    with TemporaryDirectory(prefix="photo-album-import-") as directory:
+    with job_directory("photo-album-import") as directory:
         try:
             with zipfile.ZipFile(archive) as zip_archive:
                 plan = _plan_import(
@@ -969,6 +977,39 @@ def is_video_media(media: Media) -> bool:
     return is_video(media) or is_video(media.original)
 
 
+# What a video encode needs free on the disk under /tmp, beyond three times the original: the original
+# downloaded from the bucket (opening it spills it to a temp file, PhotoAlbumS3Storage), its copy in
+# the job's directory, and the viewer copy, at most the original's size but for a rare overshoot the
+# reserve absorbs. The reserve is otherwise for everything else on the server's one disk, the databases included: a job that
+# fills the disk takes them down with it.
+ENCODE_DISK_RESERVE = 2 * 1024**3
+ENCODE_DISK_FACTOR = 3
+
+
+class NotEnoughDiskSpace(Exception):
+    """A video was not encoded because the disk has too little room for it. Nothing was counted."""
+
+
+def check_encode_disk_space(media: Media) -> None:
+    """Raise NotEnoughDiskSpace when encoding this video now could fill the disk.
+
+    An original of unknown size is let through: the encode itself then decides, as before.
+    """
+    size = media.size
+    if size is None:
+        try:
+            size = media.original.size
+        except Exception:  # the build reports a missing original better than this can
+            return
+    needed = ENCODE_DISK_FACTOR * size + ENCODE_DISK_RESERVE
+    free = shutil.disk_usage(tempfile.gettempdir()).free
+    if free < needed:
+        raise NotEnoughDiskSpace(
+            f"{media.display_name_and_size} needs {filesizeformat(needed)} free to be encoded; "
+            f"there is {filesizeformat(free)}."
+        )
+
+
 def build_derivatives(media: Media) -> bool:
     """Build stored image or video derivatives. Returns whether they are now available.
 
@@ -983,6 +1024,9 @@ def build_derivatives(media: Media) -> bool:
     The attempt is counted BEFORE the work, not after: a worker killed mid-encode (out of memory,
     the hard time limit) saves nothing afterwards, and a video that kills its worker every time
     used to stay "Mediet behandles" forever instead of ending FAILED after MAX_DERIVATIVE_ATTEMPTS.
+
+    A video the disk has no room for raises NotEnoughDiskSpace before that, and is left PENDING with
+    no attempt counted: a full disk says nothing about the file, and it should not use up the tries.
     """
     filename = media.display_name or "upload"
     if media.derivative_attempts >= MAX_DERIVATIVE_ATTEMPTS:
@@ -995,12 +1039,26 @@ def build_derivatives(media: Media) -> bool:
             media.derivative_attempts,
         )
         return False
+    video = is_video_media(media)
+    if video:
+        check_encode_disk_space(media)
     media.derivative_attempts += 1
     media.save(update_fields=["derivative_attempts"])
-    video = is_video_media(media)
     with media.original.open("rb") as original:
         source = File(original, name=filename)
-        variants = video_variants(source, filename) if video else image_variants(source, filename)
+        if video:
+            # Stored inside the block: the copies are files in the encode's directory until it ends.
+            with video_variants(source, filename) as variants:
+                return _finish_derivatives(media, variants, filename, video=True)
+        variants = image_variants(source, filename)
+    return _finish_derivatives(media, variants, filename)
+
+
+def _finish_derivatives(
+    media: Media, variants: "Variants | None", filename: str, *, video: bool = False
+) -> bool:
+    """Store what build_derivatives made, or count a source that could not be decoded. A video's
+    storing is reported as the last step of its progress (an image reports none)."""
     if variants is None:
         media.derivative_state = (
             DerivativeState.FAILED
@@ -1017,7 +1075,11 @@ def build_derivatives(media: Media) -> bool:
         )
         media.save(update_fields=["derivative_state", "derivative_attempts"])
         return False
+    if video:
+        STORE_STAGE(0.0)
     _store_variants(media, variants)
+    if video:
+        STORE_STAGE(1.0)
     return True
 
 
@@ -1050,8 +1112,11 @@ def pending_derivatives() -> "QuerySet[Media]":
 
 @dataclass
 class Variants:
-    high_definition: ContentFile
-    thumbnail: ContentFile
+    """The viewer copy and the grid thumbnail of one item: in memory for a photo, open files on disk
+    for a video (video_variants)."""
+
+    high_definition: File
+    thumbnail: File
     captured_at: datetime | None = None
 
 
@@ -1155,22 +1220,38 @@ def _animated_gif_variant(
     return ContentFile(output.getvalue(), name=name)
 
 
-def video_variants(uploaded_file: File, filename: str) -> Variants | None:
-    """Transcode a video to a viewer-sized MP4 and extract a grid-sized JPEG frame."""
-    try:
-        with TemporaryDirectory(prefix="photo-album-") as directory:
-            source = _copy_to_disk(uploaded_file, Path(directory), filename)
-            return _encode_video(_ffmpeg(), source, Path(directory), filename)
-    except ImportError:
-        return None
-    except subprocess.CalledProcessError as exc:
-        logger.warning("Could not convert %s: %s", filename, ffmpeg_failure(exc))
-        return None
-    except OSError as exc:
-        logger.warning("Could not convert %s: %s", filename, exc)
-        return None
-    finally:
-        uploaded_file.seek(0)
+@contextmanager
+def video_variants(uploaded_file: File, filename: str) -> Iterator[Variants | None]:
+    """Transcode a video to a viewer-sized MP4 and extract a grid-sized JPEG frame; None if it
+    cannot be converted.
+
+    The two are files in the encode's directory, open for the length of the `with` block and
+    deleted when it ends, so they must be stored inside it. Stored from disk, not from memory: a
+    long film's MP4 is over a gigabyte, and reading one in whole after a three-hour encode is what
+    ran the server out of memory on 2026-11-15.
+    """
+    with ExitStack() as stack:
+        try:
+            directory = Path(stack.enter_context(job_directory("photo-album-video")))
+            source = _copy_to_disk(uploaded_file, directory, filename, progress=COPY_STAGE)
+            encoded: EncodedVideo | None = _encode_video(_ffmpeg(), source, directory, filename)
+        except ImportError:
+            encoded = None
+        except subprocess.CalledProcessError as exc:
+            logger.warning("Could not convert %s: %s", filename, ffmpeg_failure(exc))
+            encoded = None
+        except OSError as exc:
+            logger.warning("Could not convert %s: %s", filename, exc)
+            encoded = None
+        finally:
+            uploaded_file.seek(0)
+        # Outside the try: an error while the caller stores the files is the caller's, not a
+        # video that could not be converted.
+        if encoded is None:
+            yield None
+        else:
+            with encoded.opened(filename) as variants:
+                yield variants
 
 
 def _ffmpeg() -> str:
@@ -1179,12 +1260,30 @@ def _ffmpeg() -> str:
     return str(imageio_ffmpeg.get_ffmpeg_exe())
 
 
-def _copy_to_disk(uploaded_file: File, directory: Path, filename: str) -> Path:
+# How a video's conversion reports its progress (core.job_progress), as parts of the whole job. The
+# encode is nearly all of it; the first chunk read from the bucket downloads the whole original
+# (PhotoAlbumS3Storage), which reports nothing until it is done.
+COPY_STAGE = stage(0.0, 0.10, "Henter originalen")
+ENCODE_STAGE = stage(0.10, 0.95, "Konverterer")
+FINISH_STAGE = stage(0.95, 0.98, "Undertekster og miniature")
+STORE_STAGE = stage(0.98, 1.0, "Gemmer versionerne")
+
+
+def _copy_to_disk(
+    uploaded_file: File, directory: Path, filename: str, progress: Callable[[float], None] = lambda _: None
+) -> Path:
     source = directory / f"source{Path(filename).suffix or '.upload'}"
     uploaded_file.seek(0)
+    size = getattr(uploaded_file, "size", None) or 0
+    copied = 0
+    progress(0.0)
     with source.open("wb") as target:
         for chunk in uploaded_file.chunks():
             target.write(chunk)
+            copied += len(chunk)
+            if size:
+                progress(copied / size)
+    progress(1.0)
     return source
 
 
@@ -1224,6 +1323,7 @@ TEXT_SUBTITLE_CODECS = frozenset(
 )
 _STREAM = re.compile(r"^\s*Stream #0:(\d+)\S*: (Video|Audio|Subtitle): (\w+)(.*)$", re.MULTILINE)
 _DIMENSIONS = re.compile(r", (\d{2,5})x(\d{2,5})\b")
+_DURATION = re.compile(r"Duration: (\d+):(\d{2}):(\d{2}(?:\.\d+)?)")
 
 
 @dataclass
@@ -1238,6 +1338,14 @@ class VideoProbe:
         for match in _STREAM.finditer(self.text):
             if match.group(2) == "Video" and (size := _DIMENSIONS.search(match.group(4))):
                 return int(size.group(1)), int(size.group(2))
+        return None
+
+    @property
+    def duration(self) -> float | None:
+        """The length in seconds, or None when ffmpeg could not tell ("Duration: N/A")."""
+        if match := _DURATION.search(self.text):
+            seconds = int(match.group(1)) * 3600 + int(match.group(2)) * 60 + float(match.group(3))
+            return seconds or None
         return None
 
     @property
@@ -1268,13 +1376,34 @@ def probe_video(ffmpeg: str, path: str, data: bytes | None = None) -> VideoProbe
     return VideoProbe(result.stderr.decode("utf-8", errors="replace"))
 
 
-def _encode_video(ffmpeg: str, source: Path, directory: Path, filename: str) -> Variants:
-    """The viewer MP4 and the grid JPEG for a video on disk. Raises CalledProcessError."""
+@dataclass
+class EncodedVideo:
+    """What _encode_video wrote: the viewer MP4 and the grid JPEG, as files in its directory."""
+
+    high_definition: Path
+    thumbnail: Path
+    captured_at: datetime | None
+
+    @contextmanager
+    def opened(self, filename: str) -> Iterator[Variants]:
+        """The two files as Variants to store, read from disk in parts as they are uploaded."""
+        stem = Path(filename).stem
+        with self.high_definition.open("rb") as video, self.thumbnail.open("rb") as thumbnail:
+            yield Variants(
+                File(video, name=f"{stem}.mp4"), File(thumbnail, name=f"{stem}.jpg"), self.captured_at
+            )
+
+
+def _encode_video(ffmpeg: str, source: Path, directory: Path, filename: str) -> EncodedVideo:
+    """Write the viewer MP4 and the grid JPEG for a video on disk to `directory`. Raises
+    CalledProcessError."""
     probe = probe_video(ffmpeg, str(source))
     high_definition = directory / "high-definition.mp4"
     thumbnail = directory / "thumbnail.jpg"
-    _run_ffmpeg(
+    _run_ffmpeg_with_progress(
         ffmpeg,
+        probe.duration,
+        _EncodeLog(filename, probe.duration, ENCODE_STAGE),
         "-i",
         str(source),
         # ffmpeg picks the streams: the best video, and of the audio the stream with the most
@@ -1296,6 +1425,7 @@ def _encode_video(ffmpeg: str, source: Path, directory: Path, filename: str) -> 
         *KEEP_VIDEO_METADATA,
         str(high_definition),
     )
+    FINISH_STAGE(0.0)
     _add_text_subtitles(ffmpeg, source, high_definition, probe, filename)
     _run_ffmpeg(
         ffmpeg,
@@ -1307,11 +1437,7 @@ def _encode_video(ffmpeg: str, source: Path, directory: Path, filename: str) -> 
         f"scale={THUMBNAIL_SIZE}:{THUMBNAIL_SIZE}:force_original_aspect_ratio=decrease",
         str(thumbnail),
     )
-    return Variants(
-        ContentFile(high_definition.read_bytes(), name=f"{Path(filename).stem}.mp4"),
-        ContentFile(thumbnail.read_bytes(), name=f"{Path(filename).stem}.jpg"),
-        _video_creation_time(probe.text),
-    )
+    return EncodedVideo(high_definition, thumbnail, _video_creation_time(probe.text))
 
 
 def _add_text_subtitles(
@@ -1381,23 +1507,27 @@ def shrink_enlarged_video(media: Media) -> str:
     Returns what it did, for the job log. The item is left exactly as it was — still READY, its old
     copy still served — unless the new copy is made: when the copy turns out not to be enlarged,
     when the original is not smaller than HIGH_DEFINITION_SIZE, and when ffmpeg fails (raises
-    CalledProcessError).
+    CalledProcessError) or the disk has no room for the encode (raises NotEnoughDiskSpace).
     """
     name = media.display_name
     copy = stored_video_dimensions(media.high_definition)
     if copy is not None and max(copy) < HIGH_DEFINITION_SIZE:
         return f"{name}: its copy is {copy[0]}x{copy[1]}, not enlarged; left as it is."
+    check_encode_disk_space(media)
     ffmpeg = _ffmpeg()
-    with media.original.open("rb") as original, TemporaryDirectory(prefix="photo-album-") as directory:
-        source = _copy_to_disk(File(original, name=name), Path(directory), name)
+    with media.original.open("rb") as original, job_directory("photo-album-video") as directory:
+        source = _copy_to_disk(File(original, name=name), Path(directory), name, progress=COPY_STAGE)
         dimensions = probe_video(ffmpeg, str(source)).dimensions
         if dimensions is None:
             return f"{name}: ffmpeg could not tell the original's size; left as it is."
         if max(dimensions) >= HIGH_DEFINITION_SIZE:
             return f"{name}: the original is {dimensions[0]}x{dimensions[1]}, so its copy is not enlarged; left as it is."
         old_size = media.high_definition.size
-        variants = _encode_video(ffmpeg, source, Path(directory), name)
-    _store_variants(media, variants)
+        encoded = _encode_video(ffmpeg, source, Path(directory), name)
+        # Inside the block, from disk: the directory and the files in it go when it ends.
+        STORE_STAGE(0.0)
+        with encoded.opened(name) as variants:
+            _store_variants(media, variants)
     return (
         f"{name}: re-encoded at its own {dimensions[0]}x{dimensions[1]} instead of "
         f"{f'{copy[0]}x{copy[1]}' if copy else 'enlarged'}; the copy went from "
@@ -1438,6 +1568,77 @@ def _run_ffmpeg(executable: str, *arguments: str) -> None:
         text=True,
         errors="replace",
     )
+
+
+def _run_ffmpeg_with_progress(
+    executable: str, duration: float | None, on_progress: Callable[[float], None], *arguments: str
+) -> None:
+    """As `_run_ffmpeg`, telling `on_progress` how far through the video it is (0 to 1): from
+    ffmpeg's `-progress` report, its position in the output against the video's `duration`.
+
+    ffmpeg is killed if this is left by an exception — the watchdog's or the time limit's
+    SoftTimeLimitExceeded included — rather than left encoding for nobody.
+    """
+    with tempfile.TemporaryFile() as errors:
+        process = subprocess.Popen(  # noqa: S603  # nosec B603
+            [
+                executable,
+                "-y",
+                "-hide_banner",
+                "-nostats",
+                "-loglevel",
+                "error",
+                "-progress",
+                "pipe:1",
+                *arguments,
+            ],
+            stdout=subprocess.PIPE,
+            stderr=errors,
+        )
+        try:
+            for raw in process.stdout or ():  # never None: PIPE was asked for
+                key, _, value = raw.decode("utf-8", errors="replace").strip().partition("=")
+                if key == "out_time_us" and duration and value.isdigit():  # "N/A" before the first frame
+                    on_progress(int(value) / 1_000_000 / duration)
+            returncode = process.wait()
+        finally:
+            if process.poll() is None:
+                process.kill()
+                process.wait()
+        if returncode:
+            errors.seek(0)
+            said = errors.read().decode("utf-8", errors="replace")
+            raise subprocess.CalledProcessError(returncode, process.args, stderr=said)
+
+
+class _EncodeLog:
+    """Passes an encode's progress on to `progress`, and logs a line at each tenth of the way, which
+    the worker-jobs page shows as the job runs."""
+
+    def __init__(self, filename: str, duration: float | None, progress: Callable[[float], None]) -> None:
+        self.filename, self.duration, self.progress = filename, duration, progress
+        self.logged = 0
+        self.started = time.monotonic()
+
+    def __call__(self, fraction: float) -> None:
+        self.progress(fraction)
+        tenth = min(10, int(fraction * 10))
+        if tenth > self.logged:
+            self.logged = tenth
+            elapsed = time.monotonic() - self.started
+            logger.info(
+                "Encoding %s: %d%% (%s of %s) after %s.",
+                self.filename,
+                tenth * 10,
+                _clock(fraction * (self.duration or 0)),
+                _clock(self.duration or 0),
+                _clock(elapsed),
+            )
+
+
+def _clock(seconds: float) -> str:
+    whole = int(seconds)
+    return f"{whole // 3600}:{whole % 3600 // 60:02d}:{whole % 60:02d}"
 
 
 def ffmpeg_failure(exc: subprocess.CalledProcessError) -> str:

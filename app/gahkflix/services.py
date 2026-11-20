@@ -13,7 +13,6 @@ from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime, time, timedelta
 from pathlib import Path
-from tempfile import TemporaryDirectory
 from typing import Any
 from uuid import uuid4
 
@@ -24,6 +23,8 @@ from django.db.models import Avg, Count, F, Max, Q, QuerySet, Sum
 from django.db.models.functions import Coalesce, Lower, TruncDate
 from django.utils import timezone
 
+from core.job_directories import job_directory
+from core.job_progress import report_progress
 from photo_album.models import validate_tag_name
 from residents.models import Resident
 
@@ -328,6 +329,7 @@ def commit_upload(ticket: UploadTicket, resident: Resident, stored_size: int | N
 
 def _heartbeat(video_file: VideoFile) -> encoding.Throttle:
     def write(fraction: float) -> None:
+        report_progress(fraction, "Behandler filmen")  # for the worker-jobs page and its watchdog
         VideoFile.objects.filter(pk=video_file.pk).update(progress=round(fraction * 100), heartbeat_at=_now())
 
     return encoding.Throttle(write)
@@ -425,7 +427,7 @@ def process_file(video_file: VideoFile, rng: random.Random | None = None) -> boo
     """
     video = video_file.video
     beat = _heartbeat(video_file)
-    with TemporaryDirectory(prefix="gahkflix-") as directory:
+    with job_directory("gahkflix") as directory:
         work = Path(directory)
         source = work / f"source{Path(video_file.original_name).suffix.lower() or '.video'}"
         sha256 = _download(key_of(video_file.original), source, video_file.size, lambda f: beat(f * 0.1))
@@ -540,7 +542,7 @@ def redraw_frames(video: Video, rng: random.Random | None = None) -> int:
     video_file = video.file
     if video_file is None or not video_file.hd:
         return 0
-    with TemporaryDirectory(prefix="gahkflix-frames-") as directory:
+    with job_directory("gahkflix-frames") as directory:
         work = Path(directory)
         source = work / "hd.mp4"
         _download(key_of(video_file.hd), source, 1, lambda f: None)
@@ -585,7 +587,7 @@ def picture_at(video: Video, at: float, kind: str) -> bytes:
     if not 0 <= at <= duration:
         raise ValidationError("Tidspunktet ligger uden for videoen.")
     key = key_of(video_file.full_hd) or key_of(video_file.hd)
-    with TemporaryDirectory(prefix="gahkflix-frame-") as directory, loopback_url(key) as source:
+    with job_directory("gahkflix-frame") as directory, loopback_url(key) as source:
         target = Path(directory) / "frame.jpg"
         # The very last instant has no frame to cut; the one just before it does.
         if not encoding.extract_frame(source, min(at, max(duration - 0.1, 0)), target):

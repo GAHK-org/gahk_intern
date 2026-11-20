@@ -5,17 +5,17 @@
   {% if cond %}
     <p class="muted">Tjekket {{ cond.recorded_at|date:"Y-m-d H:i" }} af {{ cond.recorded_by_name }}.</p>
     <table class="w-full border-collapse">
-      <thead><tr class="border-b border-gray-200"><th class="p-2">Kriterie</th><th class="p-2">Score</th><th class="p-2">Kommentar</th></tr></thead>
+      <thead><tr class="border-b border-line"><th class="p-2">Kriterie</th><th class="p-2">Score</th><th class="p-2">Kommentar</th></tr></thead>
       <tbody>
       {% for s in scores %}
-        <tr class="border-b border-gray-100">
+        <tr class="border-b border-line">
           <td class="p-2">{{ s.criterion.name }}</td>
           <td class="p-2">{{ s.score|default_if_none:"—" }}
             <span class="muted text-sm">({{ s.criterion.score_min }}–{{ s.criterion.score_max }})</span></td>
           <td class="p-2">
             {{ s.comment }}
-            {% if s.photo %}<div class="mt-1"><img src="{{ s.photo.url }}" alt="" class="max-w-xs h-auto rounded border border-gray-200" loading="lazy"></div>{% endif %}
-            {% for u in s.image_urls %}<div class="mt-1"><img src="{{ u }}" alt="billede" class="max-w-xs h-auto rounded border border-gray-200" loading="lazy"></div>{% endfor %}
+            {% if s.photo %}<div class="mt-1"><img src="{{ s.photo.url }}" alt="" class="max-w-xs h-auto rounded border border-line" loading="lazy"></div>{% endif %}
+            {% for u in s.image_urls %}<div class="mt-1"><img src="{{ u }}" alt="billede" class="max-w-xs h-auto rounded border border-line" loading="lazy"></div>{% endfor %}
           </td>
         </tr>
       {% endfor %}
