@@ -85,6 +85,9 @@ def _isolate_from_dotenv(settings: object, tmp_path: Path) -> None:
     # Off by default under DEBUG, so a dev .env would decide whether the suite's alumneregninger reach
     # Django's test outbox; tests always take the real path (the test runner's locmem backend sends nothing).
     settings.ALUMNEREGNING_SEND_MAIL = True  # type: ignore[attr-defined]
+    # Live editing defaults to the dev Document Server under DEBUG; tests switch it on themselves
+    # (test_drive_office.py), against a fake, never a running `office` container.
+    settings.ONLYOFFICE_URL = ""  # type: ignore[attr-defined]
 
 
 @pytest.fixture

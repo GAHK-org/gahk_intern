@@ -111,8 +111,8 @@ def _healthcheck() -> bool:
     try:
         with urllib.request.urlopen(f"{settings.ONLYOFFICE_INTERNAL_URL}/healthcheck", timeout=3) as response:  # noqa: S310  # nosec B310 - our own setting
             return response.read().strip() == b"true"
-    except (OSError, ValueError):
-        logger.warning("drive: the Document Server does not answer its health check", exc_info=True)
+    except (OSError, ValueError) as exc:
+        logger.warning("drive: the Document Server does not answer its health check: %s", exc)
         return False
 
 
