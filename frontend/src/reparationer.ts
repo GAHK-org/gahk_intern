@@ -214,6 +214,14 @@ if (root && root.dataset.canMove === "1") {
       const result = (await response.json()) as { ok: boolean; error: string; status: string };
       if (!result.ok) undo(result.error || "Sagen kunne ikke flyttes.");
       else if (result.status !== status) undo("Sagen kunne ikke flyttes.");
+      else {
+        // A move restarts the column-age clock (models.RepairTask.column_age): recolour now rather
+        // than leaving a red card in its new column until the live refresh lands. Færdig is the
+        // one column that is coloured from day one.
+        if (status === "faerdig") moving.dataset.age = "done";
+        else moving.removeAttribute("data-age");
+        moving.querySelector("[data-age-label]")?.remove();
+      }
     } catch {
       undo("Ingen forbindelse — sagen blev ikke flyttet.");
     } finally {

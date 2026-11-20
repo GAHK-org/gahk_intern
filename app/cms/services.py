@@ -42,7 +42,6 @@ from .models import (
     CmsImage,
     ContentChange,
     Event,
-    LegacyImageFailure,
     MenuItem,
     NewsItem,
     Page,
@@ -730,15 +729,10 @@ def image_usage(image: CmsImage) -> list[str]:
 def delete_image(image: CmsImage, by: Resident | None) -> None:
     """Delete an image and its file. Content still pointing at it shows no picture there.
 
-    An image from the old site is recorded as deleted, so the legacy import (cms.legacy_images) does
-    not bring it back; gahk.dk drops it, and the redirect from its old address, at the next publish.
+    For an image from the old site, gahk.dk drops the redirect from its old address too, at the next
+    publish.
     """
     with transaction.atomic():
-        if image.legacy_path:
-            LegacyImageFailure.objects.update_or_create(
-                legacy_path=image.legacy_path,
-                defaults={"reason": LegacyImageFailure.Reason.DELETED, "detail": f"Billede {image.pk}"},
-            )
         record_change(
             action=Action.DELETE,
             kind=Kind.IMAGE,

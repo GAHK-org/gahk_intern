@@ -21,6 +21,10 @@ name: Branch policy
 # always saw the latest state. A push to main marks in-sync pending first, which blocks merging for
 # the few seconds until the run has judged it.
 #
+# workflow_dispatch is for sync-main-to-dev.yml: GitHub starts no pull_request_target run for the
+# pull request it opens with GITHUB_TOKEN, so it dispatches this workflow once that pull request
+# exists. Anyone with write access may dispatch it too; a run only re-judges, so that is harmless.
+#
 # pull_request_target runs this file and the script as they are on the base branch, never as the pull
 # request has them, so a pull request cannot loosen its own check. That trigger is safe here because
 # the script only reads the pull request's commits with git; it never checks out or runs them.
@@ -31,6 +35,7 @@ on:
     branches: [main, dev]
   push:
     branches: [main, dev]
+  workflow_dispatch:
 
 permissions:
   contents: read

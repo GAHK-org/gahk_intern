@@ -19,6 +19,21 @@ updates:
       python-major:
         update-types: ["major"]
 
+  # The frontend bundle (frontend/package.json + package-lock.json): Tailwind, Vite, TypeScript and
+  # the browser libraries. Built into the image by the Dockerfile's frontend stage.
+  - package-ecosystem: "npm"
+    directory: "/frontend"
+    target-branch: "dev"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 10
+    labels: ["dependencies", "frontend"]
+    groups:
+      npm-minor-patch:
+        update-types: ["minor", "patch"]
+      npm-major:
+        update-types: ["major"]
+
   # GitHub Actions used by the workflows in .github/workflows/.
   - package-ecosystem: "github-actions"
     directory: "/"
@@ -30,7 +45,8 @@ updates:
       actions:
         patterns: ["*"]
 
-  # Base image in the Dockerfile.
+  # Base images in Dockerfile and Dockerfile.dev (node, python, and uv, which is a FROM stage so
+  # that Dependabot sees it).
   - package-ecosystem: "docker"
     directory: "/"
     target-branch: "dev"
@@ -49,3 +65,16 @@ updates:
     ignore:
       - dependency-name: "mediawiki"
         update-types: ["version-update:semver-major", "version-update:semver-minor"]
+
+  # Images of the local dev/ETL services in docker-compose.yml. The ones on :latest have no version
+  # to bump. Postgres stays on the major that production (Coolify-managed) and CI run: moving it is
+  # a manual upgrade of all three. docker-compose.prod.yml only uses our own image.
+  - package-ecosystem: "docker-compose"
+    directory: "/"
+    target-branch: "dev"
+    schedule:
+      interval: "weekly"
+    labels: ["dependencies", "infra"]
+    ignore:
+      - dependency-name: "postgres"
+        update-types: ["version-update:semver-major"]

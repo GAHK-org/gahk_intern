@@ -14,7 +14,7 @@ from django.utils import timezone
 
 PAGE_TYPE = "admissions"
 
-# The old site's templates (gahk_intern's transition/admissions.html and _criteria.html) as they
+# The old site's templates (the transition's admissions.html and _criteria.html, removed in #395) as they
 # were on 2026-11-18, as the editor writes HTML: no classes, headings as <h2>.
 FIELDS = {
     "intro": (
@@ -98,7 +98,7 @@ def make_ordinary_page(apps, schema_editor) -> None:  # noqa: ANN001
 
 class Migration(migrations.Migration):
     dependencies = [
-        ("cms", "0010_legacy_image_failure_deleted"),
+        ("cms", "0011_delete_legacy_image_failure"),
     ]
 
     operations = [

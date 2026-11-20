@@ -11,9 +11,9 @@ What is sent, and how it differs from what is stored:
   * Links into the intranet (/intern/…, http(s)://(www.)gahk.dk/intern/…) point at intern.gahk.dk.
   * A page of a page type (cms.page_types) also has `page_type` and `fields`, its texts: the HTML
     ones treated as bodies are, the plain ones as one line. An ordinary page has neither key.
-  * Legacy /public/image/… references are converted in the database, once, by the sync before it
-    builds a snapshot (cms.legacy_images); `legacy_images` maps their old URLs to the copies. One
-    not converted yet is sent as it is (gahk.dk answers it with a 404).
+  * The old site's images were imported into the library once, at the move (`CmsImage.legacy_path`),
+    and the content's references to them rewritten; `legacy_images` maps their old URLs to the
+    copies, so links from elsewhere keep working.
 
 `revision` is the sha256 of the canonical JSON of everything except `revision` and `published_at`,
 so it changes exactly when what gahk.dk would show changes. cms.tasks compares it with the revision
@@ -332,7 +332,7 @@ def published_image_url(name: str) -> str | None:
 
     core.media asks this for an anonymous /media/cms/<name> request (cms.apps), so an old link to a
     picture on the public site keeps working. It applies build_snapshot's test without building one:
-    the row and its metadata first (one query, and usually the answer), then a legacy import or a
+    the row and its metadata first (one query, and usually the answer), then an old-site image or a
     reference from published content. It reads no file: an image whose sha256 is still blank has
     never been in a snapshot.
     """

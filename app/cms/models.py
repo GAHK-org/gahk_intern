@@ -61,8 +61,7 @@ class Page(models.Model):  # gahk_page
     header = models.CharField(max_length=255, verbose_name="Overskrift")
     body = models.TextField(blank=True, verbose_name="Indhold")  # legacy `text` (HTML)
     # A URL string, not a FileField: a library image's /media/cms/… URL ("" for none, which means
-    # SiteSettings.default_background). Legacy /public/image/… values are converted into the
-    # library by cms.legacy_images.
+    # SiteSettings.default_background).
     background_image = models.CharField(max_length=255, blank=True, verbose_name="Baggrundsbillede")
     description = models.CharField(
         max_length=300,
@@ -169,7 +168,7 @@ class CmsImage(models.Model):
     """An image in the website's library, for use in page/news/event HTML and as a background.
 
     ALL of gahk.dk's content images live here (in S3), including the ones the old site kept in
-    static/legacy/ (imported by cms.legacy_images, which sets `legacy_path`). gahk.dk gets a
+    static/legacy/ (imported once at the move, with `legacy_path` set). gahk.dk gets a
     copy of each image it needs at a content-hashed URL, /images/<sha256[:16]>/<name>, which is
     why `sha256` is kept: it names the copy and lets publishing skip the ones gahk.dk already has.
 
@@ -187,7 +186,7 @@ class CmsImage(models.Model):
         max_length=255, blank=True, verbose_name="Beskrivelse", help_text="Bruges som alt-tekst."
     )
     uploaded_at = models.DateTimeField(auto_now_add=True)
-    # None for a system import (cms.legacy_images).
+    # None for a system import (the old site's images).
     uploaded_by = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         null=True,
@@ -203,8 +202,8 @@ class CmsImage(models.Model):
     content_type = models.CharField(max_length=30, blank=True)
     size = models.PositiveIntegerField(null=True, blank=True)
     # Where the old site served this image from, below static/legacy/image/ (e.g.
-    # "upload/images/gang.jpg"). Set only by the legacy import; unique so an image is never imported
-    # twice, and kept so gahk.dk can send old image links to the new copy.
+    # "upload/images/gang.jpg"). Set only by the one-off import of the old site's images, and kept so
+    # gahk.dk can send old image links to the new copy (cms.snapshot's `legacy_images`).
     legacy_path = models.CharField(max_length=255, unique=True, null=True, blank=True, editable=False)
 
     class Meta:
@@ -227,36 +226,6 @@ def _delete_cms_image_file(sender: type[CmsImage], instance: CmsImage, **kwargs:
     """Drop the file from storage with the row — Django has not done this since 1.3, and an orphaned
     upload is invisible: nothing lists it and nothing ever cleans it up. See core.files."""
     delete_attached_files(instance)
-
-
-class LegacyImageFailure(models.Model):
-    """An old-site image the import (cms.legacy_images) does not bring into the library: it could
-    not (missing, unusable), or an editor deleted its library copy (deleted).
-
-    Recorded so the 2-minute sync does not ask for it again forever; a manual
-    `manage.py import_legacy_images` tries every missing or unusable one again and drops the row once
-    it works. The Hjemmeside overview lists those: content may still point at the old address, which
-    gahk.dk cannot show. A deleted one is never asked for again, unless content refers to it again.
-    """
-
-    class Reason(models.TextChoices):
-        MISSING = "missing", "Findes ikke"
-        UNUSABLE = "unusable", "Kan ikke bruges"
-        DELETED = "deleted", "Slettet fra billedbiblioteket"
-
-    # Below the old static/legacy/image/, like CmsImage.legacy_path.
-    legacy_path = models.CharField(max_length=255, unique=True)
-    reason = models.CharField(max_length=10, choices=Reason.choices)
-    detail = models.CharField(max_length=255, blank=True)
-    failed_at = models.DateTimeField(auto_now=True)
-
-    class Meta:
-        ordering = ["legacy_path"]
-        verbose_name = "Gammelt billede, der ikke kunne flyttes"
-        verbose_name_plural = "Gamle billeder, der ikke kunne flyttes"
-
-    def __str__(self) -> str:
-        return f"{self.legacy_path}: {self.get_reason_display()}"
 
 
 class PageRedirect(models.Model):
@@ -378,7 +347,7 @@ class SiteSettings(models.Model):
 class ContentChange(models.Model):
     """The audit trail for every change to the website's content: who, when, what, before/after.
 
-    Written by cms.services on every write (and by cms.legacy_images for its system changes), never
+    Written by cms.services on every write (system changes have no user), never
     by a signal, so a script or an import cannot fake an editor. `changes` holds the values
     themselves — bodies included — as {field: [before, after]}, so "what did it say before?" can be
     answered for news, events, the menu and images too, not only for pages (which also keep full

@@ -127,7 +127,7 @@ def test_restoring_brings_the_texts_back_but_not_from_before_they_existed(
     admissions.refresh_from_db()
     assert admissions.fields["quote_by"] == "Første"
 
-    # The version kept from before the page had fields (cms migration 0011) has none.
+    # The version kept from before the page had fields (cms migration 0012) has none.
     old = admissions.versions.create(slug="optagelse", header="Optagelse", body="<p>Gammel tekst</p>")
     result = services.restore_version(admissions, old, editor)
     admissions.refresh_from_db()
