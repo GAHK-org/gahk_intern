@@ -786,6 +786,13 @@ albums in real use are never at risk. Run it with `docker exec -it` — it needs
 - Login is standalone (GahkAuthLogin reads the residents table directly); its cookies are host-only
   on wiki.gahk.dk and `Secure`, so neither gahk.dk nor intern.gahk.dk ever sees them.
 - The wiki image only works at wiki.gahk.dk (`$wgScriptPath` is `""`).
+- Health checks, the same pair as the intranet's (§4e), in `wiki-deploy/health.php`, neither of
+  which loads MediaWiki (the wiki is private, so its pages answer a probe with the login redirect):
+  **`/healthz`** is liveness only, Apache and PHP answering, and the image's Docker `HEALTHCHECK`
+  probes it, so Coolify shows the wiki as healthy or unhealthy rather than *unknown*.
+  **`/health`** is for the uptime monitor: 503 if MediaWiki's MariaDB or the intranet's PostgreSQL
+  (which every login reads) is unreachable, with the failing check named in the JSON body and the
+  reason in the container's log.
 
 ## 7. DNS (.dk via Punktum dk) **[you]**
 Records: **`intern.gahk.dk` and `wiki.gahk.dk` A → the Coolify VM** (no AAAA: gahk.dk has never had
@@ -826,7 +833,8 @@ old app shows how, `https://intern.gahk.dk/install` has the steps, and phones ge
 - [ ] `intern.gahk.dk` live in Coolify and bucket CORS updated; gahk.dk on Hetzner Webhosting with
       `GAHK_WEB_KEY` set here (§4f, §7); `https://gahk.dk/intern/` → `https://intern.gahk.dk/`;
       MX kept on one.com.
-- [ ] Uptime monitor on `https://intern.gahk.dk/health`; till, kitchen and Dropbox-script URLs updated.
+- [ ] Uptime monitors on `https://intern.gahk.dk/health` and `https://wiki.gahk.dk/health`; till,
+      kitchen and Dropbox-script URLs updated.
 
 ## 9. Notes
 - Python: **dev is 3.14, prod image pins 3.13** (Django 5.2's supported range; psycopg wheels).

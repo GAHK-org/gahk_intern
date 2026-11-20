@@ -224,7 +224,7 @@ CELERY_RESULT_EXPIRES = None
 CELERY_WORKER_REDIRECT_STDOUTS_LEVEL = "INFO"
 # The default ceiling for a scheduled job: generous for a sweep, and short enough that a wedged one
 # does not hold a worker slot all night. The two photo-album jobs legitimately run longer and set
-# their own limits at the task — see photo_album/tasks.py::MEDIA_TASK_TIME_LIMIT.
+# their own limits at the task — see photo_album/tasks.py::ENCODE_TASK_TIME_LIMIT.
 #
 # Redelivery from the two settings above does NOT re-run a lost download or import: by then its row
 # is BUILDING under the message's own task id, which the task takes as its worker having died and

@@ -60,6 +60,9 @@ erDiagram
         text keyword_arguments
         json lines
         int omitted
+        float progress
+        string progress_step
+        datetime progressed_at
     }
 
     core_PushDeliveryDay {
@@ -1339,6 +1342,9 @@ erDiagram
         text keyword_arguments
         json lines
         int omitted
+        float progress
+        string progress_step
+        datetime progressed_at
     }
 
     core_PushDeliveryDay {

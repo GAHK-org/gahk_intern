@@ -11,7 +11,7 @@
       {{ form.username }}
       <label for="id_password">Kodeord</label>
       {{ form.password }}
-      <p style="margin-top:1rem"><button type="submit">Log ind</button></p>
+      <p style="margin-top:1rem"><button type="submit" class="btn">Log ind</button></p>
       <input type="hidden" name="next" value="{{ next }}">
     </form>
     <p class="muted" style="margin-top:.8rem"><a href="{% url 'password_reset' %}">Glemt kodeord?</a></p>
