@@ -24,9 +24,9 @@
       <div class="mb-3">
         <label for="{{ field.id_for_label }}" class="font-semibold block mb-1">{{ field.label }}</label>
         {{ field }}
-        {% if field.errors %}<p class="text-red-600 text-sm mt-1">{{ field.errors|striptags }}</p>{% endif %}
+        {% if field.errors %}<p class="text-neg text-sm mt-1">{{ field.errors|striptags }}</p>{% endif %}
         {% if lookup_error %}
-          <p class="text-red-600 text-sm mt-1">{{ lookup_error }}</p>
+          <p class="text-neg text-sm mt-1">{{ lookup_error }}</p>
         {% elif account_name %}
           <p class="text-sm mt-1">Hedder i e-conomic: <strong>{{ account_name }}</strong></p>
         {% endif %}

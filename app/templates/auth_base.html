@@ -16,8 +16,8 @@
   failure page. Standalone on purpose — base.html is the logged-in shell (sidebar, menu, push),
   and the public website is gahk.dk's, rendered by gahk_web.
 {% endcomment %}
-<body class="min-h-screen flex flex-col bg-gray-50 text-gray-900">
-  <header class="bg-emerald-800 text-white shadow">
+<body class="min-h-screen flex flex-col bg-paper text-ink">
+  <header class="bg-gahk-green-700 text-white shadow">
     <div class="max-w-5xl mx-auto w-full px-4 h-20 flex items-center gap-3">
       <a href="{% url 'dashboard' %}" class="flex items-center gap-3 no-underline">
         <img src="{% static 'legacy/image/elements/lamassu.svg' %}" alt="" width="64" height="64"
@@ -32,13 +32,13 @@
   <main class="flex-1 w-full max-w-3xl mx-auto px-6 py-8">
     {% if messages %}
       {% for m in messages %}
-        <div class="mb-4 rounded p-3 border {% if m.tags == 'error' %}bg-red-50 text-red-700 border-red-200{% else %}bg-emerald-50 text-emerald-800 border-emerald-200{% endif %}">{{ m }}</div>
+        <div class="mb-4 rounded p-3 border {% if m.tags == 'error' %}bg-neg-bg text-neg border-neg-line{% else %}bg-gahk-green-050 text-gahk-green-700 border-gahk-green-100{% endif %}">{{ m }}</div>
       {% endfor %}
     {% endif %}
     {% block content %}{% endblock %}
   </main>
 
-  <footer class="bg-gray-100 text-gray-500 text-xs text-center py-5">
+  <footer class="bg-sunken text-faint text-xs text-center py-5">
     G. A. Hagemanns Kollegium · Kristianiagade 10 · 2100 København Ø
   </footer>
 </body>
