@@ -33,7 +33,7 @@ KITCHEN_ALLOWED_PREFIXES = (
     "/static/",
     "/media/",
     "/ws/",
-    "/kalender/",
+    "/kalender/",  # the old feed address, a redirect to /calendar/<token>.ics
 )
 # /install is public anyway (how to install the app), and the kitchen tablet may itself carry the old
 # app from gahk.dk, whose notice links there: a 403 only for the kitchen account would make no sense.
@@ -48,7 +48,10 @@ def kitchen_home() -> str:
 
 
 def kitchen_may_open(path: str) -> bool:
-    return path in KITCHEN_ALLOWED_PATHS or path.startswith(KITCHEN_ALLOWED_PREFIXES)
+    # The calendar feeds sit beside the subscription settings page under /calendar/; only the
+    # feeds are plumbing.
+    is_calendar_feed = path.startswith("/calendar/") and path.endswith(".ics")
+    return path in KITCHEN_ALLOWED_PATHS or path.startswith(KITCHEN_ALLOWED_PREFIXES) or is_calendar_feed
 
 
 class PresignForRequestHost:

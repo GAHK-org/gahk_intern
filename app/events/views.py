@@ -17,7 +17,7 @@ from django.conf import settings
 from django.contrib import messages
 from django.core.exceptions import PermissionDenied
 from django.core.paginator import Paginator
-from django.http import Http404, HttpRequest, HttpResponse, HttpResponseRedirect
+from django.http import HttpRequest, HttpResponse, HttpResponseRedirect
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
 from django.utils import timezone
@@ -27,34 +27,13 @@ from core.clock import current_date, current_datetime
 from core.danish import MONTHS, WEEKDAYS_SHORT
 from core.uploads import attached_image
 from residents import birthdays as birthdays_mod
-from residents.models import Resident
 from residents.permissions import current_resident
 
 from . import access, icalendar, live, maerkedage, services
 from .forms import EventCommentForm, EventForm
-from .models import Answer, CalendarFeedToken, Event, EventComment, Rsvp
+from .models import Answer, Event, EventComment, Rsvp
 
 PAGE_SIZE = 20
-
-
-def _my_state(event: Event, resident: Resident) -> str | None:
-    """ "kommer" / "venteliste" / "nej" / None, from rows already prefetched.
-
-    Seating is positional, so a card cannot read a column to know where you stand — it has to know
-    where you fall in the order. Done over the prefetch rather than by calling services.seated per
-    card, which would be a query each.
-    """
-    committed = sorted(
-        (r for r in event.rsvps.all() if r.answer == Answer.JA),
-        key=lambda r: (r.answered_at, r.pk),
-    )
-    coming = committed if event.capacity is None else committed[: event.capacity]
-    mine = next((r for r in event.rsvps.all() if r.resident_id == resident.pk), None)
-    if mine is None:
-        return None
-    if mine.answer == Answer.NEJ:
-        return "nej"
-    return "kommer" if any(r.pk == mine.pk for r in coming) else "venteliste"
 
 
 def _as_datetime(day: datetime.date) -> datetime.datetime:
@@ -513,29 +492,6 @@ def event_ics(request: HttpRequest, pk: int) -> HttpResponse:
 
 
 @access.access_required
-def feed_settings(request: HttpRequest) -> HttpResponse:
-    """Where a resident finds — and can replace — their personal calendar address."""
-    token = CalendarFeedToken.for_resident(current_resident(request))
-    return render(
-        request,
-        "events/feed.html",
-        {"feed_url": request.build_absolute_uri(reverse("events_feed", args=[token.token]))},
-    )
-
-
-@require_POST
-@access.access_required
-def rotate_token(request: HttpRequest) -> HttpResponseRedirect:
-    CalendarFeedToken.for_resident(current_resident(request)).rotate()
-    messages.success(
-        request,
-        "Din kalenderadresse er skiftet. Husk at tilføje den nye i din kalender — "
-        "den gamle holder op med at virke med det samme.",
-    )
-    return redirect("events:feed_settings")
-
-
-@access.access_required
 def calendar(request: HttpRequest) -> HttpResponse:
     """A month at a time. Server-rendered; the arrows are ordinary links.
 
@@ -566,7 +522,7 @@ def calendar(request: HttpRequest) -> HttpResponse:
     )
     by_day: dict[datetime.date, list[Event]] = {}
     for event in events:
-        event.my_state = _my_state(event, resident)  # type: ignore[attr-defined]
+        event.my_state = services.my_state(event, resident)  # type: ignore[attr-defined]
         by_day.setdefault(timezone.localtime(event.starts_at).date(), []).append(event)
 
     # Notes on the days, not rows in `events` — see residents.birthdays for why a birthday is not
@@ -598,67 +554,3 @@ def calendar(request: HttpRequest) -> HttpResponse:
             "chosen_maerkedage": marked_days.get(chosen, []) if chosen else [],
         },
     )
-
-
-@require_GET
-def calendar_feed(request: HttpRequest, token: str) -> HttpResponse:
-    """One resident's subscribable calendar. NO AUTH DECORATOR — the token IS the credential.
-
-    That is not a shortcut. Google Calendar's "Fra URL" fetch is made by Google's servers, not the
-    subscriber's browser: no cookies, no login form, no redirect to follow. Behind @login_required
-    this would return the login page's HTML with a 200, and Google would show an empty calendar with
-    no error anywhere. Apple's fetcher behaves the same. HTTP Basic is the other option and is worse
-    — it means handing a resident's site password to Apple and Google.
-
-    What follows from the token being a bearer credential, and all of it matters:
-
-      * It is a PATH SEGMENT, never a query string. Query strings reach Referer headers and
-        third-party analytics far more readily, and calendar clients want a URL ending in .ics.
-      * An unknown token 404s — not 403, which would confirm that a token once existed.
-      * `no-store` and `noindex`, so it is not cached by a proxy or found by a crawler.
-      * The feed contains only THIS person's own ja-events, so a leak exposes one person's social
-        calendar rather than the kollegium's.
-      * It is rotatable, and the page that shows it says so in Danish (see events/feed.html).
-
-    Deliberately outside the rollout gate: somebody not in a trial group simply has no answers, so
-    their feed is a valid empty VCALENDAR rather than a 403 a calendar client cannot explain.
-    """
-    feed_token = CalendarFeedToken.objects.filter(token=token).select_related("resident").first()
-    if feed_token is None:
-        raise Http404("Ingen kalender med den adresse.")
-
-    resident = feed_token.resident
-    since = current_datetime() - icalendar.FEED_LOOKBACK
-    mine = (
-        access.visible_to(resident)
-        .filter(rsvps__resident=resident, rsvps__answer=Answer.JA, starts_at__gte=since)
-        .prefetch_related("rsvps")
-        .order_by("starts_at")
-        .distinct()
-    )
-    entries = [(event, _my_state(event, resident) == "venteliste") for event in mine]
-
-    body = icalendar.feed(entries, name="GAHK – mine begivenheder")
-    response = HttpResponse(body, content_type="text/calendar; charset=utf-8")
-    # inline, NOT attachment: a subscribing client just GETs this, and `attachment` would make a
-    # resident who pastes the URL into a browser download a file instead of seeing it work.
-    response["Content-Disposition"] = 'inline; filename="gahk-begivenheder.ics"'
-    response["Cache-Control"] = "private, max-age=0, no-store"
-    response["X-Robots-Tag"] = "noindex, nofollow"
-    response["Referrer-Policy"] = "no-referrer"
-
-    _touch(feed_token)
-    return response
-
-
-def _touch(feed_token: CalendarFeedToken) -> None:
-    """Record that the feed was fetched, at most once an hour.
-
-    A write on every GET would turn a read endpoint into a write storm: sixty phones polling hourly,
-    forever. Once an hour is enough to answer "is my calendar actually pulling?" and to make a leak
-    that is being *used* visible in the data.
-    """
-    now = current_datetime()
-    if feed_token.last_used_at and now - feed_token.last_used_at < datetime.timedelta(hours=1):
-        return
-    CalendarFeedToken.objects.filter(pk=feed_token.pk).update(last_used_at=now)

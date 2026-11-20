@@ -569,13 +569,16 @@ erDiagram
         datetime created_at
     }
 
-    events_CalendarFeedToken {
+    calendar_feed_CalendarSubscription {
         int id PK
         int resident_id FK
         string token
         datetime created_at
         datetime rotated_at
+        string events
+        bool include_birthdays
         datetime last_used_at
+        int fetch_count
     }
 
     reparationer_RepairTask {
@@ -588,6 +591,7 @@ erDiagram
         int reported_by_id FK
         datetime created_at
         datetime updated_at
+        datetime status_changed_at
         datetime archived_at
     }
 
@@ -597,6 +601,14 @@ erDiagram
         int author_id FK
         text body
         datetime created_at
+    }
+
+    reparationer_RepairImage {
+        int id PK
+        int task_id FK
+        int comment_id FK
+        string file
+        datetime uploaded_at
     }
 
     arkiv_ArchiveFolder {
@@ -1042,10 +1054,12 @@ erDiagram
     events_Rsvp }o--|| residents_Resident : "resident"
     events_EventComment }o--|| events_Event : "event"
     events_EventComment }o--|| residents_Resident : "author"
-    events_CalendarFeedToken ||--|| residents_Resident : "resident"
+    calendar_feed_CalendarSubscription ||--|| residents_Resident : "resident"
     reparationer_RepairTask }o--|| residents_Resident : "reported_by"
     reparationer_RepairComment }o--|| reparationer_RepairTask : "task"
     reparationer_RepairComment }o--|| residents_Resident : "author"
+    reparationer_RepairImage }o--|| reparationer_RepairTask : "task"
+    reparationer_RepairImage }o--|o reparationer_RepairComment : "comment"
     arkiv_ArchiveFolder }o--|o arkiv_ArchiveFolder : "parent"
     arkiv_ArchiveFolder }o--|o core_Workgroup : "workgroup"
     arkiv_ArchiveFolder }o--|o core_Workgroup : "effective_workgroup"
@@ -1215,6 +1229,27 @@ erDiagram
     arkiv_ArchiveFile }o--|| arkiv_ArchiveFolder : "folder"
     arkiv_ArchiveFile }o--|o residents_Resident : "uploaded_by"
     arkiv_ArchiveFile }o--|o residents_Resident : "deleted_by"
+```
+
+## calendar_feed
+
+```mermaid
+erDiagram
+    calendar_feed_CalendarSubscription {
+        int id PK
+        int resident_id FK
+        string token
+        datetime created_at
+        datetime rotated_at
+        string events
+        bool include_birthdays
+        datetime last_used_at
+        int fetch_count
+    }
+
+    residents_Resident { }
+
+    calendar_feed_CalendarSubscription ||--|| residents_Resident : "resident"
 ```
 
 ## cms
@@ -1522,15 +1557,6 @@ erDiagram
         datetime created_at
     }
 
-    events_CalendarFeedToken {
-        int id PK
-        int resident_id FK
-        string token
-        datetime created_at
-        datetime rotated_at
-        datetime last_used_at
-    }
-
     residents_Resident { }
 
     events_Event }o--|| residents_Resident : "organiser"
@@ -1542,7 +1568,6 @@ erDiagram
     events_Rsvp }o--|| residents_Resident : "resident"
     events_EventComment }o--|| events_Event : "event"
     events_EventComment }o--|| residents_Resident : "author"
-    events_CalendarFeedToken ||--|| residents_Resident : "resident"
 ```
 
 ## gahkflix
@@ -2146,6 +2171,7 @@ erDiagram
         int reported_by_id FK
         datetime created_at
         datetime updated_at
+        datetime status_changed_at
         datetime archived_at
     }
 
@@ -2157,11 +2183,21 @@ erDiagram
         datetime created_at
     }
 
+    reparationer_RepairImage {
+        int id PK
+        int task_id FK
+        int comment_id FK
+        string file
+        datetime uploaded_at
+    }
+
     residents_Resident { }
 
     reparationer_RepairTask }o--|| residents_Resident : "reported_by"
     reparationer_RepairComment }o--|| reparationer_RepairTask : "task"
     reparationer_RepairComment }o--|| residents_Resident : "author"
+    reparationer_RepairImage }o--|| reparationer_RepairTask : "task"
+    reparationer_RepairImage }o--|o reparationer_RepairComment : "comment"
 ```
 
 ## residents

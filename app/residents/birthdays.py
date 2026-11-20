@@ -1,11 +1,11 @@
 """Who has a birthday when.
 
 A birthday is NOT an Event, and deliberately so. Nobody organises it, nobody answers ja or nej to
-it, it cannot be aflyst, it has no capacity, and it must never reach a subscriber's phone as a push
-or a VEVENT. It is a fact about a date that the calendar happens to be able to show — a note
+it, it cannot be aflyst, it has no capacity, and it must never reach anybody's phone as a push. It is a fact about a date that the calendar happens to be able to show — a note
 printed on the day, the way a paper calendar prints one. Writing Event rows for sixty residents
 every year would have handed all of that machinery something to do, and every bit of it would have
-been wrong.
+been wrong. A resident's calendar subscription carries them as all-day entries of its own when they
+choose so (calendar_feed.feed), never as Event rows.
 
 That is also why this lives in `residents` rather than in `events`. It answers a question about
 PEOPLE, and the month grid is only its first caller; a dashboard strip of "fødselsdage i denne uge"

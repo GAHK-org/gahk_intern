@@ -33,7 +33,6 @@ is deliberate. If the house wants a record, that is opslagstavlen's job.
 """
 
 import datetime
-import secrets
 from typing import Any
 
 from django.conf import settings
@@ -84,16 +83,6 @@ ICAL_UID_DOMAIN = "gahk.dk"
 # CheckConstraint without a trigger. It therefore has to run on edit and on uninvite too, not only
 # on create — the create-only version is the obvious bug, and it has its own test.
 MIN_INVITEES = 4
-
-
-def _new_feed_token() -> str:
-    """A fresh calendar-feed secret.
-
-    A NAMED module function rather than a lambda or an inline default because migrations serialise
-    the callable by import path. `secrets`, never `random`: this is a bearer credential, and bandit
-    is right to flag the other one (B311).
-    """
-    return secrets.token_urlsafe(32)
 
 
 # Same ceiling as opslagstavle.MAX_COMMENT_CHARS, and the same reasoning: long enough for a real
@@ -432,60 +421,6 @@ class EventComment(models.Model):
 
     def __str__(self) -> str:
         return f"Kommentar af {self.author} på #{self.event_id}"
-
-
-class CalendarFeedToken(models.Model):
-    """One resident's secret for their subscribable .ics feed.
-
-    Its own model rather than a column on Resident, deliberately. Resident is the auth principal —
-    loaded by every request, touched by every app, dumped by the alumneliste export. A secret living
-    there is one that a stray .values(), a serializer or an admin changelist can leak from code that
-    has no idea it is handling a credential. Here, the only code that can render it is code that
-    already knows what it is. Second reason: revocation should be a row you delete, not a column you
-    remember to null.
-
-    The token IS the credential — a calendar client cannot log in, so the feed view carries no auth
-    decorator. Everything that follows from that (path segment not query string, 404 on unknown,
-    no-store, rotation) lives in views.py beside the endpoint.
-    """
-
-    resident = models.OneToOneField(
-        settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="calendar_token"
-    )
-    token = models.CharField(max_length=64, unique=True, editable=False, default=_new_feed_token)
-    created_at = models.DateTimeField(auto_now_add=True)
-    rotated_at = models.DateTimeField(null=True, blank=True)
-
-    # Written at most once an hour by the feed view, not on every GET: sixty phones polling hourly
-    # would otherwise turn a read endpoint into a write storm. Once an hour is enough to answer "is
-    # my calendar actually pulling?" and to make a leak that is being *used* visible.
-    last_used_at = models.DateTimeField(null=True, blank=True)
-
-    class Meta:
-        verbose_name = "Kalender-token"
-        verbose_name_plural = "Kalender-tokens"
-
-    def __str__(self) -> str:
-        return f"Kalender-token for {self.resident}"
-
-    @classmethod
-    def for_resident(cls, resident: Any) -> "CalendarFeedToken":  # noqa: ANN401
-        """This resident's token, minting one on first use.
-
-        Lazily, never backfilled by a migration: a RunPython minting sixty secrets would create
-        sixty things to leak for people who may never open the feature, and — worse — would bake a
-        non-deterministic data step into the migration history, so `migrate` would stop being
-        reproducible and the history could never be squashed cleanly.
-        """
-        token, _ = cls.objects.get_or_create(resident=resident)
-        return token
-
-    def rotate(self) -> str:
-        """Mint a new secret and invalidate the old one. Returns the new token."""
-        self.token = _new_feed_token()
-        self.rotated_at = current_datetime()
-        self.save(update_fields=["token", "rotated_at"])
-        return self.token
 
 
 @receiver(post_delete, sender=EventComment)
