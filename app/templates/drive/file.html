@@ -33,7 +33,7 @@
   {% include "drive/_preview.html" %}
 
   <div class="drive-actions mb-4">
-    <a class="btn btn-primary" href="{% url 'drive:download' file.pk %}">Hent</a>
+    <a class="btn" href="{% url 'drive:download' file.pk %}">Hent</a>
     {% if can_version %}
       {% include "drive/_upload.html" with label="Upload ny version" multiple=False %}
     {% endif %}
