@@ -15,7 +15,7 @@
   <div class="overflow-x-auto">
     <table class="w-full border-collapse text-sm">
       <thead>
-        <tr class="border-b border-gray-200 text-left">
+        <tr class="border-b border-line text-left">
           <th class="p-2 whitespace-nowrap">Værelse</th>
           <th class="p-2 whitespace-nowrap">Seneste tjek</th>
           <th class="p-2 whitespace-nowrap">Af</th>
@@ -24,7 +24,7 @@
       </thead>
       <tbody>
       {% for row in rows %}
-        <tr class="border-b border-gray-100">
+        <tr class="border-b border-line">
           <td class="p-2 whitespace-nowrap"><a href="{% url 'vaerelsestjek:room' row.condition.room.number %}">{{ row.condition.room.number|stringformat:"03d" }}</a></td>
           <td class="p-2 whitespace-nowrap">{{ row.condition.recorded_at|date:"Y-m-d" }}</td>
           <td class="p-2 whitespace-nowrap">{{ row.condition.recorded_by_name }}</td>

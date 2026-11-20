@@ -28,7 +28,7 @@
 .cms-subhead:first-of-type { margin-top: 0 !important; }
 .cms-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; margin: 10px 0 4px; }
 .cms-plain-list { list-style: none; margin: 6px 0 0; padding: 0; display: grid; gap: 4px; font-size: 14px; }
-.cms-warn { border-color: #e7d8b0; }
+.cms-warn { border-color: var(--warn-line); }
 .cms-warn .card-head { background: var(--warn-bg); }
 .cms .btn[disabled] { opacity: .5; cursor: not-allowed; }
 .cms .btn-link-danger { border: 0; background: none; padding: 0; font: inherit; font-size: 13px; font-weight: 600;
@@ -76,7 +76,7 @@
 .cms-address-preview { margin: 6px 0 0; font-size: 13px; font-family: ui-monospace, Menlo, monospace; overflow-wrap: anywhere; }
 .cms-address-preview b { color: var(--green-700); }
 .cms-form-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 6px; }
-.cms-form-errors { border-color: #e7c7c3; color: var(--neg); }
+.cms-form-errors { border-color: var(--neg-line); color: var(--neg); }
 .cms-form-errors .errorlist { margin: 0; padding-left: 18px; }
 .cms-editor-main textarea { font-family: ui-monospace, Menlo, monospace; font-size: 13px; line-height: 1.5; min-height: 22rem; }
 .cms-inline-fields { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 0 14px; }
@@ -128,10 +128,10 @@
 .cms-tool:disabled { opacity: .35; cursor: default; }
 .cms-tool svg { width: 16px; height: 16px; display: block; }
 .cms-image-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; padding: 5px 6px; background: var(--warn-bg);
-  border-bottom: 1px solid #e7d8b0; font-size: 13px; }
+  border-bottom: 1px solid var(--warn-line); font-size: 13px; }
 .cms-image-bar[hidden] { display: none; }
 .cms-image-group { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 3px; }
-.cms-image-group + .cms-image-group { border-left: 1px solid #e7d8b0; padding-left: 6px; }
+.cms-image-group + .cms-image-group { border-left: 1px solid var(--warn-line); padding-left: 6px; }
 .cms-image-bar-label { font-weight: 700; color: var(--brass-ink); margin: 0 4px; }
 .cms-tool-source { margin-left: auto; font-family: ui-monospace, Menlo, monospace; }
 .cms-tool-sep { width: 1px; align-self: stretch; margin: 2px 4px; background: var(--border-strong); }
