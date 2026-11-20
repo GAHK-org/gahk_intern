@@ -81,7 +81,7 @@
         {% if recent_notices %}
           <ul style="list-style:none;padding:0;margin:0">
             {% for notice in recent_notices %}
-              <li style="padding:.5rem 0; border-bottom:1px solid var(--border,#e6e8ec)">
+              <li style="padding:.5rem 0; border-bottom:1px solid var(--border)">
                 <a href="{% url 'opslagstavle:detail' notice.pk %}">{{ notice.body|truncatechars:80 }}</a>
                 <span class="muted" style="display:block;font-size:.8rem">{{ notice.created_at|date:"d. N Y" }}</span>
               </li>
