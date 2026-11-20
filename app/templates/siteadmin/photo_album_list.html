@@ -52,7 +52,7 @@
         {% if can_retry and retryable %}
           <form method="post" action="{% url 'siteadmin:photo_album_retry' kind %}">
             {% csrf_token %}
-            <button type="submit" class="btn btn-primary">Prøv alle {{ retryable|length }} igen nu</button>
+            <button type="submit" class="btn">Prøv alle {{ retryable|length }} igen nu</button>
           </form>
         {% endif %}
       </div>
