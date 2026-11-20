@@ -113,7 +113,7 @@ def textarea(html: str) -> tuple[str, str]:
 
 def body_of(html: str) -> str:
     """The post's own text, as drawn: from its .board-body to its foot."""
-    return html.split('<div class="board-body prose-gahk">')[1].split(
+    return html.split('<div class="board-body prose-gahk" data-highlight-in>')[1].split(
         '<div class="notice-foot">', maxsplit=1
     )[0]
 
@@ -153,7 +153,7 @@ def test_the_feed_shows_the_excerpt_and_the_first_widget_under_it(beboer: Reside
 
     [widget] = album_widgets(feed)
     assert "<strong>Fredag</strong>" in widget
-    excerpt = feed.split('<div class="board-body prose-gahk">')[1].split("</div>")[0]
+    excerpt = feed.split('<div class="board-body prose-gahk" data-highlight-in>')[1].split("</div>")[0]
     assert "Fredag:" in excerpt and "Og lørdag:" in excerpt and "album-embed" not in excerpt
     assert [
         ("<strong>Fredag</strong>" in each, "<strong>Lørdag</strong>" in each) for each in album_widgets(page)

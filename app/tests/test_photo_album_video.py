@@ -195,7 +195,7 @@ def test_a_failed_re_encode_leaves_the_old_copy_in_place(
 def test_failed_media_can_be_given_fresh_attempts(
     make_resident: Callable[..., Resident], monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from photo_album.management.commands import retry_failed_photo_album_media
+    from photo_album import tasks
 
     failed = _video(make_resident, "broken.mpg", b"not a video")
     elsewhere = _video(make_resident, "broken.avi", b"not a video", folder="2005")
@@ -203,9 +203,7 @@ def test_failed_media_can_be_given_fresh_attempts(
         derivative_state=DerivativeState.FAILED, derivative_attempts=3
     )
     queued: list[int] = []
-    monkeypatch.setattr(
-        retry_failed_photo_album_media, "queue_derivatives", lambda media: queued.append(media.pk)
-    )
+    monkeypatch.setattr(tasks, "queue_derivatives", lambda media: queued.append(media.pk))
 
     call_command("retry_failed_photo_album_media", "--year", "2004", "--dry-run", stdout=StringIO())
     assert Media.objects.get(pk=failed.pk).derivative_state == DerivativeState.FAILED

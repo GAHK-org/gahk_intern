@@ -54,6 +54,11 @@ Fotoalbum, with a page of its own for the dating and a list behind every count t
   (duplicates). Its details open in place: every date and its source, the hash, the storage keys,
   the camera metadata. The original can be opened; the list never sends one to the album.
 - Two more lists: the largest files, by the original's size; and the files no item points at.
+- The lists of items waiting for their versions and of failed conversions offer "Prøv igen nu",
+  for one item or all of them: the item is converted again at once, with three fresh attempts,
+  instead of the next night. It is offered for items that failed (gave up, or failed a try and wait
+  for the night), not for those already in the queue or being converted; pressing it twice queues
+  an item once.
 
 ## Storage
 
