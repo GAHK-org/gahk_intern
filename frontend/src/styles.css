@@ -2118,7 +2118,7 @@
   .drive-table { border-collapse:collapse; font-size:13px; min-width:100%; }
   .drive-table th, .drive-table td { padding:6px 10px; border-bottom:1px solid var(--border); text-align:left; white-space:nowrap; }
   .drive-table th { position:sticky; top:0; background:var(--surface); font-weight:600; }
-  .drive-markdown { padding:12px 14px; border:1px solid var(--border); border-radius:8px; overflow-wrap:anywhere; }
+  .drive-markdown { padding:12px 14px; border:1px solid var(--border); border-radius:8px; background:var(--surface); overflow-wrap:anywhere; }
   .drive-preview-note { margin:0; font-size:13px; }
   .drive-search { display:flex; align-items:center; gap:8px; max-width:520px; margin-top:0; }
   .drive-search input[type=search] { flex:1 1 auto; min-width:0; margin:0; }
