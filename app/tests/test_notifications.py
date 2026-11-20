@@ -518,10 +518,12 @@ def test_grouping_rewrites_one_row(pushes: Recorded, make_resident: Callable[...
     second.refresh_from_db()
     assert second.title == "Bente Bo og Anders And reagerede på din besked"
     assert second.seen_at is None, "a new actor makes it news again"
+    services.mark_done(Notification.objects.filter(pk=first.pk))
     assert [a["id"] for a in second.actors] == [bente.pk, anders.pk]
 
     like(carl)
     row = Notification.objects.get()  # still exactly one row
+    assert row.done_at is None and row.seen_at is None, "news again: back out of Færdige"
     assert row.title == "3 personer reagerede på din besked"
     assert row.group_key == "chat.likes:7"
     assert row.category == categories.CHAT_LIKES
@@ -642,6 +644,144 @@ def test_mark_seen_stamps_only_what_was_unseen(make_resident: Callable[..., Resi
     assert not Notification.objects.unseen().exists()
 
 
+# --- done ---------------------------------------------------------------------------------------
+
+
+def test_mark_done_also_marks_seen_and_keeps_an_earlier_seen_at(
+    make_resident: Callable[..., Resident],
+) -> None:
+    a = make_resident(email="a@gahk.dk")
+    earlier = timezone.now() - datetime.timedelta(days=1)
+    read = make_notification(a, seen_at=earlier)
+    unread = make_notification(a)
+
+    assert services.mark_done(Notification.objects.filter(recipient=a)) == 2
+    assert services.mark_done(Notification.objects.filter(recipient=a)) == 0, "done once"
+
+    read.refresh_from_db()
+    unread.refresh_from_db()
+    assert read.seen_at == earlier
+    assert read.done_at is not None
+    assert unread.seen_at == unread.done_at
+    assert services.unseen_count(a.pk) == 0
+
+
+def test_mark_not_done_leaves_it_seen(make_resident: Callable[..., Resident]) -> None:
+    a = make_resident(email="a@gahk.dk")
+    row = make_notification(a)
+    services.mark_done(Notification.objects.filter(pk=row.pk))
+
+    assert services.mark_not_done(Notification.objects.filter(pk=row.pk)) == 1
+
+    row.refresh_from_db()
+    assert row.done_at is None
+    assert row.seen_at is not None
+
+
+def test_the_dropdown_hides_read_rows_except_kritisk_and_hides_done_rows(
+    client: Client, make_resident: Callable[..., Resident]
+) -> None:
+    a = make_resident(email="a@gahk.dk")
+    now = timezone.now()
+    make_notification(a, title="ny")
+    make_notification(a, title="læst", seen_at=now)
+    make_notification(a, title="læst kritisk", importance=Importance.KRITISK, seen_at=now)
+    make_notification(a, title="færdig kritisk", importance=Importance.KRITISK, seen_at=now, done_at=now)
+    make_notification(a, title="færdig", seen_at=now, done_at=now)
+    client.force_login(a)
+
+    titles = [r.title for r in client.get(reverse("notifications:dropdown")).context["rows"]]
+
+    assert titles == ["ny", "læst kritisk"]
+
+
+def test_the_page_splits_current_and_done_into_tabs(
+    client: Client, make_resident: Callable[..., Resident]
+) -> None:
+    a = make_resident(email="a@gahk.dk")
+    now = timezone.now()
+    make_notification(a, title="ny")
+    make_notification(a, title="læst", seen_at=now)
+    make_notification(a, title="først færdig", seen_at=now, done_at=now - datetime.timedelta(hours=1))
+    make_notification(a, title="sidst færdig", seen_at=now, done_at=now)
+    make_notification(a, title="udløbet færdig", done_at=now, expires_at=now - datetime.timedelta(seconds=1))
+    client.force_login(a)
+
+    current = client.get(reverse("notifications:index"))
+    done = client.get(reverse("notifications:index"), {"tab": "done"})
+    by_category = client.get(reverse("notifications:index"), {"tab": "done", "visning": "kategori"})
+    unknown = client.get(reverse("notifications:index"), {"tab": "x"})
+
+    assert current.context["tab"] == "current"
+    assert [r.title for r in current.context["rows"]] == ["ny", "læst"]
+    assert done.context["tab"] == "done"
+    assert [r.title for r in done.context["rows"]] == ["sidst færdig", "først færdig"]
+    assert [(name, len(rows)) for name, rows in by_category.context["groups"]] == [("Generelt", 2)]
+    assert unknown.context["tab"] == "current"
+    # The read row offers "done" but no "read"; the unread one both; a done one only the way back.
+    html = current.content.decode()
+    assert html.count('aria-label="Markér som læst"') == 1
+    assert html.count('aria-label="Markér som færdig"') == 2
+    assert 'aria-label="Flyt tilbage til aktuelle"' in done.content.decode()
+
+
+@pytest.mark.parametrize(
+    ("name", "seen", "done"),
+    [("mark_seen", True, False), ("mark_done", True, True)],
+)
+def test_an_items_buttons_mark_it_and_go_back(
+    client: Client, make_resident: Callable[..., Resident], name: str, seen: bool, done: bool
+) -> None:
+    a = make_resident(email="a@gahk.dk")
+    row = make_notification(a)
+    client.force_login(a)
+    url = reverse(f"notifications:{name}", args=[row.pk])
+    back = reverse("notifications:index") + "?tab=current&visning=kategori"
+
+    assert client.get(url).status_code == 405
+    response = client.post(url, {"next": back})
+
+    assert response.status_code == 302
+    assert response["Location"] == back
+    row.refresh_from_db()
+    assert row.is_seen is seen
+    assert row.is_done is done
+
+
+def test_moving_a_row_back_from_done(client: Client, make_resident: Callable[..., Resident]) -> None:
+    a = make_resident(email="a@gahk.dk")
+    now = timezone.now()
+    row = make_notification(a, seen_at=now, done_at=now)
+    client.force_login(a)
+
+    response = client.post(
+        reverse("notifications:mark_not_done", args=[row.pk]),
+        {"next": reverse("notifications:dropdown")},
+    )
+
+    assert response["Location"] == reverse("notifications:dropdown")
+    row.refresh_from_db()
+    assert row.done_at is None
+
+
+def test_an_items_buttons_touch_only_own_rows_and_stay_on_site(
+    client: Client, make_resident: Callable[..., Resident]
+) -> None:
+    a = make_resident(email="a@gahk.dk")
+    others = make_notification(make_resident(email="b@gahk.dk"))
+    mine = make_notification(a)
+    client.force_login(a)
+
+    assert client.post(reverse("notifications:mark_done", args=[others.pk])).status_code == 404
+    response = client.post(
+        reverse("notifications:mark_seen", args=[mine.pk]), {"next": "https://evil.example/"}
+    )
+
+    assert response["Location"] == reverse("notifications:index")
+    others.refresh_from_db()
+    assert others.seen_at is None and others.done_at is None
+
+
 def test_unseen_count_is_the_residents_own_visible_unseen_rows(
     make_resident: Callable[..., Resident],
 ) -> None:
@@ -687,7 +827,6 @@ def test_index_lists_own_active_rows_most_important_first_then_newest(
     assert response.status_code == 200
     assert [r.title for r in response.context["rows"]] == ["aflyst", "ny", "gammel"]
     assert response.context["view"] == "kronologisk"
-    assert response.context["unseen"] == 3
     html = response.content.decode()
     assert "andres" not in html
     assert "udløbet" not in html
@@ -711,7 +850,8 @@ def test_unseen_come_first_then_most_important_then_newest(
 
     expected = ["gammel høj", "gammel", "ny lav", "set kritisk", "set ny"]
     assert [r.title for r in client.get(reverse("notifications:index")).context["rows"]] == expected
-    assert [r.title for r in client.get(reverse("notifications:dropdown")).context["rows"]] == expected
+    # The dropdown drops what is read, except Kritisk.
+    assert [r.title for r in client.get(reverse("notifications:dropdown")).context["rows"]] == expected[:4]
 
 
 def test_index_by_category_groups_in_display_order(
@@ -838,25 +978,6 @@ def test_open_batch_without_a_row_lands_on_the_list(
 
     assert response.status_code == 302
     assert response["Location"] == reverse("notifications:index")
-
-
-def test_mark_all_seen_marks_only_own_visible_rows(
-    client: Client, make_resident: Callable[..., Resident]
-) -> None:
-    a = make_resident(email="a@gahk.dk")
-    b = make_resident(email="b@gahk.dk")
-    make_notification(a)
-    make_notification(a)
-    others = make_notification(b)
-    client.force_login(a)
-
-    assert client.get(reverse("notifications:mark_all_seen")).status_code == 405
-    response = client.post(reverse("notifications:mark_all_seen"))
-
-    assert response.status_code == 302
-    assert services.unseen_count(a.pk) == 0
-    others.refresh_from_db()
-    assert others.seen_at is None
 
 
 def test_the_bell_badge_counts_unseen(client: Client, make_resident: Callable[..., Resident]) -> None:

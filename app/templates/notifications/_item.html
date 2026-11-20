@@ -1,22 +1,43 @@
 {% comment %}
-  One notification, as a link. Shared by the bell's dropdown and the notifications page.
+  One notification: a link, and its own buttons. Shared by the bell's dropdown and the notifications
+  page; the dropdown includes it `with in_dropdown=True`.
 
   The link goes through notifications:open, which marks it seen and then redirects to where it
-  points — "seen" means clicked, in-app or on the push, never merely listed.
+  points — "seen" means clicked or marked as read, in-app or on the push, never merely listed.
+
+  The buttons post with htmx and come back through `next`: in the dropdown that is the dropdown's own
+  URL, swapped into #notif-panel; on the page it is the page itself, of which only #notif-content is
+  swapped in, so the reader keeps their place. Without JavaScript the page's buttons still work as
+  plain forms. Only the buttons that would change something are shown: no "read" on a read row, and
+  on the "Færdige" tab only the way back.
 
   Importance shows twice on purpose: as a coloured edge (notif-imp-N, readable at a glance in a
   list) and, for Høj and Kritisk, as a word — colour alone says nothing to a colour-blind reader.
 {% endcomment %}
-<a href="{% url 'notifications:open' row.pk %}"
-   class="notif-item notif-imp-{{ row.importance }}{% if not row.is_seen %} is-unseen{% endif %}">
-  <svg class="notif-icon" aria-hidden="true"><use href="#i-{{ row.icon }}"></use></svg>
-  <span class="notif-text">
-    <span class="notif-title">
-      {% if row.importance >= 3 %}<span class="notif-level">{{ row.importance_level.label }}</span>{% endif %}
-      {{ row.title }}
+<div class="notif-item notif-imp-{{ row.importance }}{% if not row.is_seen %} is-unseen{% endif %}">
+  <a href="{% url 'notifications:open' row.pk %}" class="notif-link">
+    <svg class="notif-icon" aria-hidden="true"><use href="#i-{{ row.icon }}"></use></svg>
+    <span class="notif-text">
+      <span class="notif-title">
+        {% if row.importance >= 3 %}<span class="notif-level">{{ row.importance_level.label }}</span>{% endif %}
+        {{ row.title }}
+      </span>
+      {% if row.body %}<span class="notif-body">{{ row.body }}</span>{% endif %}
+      <span class="notif-time">{{ row.updated_at|timesince }} siden</span>
     </span>
-    {% if row.body %}<span class="notif-body">{{ row.body }}</span>{% endif %}
-    <span class="notif-time">{{ row.updated_at|timesince }} siden</span>
-  </span>
-  {% if not row.is_seen %}<span class="notif-dot" aria-label="Ny"></span>{% endif %}
-</a>
+    {% if not row.is_seen %}<span class="notif-dot" aria-label="Ny"></span>{% endif %}
+  </a>
+  <div class="notif-actions">
+    {% if row.is_done %}
+      {% url 'notifications:mark_not_done' row.pk as action %}
+      {% include "notifications/_item_action.html" with label="Flyt tilbage til aktuelle" icon="undo" %}
+    {% else %}
+      {% if not row.is_seen %}
+        {% url 'notifications:mark_seen' row.pk as action %}
+        {% include "notifications/_item_action.html" with label="Markér som læst" icon="mail-open" %}
+      {% endif %}
+      {% url 'notifications:mark_done' row.pk as action %}
+      {% include "notifications/_item_action.html" with label="Markér som færdig" icon="tick" %}
+    {% endif %}
+  </div>
+</div>

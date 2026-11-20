@@ -5,7 +5,8 @@ something to show on a fresh checkout, in the states worth seeing:
 
   * unseen at every importance, Kritisk included (the coloured edge and the level word);
   * a grouped row naming two people, and one counting several ("3 personer reagerede");
-  * seen ones, which the list shows and the badge does not count;
+  * seen ones, which the page lists, and the dropdown and badge do not;
+  * one marked done, for the page's "Færdige" tab;
   * one long expired, shown nowhere, so `purge_expired_notifications` has something to purge.
 
 Rows are written directly rather than through services.notify: that would apply preferences and
@@ -38,6 +39,7 @@ class _Row:
     url: str
     age: timedelta
     seen: bool = False
+    done: bool = False
     expired: bool = False
     group_key: str = ""
     actors: tuple[Resident, ...] = ()
@@ -136,6 +138,7 @@ def seed(residents: list[Resident], now: datetime, rng: random.Random) -> int:
                 notice_url,
                 timedelta(days=3),
                 seen=True,
+                done=True,
             ),
             _Row(
                 categories.REPAIRS,
@@ -165,6 +168,7 @@ def seed(residents: list[Resident], now: datetime, rng: random.Random) -> int:
                     # Long expired: past purge_expired's month too, so the purge finds it.
                     expires_at=now - timedelta(days=40) if spec.expired else now + timedelta(days=7),
                     seen_at=at + timedelta(minutes=10) if spec.seen else None,
+                    done_at=at + timedelta(minutes=20) if spec.done else None,
                 )
             )
     Notification.objects.bulk_create(rows)

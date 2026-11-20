@@ -8,27 +8,31 @@
       <h1>Notifikationer</h1>
     </div>
     <div class="head-actions">
-      {% if unseen %}
-        <form method="post" action="{% url 'notifications:mark_all_seen' %}">
-          {% csrf_token %}<button type="submit" class="btn-secondary">Markér alle som læst</button>
-        </form>
-      {% endif %}
       <a class="btn notif-head-link" href="{% url 'notifications:preferences' %}"><svg><use href="#i-gear"></use></svg>Indstillinger</a>
     </div>
   </div>
 
+  <nav class="notif-tabs" aria-label="Notifikationer">
+    {% for key, label in tabs %}
+      <a href="?tab={{ key }}&amp;visning={{ view }}" class="notif-tab"{% if key == tab %} aria-current="page"{% endif %}>{{ label }}</a>
+    {% endfor %}
+  </nav>
+
   <nav class="notif-views" aria-label="Visning">
     {% for key, label in views %}
-      <a href="?visning={{ key }}" class="chip{% if key == view %} chip-brass{% endif %}"{% if key == view %} aria-current="page"{% endif %}>{{ label }}</a>
+      <a href="?tab={{ tab }}&amp;visning={{ key }}" class="chip{% if key == view %} chip-brass{% endif %}"{% if key == view %} aria-current="page"{% endif %}>{{ label }}</a>
     {% endfor %}
   </nav>
 
   {% comment %}
-    Most important first, then newest — in both views. A cancelled event outranks three likes even
-    when the likes are newer; that ordering is the point of having importance levels at all.
+    #notif-content is what an item's button swaps back in (notifications/_item.html).
+    Aktuelle: unseen first, then most important, then newest — in both views. A cancelled event
+    outranks three likes even when the likes are newer; that ordering is the point of having
+    importance levels at all. Færdige: most recently done first.
   {% endcomment %}
+  <div id="notif-content">
   {% if not rows %}
-    <div class="card-flat card-pad"><p class="muted">Du har ingen notifikationer lige nu.</p></div>
+    <div class="card-flat card-pad"><p class="muted">{% if tab == "done" %}Du har ingen færdige notifikationer.{% else %}Du har ingen notifikationer lige nu.{% endif %}</p></div>
   {% elif view == "kategori" %}
     {% for name, items in groups %}
       <section class="card-flat notif-section">
@@ -45,4 +49,5 @@
       </div>
     </section>
   {% endif %}
+  </div>
 {% endblock %}

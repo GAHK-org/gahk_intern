@@ -26,7 +26,8 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 
 from django.db import transaction
-from django.db.models import Q, QuerySet
+from django.db.models import F, Q, QuerySet, Value
+from django.db.models.functions import Coalesce
 from django.urls import reverse
 from django.utils.http import url_has_allowed_host_and_scheme
 
@@ -327,6 +328,8 @@ def notify_grouped(
         row.updated_at = now
         row.expires_at = expires_at
         row.seen_at = None
+        # News again, so back out of the "Færdige" tab and into the dropdown.
+        row.done_at = None
         row.save()
     if decision.in_app:
         live.inbox_changed([recipient_id])
@@ -357,6 +360,28 @@ def mark_seen(rows: QuerySet[Notification]) -> int:
     if marked:
         live.inbox_changed(recipients)
     return marked
+
+
+def mark_done(rows: QuerySet[Notification]) -> int:
+    """Done is also seen: a row marked done without having been read gets both stamps, and one read
+    earlier keeps its own "seen at"."""
+    pending = rows.filter(done_at__isnull=True)
+    recipients = list(pending.values_list("recipient_id", flat=True).distinct())
+    now = current_datetime()
+    marked = pending.update(done_at=now, seen_at=Coalesce(F("seen_at"), Value(now)))
+    if marked:
+        live.inbox_changed(recipients)
+    return marked
+
+
+def mark_not_done(rows: QuerySet[Notification]) -> int:
+    """Back from the "Færdige" tab. It stays seen, so only a Kritisk one returns to the dropdown."""
+    done = rows.filter(done_at__isnull=False)
+    recipients = list(done.values_list("recipient_id", flat=True).distinct())
+    restored = done.update(done_at=None)
+    if restored:
+        live.inbox_changed(recipients)
+    return restored
 
 
 def unseen_count(resident_id: int) -> int:

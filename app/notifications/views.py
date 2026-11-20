@@ -7,11 +7,13 @@ requesting resident's own rows, so there is nothing of anyone else's to gate.
 """
 
 import uuid
+from collections.abc import Callable
 
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.db import transaction
-from django.http import HttpRequest, HttpResponse, HttpResponseRedirect
+from django.db.models import QuerySet
+from django.http import Http404, HttpRequest, HttpResponse, HttpResponseRedirect
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
 from django.views.decorators.http import require_POST
@@ -28,6 +30,7 @@ from .models import Notification, NotificationPreference, NotificationSettings
 DROPDOWN_SIZE = 10
 
 VIEWS = (("kronologisk", "Kronologisk"), ("kategori", "Efter kategori"))
+TABS = (("current", "Aktuelle"), ("done", "Færdige"))
 
 
 def _safe(url: str) -> str:
@@ -38,13 +41,21 @@ def _safe(url: str) -> str:
 
 @login_required
 def index(request: HttpRequest) -> HttpResponse:
-    """Every active notification, unseen first, then most important, then newest. `?visning=kategori` groups
-    them under their category's group instead."""
+    """Every active notification, in two tabs: the current ones (unseen first, then most important,
+    then newest) and `?tab=done`, the ones marked done (most recently done first). `?visning=kategori`
+    groups either tab under the categories' groups instead."""
     resident = current_resident(request)
     view = request.GET.get("visning", "kronologisk")
     if view not in dict(VIEWS):
         view = "kronologisk"
-    rows = list(Notification.objects.filter(recipient=resident).visible().ranked())
+    tab = request.GET.get("tab", "current")
+    if tab not in dict(TABS):
+        tab = "current"
+    mine = Notification.objects.filter(recipient=resident).visible()
+    if tab == "done":
+        rows = list(mine.done().order_by("-done_at", "-pk"))
+    else:
+        rows = list(mine.not_done().ranked())
     groups: list[tuple[str, list[Notification]]] = []
     if view == "kategori":
         by_group: dict[str, list[Notification]] = {}
@@ -59,7 +70,8 @@ def index(request: HttpRequest) -> HttpResponse:
             "groups": groups,
             "view": view,
             "views": VIEWS,
-            "unseen": sum(1 for row in rows if not row.is_seen),
+            "tab": tab,
+            "tabs": TABS,
             "category_names": {c.key: c.name for c in categories.CATEGORIES},
         },
     )
@@ -67,10 +79,10 @@ def index(request: HttpRequest) -> HttpResponse:
 
 @login_required
 def dropdown(request: HttpRequest) -> HttpResponse:
-    """The bell's panel, fetched by htmx the first time it opens — so a page render costs one COUNT
-    for the badge, not ten rows nobody looked at."""
+    """The bell's panel, fetched by htmx each time it opens — so a page render costs one COUNT for the
+    badge, not ten rows nobody looked at. Only what is still to deal with: see `in_dropdown`."""
     resident = current_resident(request)
-    rows = Notification.objects.filter(recipient=resident).visible().ranked()[:DROPDOWN_SIZE]
+    rows = Notification.objects.filter(recipient=resident).in_dropdown().ranked()[:DROPDOWN_SIZE]
     return render(request, "notifications/_dropdown.html", {"rows": rows})
 
 
@@ -105,11 +117,36 @@ def open_batch(request: HttpRequest, batch: uuid.UUID) -> HttpResponseRedirect:
     return redirect(_safe(row.url))
 
 
+def _mark(
+    request: HttpRequest, pk: int, action: Callable[[QuerySet[Notification]], int]
+) -> HttpResponseRedirect:
+    """One of the item's buttons, then back to `next`: the page the button was on, or the dropdown's
+    own URL when it sat in the bell's panel. Both post with htmx (notifications/_item.html), which
+    follows the redirect and swaps in the fresh list, so the reader keeps their place."""
+    rows = Notification.objects.filter(pk=pk, recipient=current_resident(request))
+    if not rows.exists():
+        raise Http404
+    action(rows)
+    target = request.POST.get("next", "")
+    return redirect(target if services.is_site_path(target) else reverse("notifications:index"))
+
+
 @require_POST
 @login_required
-def mark_all_seen(request: HttpRequest) -> HttpResponseRedirect:
-    services.mark_seen(Notification.objects.filter(recipient=current_resident(request)).visible())
-    return redirect("notifications:index")
+def mark_seen(request: HttpRequest, pk: int) -> HttpResponseRedirect:
+    return _mark(request, pk, services.mark_seen)
+
+
+@require_POST
+@login_required
+def mark_done(request: HttpRequest, pk: int) -> HttpResponseRedirect:
+    return _mark(request, pk, services.mark_done)
+
+
+@require_POST
+@login_required
+def mark_not_done(request: HttpRequest, pk: int) -> HttpResponseRedirect:
+    return _mark(request, pk, services.mark_not_done)
 
 
 @login_required

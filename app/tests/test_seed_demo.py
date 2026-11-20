@@ -136,6 +136,7 @@ def test_seed_demo_gives_the_logins_notifications_in_every_state() -> None:
     assert services.unseen_count(beboer.pk) == 4
     assert mine.visible().filter(importance=Importance.KRITISK).exists()
     assert mine.visible().filter(seen_at__isnull=False).count() == 2
+    assert mine.visible().done().count() == 1
     assert any(len(n.actors) == 2 for n in mine)  # "Mette og Jonas svarede"
     assert services.purge_expired() == 5  # one long-expired row per documented login
     assert beboer.notification_preferences.filter(push=False).exists()
