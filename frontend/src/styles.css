@@ -2125,7 +2125,8 @@
   .drive-search-form select { width:auto; max-width:100%; margin:0; flex:0 1 auto; }
   .drive-where { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; flex:0 1 auto; min-width:0; max-width:50%; }
   .drive-sort { display:flex; align-items:center; gap:6px 14px; flex-wrap:wrap; font-size:13px; }
-  .drive-sort a { color:var(--brass); }
+  .drive-sort a { color:var(--brass); text-decoration:none; }
+  .drive-sort a:hover { text-decoration:underline; }
   .drive-sort a[aria-current] { font-weight:600; color:var(--ink); }
   .drive-member { flex-wrap:wrap; }
   .drive-list .ni.drive-locked { width:14px; height:14px; color:var(--muted); }
