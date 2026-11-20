@@ -1,5 +1,7 @@
 from celery import shared_task
 
+from photo_album.tasks import ZIP_TASK_SOFT_TIME_LIMIT, ZIP_TASK_TIME_LIMIT
+
 from . import locks, operations, preview, shared, zips
 from .structure import ensure_structure
 
@@ -40,9 +42,12 @@ def queue_stranded_previews() -> int:
     return preview.queue_stranded()
 
 
-@shared_task(name="drive.tasks.build_zip", time_limit=2 * 60 * 60, soft_time_limit=2 * 60 * 60 - 300)
+@shared_task(
+    name="drive.tasks.build_zip", time_limit=ZIP_TASK_TIME_LIMIT, soft_time_limit=ZIP_TASK_SOFT_TIME_LIMIT
+)
 def build_zip(download_id: int) -> bool:
-    """A zip one resident asked for, into the bucket (on "media": it reads whole files)."""
+    """A zip one resident asked for, into the bucket (on "media": it reads whole files). It reports
+    its progress, so the album ZIPs' twelve hours with the watchdog, not a limit of its own."""
     return zips.build(download_id)
 
 
