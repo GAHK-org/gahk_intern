@@ -10,7 +10,7 @@
       {% for p in app.priorities.all %}{{ p.priority }}: {{ p.room.number|stringformat:"03d" }}{% if not forloop.last %} · {% endif %}{% endfor %}</p>
     <p><strong>Orlov:</strong> {{ submitted_orlov }} måned{{ submitted_orlov|pluralize:"er" }}</p>
     {% if is_indstilling %}
-      <p class="{% if orlov_differs %}text-amber-700{% else %}muted{% endif %}">
+      <p class="{% if orlov_differs %}text-brass-ink{% else %}muted{% endif %}">
         <strong>Orlov (kontrol):</strong> angivet <strong>{{ submitted_orlov }}</strong> md. ·
         automatisk beregnet <strong>{{ suggested_orlov }}</strong> md.
         {% if orlov_differs %}⚠ beboeren har ændret værdien{% endif %}
