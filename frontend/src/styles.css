@@ -2095,7 +2095,7 @@
   .drive-form fieldset { border:1px solid var(--border); border-radius:10px; padding:12px 14px; display:grid; gap:8px; margin:0; }
   .drive-form legend { font-weight:600; font-size:14px; padding:0 4px; }
   .drive-form input[type=date] { max-width:200px; }
-  .drive-form .drive-choice, .drive-pick .drive-choice { display:flex; align-items:flex-start; gap:8px; font-size:14px; }
+  .drive-form .drive-choice, .drive-pick .drive-choice { display:flex; align-items:flex-start; gap:8px; font-size:14px; font-weight:400; margin:0; }
   .drive-choice input { width:auto; margin:3px 0 0; flex:none; }
   .drive-pick { list-style:none; margin:0; padding:0; max-height:320px; overflow:auto; display:grid; gap:4px; }
   .drive-pick li[hidden] { display:none; }
