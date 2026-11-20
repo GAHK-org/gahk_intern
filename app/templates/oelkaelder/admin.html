@@ -12,10 +12,10 @@
   </div>
 
   <table cellpadding="6" style="width:100%; border-collapse:collapse">
-    <thead><tr style="text-align:left; border-bottom:1px solid #e6e8ec"><th>Alumne</th><th>Saldo</th><th>Indbetal (kr)</th><th></th></tr></thead>
+    <thead><tr style="text-align:left; border-bottom:1px solid var(--border-strong)"><th>Alumne</th><th>Saldo</th><th>Indbetal (kr)</th><th></th></tr></thead>
     <tbody>
     {% for shopper, balance in rows %}
-      <tr style="border-bottom:1px solid #f0f1f4">
+      <tr style="border-bottom:1px solid var(--border)">
         <td>{{ shopper.resident.full_name }}</td>
         <td class="{{ balance|sign_class }}">{{ balance|kr }}</td>
         <td>
@@ -119,10 +119,10 @@
 
   <h2 class="mt-8">Seneste indbetalinger</h2>
   <table cellpadding="6" style="width:100%; border-collapse:collapse">
-    <thead><tr style="text-align:left; border-bottom:1px solid #e6e8ec"><th>Dato</th><th>Alumne</th><th>Beløb</th><th></th></tr></thead>
+    <thead><tr style="text-align:left; border-bottom:1px solid var(--border-strong)"><th>Dato</th><th>Alumne</th><th>Beløb</th><th></th></tr></thead>
     <tbody>
     {% for d in deposits %}
-      <tr style="border-bottom:1px solid #f0f1f4">
+      <tr style="border-bottom:1px solid var(--border)">
         <td>{{ d.created_at|date:"Y-m-d H:i" }}</td>
         <td>{{ d.shopper.resident.full_name }}</td>
         <td class="amount-pos">{{ d.amount_ore|kr }}</td>
