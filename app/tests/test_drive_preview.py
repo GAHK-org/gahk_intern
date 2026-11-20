@@ -274,6 +274,44 @@ def test_markdown_is_rendered_without_the_authors_html(people: dict[str, Residen
     assert "<script>x()" not in page
 
 
+def test_a_folders_readme_is_rendered_above_its_list(people: dict[str, Resident], group: Workgroup) -> None:
+    member = _client(people["member"])
+    winter = _period_folder(group, WINTER)
+    member.post(reverse("drive:create_folder", args=[winter.pk]), {"name": "Underskab"})
+    _upload(member, winter, "Readme.md", b"# Velkommen\n\n<script>x()</script> **Husk** budgettet")
+    page = member.get(reverse("drive:folder", args=[winter.pk])).content.decode()
+    assert 'class="drive-readme' in page
+    assert page.index("<strong>Husk</strong>") < page.index("Underskab")  # above the folders
+    assert "<script>x()" not in page
+    assert page.count("Readme.md") >= 2  # still in the list too
+
+    # Only README.md, in any case, and not from the bin.
+    member.post(reverse("drive:create_folder", args=[winter.pk]), {"name": "Andet"})
+    other = Folder.objects.get(parent=winter, name="Andet")
+    _upload(member, other, "README.txt", b"x")
+    _upload(member, other, "noter.md", b"x")
+    assert 'class="drive-readme' not in member.get(reverse("drive:folder", args=[other.pk])).content.decode()
+    File.objects.filter(name="Readme.md").update(deleted_at=timezone.now())
+    assert 'class="drive-readme' not in member.get(reverse("drive:folder", args=[winter.pk])).content.decode()
+
+
+def test_a_readme_is_read_from_the_bucket_once(people: dict[str, Resident], group: Workgroup) -> None:
+    member = _client(people["member"])
+    winter = _period_folder(group, WINTER)
+    _upload(member, winter, "README.md", b"Hej **alle**")
+    assert "<strong>alle</strong>" in member.get(reverse("drive:folder", args=[winter.pk])).content.decode()
+    with mock.patch.object(preview, "text", side_effect=AssertionError("read again")):
+        assert (
+            "<strong>alle</strong>" in member.get(reverse("drive:folder", args=[winter.pk])).content.decode()
+        )
+
+    # Bytes that cannot be read leave the README out, not the folder.
+    FileVersion.objects.filter(file__name="README.md").update(key=services.new_key())
+    page = member.get(reverse("drive:folder", args=[winter.pk]))
+    assert page.status_code == 200
+    assert 'class="drive-readme' not in page.content.decode()
+
+
 def test_a_utf8_character_cut_by_the_limit_is_left_out() -> None:
     assert preview._decode("blåbær".encode()[:3]) == "bl"
     assert preview._decode("blåbær".encode("cp1252")) == "blåbær"
