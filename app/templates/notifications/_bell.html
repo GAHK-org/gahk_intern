@@ -7,7 +7,7 @@
   LIVE: `data-live` subscribes the page to this resident's inbox topic (notifications.live). On a
   signal, frontend/src/bell.ts re-reads the badge and, if the panel is open, the panel too.
 {% endcomment %}
-<div class="notif-bell" x-data="{ open: false }" data-live="notifikationer.{{ user.pk }}"
+<div class="notif-bell" x-data="{ open: false }" @pageshow.window="open = false" data-live="notifikationer.{{ user.pk }}"
      data-badge-url="{% url 'notifications:badge' %}" @keydown.escape.window="open = false" @click.outside="open = false">
   <button type="button" class="btn-top notif-bell-button" aria-label="Notifikationer" :aria-expanded="open"
           @click="open = !open"

@@ -3593,6 +3593,86 @@ def test_a_post_with_a_valid_duration_still_goes_straight_through(
     assert QuickPost.objects.get().minutes_left <= 60
 
 
+# ---- the composer sends with htmx (#365) ---------------------------------------------------------
+
+HX = {"HX-Request": "true"}
+
+
+def test_the_composer_posts_with_htmx_into_the_live_list(
+    client: Client, make_resident: Callable[..., Resident]
+) -> None:
+    """Posted the ordinary way, each message was a new page: Back showed the page from before the send
+    with the text still typed. method/action stay for the no-JS path."""
+    client.force_login(make_resident(email="a@gahk.dk"))
+
+    form = client.get(FEED_URL).content.decode().split('id="js-composer"', 1)[1].split(">", 1)[0]
+
+    assert 'hx-post="/den-hurtige/opret"' in form
+    assert 'hx-target="#js-live"' in form
+
+
+def test_a_message_sent_with_htmx_answers_with_the_live_list(
+    client: Client, make_resident: Callable[..., Resident], pushes: list
+) -> None:
+    client.force_login(make_resident(email="a@gahk.dk"))
+
+    response = client.post(FEED_URL + "opret", {"content": "Kaffe nu", "duration": "60"}, headers=HX)
+
+    assert response.status_code == 200
+    assert "HX-Refresh" not in response.headers
+    assert "Kaffe nu" in response.content.decode()
+    assert QuickPost.objects.get().content == "Kaffe nu"
+
+
+def test_a_message_refused_over_htmx_reloads_with_the_text_kept(
+    client: Client, make_resident: Callable[..., Resident]
+) -> None:
+    """A 422, so the composer keeps its text instead of emptying itself; the reload shows the warning
+    and the draft."""
+    client.force_login(make_resident(email="a@gahk.dk"))
+
+    response = client.post(FEED_URL + "opret", {"content": "Mislykket"}, headers=HX)
+
+    assert response.status_code == 422
+    assert response.headers["HX-Refresh"] == "true"
+    html = client.get(FEED_URL).content.decode()
+    assert "Mislykket" in html and "Vælg hvor længe" in html
+
+
+def test_an_empty_message_over_htmx_reloads_with_the_warning(
+    client: Client, make_resident: Callable[..., Resident]
+) -> None:
+    client.force_login(make_resident(email="a@gahk.dk"))
+
+    response = client.post(FEED_URL + "opret", {"content": "  ", "duration": "60"}, headers=HX)
+
+    assert response.status_code == 422
+    assert "Skriv en besked" in client.get(FEED_URL).content.decode()
+
+
+def test_a_rejected_image_over_htmx_reloads_to_show_the_warning(
+    client: Client, make_resident: Callable[..., Resident], pushes: list, settings: object, tmp_path: Path
+) -> None:
+    """The message is posted, but the warning only shows on a fresh page."""
+    settings.MEDIA_ROOT = tmp_path  # type: ignore[attr-defined]
+    client.force_login(make_resident(email="a@gahk.dk"))
+
+    response = client.post(
+        FEED_URL + "opret",
+        {
+            "content": "Se her",
+            "duration": "60",
+            "image": SimpleUploadedFile("evil.pdf", b"x" * 100, content_type="application/pdf"),
+        },
+        headers=HX,
+    )
+
+    assert response.status_code == 200
+    assert response.headers["HX-Refresh"] == "true"
+    assert QuickPost.objects.get().content == "Se her"
+    assert "blev ikke gemt" in client.get(FEED_URL).content.decode()
+
+
 def test_the_authors_name_links_to_their_profile(
     client: Client, make_resident: Callable[..., Resident]
 ) -> None:

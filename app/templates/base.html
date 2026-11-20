@@ -6,6 +6,8 @@
   {% include "_csp_upgrade.html" %}
   {% block viewport %}<meta name="viewport" content="width=device-width, initial-scale=1">{% endblock %}
   <meta name="theme-color" content="#1F5A3A">
+  {# When this page's request started: Back compares it with the last write (core/back_navigation.py). #}
+  <meta name="gahk-rendered" content="{{ rendered_ms }}">
   {# The home-screen name on iOS, which reads this rather than the manifest's short_name. #}
   <meta name="apple-mobile-web-app-title" content="GAHK Intern">
   <title>{% block title %}G. A. Hagemanns Kollegium{% endblock %}</title>
@@ -14,7 +16,7 @@
   <link rel="manifest" href="{% static 'manifest.json' %}">
   <script src="{% static 'dist/app.js' %}" defer></script>
 </head>
-<body class="{% block body_class %}{% endblock %}" x-data="{ sidebar: false }"{% if user.is_authenticated %} data-mention-lookup="{% url 'mention_lookup' %}"{% endif %}>
+<body class="{% block body_class %}{% endblock %}" x-data="{ sidebar: false }" @pageshow.window="sidebar = false"{% if user.is_authenticated %} data-mention-lookup="{% url 'mention_lookup' %}"{% endif %}>
   {# Icon sprite: referenced from the sidebar via <use href="#i-…">. Stroke inherits the item colour. #}
   <svg width="0" height="0" style="position:absolute" aria-hidden="true">
     <defs>
@@ -136,7 +138,7 @@
             The avatar opens the account menu: the profile, the notification settings (the bell beside
             it is for reading them), the password, and logging out. Same Alpine pattern as the bell.
           {% endcomment %}
-          <div class="user-menu" x-data="{ open: false }" @keydown.escape.window="open = false" @click.outside="open = false">
+          <div class="user-menu" x-data="{ open: false }" @pageshow.window="open = false" @keydown.escape.window="open = false" @click.outside="open = false">
             <button type="button" class="topuser user-menu-button" aria-haspopup="menu" aria-controls="user-menu-panel"
                     :aria-expanded="open" @click="open = !open" title="Min konto">
               {% if user.profile_picture %}

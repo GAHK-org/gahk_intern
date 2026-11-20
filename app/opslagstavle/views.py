@@ -25,6 +25,7 @@ from django.shortcuts import get_object_or_404, redirect, render
 from django.utils import timezone
 from django.views.decorators.http import require_POST
 
+from core.back_navigation import not_a_write
 from core.emoji import EMOJI_SHORTLIST
 from core.markdown import embed_references, image_sources, render_markdown
 from core.reactions import CREATED, apply_toggle, reaction_rows
@@ -475,6 +476,7 @@ def toggle_reaction(request: HttpRequest, pk: int) -> HttpResponse:
     )
 
 
+@not_a_write  # renders the draft, stores nothing
 @require_POST
 @access_required
 def preview(request: HttpRequest) -> HttpResponse:
@@ -492,6 +494,7 @@ def preview(request: HttpRequest) -> HttpResponse:
     return render(request, "opslagstavle/_preview.html", {"html": render_markdown(body, embeds=widgets)})
 
 
+@not_a_write  # renders the draft's embeds, stores nothing
 @require_POST
 @access_required
 def embedded(request: HttpRequest) -> HttpResponse:
