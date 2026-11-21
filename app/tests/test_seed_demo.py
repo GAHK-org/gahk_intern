@@ -149,6 +149,7 @@ def test_seed_demo_fills_the_outbox_with_every_kind_and_status(settings: object)
     """The mail page needs a mail in every state, and seeding must send none of them (core.demo)."""
     from datetime import timedelta
 
+    from django.conf import settings as django_settings
     from django.core import mail as django_mail
     from django.utils import timezone
 
@@ -185,6 +186,11 @@ def test_seed_demo_fills_the_outbox_with_every_kind_and_status(settings: object)
     failed = list(mails.filter(status=Status.FAILED))
     assert any(outbox.can_send_again(m, now) for m in failed), "a failure to try Send igen on"
     assert any(not m.payload for m in failed), "an old failure the purge has emptied"
+    # Made as the sending code makes them: from the one sender, with a Reply-To and the automatic headers.
+    kept = [m.payload for m in mails.exclude(payload={})]
+    assert kept
+    assert all(p["from_email"].endswith(f"<{django_settings.MAIL_SENDER}>") for p in kept)
+    assert all(p["reply_to"] and p["headers"]["Auto-Submitted"] == "auto-generated" for p in kept)
 
     # Spread over time, so each period filter shows a different set.
     ages = [now - m.created_at for m in mails]
