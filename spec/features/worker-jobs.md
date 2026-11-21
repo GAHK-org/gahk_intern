@@ -78,6 +78,13 @@ ran and how it went, and what is scheduled next. Under Administration → Worker
   job is kept until there are more than 1000 of the same type and status; then the oldest beyond the
   1000 go once they are 60 days old.
 
+## Demo data
+
+- The demo seed fills the page: jobs running (one with progress), one whose worker died, failed
+  ones (an error, the watchdog, a worker out of memory), an import with its sub-jobs, and the
+  routine Beat jobs over the last days, with peak memory on all but the oldest. The queue stays
+  empty: the local worker would take and run a seeded message at once.
+
 ## Decisions
 
 - **The worker keeps its own record of every job**, not only of the jobs that log something. The

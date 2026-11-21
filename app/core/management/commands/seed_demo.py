@@ -42,7 +42,9 @@ from cms.models import ContentChange, NewsItem, Page, PageVersion, PylonEvent
 # CmsEvent, never Event: the internal events app has one of the same name, and both are seeded
 # here. See events.models on the three-way collision.
 from cms.models import Event as CmsEvent
-from core.models import Cleaning, Room, Workgroup
+from core.demo import seed as seed_worker_jobs
+from core.demo import wipe as wipe_worker_job_results
+from core.models import Cleaning, Room, WorkerJobLog, Workgroup
 from den_hurtige.demo import seed as seed_den_hurtige
 from den_hurtige.models import QuickComment, QuickPost, QuickReaction
 from events.demo import seed as seed_events
@@ -159,6 +161,8 @@ WIPE_ORDER: list[type[models.Model]] = [
     QuickReaction,
     QuickComment,
     QuickPost,
+    # Every job, like Celery's result rows (core.demo.wipe): jobs naming wiped media and films.
+    WorkerJobLog,
     Media,
     Album,
     Notification,
@@ -245,6 +249,8 @@ class Command(BaseCommand):
             seed_den_hurtige(residents, self.now, self.rng)
             # Last: its rows link to the events, opslag and Den Hurtige posts seeded above.
             seed_notifications(residents, self.now, self.rng)
+            # After the photo album and GAHKFlix: its jobs name their photos, albums and films.
+            seed_worker_jobs(residents, self.now, self.rng)
 
         self._report(residents)
 
@@ -257,6 +263,7 @@ class Command(BaseCommand):
                     Album.objects.filter(depth=depth).delete()
                 continue
             model._default_manager.all().delete()
+        wipe_worker_job_results()
         self.stdout.write("  wiped existing demo data")
 
     # ------------------------------------------------------------- lookups
@@ -771,6 +778,7 @@ class Command(BaseCommand):
                 f"\nSeeded demo data: {len(residents)} residents, "
                 f"{Residency.objects.count()} residencies, {AkEntry.objects.count()} AK entries, "
                 f"{Event.objects.count()} begivenheder, {Notification.objects.count()} notifikationer, "
+                f"{WorkerJobLog.objects.count()} worker jobs, "
                 f"{Transaction.objects.count()} ølkælder purchases, {Application.objects.count()} applications."
             )
         )
