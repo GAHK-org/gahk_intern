@@ -22,6 +22,11 @@
             <strong class="drive-name">{{ item.file.name }}</strong>
             <span class="muted">{{ item.where }} · slettet {{ item.file.deleted_at|date:"j. M Y" }}{% if item.file.deleted_by %} af {{ item.file.deleted_by.full_name }}{% endif %} · væk {{ item.gone_at|date:"j. M" }}</span>
           </span>
+          {% if item.purge_pending %}
+            <span class="muted drive-pending">Permanent sletning venter på godkendelse</span>
+          {% else %}
+            {% include "drive/_purge_form.html" with file_uuid=item.file.uuid number=None bin=folder.uuid %}
+          {% endif %}
           <form method="post" action="{% url 'drive:restore' item.file.uuid %}">
             {% csrf_token %}
             <button type="submit" class="btn btn-secondary">Gendan</button>

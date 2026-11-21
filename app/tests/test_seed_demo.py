@@ -151,6 +151,7 @@ def test_seed_demo_fills_drive_for_every_login() -> None:
 
     _check_drive_structure(seeded)
     _check_drive_files(seeded)
+    _check_drive_locks(seeded)
 
 
 class _DriveSeed:
@@ -267,6 +268,38 @@ def _check_drive_files(seeded: _DriveSeed) -> None:
     }
     assert Notification.objects.filter(recipient__email="ak@gahk.dk", title__contains="omdøbte").exists()
     assert Folder.objects.filter(deleted_at__isnull=False).count() == 1
+
+
+def _check_drive_locks(seeded: _DriveSeed) -> None:
+    """Locks and the requests page: pending, approved and rejected unlocks and purges."""
+    from django.db.models import Q
+    from django.utils import timezone
+
+    from drive.models import ApprovalRequest, Event, File, Folder
+
+    requests = ApprovalRequest.objects.all()
+    for kind in ApprovalRequest.Kind.values:
+        for state in ApprovalRequest.State.values:
+            assert requests.filter(kind=kind, state=state).exists(), (kind, state)
+    # Pending ones are for admin@ and formand@ to decide: neither of them asked.
+    pending = requests.filter(state=ApprovalRequest.State.PENDING)
+    assert not pending.filter(requested_by__email__in=["admin@gahk.dk", "formand@gahk.dk"]).exists()
+    # Locked by the nightly task and by hand, a locked folder, and a file unlocked for now.
+    assert File.objects.filter(locked_at__isnull=False, locked_by__isnull=True).exists()
+    assert File.objects.filter(locked_at__isnull=False, locked_by__isnull=False).exists()
+    assert Folder.objects.filter(kind=Folder.Kind.FOLDER, locked_at__isnull=False).exists()
+    assert File.objects.filter(unlocked_until__gt=timezone.now()).exists()
+    lines = set(Event.objects.values_list("action", flat=True))
+    assert lines >= {
+        "locked",
+        "unlock_requested",
+        "unlock_decided",
+        "purge_requested",
+        "purge_decided",
+        "purged",
+    }
+    # The space's activity page has lines with their place.
+    assert not Event.objects.filter(Q(space="") | Q(space__isnull=True)).exists()
 
 
 @pytest.mark.django_db

@@ -111,7 +111,7 @@ Drive
 - A new version is created by an upload that replaces a file, or when a live editing session ends. A version lists everyone who edited in it, and when it was saved.
 - Every version is kept for as long as the file exists.
 - Anyone who can read a file can view and download its old versions. Restoring one adds it as a new version on top.
-- A single version, or a binned file, is permanently deleted before its time only by request: a member who can write asks, and an admin or Inspektionen approves (moderators in a Delt mappe). The approver sees the name and version details, never the contents.
+- A single version, or a binned file, is permanently deleted before its time only by request: a member who can write asks, and an admin or Inspektionen approves (moderators in a Delt mappe). The approver sees the name and version details, never the contents. The newest version cannot be purged; the file goes in the bin first.
 
 ## Locking
 
@@ -120,6 +120,7 @@ Drive
 - A file locks automatically one year after its last new version. A folder locks automatically after a year with no new file, version or subfolder anywhere inside it. Renaming does not count.
 - Anyone who can write can lock a file or folder by hand.
 - Anyone who could otherwise write to a locked item can request an unlock for up to 30 days, with a reason. Admins and Inspektionen decide (moderators in a Delt mappe), and a rejection comes with a reason. The requester is told the outcome.
+- Nobody decides their own unlock or purge request.
 - When the unlock period ends, the item locks again immediately.
 - Unlocking never grants write access: a file in a read-only period cannot be unlocked for editing.
 - Unlocking a folder does not unlock the files inside it.

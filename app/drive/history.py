@@ -29,8 +29,17 @@ def record(
     folder: Folder | None = None,
     **details: object,
 ) -> Event:
+    where = folder if folder is not None else file.folder if file is not None else None
     return Event.objects.create(
-        action=action, actor=actor, name=name, file=file, folder=folder, details=details
+        action=action,
+        actor=actor,
+        name=name,
+        file=file,
+        folder=folder,
+        details=details,
+        space=where.space if where else "",
+        workgroup_id=where.workgroup_id if where else None,
+        period_start=where.period_start if where else None,
     )
 
 

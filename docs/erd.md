@@ -950,6 +950,9 @@ erDiagram
 
     drive_Folder {
         int id PK
+        datetime locked_at
+        int locked_by_id FK
+        datetime unlocked_until
         string uuid
         int parent_id FK
         string name
@@ -967,6 +970,9 @@ erDiagram
 
     drive_File {
         int id PK
+        datetime locked_at
+        int locked_by_id FK
+        datetime unlocked_until
         string uuid
         int folder_id FK
         string name
@@ -1010,6 +1016,28 @@ erDiagram
         int folder_id FK
         string name
         json details
+        string space
+        int workgroup_id FK
+        date period_start
+    }
+
+    drive_ApprovalRequest {
+        int id PK
+        string uuid
+        string kind
+        string state
+        int file_id FK
+        int folder_id FK
+        int version_number
+        string name
+        string where
+        int days
+        text reason
+        int requested_by_id FK
+        datetime requested_at
+        int decided_by_id FK
+        datetime decided_at
+        text decision_reason
     }
 
     regnskab_EconomicLedgerEntry {
@@ -1158,10 +1186,12 @@ erDiagram
     gahkflix_VideoEvent }o--|| gahkflix_Video : "video"
     gahkflix_VideoEvent }o--|o residents_Resident : "actor"
     gahkflix_VideoEvent }o--|o gahkflix_ChangeRequest : "request"
+    drive_Folder }o--|o residents_Resident : "locked_by"
     drive_Folder }o--|o drive_Folder : "parent"
     drive_Folder }o--|o core_Workgroup : "workgroup"
     drive_Folder }o--|o residents_Resident : "created_by"
     drive_Folder }o--|o residents_Resident : "deleted_by"
+    drive_File }o--|o residents_Resident : "locked_by"
     drive_File }o--|| drive_Folder : "folder"
     drive_File }o--|o residents_Resident : "created_by"
     drive_File }o--|o residents_Resident : "changed_by"
@@ -1173,6 +1203,11 @@ erDiagram
     drive_Event }o--|o residents_Resident : "actor"
     drive_Event }o--|o drive_File : "file"
     drive_Event }o--|o drive_Folder : "folder"
+    drive_Event }o--|o core_Workgroup : "workgroup"
+    drive_ApprovalRequest }o--|o drive_File : "file"
+    drive_ApprovalRequest }o--|o drive_Folder : "folder"
+    drive_ApprovalRequest }o--|o residents_Resident : "requested_by"
+    drive_ApprovalRequest }o--|o residents_Resident : "decided_by"
     regnskab_EconomicLedgerEntry }o--|| residents_Resident : "resident"
     regnskab_AlumneregningSend }o--|| residents_Resident : "resident"
     regnskab_AlumneregningSend }o--|o core_OutgoingMail : "mail"
@@ -1528,6 +1563,9 @@ erDiagram
 erDiagram
     drive_Folder {
         int id PK
+        datetime locked_at
+        int locked_by_id FK
+        datetime unlocked_until
         string uuid
         int parent_id FK
         string name
@@ -1545,6 +1583,9 @@ erDiagram
 
     drive_File {
         int id PK
+        datetime locked_at
+        int locked_by_id FK
+        datetime unlocked_until
         string uuid
         int folder_id FK
         string name
@@ -1588,16 +1629,40 @@ erDiagram
         int folder_id FK
         string name
         json details
+        string space
+        int workgroup_id FK
+        date period_start
+    }
+
+    drive_ApprovalRequest {
+        int id PK
+        string uuid
+        string kind
+        string state
+        int file_id FK
+        int folder_id FK
+        int version_number
+        string name
+        string where
+        int days
+        text reason
+        int requested_by_id FK
+        datetime requested_at
+        int decided_by_id FK
+        datetime decided_at
+        text decision_reason
     }
 
     core_Workgroup { }
 
     residents_Resident { }
 
+    drive_Folder }o--|o residents_Resident : "locked_by"
     drive_Folder }o--|o drive_Folder : "parent"
     drive_Folder }o--|o core_Workgroup : "workgroup"
     drive_Folder }o--|o residents_Resident : "created_by"
     drive_Folder }o--|o residents_Resident : "deleted_by"
+    drive_File }o--|o residents_Resident : "locked_by"
     drive_File }o--|| drive_Folder : "folder"
     drive_File }o--|o residents_Resident : "created_by"
     drive_File }o--|o residents_Resident : "changed_by"
@@ -1609,6 +1674,11 @@ erDiagram
     drive_Event }o--|o residents_Resident : "actor"
     drive_Event }o--|o drive_File : "file"
     drive_Event }o--|o drive_Folder : "folder"
+    drive_Event }o--|o core_Workgroup : "workgroup"
+    drive_ApprovalRequest }o--|o drive_File : "file"
+    drive_ApprovalRequest }o--|o drive_Folder : "folder"
+    drive_ApprovalRequest }o--|o residents_Resident : "requested_by"
+    drive_ApprovalRequest }o--|o residents_Resident : "decided_by"
 ```
 
 ## events

@@ -1,0 +1,61 @@
+{% extends "base.html" %}
+{% block title %}Anmodninger - Drive - GAHK Intern{% endblock %}
+{% block content_width %}max-w-5xl{% endblock %}
+
+{% block content %}
+  <div class="page-head">
+    <div>
+      <p class="eyebrow">Drive</p>
+      <h1>Anmodninger</h1>
+    </div>
+  </div>
+  {% include "drive/_crumbs.html" with ancestors=None current="Anmodninger" %}
+  <p class="muted mb-4">
+    Oplåsning og permanent sletning, som en anden end den, der bad om det, skal godkende.
+    Du ser navn, sti og version, aldrig indholdet.
+  </p>
+
+  <h2 class="drive-h2">Venter</h2>
+  {% if pending %}
+    <ul class="drive-list mb-6">
+      {% for item in pending %}
+        <li class="drive-request">
+          <span class="drive-version">
+            <strong>{{ item.get_kind_display }}: {% if item.version_number %}version {{ item.version_number }} af {% endif %}{{ item.name }}</strong>
+            <span class="muted">{{ item.where }}{% if item.days %} · {{ item.days }} dage{% endif %}</span>
+            <span class="drive-request-reason">„{{ item.reason }}“ · {{ item.requested_by.full_name|default:"Ukendt" }}, {{ item.requested_at|date:"j. M Y H:i" }}</span>
+          </span>
+          {% if item.requested_by_id == me %}
+            <span class="muted drive-pending">Din egen: en anden beslutter</span>
+          {% else %}
+            <form method="post" action="{% url 'drive:decide' item.uuid %}" class="drive-request-form">
+              {% csrf_token %}
+              <label class="sr-only" for="reason-{{ item.uuid }}">Begrundelse</label>
+              <input id="reason-{{ item.uuid }}" type="text" name="reason" maxlength="2000" placeholder="Begrundelse (skal med ved afvisning)">
+              <div class="drive-dialog-buttons">
+                <button type="submit" name="decision" value="approve" class="btn">Godkend</button>
+                <button type="submit" name="decision" value="reject" class="btn btn-secondary">Afvis</button>
+              </div>
+            </form>
+          {% endif %}
+        </li>
+      {% endfor %}
+    </ul>
+  {% else %}
+    <p class="muted mb-6">Ingen anmodninger venter.</p>
+  {% endif %}
+
+  <h2 class="drive-h2">Besluttet</h2>
+  {% if decided %}
+    <ul class="drive-history">
+      {% for item in decided %}
+        <li>
+          <span>{{ item.get_state_display }}: {{ item.get_kind_display|lower }} af {% if item.version_number %}version {{ item.version_number }} af {% endif %}{{ item.name }}{% if item.decision_reason %} („{{ item.decision_reason }}“){% endif %}</span>
+          <span class="muted">{{ item.where }} · bedt om af {{ item.requested_by.full_name|default:"ukendt" }} · {{ item.decided_by.full_name|default:"ukendt" }}, {{ item.decided_at|date:"j. M Y" }}</span>
+        </li>
+      {% endfor %}
+    </ul>
+  {% else %}
+    <p class="muted">Intet besluttet endnu.</p>
+  {% endif %}
+{% endblock %}

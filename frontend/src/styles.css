@@ -2091,6 +2091,15 @@
     background:var(--surface); font-size:14px; }
   .drive-note p { margin:0 0 4px; }
   .drive-note p:last-child { margin:0; }
+  .drive-list .ni.drive-locked { width:14px; height:14px; color:var(--muted); }
+  .drive-pending { font-size:12px; }
+  .drive-request { flex-wrap:wrap; }
+  .drive-request-reason { flex:1 1 100%; font-size:13px; overflow-wrap:anywhere; }
+  .drive-request-form { display:grid; gap:8px; margin:8px 0 0; max-width:420px; }
+  .drive-request-form label { display:grid; gap:4px; font-size:13px; }
+  .drive-request-form input[type=number] { max-width:120px; }
+  .drive-request-form > button { justify-self:start; }
+  .drive-list .drive-request-form { margin:0; flex:1 1 280px; }
   @media (max-width: 560px) {
     /* The metadata goes first: on a phone the name is the point. */
     .drive-meta { display:none; }

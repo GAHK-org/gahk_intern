@@ -1,6 +1,6 @@
 from django.urls import path
 
-from . import views, views_items
+from . import views, views_items, views_locks
 
 app_name = "drive"
 
@@ -25,4 +25,12 @@ urlpatterns = [
     path(
         "file/<uuid:uuid>/version/<int:number>/restore", views_items.restore_version, name="restore_version"
     ),
+    path("file/<uuid:uuid>/lock", views_locks.lock_file, name="lock_file"),
+    path("file/<uuid:uuid>/unlock-request", views_locks.unlock_file, name="unlock_file"),
+    path("file/<uuid:uuid>/purge-request", views_locks.purge_request, name="purge_request"),
+    path("folder/<uuid:uuid>/lock", views_locks.lock_folder, name="lock_folder"),
+    path("folder/<uuid:uuid>/unlock-request", views_locks.unlock_folder, name="unlock_folder"),
+    path("folder/<uuid:uuid>/activity", views_locks.activity, name="activity"),
+    path("requests/", views_locks.requests_page, name="requests"),
+    path("requests/<uuid:uuid>/decide", views_locks.decide, name="decide"),
 ]

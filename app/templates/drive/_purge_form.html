@@ -1,0 +1,11 @@
+{% comment %} Asking admins and Inspektionen to delete a version or a binned file for good. {% endcomment %}
+<details class="drive-inline">
+  <summary>Slet permanent</summary>
+  <form method="post" action="{% url 'drive:purge_request' file_uuid %}" class="drive-request-form">
+    {% csrf_token %}
+    {% if number %}<input type="hidden" name="number" value="{{ number }}">{% endif %}
+    {% if bin %}<input type="hidden" name="bin" value="{{ bin }}">{% endif %}
+    <label>Begrundelse <textarea name="reason" rows="2" maxlength="2000" required></textarea></label>
+    <button type="submit" class="btn btn-secondary">Bed om permanent sletning</button>
+  </form>
+</details>
