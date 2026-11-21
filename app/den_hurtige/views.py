@@ -39,6 +39,7 @@ from django.views.decorators.http import require_POST
 
 from core.clock import current_date, current_datetime
 from core.reactions import CREATED, apply_toggle, reaction_rows
+from core.send_once import send_once
 from core.uploads import attached_image
 from notifications.categories import chat_room_key
 from notifications.models import NotificationPreference
@@ -331,6 +332,11 @@ def feed_items(request: HttpRequest) -> HttpResponse:
     channel = channels.lookup(request.GET.get("kanal"))
     if channel is None or not channels.allowed(channel, effective_roles(request)):
         return HttpResponse(status=204)
+    return _posts_response(request, channel)
+
+
+def _posts_response(request: HttpRequest, channel: Channel) -> HttpResponse:
+    """The live list of `channel`: the poll's answer, and the composer's after a send."""
     return render(
         request,
         "den_hurtige/_posts.html",
@@ -637,16 +643,30 @@ def _channel_of(post: QuickPost) -> str:
 DRAFT_SESSION_KEY = "den_hurtige_draft"
 
 
-def _reject(request: HttpRequest, channel: Channel, content: str, message: str) -> HttpResponseRedirect:
-    """Refuse a submission and bounce back to the feed with the text still in the box.
+def _reject(request: HttpRequest, channel: Channel, content: str, message: str) -> HttpResponse:
+    """Refuse a submission and show the feed again with the text still in the box.
 
-    The composer posts and redirects, so without this a rejected message is simply gone — and it was
-    typed in a hurry by somebody who thought they had sent it. An attached image cannot be carried:
-    no server can refill a file input. The text is the part worth saving and the part that took the
-    effort; the warning says the image has to be picked again.
+    Without this a rejected message is simply gone — and it was typed in a hurry by somebody who
+    thought they had sent it. An attached image cannot be carried: no server can refill a file
+    input. The text is the part worth saving and the part that took the effort; the warning says the
+    image has to be picked again.
     """
     messages.error(request, message)
-    request.session[DRAFT_SESSION_KEY] = content
+    if content:
+        request.session[DRAFT_SESSION_KEY] = content
+    return _reload_feed(request, channel, status=422)
+
+
+def _reload_feed(request: HttpRequest, channel: Channel, status: int = 200) -> HttpResponse:
+    """Show the feed afresh, with whatever the session holds for it: a warning, a refused draft.
+
+    For htmx (the composer, feed.html) that is a reload of the page it is on, which adds no step to
+    the Back button. Without JavaScript the form was posted the ordinary way, so it is a redirect.
+    The 422 on a refusal is for the composer: an unsuccessful request keeps its text rather than
+    emptying itself (frontend/src/feed.ts).
+    """
+    if request.headers.get("HX-Request"):
+        return HttpResponse(status=status, headers={"HX-Refresh": "true"})
     return redirect(channel.url)
 
 
@@ -666,13 +686,12 @@ def _posting_channel(request: HttpRequest) -> Channel:
 
 @require_POST
 @access_required
-def create_post(request: HttpRequest) -> HttpResponseRedirect:
+def create_post(request: HttpRequest) -> HttpResponse:
     author = current_resident(request)
     channel = _posting_channel(request)
     content = (request.POST.get("content") or "").strip()
     if not content:
-        messages.error(request, "Skriv en besked før du slår op.")
-        return redirect(channel.url)
+        return _reject(request, channel, content, "Skriv en besked før du slår op.")
     if len(content) > MAX_CONTENT_CHARS:
         return _reject(request, channel, content, f"Beskeden må højst fylde {MAX_CONTENT_CHARS} tegn.")
 
@@ -688,19 +707,33 @@ def create_post(request: HttpRequest) -> HttpResponseRedirect:
     if minutes not in VALID_DURATIONS:
         return _reject(request, channel, content, "Vælg hvor længe beskeden skal være relevant.")
 
-    post = QuickPost.objects.create(
-        author=author,
-        channel=channel.slug,
-        content=content,
-        image=_validated_image(request) or "",
-        expires_at=current_datetime() + timedelta(minutes=minutes),
-    )
+    # The same send arriving twice (a second press during a slow upload, a retry) is saved once, and
+    # the copy is answered as the first was (core.send_once).
+    with send_once(request) as send:
+        if send.repeated:
+            return _posted(request, channel)
+        post = QuickPost.objects.create(
+            author=author,
+            channel=channel.slug,
+            content=content,
+            image=_validated_image(request) or "",
+            expires_at=current_datetime() + timedelta(minutes=minutes),
+        )
     services.notify_new_post(post)
     live.message_changed(post.channel, post.pk, "created")
     # No success message on purpose: the message appearing at the bottom of the feed *is* the
-    # confirmation, and no chat app interrupts you to say a send worked. The warnings above (a
-    # rejected image, over-long text) still surface, because those change what was actually posted.
-    return redirect(channel.url)
+    # confirmation, and no chat app interrupts you to say a send worked. A rejected image still
+    # surfaces, because it changes what was actually posted, and only a fresh page shows it.
+    #
+    # The composer sends with htmx and gets the live list back, so a message adds no step to the Back
+    # button, and Back cannot show the page from before the send with the text still typed (#365).
+    return _posted(request, channel)
+
+
+def _posted(request: HttpRequest, channel: Channel) -> HttpResponse:
+    if request.headers.get("HX-Request") and not len(messages.get_messages(request)):
+        return _posts_response(request, channel)
+    return _reload_feed(request, channel)
 
 
 def _comment_response(request: HttpRequest, post: QuickPost, back: str) -> HttpResponse:
@@ -770,13 +803,16 @@ def create_comment(request: HttpRequest, pk: int) -> HttpResponse:
         messages.error(request, "Skriv et svar, eller vedhæft et billede.")
         return _comment_response(request, post, back)
 
-    comment = QuickComment.objects.create(
-        post=post,
-        author=author,
-        content=content,
-        image=image or "",
-        notify_everyone=request.POST.get("notify") == "alle",
-    )
+    with send_once(request) as send:
+        if send.repeated:
+            return _comment_response(request, post, back)  # the same send, arriving twice
+        comment = QuickComment.objects.create(
+            post=post,
+            author=author,
+            content=content,
+            image=image or "",
+            notify_everyone=request.POST.get("notify") == "alle",
+        )
     services.notify_new_comment(comment)
     live.message_changed(post.channel, post.pk)
     return _comment_response(request, post, back)

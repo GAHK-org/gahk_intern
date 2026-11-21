@@ -1,4 +1,4 @@
-{% load text_extras %}
+{% load send_once text_extras %}
 {% comment %}
   Everything on the detail page that a live update re-draws: the post and its comments. Rendered
   inside detail.html on first load and by views.live_detail when a signal names this post, and
@@ -80,7 +80,7 @@
     {% endcomment %}
     <form method="post" enctype="multipart/form-data" data-morph-skip
           action="{% url 'opslagstavle:create_comment' notice.pk %}" class="comment-form">
-      {% csrf_token %}
+      {% csrf_token %}{% send_token %}
       {% comment %}
         ENCTYPE IS LOAD-BEARING. Without multipart/form-data the browser posts the file's NAME and
         nothing else, request.FILES is empty, and the comment saves with no picture and no error

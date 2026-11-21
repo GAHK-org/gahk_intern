@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% load send_once %}
 {% block title %}{{ channel.name }} - Den Hurtige - GAHK Intern{% endblock %}
 {% comment %}
   A bespoke class rather than Tailwind's max-w-3xl, because the cap has to CHANGE when a thread is
@@ -252,10 +253,17 @@
         same rule the sheet enforces, by the only means available without scripting. feed.ts hides
         it and drops `required` the moment it takes over, so a scripted browser is asked exactly
         once, by the sheet. It stays a native <select> there so iOS gives it the wheel picker.
+
+        SENT WITH htmx, answered with the live list (#365). Posted the ordinary way, every message
+        was a new page: Back then needed one press per message sent, and showed the page from
+        before the send with the text still in the box. Without JavaScript it still posts the
+        ordinary way, which is what method/action are for.
     {% endcomment %}
     <form class="composer" method="post" action="{% url 'den_hurtige:create_post' %}"
-          enctype="multipart/form-data" id="js-composer">
-      {% csrf_token %}
+          enctype="multipart/form-data" id="js-composer"
+          hx-post="{% url 'den_hurtige:create_post' %}" hx-target="#js-live"
+          hx-ext="morph" hx-swap="morph:innerHTML">
+      {% csrf_token %}{% send_token %}
       {% comment %}
         Which feed this lands in. Rendered server-side, so the composer cannot disagree with the
         page it is on — there is no client state to fall out of sync.

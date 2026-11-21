@@ -96,6 +96,14 @@ erDiagram
         text error
     }
 
+    core_SentForm {
+        int id PK
+        int resident_id FK
+        string token
+        string landed
+        datetime created_at
+    }
+
     residents_Resident {
         int id PK
         string password
@@ -1009,6 +1017,7 @@ erDiagram
     }
 
     core_PushSubscription }o--|| residents_Resident : "user"
+    core_SentForm }o--|| residents_Resident : "resident"
     residents_Resident }o--|o residents_Resident : "sponsor"
     residents_Residency }o--|| residents_Resident : "resident"
     residents_Residency }o--|| core_Room : "room"
@@ -1476,9 +1485,18 @@ erDiagram
         text error
     }
 
+    core_SentForm {
+        int id PK
+        int resident_id FK
+        string token
+        string landed
+        datetime created_at
+    }
+
     residents_Resident { }
 
     core_PushSubscription }o--|| residents_Resident : "user"
+    core_SentForm }o--|| residents_Resident : "resident"
 ```
 
 ## den_hurtige
