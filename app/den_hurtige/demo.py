@@ -8,6 +8,7 @@ from django.core.files.base import ContentFile
 
 from residents.models import Resident
 
+from . import channels
 from .models import DEFAULT_CHANNEL_SLUG, QuickComment, QuickPost, QuickReaction
 
 POSTS = [
@@ -257,6 +258,85 @@ def seed(residents: list[Resident], now: datetime, rng: random.Random) -> int:
         doomed.soft_delete()
         made += 1
     return made
+
+
+# Den Hurtige's Køkkenet channel: the kitchen account's home page, which every resident can also read
+# and write in. Per post: author ("kitchen" or an index into `residents`), message, age, expiry
+# relative to now, replies as (author, text), post image, reaction count.
+KITCHEN_POSTS: list[tuple[str | int, str, timedelta, timedelta, list[tuple[str | int, str]], bool, int]] = [
+    # A resident asking and the kitchen answering, so a reply by the kitchen account shows in a thread.
+    (
+        1,
+        "Må vi låne de store gryder til fællesspisning på fredag?",
+        timedelta(minutes=30),
+        timedelta(hours=10),
+        [("kitchen", "Ja, de står på hylden ved opvasken. Sæt dem tilbage rene 🙂")],
+        False,
+        1,
+    ),
+    # The kitchen's own messages, with reactions and a resident's reply, which is what its
+    # notifications (chat.likes, chat.replies) are about.
+    (
+        "kitchen",
+        "Aftensmaden i dag er lasagne med salat. Der er en vegetarisk udgave til dem, der har bestilt den.",
+        timedelta(hours=2),
+        timedelta(hours=8),
+        [(2, "Kan man stadig nå at bestille den vegetariske?"), ("kitchen", "Ja, skriv inden kl. 16.")],
+        False,
+        3,
+    ),
+    (
+        "kitchen",
+        "Der er rester fra frokosten på køl. Tag gerne for jer.",
+        timedelta(hours=5),
+        timedelta(hours=3),
+        [],
+        True,
+        2,
+    ),
+    # Expired, so the channel's archive has the kitchen in it too.
+    (
+        "kitchen",
+        "Køkkenet holder lukket mandag, fordi ovnene skal rengøres.",
+        timedelta(days=6),
+        timedelta(days=-3),
+        [],
+        False,
+        0,
+    ),
+]
+
+
+def seed_kitchen(kitchen: Resident, residents: list[Resident], now: datetime) -> int:
+    """The Køkkenet channel, which the plain seed leaves empty: the only channel the kitchen account
+    sees, so without this it lands on an empty page. Reactions are fixed rather than random, so
+    seeding the kitchen does not shift the random draws of everything seeded after it."""
+    if len(residents) < 6:
+        return 0
+
+    def who(author: str | int) -> Resident:
+        return kitchen if author == "kitchen" else residents[int(author)]
+
+    for index, (author, content, age, expires_in, replies, has_image, reaction_count) in enumerate(
+        KITCHEN_POSTS
+    ):
+        post = QuickPost.objects.create(
+            author=who(author),
+            channel=channels.KITCHEN_CHANNEL,
+            content=content,
+            image=ContentFile(_image(content, index), name=f"koekken-{index + 1}.jpg") if has_image else "",
+            expires_at=now + expires_in,
+        )
+        created_at = now - age
+        QuickPost.objects.filter(pk=post.pk).update(created_at=created_at)
+        for reply_index, (reply_author, text) in enumerate(replies):
+            reply = QuickComment.objects.create(post=post, author=who(reply_author), content=text)
+            QuickComment.objects.filter(pk=reply.pk).update(
+                created_at=created_at + timedelta(minutes=5 * (reply_index + 1))
+            )
+        for reaction_index, resident in enumerate(residents[3 : 3 + reaction_count]):
+            QuickReaction.objects.create(post=post, author=resident, emoji=EMOJI[reaction_index % len(EMOJI)])
+    return len(KITCHEN_POSTS)
 
 
 def _image(label: str, index: int) -> bytes:

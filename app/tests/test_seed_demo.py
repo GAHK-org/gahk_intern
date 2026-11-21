@@ -3,6 +3,9 @@ data that lights up the app's real queries (active period, roles, derived ølkæ
 
 import pytest
 from django.core.management import call_command
+from django.test import Client
+from django.urls import reverse
+from django.utils import timezone
 
 from den_hurtige.models import QuickPost
 from oelkaelder.models import Shopper
@@ -16,9 +19,11 @@ def test_seed_demo_populates_and_is_idempotent() -> None:
     call_command("seed_demo", "--fresh", "--force", "--residents", "12", verbosity=0)
     # 12 seeded residents, one of whom then moves out and is replaced by a newly created one, so the
     # current month stays full (see _seed_residencies). That keeps a leaver for the regnskab page
-    # without leaving the alumneliste a person short.
+    # without leaving the alumneliste a person short. The kitchen account comes on top: it is no
+    # resident, so it is on no list (test_seed_demo_gives_the_kitchen_account_its_pages).
     first_count = Resident.objects.count()
-    assert first_count == 13
+    assert Resident.objects.filter(is_kitchen=False).count() == 13
+    assert first_count == 14
 
     # Re-running with --fresh must not duplicate or raise (idempotent).
     # --force because Django's test runner forces DEBUG=False, which the safety guard blocks.
@@ -39,7 +44,7 @@ def test_seed_demo_populates_and_is_idempotent() -> None:
 
     # Two alumni in the current month lack an e-conomic kontonr., for trying the regnskab page's
     # "Mangler e-conomic kontonr." list; everyone else has one.
-    missing = Resident.objects.filter(economic_account_number__isnull=True)
+    missing = Resident.objects.filter(economic_account_number__isnull=True, is_kitchen=False)
     assert missing.count() == 2
     assert all(r.residencies.filter(year=year, month=month).exists() for r in missing)
 
@@ -61,7 +66,7 @@ def test_seed_demo_populates_and_is_idempotent() -> None:
 
     this_month = Residency.objects.filter(year=year, month=month)
     # Everyone except the one leaver is on this month's list: a full alumneliste, not one short.
-    assert this_month.count() == Resident.objects.count() - 1
+    assert this_month.count() == Resident.objects.filter(is_kitchen=False).count() - 1
     assert not this_month.filter(resident=leaver).exists()
     room_ids = list(this_month.values_list("room_id", flat=True))
     assert len(room_ids) == len(set(room_ids)), "one resident per room this month"
@@ -205,3 +210,65 @@ def test_seed_demo_leaves_no_mail_waiting_for_a_backend_that_really_sends(settin
 
     assert not OutgoingMail.objects.filter(status=OutgoingMail.Status.QUEUED).exists()
     assert OutgoingMail.objects.filter(status=OutgoingMail.Status.FAILED).exists()
+
+
+@pytest.mark.django_db
+def test_seed_demo_gives_the_kitchen_account_its_pages(client: Client) -> None:
+    """A documented kitchen login, with something on every page open to it: otherwise it lands on an
+    empty Køkkenet channel, and the account kinds can only be tried through the admin preview."""
+    from den_hurtige import channels
+    from notifications.categories import KITCHEN_CATEGORIES
+    from notifications.models import Notification
+    from opslagstavle.models import Notice
+    from reparationer.models import RepairTask
+    from residents.models import Residency
+
+    call_command("seed_demo", "--fresh", "--force", "--residents", "12", verbosity=0)
+    kitchen = Resident.objects.get(email="koekken@gahk.dk")
+
+    assert kitchen.is_kitchen
+    assert kitchen.check_password("demo1234")
+    assert not Residency.objects.filter(resident=kitchen).exists(), "not a resident, on no alumneliste"
+
+    channel = QuickPost.objects.filter(channel=channels.KITCHEN_CHANNEL)
+    assert channel.filter(author=kitchen).exists()
+    assert channel.exclude(author=kitchen).filter(comments__author=kitchen).exists(), "the kitchen answers"
+    assert channel.filter(author=kitchen, reactions__isnull=False).exists()
+    assert channel.filter(expires_at__lt=timezone.now()).exists(), "the channel's archive"
+
+    assert Notice.objects.filter(author=kitchen, comments__isnull=False).exists()
+    assert RepairTask.objects.filter(
+        reported_by=kitchen, comments__isnull=False, images__isnull=False
+    ).exists()
+
+    mine = Notification.objects.filter(recipient=kitchen)
+    assert {n.category for n in mine} <= KITCHEN_CATEGORIES, "only what the kitchen can be sent"
+    assert mine.filter(seen_at__isnull=True).exists() and mine.filter(seen_at__isnull=False).exists()
+
+    # Logged in, it lands on the channel, with the seeded messages there.
+    client.force_login(kitchen)
+    page = client.get(reverse("dashboard"), follow=True)
+    assert page.redirect_chain[-1][0] == channels.BY_SLUG[channels.KITCHEN_CHANNEL].url
+    assert "lasagne" in page.content.decode()
+    for name, text in [
+        ("opslagstavle:board", "Køkkenet holder juleferie"),
+        ("reparationer:board", "Emhætten i det varme køkken larmer"),
+        ("notifications:index", "Kan vi låne køkkenet til en julefrokost?"),
+    ]:
+        assert text in client.get(reverse(name)).content.decode(), name
+
+
+@pytest.mark.django_db
+def test_seed_demo_fills_every_column_of_the_repair_board() -> None:
+    """One ticket per column, both owners, a yellow and a red card, and one archived, so the board's
+    colours and the archive page show without months of waiting."""
+    from reparationer.models import RepairTask
+
+    call_command("seed_demo", "--fresh", "--force", "--residents", "12", verbosity=0)
+    active = RepairTask.objects.active()
+
+    assert {t.status for t in active} == set(RepairTask.Status.values)
+    assert {t.responsible for t in active} == set(RepairTask.Responsible.values)
+    assert {"stale", "overdue", "done"} <= {t.column_age for t in active}
+    assert RepairTask.objects.archived().exists()
+    assert RepairTask.objects.due_for_archive().count() == 0, "the nightly sweep would change the demo"

@@ -150,3 +150,42 @@ def seed_embeds(residents: list[Resident], now: datetime) -> int:
         notice = Notice.objects.create(author=residents[i % len(residents)], category=Category.NYT, body=body)
         Notice.objects.filter(pk=notice.pk).update(created_at=now - timedelta(hours=2 + i))
     return len(bodies)
+
+
+def seed_kitchen(kitchen: Resident, residents: list[Resident], now: datetime) -> int:
+    """The kitchen account's own opslag. It sees only its own posts on the board, so without these its
+    board is empty; one has comments and reactions from residents, which is what its posts.replies and
+    posts.likes notifications are about. Older than the embed posts, so they stay the newest opslag."""
+    if len(residents) < 5:
+        return 0
+    bodies = [
+        (
+            Category.PRAKTISK,
+            (
+                "**Køkkenet holder juleferie.** Sidste aftensmad før jul bliver sagt i Den Hurtige, og "
+                "vi er tilbage den første hverdag i januar."
+            ),
+            timedelta(days=1),
+        ),
+        (
+            Category.NYT,
+            (
+                "**Allergener.** Spørg altid i køkkenet, hvis du er i tvivl om, hvad maden indeholder. "
+                "Listen hænger ved anretningen."
+            ),
+            timedelta(days=40),
+        ),
+    ]
+    made = []
+    for category, body, age in bodies:
+        notice = Notice.objects.create(author=kitchen, category=category, body=body)
+        Notice.objects.filter(pk=notice.pk).update(created_at=now - age)
+        made.append(notice)
+    for i, (resident, text) in enumerate(
+        [(residents[1], "Tak for i år!"), (residents[2], "Kan vi låne køkkenet til en julefrokost?")]
+    ):
+        comment = NoticeComment.objects.create(notice=made[0], author=resident, body=text)
+        NoticeComment.objects.filter(pk=comment.pk).update(created_at=now - timedelta(hours=20 - i))
+    for i, resident in enumerate(residents[2:5]):
+        NoticeReaction.objects.create(notice=made[0], author=resident, emoji=EMOJI[i % len(EMOJI)])
+    return len(made)
