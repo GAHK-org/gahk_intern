@@ -100,7 +100,7 @@ def share(
         access="redigere" if access == EDIT else "læse",
     )
     if created and resident_id is not None:
-        url = reverse("drive:file", args=[file.pk]) if file else reverse("drive:folder", args=[folder.pk])  # type: ignore[union-attr]
+        url = reverse("drive:file", args=[file.uuid]) if file else reverse("drive:folder", args=[folder.uuid])  # type: ignore[union-attr]
         notifications.notify(
             [resident_id],
             category=categories.GENERAL,
@@ -163,8 +163,8 @@ class Shared:
     @property
     def url(self) -> str:
         if self.file is not None:
-            return reverse("drive:file", args=[self.file.pk])
-        return reverse("drive:folder", args=[self.folder.pk])  # type: ignore[union-attr]
+            return reverse("drive:file", args=[self.file.uuid])
+        return reverse("drive:folder", args=[self.folder.uuid])  # type: ignore[union-attr]
 
 
 def _listed(viewer: Viewer, rows: list[Share]) -> list[Shared]:

@@ -2,6 +2,7 @@
 rules are in standing.py."""
 
 from datetime import date
+from uuid import UUID
 
 from django.contrib import messages
 from django.core.exceptions import PermissionDenied, ValidationError
@@ -18,16 +19,16 @@ from .models import Folder, StandingFolder
 from .views import _folder, _render, crumbs
 
 
-def _space(request: HttpRequest, pk: int) -> tuple[Folder, Viewer]:
-    folder, viewer, _ = _folder(request, pk)
+def _space(request: HttpRequest, uuid: UUID) -> tuple[Folder, Viewer]:
+    folder, viewer, _ = _folder(request, uuid)
     if folder.kind not in (Folder.Kind.COMMON_ROOT, Folder.Kind.GROUP):
         raise Http404("not a space")
     return folder, viewer
 
 
 @access.access_required
-def manage(request: HttpRequest, pk: int) -> HttpResponse:
-    space, viewer = _space(request, pk)
+def manage(request: HttpRequest, uuid: UUID) -> HttpResponse:
+    space, viewer = _space(request, uuid)
     if request.method == "POST":
         try:
             standing.define(
@@ -45,7 +46,7 @@ def manage(request: HttpRequest, pk: int) -> HttpResponse:
             messages.error(request, " ".join(exc.messages))
         else:
             messages.success(request, "Den stående mappe er oprettet.")
-            return redirect("drive:standing_manage", space.pk)
+            return redirect("drive:standing_manage", space.uuid)
     return _render(
         request,
         "drive/standing_manage.html",
@@ -63,20 +64,20 @@ def manage(request: HttpRequest, pk: int) -> HttpResponse:
 
 @access.access_required
 @require_POST
-def stop(request: HttpRequest, pk: int, item: int) -> HttpResponse:
-    space, viewer = _space(request, pk)
-    row = get_object_or_404(StandingFolder, pk=item, space=space.space, workgroup_id=space.workgroup_id)
+def stop(request: HttpRequest, uuid: UUID, item: UUID) -> HttpResponse:
+    space, viewer = _space(request, uuid)
+    row = get_object_or_404(StandingFolder, uuid=item, space=space.space, workgroup_id=space.workgroup_id)
     try:
         standing.stop(viewer, row, space, current_resident(request))
     except PermissionDenied:
         messages.error(request, "Du kan ikke stoppe den.")
     else:
         messages.success(request, f"{row.name} oprettes ikke længere i nye perioder.")
-    return redirect("drive:standing_manage", space.pk)
+    return redirect("drive:standing_manage", space.uuid)
 
 
-def _readable(request: HttpRequest, pk: int) -> tuple[StandingFolder, Viewer, list[Folder]]:
-    item = get_object_or_404(StandingFolder, pk=pk)
+def _readable(request: HttpRequest, uuid: UUID) -> tuple[StandingFolder, Viewer, list[Folder]]:
+    item = get_object_or_404(StandingFolder, uuid=uuid)
     viewer = Viewer.for_request(request)
     readable = [copy for copy in standing.copies(item) if viewer.level(copy) >= access.Level.READ]
     if not readable:
@@ -85,8 +86,8 @@ def _readable(request: HttpRequest, pk: int) -> tuple[StandingFolder, Viewer, li
 
 
 @access.access_required
-def combined(request: HttpRequest, pk: int) -> HttpResponse:
-    item, viewer, readable = _readable(request, pk)
+def combined(request: HttpRequest, uuid: UUID) -> HttpResponse:
+    item, viewer, readable = _readable(request, uuid)
     current = standing.copy_for(item, viewer.today)
     return _render(
         request,
@@ -105,8 +106,8 @@ def combined(request: HttpRequest, pk: int) -> HttpResponse:
 
 @access.access_required
 @require_POST
-def create_item(request: HttpRequest, pk: int) -> HttpResponse:
-    item, viewer, _ = _readable(request, pk)
+def create_item(request: HttpRequest, uuid: UUID) -> HttpResponse:
+    item, viewer, _ = _readable(request, uuid)
     try:
         day = date.fromisoformat(request.POST.get("day", ""))
     except ValueError:
@@ -118,5 +119,5 @@ def create_item(request: HttpRequest, pk: int) -> HttpResponse:
     except ValidationError as exc:
         messages.error(request, " ".join(exc.messages))
     else:
-        return redirect("drive:folder", created.pk)
-    return redirect("drive:standing", item.pk)
+        return redirect("drive:folder", created.uuid)
+    return redirect("drive:standing", item.uuid)

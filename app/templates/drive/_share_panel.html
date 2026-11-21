@@ -12,7 +12,7 @@
             <span>{{ row.recipient }}{% if row.workgroup_id %} (gruppe){% endif %}</span>
             <span class="muted">{% if row.can_edit %}kan redigere{% else %}kan læse{% endif %}</span>
             {% if can_share %}
-              <form method="post" action="{% url 'drive:stop_share' row.pk %}" class="drive-inline-form">
+              <form method="post" action="{% url 'drive:stop_share' row.uuid %}" class="drive-inline-form">
                 {% csrf_token %}
                 <button type="submit" class="btn-link-danger">Stop deling</button>
               </form>

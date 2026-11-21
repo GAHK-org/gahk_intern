@@ -145,9 +145,9 @@ def test_faellesmoeder_is_read_by_everyone_and_written_by_inspektionen_and_named
 def test_the_naming_rule_makes_a_dated_folder_in_that_years_copy(people: dict[str, Resident]) -> None:
     item = _meetings()
     inspector = _client(people["inspector"])
-    response = inspector.post(reverse("drive:standing_item", args=[item.pk]), {"day": "2026-11-03"})
+    response = inspector.post(reverse("drive:standing_item", args=[item.uuid]), {"day": "2026-11-03"})
     made = Folder.objects.get(name="2026-11-03 Fællesmøde")
-    assert response["Location"] == reverse("drive:folder", args=[made.pk])
+    assert response["Location"] == reverse("drive:folder", args=[made.uuid])
     assert (made.parent.standing_id, made.standing_id) == (item.pk, item.pk)
     # Below the copy, the limit holds too.
     assert not _viewer(people["resident"]).can_upload_to(made)
@@ -161,7 +161,7 @@ def test_the_combined_view_shows_every_year_newest_first(people: dict[str, Resid
     inspector = _viewer(people["inspector"])
     standing.create_item(inspector, item, date(2026, 3, 1), people["inspector"])
     standing.create_item(inspector, item, date(2027, 1, 10), people["inspector"])
-    page = _client(people["resident"]).get(reverse("drive:standing", args=[item.pk])).content.decode()
+    page = _client(people["resident"]).get(reverse("drive:standing", args=[item.uuid])).content.decode()
     assert "Fællesmøder (alle år)" in page
     assert page.index("2027-01-10 Fællesmøde") < page.index("2026-03-01 Fællesmøde")
     assert "Opret fællesmøde" not in page  # residents read; Inspektionen writes
@@ -176,7 +176,7 @@ def test_standing_copies_cannot_be_renamed_or_deleted_and_never_lock(people: dic
 
 def test_a_residents_folder_of_the_same_name_keeps_its_name(people: dict[str, Resident]) -> None:
     resident = _client(people["resident"])
-    resident.post(reverse("drive:create_folder", args=[_year(2026).pk]), {"name": "Fællesmøder"})
+    resident.post(reverse("drive:create_folder", args=[_year(2026).uuid]), {"name": "Fællesmøder"})
     copy = Folder.objects.get(standing=_meetings())
     assert copy.name == "Fællesmøder (2)"
 
@@ -187,14 +187,14 @@ def test_a_residents_folder_of_the_same_name_keeps_its_name(people: dict[str, Re
 def test_uden_periode_offers_the_current_period_first(people: dict[str, Resident], group: Workgroup) -> None:
     member = _client(people["member"])
     timeless = Folder.objects.get(workgroup=group, kind=Folder.Kind.TIMELESS)
-    page = member.get(reverse("drive:folder", args=[timeless.pk])).content.decode()
+    page = member.get(reverse("drive:folder", args=[timeless.uuid])).content.decode()
     assert "data-drive-timeless" in page
     assert "Læg i 2026-27 Vinter" in page
     assert (
-        f'data-drive-instead="{reverse("drive:create_folder", args=[_period_folder(group, WINTER).pk])}"'
+        f'data-drive-instead="{reverse("drive:create_folder", args=[_period_folder(group, WINTER).uuid])}"'
         in page
     )
     period_page = member.get(
-        reverse("drive:folder", args=[_period_folder(group, WINTER).pk])
+        reverse("drive:folder", args=[_period_folder(group, WINTER).uuid])
     ).content.decode()
     assert "data-drive-timeless" not in period_page
