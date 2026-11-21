@@ -29,9 +29,10 @@ from dataclasses import dataclass, field
 
 from django.core.exceptions import ValidationError
 from django.db import transaction
-from django.db.models import CharField, F, Max, Value
+from django.db.models import CharField, F, Max, Q, Value
 from django.db.models.fields.files import FieldFile
 from django.db.models.functions import Concat, Substr
+from django.utils import timezone
 
 from residents.models import Resident
 
@@ -56,6 +57,15 @@ logger = logging.getLogger(__name__)
 
 _CHUNK = 1024 * 1024
 _STATUS_RANK: dict[str, int] = {MediaStatus.APPROVED: 2, MediaStatus.PENDING: 1, MediaStatus.REJECTED: 0}
+
+
+@dataclass
+class Approval:
+    """What a merge approving a pending album approves (AlbumMerge.approve_*), and as whom."""
+
+    media_ids: list[int]
+    album_ids: list[int]
+    by_id: int
 
 
 @dataclass
@@ -92,7 +102,11 @@ def plan(target: Album, source: Album) -> MergePlan:
     """How `source` would be merged into `target`. Raises ValidationError if it cannot be."""
     if target.pk == source.pk:
         raise ValidationError("Et album kan ikke flettes ind i sig selv.")
-    if target.folder != source.folder:
+    if target.pending:
+        raise ValidationError(f"{target.name} venter på godkendelse og kan ikke flettes ind i.")
+    # A pending album (photo_album.approvals) has no sub-albums, so nothing of its folder's tree
+    # moves with it: it may go into any folder's album.
+    if target.folder != source.folder and not source.pending:
         raise ValidationError("Kun albummer i samme mappe kan flettes.")
     if source.pk in target.ancestor_ids:
         raise ValidationError(f"{source.name} kan ikke flettes ind i et af sine egne underalbummer.")
@@ -120,7 +134,10 @@ def _plan(target: Album, source: Album, top: Album, result: MergePlan) -> None:
     result.pairs.append((target, source))
     # Lower-cased as the database's unique constraint on sibling names is (models.Album.Meta). Never
     # `top`, the album being merged: merged into the album above it, it is one of its sub-albums.
-    by_name = {child.name.lower(): child for child in target.children.exclude(pk=top.pk)}
+    # Nor one awaiting approval, which is someone else's and holds no name (models.Album).
+    by_name = {
+        child.name.lower(): child for child in target.children.filter(pending=False).exclude(pk=top.pk)
+    }
     for child in source.children.order_by("pk"):
         if (match := by_name.get(child.name.lower())) is not None:
             _plan(match, child, top, result)
@@ -142,12 +159,20 @@ class Candidate:
 
 
 def merge_targets(album: Album) -> list[Candidate]:
-    """The albums `album` could be merged into: the others in its folder, but not its own sub-albums.
+    """The albums `album` could be merged into: the others in its folder, but not its own sub-albums."""
+    return folder_albums(album.folder, excluding=album)
+
+
+def folder_albums(folder: str, excluding: Album | None = None) -> list[Candidate]:
+    """The albums of `folder` an album could be merged into, by their paths — but not `excluding`
+    and its sub-albums, and none awaiting approval.
 
     Two queries whatever the folder holds: its albums, and their lock states all at once.
     """
-    albums = list(Album.objects.filter(folder=album.folder))
-    excluded = {other.pk for other in albums if other.path.startswith(album.path)}
+    albums = list(Album.objects.filter(folder=folder, pending=False))
+    excluded = {
+        other.pk for other in albums if excluding is not None and other.path.startswith(excluding.path)
+    }
     if all(other.pk in excluded for other in albums):
         return []
     names = {other.pk: other.name for other in albums}
@@ -160,15 +185,43 @@ def merge_targets(album: Album) -> list[Candidate]:
     return sorted(candidates, key=lambda candidate: [name.lower() for name in candidate.path])
 
 
-def request_merge(target: Album, source: Album, *, by: Resident) -> AlbumMerge:
+def request_merge(
+    target: Album,
+    source: Album,
+    *,
+    by: Resident,
+    approve_media_ids: list[int] | None = None,
+    approve_album_ids: list[int] | None = None,
+) -> AlbumMerge:
     """Queue the merge of `source` into `target`, once the transaction commits. Raises
-    ValidationError for albums that cannot be merged, or while another merge in the folder runs."""
+    ValidationError for albums that cannot be merged, or while another merge in the folder runs.
+
+    `approve_media_ids` and `approve_album_ids` are the items and the sub-albums of a pending `source`
+    its approval approves (photo_album.approvals), which the merge does as it moves them. Such merges
+    only wait for an administrator's merge involving the target, not for each other: they lock the
+    target as they apply, so two into one album take turns."""
     plan(target, source)
-    if AlbumMerge.objects.filter(state__in=AlbumMerge.ACTIVE_STATES, target__folder=target.folder).exists():
+    active = AlbumMerge.objects.filter(state__in=AlbumMerge.ACTIVE_STATES)
+    if source.pending:
+        lineage = [*target.ancestor_ids, target.pk]
+        if (
+            active.exclude(source__pending=True)
+            .filter(Q(target_id__in=lineage) | Q(source_id__in=lineage))
+            .exists()
+        ):
+            raise ValidationError(f"{label(target)} er ved at blive flettet. Vent, til det er færdigt.")
+    elif active.filter(target__folder=target.folder).exists():
         raise ValidationError(
             f"Der er allerede en fletning i gang i mappen {target.folder}. Vent, til den er færdig."
         )
-    job = AlbumMerge.objects.create(target=target, source=source, source_path=label(source), requested_by=by)
+    job = AlbumMerge.objects.create(
+        target=target,
+        source=source,
+        source_path=label(source),
+        requested_by=by,
+        approve_media_ids=approve_media_ids or [],
+        approve_album_ids=approve_album_ids or [],
+    )
     from .tasks import process_album_merge
 
     def enqueue() -> None:
@@ -179,9 +232,16 @@ def request_merge(target: Album, source: Album, *, by: Resident) -> AlbumMerge:
     return job
 
 
-def merge_albums(target: Album, source: Album, progress: Progress = no_progress) -> MergeResult:
-    """Merge `source` into `target`. Raises ValidationError for albums that cannot be merged."""
-    return apply(target, source, compare(plan(target, source).pairs, progress))
+def merge_albums(
+    target: Album,
+    source: Album,
+    progress: Progress = no_progress,
+    approve: "Approval | None" = None,
+) -> MergeResult:
+    """Merge `source` into `target`. Raises ValidationError for albums that cannot be merged.
+
+    `approve` approves what of a pending `source` its approval approved (AlbumMerge.approve_*)."""
+    return apply(target, source, compare(plan(target, source).pairs, progress), approve)
 
 
 # --- Reading the files ------------------------------------------------------------------------
@@ -253,11 +313,16 @@ def _read(stored: FieldFile) -> bytes | None:
 # --- Merging ----------------------------------------------------------------------------------
 
 
-def apply(target: Album, source: Album, comparison: Comparison) -> MergeResult:
+def apply(
+    target: Album, source: Album, comparison: Comparison, approve: "Approval | None" = None
+) -> MergeResult:
     """Merge `source` into `target` in one transaction, with what `compare` found out.
 
     The albums are planned again, locked: anything may have changed while the files were read. An
     item or a sub-album that arrived meanwhile was not compared, so it is moved as it is.
+
+    `approve` (merge_albums) approves items as they arrive, so none shows in the pending album it
+    came from. One the target had already is kept once as usual; an approved copy there wins.
     """
     result = MergeResult()
     unused: list[str] = []
@@ -276,8 +341,15 @@ def apply(target: Album, source: Album, comparison: Comparison) -> MergeResult:
             Album.objects.filter(pk=merged.pk).update(name=f"/fletning/{merged.pk}")
         for kept, merged in merge_plan.pairs:
             _merge_media(kept, merged, comparison, result, unused)
+        if approve is not None:
+            Media.objects.filter(
+                pk__in=approve.media_ids, status=MediaStatus.PENDING, deleted_at__isnull=True
+            ).update(status=MediaStatus.APPROVED, approved_by_id=approve.by_id, approved_at=timezone.now())
         for album, under in merge_plan.moves:
             _move(album, under=under)
+        if approve is not None:
+            # Those moved over whole; those merged into one of the same name are gone below.
+            Album.objects.filter(pk__in=approve.album_ids).update(pending=False)
         for kept, merged in merge_plan.pairs:
             kept.tags.add(*merged.tags.all())
             AlbumDownload.objects.filter(album=merged).update(album=kept)

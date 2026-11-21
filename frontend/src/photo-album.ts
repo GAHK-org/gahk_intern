@@ -371,6 +371,8 @@ if (uploadDialog && uploadForm && uploadInput && uploadProgress && uploadProgres
 
 const MAX_TILES = 480
 const tileSelector = "article.album-media-item"
+// What opens an item in the viewer: the tile itself in an album, a corner button on the approval page.
+const entrySelector = "[data-detail-url]"
 
 const pageUrl = (direction: "before" | "after", pk: string): string => {
   const url = new URL(window.location.href)
@@ -962,6 +964,7 @@ if (gallery && dialog) {
   const menu = dialog.querySelector<HTMLElement>("[data-gallery-menu]")!
   const stage = dialog.querySelector<HTMLElement>(".album-viewer-stage")!
   const previous = dialog.querySelector<HTMLButtonElement>("[data-gallery-previous]")!
+  const reject = dialog.querySelector<HTMLButtonElement>("[data-gallery-reject]")
   const next = dialog.querySelector<HTMLButtonElement>("[data-gallery-next]")!
   // The bin shows binned items through the same viewer; looking at those is not a view.
   const countsViews = !gallery.hasAttribute("data-album-no-views")
@@ -993,7 +996,7 @@ if (gallery && dialog) {
 
   // Read fresh every time: the grid gains and loses pages as the reader scrolls.
   const entries = (): HTMLButtonElement[] =>
-    Array.from(gallery.querySelectorAll<HTMLButtonElement>(".album-media-tile[data-detail-url]"))
+    Array.from(gallery.querySelectorAll<HTMLButtonElement>(entrySelector))
 
   const touchDistance = (touches: TouchList): number =>
     Math.hypot(touches[0].clientX - touches[1].clientX, touches[0].clientY - touches[1].clientY)
@@ -1102,6 +1105,27 @@ if (gallery && dialog) {
     window.history.replaceState(window.history.state, "", url)
   }
 
+  // The approval page's "reject" tick of the item on screen, which the viewer's button flips.
+  const rejectBox = (): HTMLInputElement | null | undefined =>
+    current?.closest(tileSelector)?.querySelector<HTMLInputElement>("[data-approval-reject]")
+
+  const syncReject = (): void => {
+    if (!reject) return
+    const box = rejectBox()
+    reject.hidden = !box
+    reject.setAttribute("aria-pressed", String(Boolean(box?.checked)))
+    reject.classList.toggle("is-on", Boolean(box?.checked))
+    reject.textContent = box?.checked ? "Afvises · fortryd" : "Afvis"
+  }
+
+  const toggleReject = (): void => {
+    const box = rejectBox()
+    if (!box) return
+    box.checked = !box.checked
+    box.dispatchEvent(new Event("change", { bubbles: true }))
+    syncReject()
+  }
+
   const updateArrows = (): void => {
     const all = entries()
     const index = current ? all.indexOf(current) : -1
@@ -1116,7 +1140,7 @@ if (gallery && dialog) {
 
     // The thumbnail is already decoded in the grid, so showing it stretched is instant and the
     // viewer never opens on a blank stage. The real image replaces it when the fetch lands.
-    const thumbnail = entry.querySelector("img")
+    const thumbnail = entry.querySelector("img") ?? entry.closest(tileSelector)?.querySelector("img")
     image.hidden = false
     video.hidden = true
     video.removeAttribute("src")
@@ -1137,6 +1161,7 @@ if (gallery && dialog) {
     menu.hidden = true
     menuButton.setAttribute("aria-expanded", "false")
     updateArrows()
+    syncReject()
     // The address bar always holds a link to what is on screen, ready to be shared.
     const pk = mediaIdOf(entry)
     if (pk) setAddress(pk)
@@ -1200,7 +1225,7 @@ if (gallery && dialog) {
   }
 
   gallery.addEventListener("click", (event) => {
-    const entry = (event.target as Element).closest<HTMLButtonElement>(".album-media-tile[data-detail-url]")
+    const entry = (event.target as Element).closest<HTMLButtonElement>(entrySelector)
     if (!entry) return
     if (selection.isSelecting()) {
       // In selection mode a tap on the picture ticks it, as in every phone gallery.
@@ -1231,6 +1256,7 @@ if (gallery && dialog) {
     if (album.pathname === window.location.pathname) event.preventDefault()
     dialog.close()
   })
+  reject?.addEventListener("click", toggleReject)
   previous.addEventListener("click", () => void step(-1))
   next.addEventListener("click", () => void step(1))
   stage.addEventListener("touchstart", (event) => {
@@ -1270,13 +1296,14 @@ if (gallery && dialog) {
     if ((event.target as Element | null)?.closest?.("input, textarea")) return
     if (event.key === "ArrowLeft") void step(-1)
     if (event.key === "ArrowRight") void step(1)
+    if (event.key.toLowerCase() === "x" && reject && !reject.hidden) toggleReject()
   })
 
   // A shared link (`?media=<pk>`): the page was rendered around that item, so open it.
   const linked = new URL(window.location.href).searchParams.get("media")
   if (linked) {
     const entry = gallery.querySelector<HTMLButtonElement>(
-      `${tileSelector}[data-media-id="${CSS.escape(linked)}"] .album-media-tile[data-detail-url]`,
+      `${tileSelector}[data-media-id="${CSS.escape(linked)}"] ${entrySelector}`,
     )
     if (entry) {
       entry.scrollIntoView({ block: "center" })

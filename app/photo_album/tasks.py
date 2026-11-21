@@ -411,6 +411,14 @@ def measure_photo_album_storage() -> int:
 
 
 @shared_task
+def remind_approvals() -> int:
+    """Daily: tell Fotogruppen what still waits for approval (photo_album.approvals)."""
+    from .approvals import remind
+
+    return remind()
+
+
+@shared_task
 def purge_expired_media() -> None:
     """Permanently remove photo-album media past its retention period."""
     call_command("purge_photo_album")
@@ -785,7 +793,12 @@ def process_album_merge(self: Task, merge_id: int) -> bool:
     try:
         if job.source is None:
             raise ValidationError(f"{job.source_path} findes ikke længere.")
-        result = merge.merge_albums(job.target, job.source, progress=JobProgress(rows))
+        approve = (
+            merge.Approval(job.approve_media_ids, job.approve_album_ids, job.requested_by_id)
+            if job.source is not None and job.source.pending
+            else None
+        )
+        result = merge.merge_albums(job.target, job.source, progress=JobProgress(rows), approve=approve)
     except ValidationError as exc:
         # Refused, not crashed: an album was locked or moved meanwhile, and nothing was merged.
         logger.warning("Refused: %s", " ".join(exc.messages))

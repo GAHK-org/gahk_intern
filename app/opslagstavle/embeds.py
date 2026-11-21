@@ -278,7 +278,11 @@ def _album_widgets(request: HttpRequest, wanted: set[Embed]) -> dict[Embed, obje
     from photo_album.models import Album
     from photo_album.storage import get_photo_album_storage
 
-    albums = {album.pk: album for album in Album.objects.filter(pk__in={embed.key for embed in wanted})}
+    # A pending album (photo_album.approvals) is its maker's and Fotogruppen's until it is approved.
+    albums = {
+        album.pk: album
+        for album in Album.objects.filter(pk__in={embed.key for embed in wanted}, pending=False)
+    }
     if not albums:
         return {}
     counts, newest = _contents(list(albums.values()), MOSAIC)
@@ -390,7 +394,7 @@ def _album_choices(request: HttpRequest, query: str) -> list[Choice]:
     from photo_album.models import Album
     from photo_album.storage import get_photo_album_storage
 
-    albums = Album.objects.order_by("-created_at", "-pk")
+    albums = Album.objects.filter(pending=False).order_by("-created_at", "-pk")
     if query:
         albums = albums.filter(name__icontains=query)
     found = list(albums[:CHOICES])
@@ -417,7 +421,7 @@ def _album_choices(request: HttpRequest, query: str) -> list[Choice]:
 def _album_shareable(request: HttpRequest, key: int) -> str | None:
     from photo_album.models import Album
 
-    return Album.objects.filter(pk=key).values_list("name", flat=True).first()
+    return Album.objects.filter(pk=key, pending=False).values_list("name", flat=True).first()
 
 
 def album_featuring(key: int, page: int, picked: str) -> dict[str, object] | None:
@@ -430,7 +434,7 @@ def album_featuring(key: int, page: int, picked: str) -> dict[str, object] | Non
     """
     from photo_album.models import Album
 
-    album = Album.objects.filter(pk=key).first()
+    album = Album.objects.filter(pk=key, pending=False).first()
     if album is None:
         return None
     pictures = _with_pictures(_shown([album]))

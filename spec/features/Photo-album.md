@@ -6,8 +6,8 @@ The photo album stores and presents photos and videos. Hereafter, "media" means 
 
 - Every media item belongs to exactly one album.
 - Albums form a tree. A root album belongs to a folder; valid folder names are a four-digit year (`yyyy`) or `Uden årstal`, for albums with no year to go by. The album index lists the years newest first, then `Uden årstal`; so does the folder choice when creating an album or importing a ZIP, which starts at this year and also takes a year typed in. Folder names are stored Unicode-normalised (NFC), like album names. `Uden årstal` replaced the earlier `Andet` folder, whose albums were deleted. A sub-album has a parent album and inherits its folder.
-- The tree is at most five levels deep: a root album (level 0) down to level 4. By hand, Fotogruppen members and administrators can create sub-albums directly under a root album only; deeper trees arrive by ZIP import.
-- Album names behave like folder names on a computer: sibling names (root albums in the same folder, or sub-albums of the same parent) are unique ignoring case, and names are stored Unicode-normalised (NFC) so that `å` from a Mac and from Windows is one name. A name may not contain `/` or `\`, control characters, leading or trailing spaces, or a trailing dot.
+- The tree is at most five levels deep: a root album (level 0) down to level 4. By hand, sub-albums can be created directly under a root album only; deeper trees arrive by ZIP import.
+- Album names behave like folder names on a computer: sibling names (root albums in the same folder, or sub-albums of the same parent) are unique ignoring case, and names are stored Unicode-normalised (NFC) so that `å` from a Mac and from Windows is one name. A name may not contain `/` or `\`, control characters, leading or trailing spaces, or a trailing dot. An album awaiting approval holds no name: others may create or ask for one of the same name meanwhile, and the approver renames it or merges it (below).
 - Albums can be renamed — root albums and sub-albums alike — under the same lock policy as their media: a locked album keeps its name. Albums cannot be moved to another parent or folder; only a merge moves sub-albums, to the album they are merged into (below).
 - An album can only be deleted when it has no sub-albums and no media, including media in the bin.
 
@@ -60,6 +60,7 @@ The photo album stores and presents photos and videos. Hereafter, "media" means 
 ## Access and upload workflow
 
 - Members of Fotogruppen and administrators can create, rename and delete albums, create sub-albums, import ZIP files, manage media, approve/reject submissions, view album bins, manually lock albums, and add or remove tags.
+- Any signed-in resident can create an album, or a sub-album of an album they can upload to; one made outside Fotogruppen awaits approval (below).
 - Any signed-in resident can upload one or more photos or videos to an unlocked album. The upload form lists the chosen filenames before submission and may apply one optional title to all selected uploads.
 - A file of 8 MB or more goes straight into the bucket in 64 MB parts, uploaded by Uppy with each request retried and an unfinished upload aborted, so it is not cut off by the proxy's one-minute limit. The server signs each of Uppy's requests, only for the key it chose and only for the resident it gave the upload to. The server then reads it back and runs exactly the checks a file sent with the form gets (type, size, content, duplicates); one that fails is refused with the same message and removed from the bucket. Smaller files, a server without a bucket, and a browser that cannot reach the bucket send the file with the form. The ZIP import page sends its ZIP the same way.
 - An upload that is an exact copy (same name, same hash, same bytes) of a live item in the same album is skipped with a message. An upload whose content already exists in other albums is stored, with a warning naming those albums.
@@ -67,6 +68,37 @@ The photo album stores and presents photos and videos. Hereafter, "media" means 
 - Pending media is visible only to Fotogruppen members, administrators, and the requesting resident, and its thumbnail is marked `Afventer godkendelse`.
 - Rejected media moves to the bin. Pending media that remains unapproved for 30 days is permanently deleted.
 - A requesting resident may withdraw their own pending upload; other deletion and moderation actions require Fotogruppen or administrator access.
+
+### Approval
+
+- Fotogruppen and administrators approve on `Godkend` (a button on the album index with the number waiting), one request at a time. A request is everything one resident has waiting in one album tree: their pending uploads to a root album and its sub-albums, and the albums in it they made. Two residents' uploads to the same album are two requests. The list shows each with its uploader, album, counts, since when it has waited and when it goes, oldest first.
+- A request's page shows every item, grouped by sub-album. Everything is approved except what is ticked to be rejected: a tap on a picture ticks it (it greys out, marked `Afvises`), another takes it back; `Afvis alle` and `Fortryd alle` do all of them. A corner button opens the item in the viewer, which has the same `Afvis` toggle (and the X key). `Afvis alt` rejects the whole request. The approver may write a note to the uploader.
+- Rejected items go to the bin, whatever album they are in, where Fotogruppen can restore them for 30 days; a restored item is pending again, and its request is back.
+- Only what the page showed is decided: an item or an album that arrived while it was open waits, as a request of its own. The single-item and selection approve/reject on the album pages still work, and a request simply loses what they decide.
+- The uploader is told how it went (a Generelt notification): approved, how many were rejected, where their albums ended up, and the note.
+
+### Albums awaiting approval
+
+- An album or a sub-album made by a resident outside Fotogruppen is pending, and so is every sub-album made in it (only its maker makes those). Only its maker, Fotogruppen and the administrators see it (marked `Afventer godkendelse` on its card and its page), and only its maker uploads to it, as pending items. It gets no lock, merge menu or `Del på opslagstavlen`, and cannot be embedded on the board. Its maker may withdraw it (`Træk albummet tilbage`), which deletes it with its sub-albums and everything they uploaded.
+- Its name holds no place: Fotogruppen may make an album of the same name meanwhile, another resident may ask for one, and a ZIP import or the Dropbox script neither refuses the name nor adds to it. A resident cannot ask for an album with the name of an approved sibling (that is the album to upload to), nor for the same name twice.
+- Each new album in a request is decided on its own; new sub-albums inside it follow it. The approver either keeps it — under its name or another, and a root album in its folder or another — or puts it into an album that exists, in any folder (unlocked, not itself pending): an album merge (see Merging albums) run in the background, whose sub-albums are merged into those of the same name or moved over. When an approved sibling has its name, the page says so and starts on merging into that album; keeping the name is refused. A merge approves what was approved in its own transaction, so none shows before it is where it belongs. Until then the album is off the list; if the merge fails, it is back, with the reason, and nothing in it is approved. Approvals' merges do not wait for each other, only for an administrator's merge of the album merged into.
+- Rejected, a new album with items stays pending and hidden while they are in the bin; its maker's page says it was rejected. A restored item, or a new upload by its maker, makes it a request again. One with nothing in it is deleted at once.
+- One left empty for 30 days — never uploaded to, or emptied by the purge of its pending or binned items — is deleted by the nightly purge, its sub-albums first.
+
+### Notifications
+
+- Fotogruppen's members this month are told (`Godkendelser`, under Fotoalbum) when a request starts: an album or sub-album is asked for, or the first upload of a request arrives. Later uploads to the same request tell no one. A second request folds into the same notification (`Anders og Bente har uploadet til fotoalbummet`), with the latest in its body.
+- Every day at 10:20 they are reminded of the requests that have waited at least a day: how many, and the oldest with when it goes. Høj when the oldest goes within three days. Each reminder lasts until the next.
+- With nobody in Fotogruppen this month, the administrators are told instead.
+
+### Decisions
+
+- **A request is one resident's uploads to one album tree.** A party's 80 photos are one decision rather than 80, while two residents' photos of it are judged each on their own.
+- **Requests are worked out from what is pending, not stored**, so approving, withdrawing or restoring an item anywhere else leaves nothing to keep in step.
+- **Fotogruppen hears of a request once.** Large files are sent one per request, so a notification per upload would be dozens for one party.
+- **A merged new album's items are approved by the merge.** Approved before it, they would show in the album being merged away, or for good if the merge failed.
+- **Rejection is undoable for 30 days.** A rejected new album keeps its items in its bin, hidden, so a rejection by mistake or a change of mind days later can be put right.
+- **A pending album's name blocks nobody.** It may never be approved under it, and nobody else can see it; a clash is the approver's to settle, by renaming or merging.
 
 ## Album locking
 

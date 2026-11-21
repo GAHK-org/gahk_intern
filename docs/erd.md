@@ -591,6 +591,7 @@ erDiagram
         int reported_by_id FK
         datetime created_at
         datetime updated_at
+        datetime status_changed_at
         datetime archived_at
     }
 
@@ -600,6 +601,14 @@ erDiagram
         int author_id FK
         text body
         datetime created_at
+    }
+
+    reparationer_RepairImage {
+        int id PK
+        int task_id FK
+        int comment_id FK
+        string file
+        datetime uploaded_at
     }
 
     arkiv_ArchiveFolder {
@@ -645,6 +654,8 @@ erDiagram
         datetime created_at
         datetime manually_locked_at
         datetime unlocked_at
+        int created_by_id FK
+        bool pending
     }
 
     photo_album_Media {
@@ -737,6 +748,8 @@ erDiagram
         datetime progressed_at
         datetime created_at
         datetime completed_at
+        json approve_media_ids
+        json approve_album_ids
         datetime notice_closed_at
     }
 
@@ -1049,6 +1062,8 @@ erDiagram
     reparationer_RepairTask }o--|| residents_Resident : "reported_by"
     reparationer_RepairComment }o--|| reparationer_RepairTask : "task"
     reparationer_RepairComment }o--|| residents_Resident : "author"
+    reparationer_RepairImage }o--|| reparationer_RepairTask : "task"
+    reparationer_RepairImage }o--|o reparationer_RepairComment : "comment"
     arkiv_ArchiveFolder }o--|o arkiv_ArchiveFolder : "parent"
     arkiv_ArchiveFolder }o--|o core_Workgroup : "workgroup"
     arkiv_ArchiveFolder }o--|o core_Workgroup : "effective_workgroup"
@@ -1057,6 +1072,7 @@ erDiagram
     arkiv_ArchiveFile }o--|o residents_Resident : "uploaded_by"
     arkiv_ArchiveFile }o--|o residents_Resident : "deleted_by"
     photo_album_Album }o--|o photo_album_Album : "parent"
+    photo_album_Album }o--|o residents_Resident : "created_by"
     photo_album_Album }o--o{ photo_album_Tag : "tags"
     photo_album_Media }o--|| photo_album_Album : "album"
     photo_album_Media }o--|| residents_Resident : "requested_by"
@@ -1957,6 +1973,8 @@ erDiagram
         datetime created_at
         datetime manually_locked_at
         datetime unlocked_at
+        int created_by_id FK
+        bool pending
     }
 
     photo_album_Media {
@@ -2049,6 +2067,8 @@ erDiagram
         datetime progressed_at
         datetime created_at
         datetime completed_at
+        json approve_media_ids
+        json approve_album_ids
         datetime notice_closed_at
     }
 
@@ -2080,6 +2100,7 @@ erDiagram
     residents_Resident { }
 
     photo_album_Album }o--|o photo_album_Album : "parent"
+    photo_album_Album }o--|o residents_Resident : "created_by"
     photo_album_Album }o--o{ photo_album_Tag : "tags"
     photo_album_Media }o--|| photo_album_Album : "album"
     photo_album_Media }o--|| residents_Resident : "requested_by"
@@ -2152,6 +2173,7 @@ erDiagram
         int reported_by_id FK
         datetime created_at
         datetime updated_at
+        datetime status_changed_at
         datetime archived_at
     }
 
@@ -2163,11 +2185,21 @@ erDiagram
         datetime created_at
     }
 
+    reparationer_RepairImage {
+        int id PK
+        int task_id FK
+        int comment_id FK
+        string file
+        datetime uploaded_at
+    }
+
     residents_Resident { }
 
     reparationer_RepairTask }o--|| residents_Resident : "reported_by"
     reparationer_RepairComment }o--|| reparationer_RepairTask : "task"
     reparationer_RepairComment }o--|| residents_Resident : "author"
+    reparationer_RepairImage }o--|| reparationer_RepairTask : "task"
+    reparationer_RepairImage }o--|o reparationer_RepairComment : "comment"
 ```
 
 ## residents
