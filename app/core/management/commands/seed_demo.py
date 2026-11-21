@@ -9,7 +9,8 @@ Usage:
     python manage.py seed_demo --fresh --residents 40
 
 Safety: refuses to run when DEBUG is off unless --force is given, so it can never wipe a prod DB
-by accident. --fresh deletes the demo-managed tables (everything below) inside one transaction.
+by accident. --fresh deletes the demo-managed tables (everything below) inside one transaction, and
+empties the audit trail, whose made-up history (audit.demo) is written last.
 
 Deterministic logins (all password `demo1234`):
     admin@gahk.dk      superuser (all access)
@@ -29,7 +30,7 @@ from io import BytesIO
 from django.conf import settings
 from django.core.files.base import ContentFile
 from django.core.management.base import BaseCommand, CommandError
-from django.db import models, transaction
+from django.db import connection, models, transaction
 from django.utils import timezone
 
 from admissions.models import Application
@@ -38,6 +39,8 @@ from ak.services import apply_monthly_charge
 from arkiv.demo import seed as seed_arkiv
 from arkiv.models import ArchiveFile, ArchiveFolder
 from audit import trail
+from audit.demo import seed as seed_audit_trail
+from audit.models import AuditChange, AuditEntity, AuditEvent
 
 # CmsEvent, never Event: the internal events app has one of the same name, and both are seeded
 # here. See events.models on the three-way collision.
@@ -201,11 +204,6 @@ class Command(BaseCommand):
         parser.add_argument("--residents", type=int, default=61, help="How many residents to create.")
         parser.add_argument("--force", action="store_true", help="Allow running when DEBUG is off.")
 
-    def execute(self, *args: object, **options: object) -> str | None:
-        # Loading old data (or demo data) is nobody's action: not one audit event per row.
-        with trail.unaudited():
-            return super().execute(*args, **options)
-
     def handle(self, *args, **opts) -> None:  # noqa: ANN002, ANN003
         if not settings.DEBUG and not opts["force"]:
             raise CommandError("Refusing to seed with DEBUG=off. Pass --force if you really mean it.")
@@ -223,35 +221,43 @@ class Command(BaseCommand):
         self.year, self.month = today.year, today.month
 
         with transaction.atomic():
-            if opts["fresh"]:
-                self._wipe()
-            rooms = self._seed_rooms()
-            workgroups, cleanings = self._seed_lookups(opts["residents"])
-            residents = self._seed_residents(opts["residents"])
-            # Returns the list plus the newcomer who took over the leaver's room, so the new resident
-            # takes part in the seeding below like everyone else (roles, AK, ølkælder, posts, ...).
-            residents = self._seed_residencies(residents, rooms, workgroups, cleanings)
-            self._seed_roles(residents)
-            self._seed_profile_pictures(residents)
-            self._seed_ak(residents)
-            self._seed_oelkaelder(residents)
-            self._seed_admissions(residents)
-            self._seed_cms()
-            self._seed_room_conditions(rooms, residents)
-            self._seed_kvotient(residents, rooms)
-            self._seed_stats()
-            seed_opslagstavle(residents, self.now, self.rng)
-            seed_events(residents, self.now, self.rng)
-            seed_arkiv(residents, self.now, self.rng)
-            seed_photo_album(residents, self.now, self.rng)
-            seed_gahkflix(residents, self.now, self.rng)
-            # After both: these posts embed an album and a film seeded just above.
-            seed_opslagstavle_embeds(residents, self.now)
-            seed_den_hurtige(residents, self.now, self.rng)
-            # Last: its rows link to the events, opslag and Den Hurtige posts seeded above.
-            seed_notifications(residents, self.now, self.rng)
+            # Loading demo data is nobody's action: not one audit event per row.
+            with trail.unaudited():
+                residents = self._seed_data(opts)
+            # Then, on purpose and audited, the weeks of history before today, for the audit page.
+            seed_audit_trail(residents, self.now, self.rng)
 
         self._report(residents)
+
+    def _seed_data(self, opts: dict) -> list[Resident]:
+        if opts["fresh"]:
+            self._wipe()
+        rooms = self._seed_rooms()
+        workgroups, cleanings = self._seed_lookups(opts["residents"])
+        residents = self._seed_residents(opts["residents"])
+        # Returns the list plus the newcomer who took over the leaver's room, so the new resident
+        # takes part in the seeding below like everyone else (roles, AK, ølkælder, posts, ...).
+        residents = self._seed_residencies(residents, rooms, workgroups, cleanings)
+        self._seed_roles(residents)
+        self._seed_profile_pictures(residents)
+        self._seed_ak(residents)
+        self._seed_oelkaelder(residents)
+        self._seed_admissions(residents)
+        self._seed_cms()
+        self._seed_room_conditions(rooms, residents)
+        self._seed_kvotient(residents, rooms)
+        self._seed_stats()
+        seed_opslagstavle(residents, self.now, self.rng)
+        seed_events(residents, self.now, self.rng)
+        seed_arkiv(residents, self.now, self.rng)
+        seed_photo_album(residents, self.now, self.rng)
+        seed_gahkflix(residents, self.now, self.rng)
+        # After both: these posts embed an album and a film seeded just above.
+        seed_opslagstavle_embeds(residents, self.now)
+        seed_den_hurtige(residents, self.now, self.rng)
+        # Last: its rows link to the events, opslag and Den Hurtige posts seeded above.
+        seed_notifications(residents, self.now, self.rng)
+        return residents
 
     # ---------------------------------------------------------------- wipe
     def _wipe(self) -> None:
@@ -262,6 +268,17 @@ class Command(BaseCommand):
                     Album.objects.filter(depth=depth).delete()
                 continue
             model._default_manager.all().delete()
+        # The trail is append-only: its rows refuse DELETE, in the models and in the database. A demo
+        # database starts its history again, so its tables are emptied the one way they allow, by
+        # their owner (the same TRUNCATE the test suite's flush uses). Postgres refuses to truncate a
+        # table with foreign-key checks still pending in this transaction (a second seed in one test),
+        # so those run first.
+        with connection.cursor() as cursor:
+            cursor.execute("SET CONSTRAINTS ALL IMMEDIATE")
+            cursor.execute(
+                f"TRUNCATE {', '.join(m._meta.db_table for m in (AuditChange, AuditEntity, AuditEvent))}"
+            )
+            cursor.execute("SET CONSTRAINTS ALL DEFERRED")
         self.stdout.write("  wiped existing demo data")
 
     # ------------------------------------------------------------- lookups
@@ -776,7 +793,8 @@ class Command(BaseCommand):
                 f"\nSeeded demo data: {len(residents)} residents, "
                 f"{Residency.objects.count()} residencies, {AkEntry.objects.count()} AK entries, "
                 f"{Event.objects.count()} begivenheder, {Notification.objects.count()} notifikationer, "
-                f"{Transaction.objects.count()} ølkælder purchases, {Application.objects.count()} applications."
+                f"{Transaction.objects.count()} ølkælder purchases, {Application.objects.count()} applications, "
+                f"{AuditEvent.objects.count()} audit events."
             )
         )
         self.stdout.write(f"\nDev logins (password: {DEMO_PASSWORD}):")

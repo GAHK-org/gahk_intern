@@ -57,3 +57,13 @@ and what every changed field held before and after. Under Administration → Rev
   so every screen and job names what it does.
 - Names are kept as they were at the time: a resident who changes name or is deleted still reads
   right in old events. Related things in a change are shown by their name today.
+
+## Development seed data
+
+- A demo database gets a made-up history of the five weeks before the day it was seeded, with every
+  kind of line the page shows: logins and failed logins (a night-time burst against admin@ among
+  them), a password reset, refused pages, roles given and removed, an administrator approved and one
+  refused, residents and the alumneliste edited, the room round, a role preview, and "Uden handling"
+  from the Django admin and from a shell. By the documented logins and others, from several addresses.
+- Loading the demo data itself is not in the trail. The history is written afterwards, on purpose,
+  and its before and after values are real: it ends at the seeded data.
