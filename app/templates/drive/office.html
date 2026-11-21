@@ -5,8 +5,8 @@
 {% block content %}
   {% include "drive/_crumbs.html" with ancestors=ancestors current="" %}
   <div class="drive-links mb-2">
-    <a href="{% url 'drive:file' file.pk %}">{{ file.name }}: versioner og historik</a>
-    <a href="{% url 'drive:download' file.pk %}">Hent</a>
+    <a href="{% url 'drive:file' file.uuid %}">{{ file.name }}: versioner og historik</a>
+    <a href="{% url 'drive:download' file.uuid %}">Hent</a>
     {% if edit_on_phone %}<span class="muted">På en telefon får du computerudgaven af editoren. Den er bedst til små rettelser.</span>{% elif not edit %}<span class="muted">Kun visning</span>{% endif %}
   </div>
   {% comment %}

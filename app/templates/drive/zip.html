@@ -20,5 +20,5 @@
     <p class="mb-4" data-drive-wait>Zip'en bliver lavet … Siden opdaterer sig selv, og du kan også gå og komme tilbage.</p>
   {% endif %}
 
-  {% if back %}<p class="drive-links"><a href="{% url 'drive:folder' back.pk %}">Tilbage til {{ back.name }}</a></p>{% endif %}
+  {% if back %}<p class="drive-links"><a href="{% url 'drive:folder' back.uuid %}">Tilbage til {{ back.name }}</a></p>{% endif %}
 {% endblock %}

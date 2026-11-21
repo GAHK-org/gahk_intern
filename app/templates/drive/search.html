@@ -42,15 +42,15 @@
         {% for hit in results.hits %}
           <li>
             {% if hit.folder %}
-              <a href="{% url 'drive:folder' hit.folder.pk %}">
+              <a href="{% url 'drive:folder' hit.folder.uuid %}">
                 <svg class="ni" aria-hidden="true"><use href="#i-{% if hit.folder.kind == 'shared' %}users{% else %}folder{% endif %}"></use></svg>
                 <span class="drive-name">{{ hit.name }}</span>
               </a>
               <span class="muted drive-meta drive-where">{{ hit.where }}</span>
             {% else %}
-              <a href="{% url 'drive:file' hit.file.pk %}">
+              <a href="{% url 'drive:file' hit.file.uuid %}">
                 {% if hit.file.thumbnail %}
-                  <img class="drive-thumb" src="{% url 'drive:thumbnail' hit.file.pk %}?v={{ hit.file.thumbnail }}" alt="" loading="lazy" width="36" height="36">
+                  <img class="drive-thumb" src="{% url 'drive:thumbnail' hit.file.uuid %}?v={{ hit.file.thumbnail }}" alt="" loading="lazy" width="36" height="36">
                 {% else %}
                   <svg class="ni" aria-hidden="true"><use href="#i-{{ hit.name|drive_icon }}"></use></svg>
                 {% endif %}

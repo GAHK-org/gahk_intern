@@ -66,7 +66,9 @@ def test_renaming_a_file_keeps_it_and_tells_its_creator(
     _upload(_client(creator), winter, "Budget.xlsx", b"one")
     file = File.objects.get(folder=winter)
 
-    response = _client(other).post(reverse("drive:rename_file", args=[file.pk]), {"name": "Budget 2027.xlsx"})
+    response = _client(other).post(
+        reverse("drive:rename_file", args=[file.uuid]), {"name": "Budget 2027.xlsx"}
+    )
     assert response.status_code == 302
     file.refresh_from_db()
     assert file.name == "Budget 2027.xlsx"
@@ -82,10 +84,10 @@ def test_a_rename_to_a_name_in_use_is_refused_but_a_change_of_case_is_not(
     _upload(client, winter, "a.txt", b"a")
     _upload(client, winter, "b.txt", b"b")
     b = File.objects.get(name="b.txt")
-    client.post(reverse("drive:rename_file", args=[b.pk]), {"name": "A.TXT"})
+    client.post(reverse("drive:rename_file", args=[b.uuid]), {"name": "A.TXT"})
     b.refresh_from_db()
     assert b.name == "b.txt"
-    client.post(reverse("drive:rename_file", args=[b.pk]), {"name": "B.txt"})
+    client.post(reverse("drive:rename_file", args=[b.uuid]), {"name": "B.txt"})
     b.refresh_from_db()
     assert b.name == "B.txt"
 
@@ -95,13 +97,13 @@ def test_the_systems_folders_cannot_be_renamed_and_residents_folders_can(
 ) -> None:
     client = _client(members[0])
     winter = _period_folder(group, WINTER)
-    client.post(reverse("drive:rename_folder", args=[winter.pk]), {"name": "Mit eget navn"})
+    client.post(reverse("drive:rename_folder", args=[winter.uuid]), {"name": "Mit eget navn"})
     winter.refresh_from_db()
     assert winter.name == "2026-27 Vinter"
 
-    client.post(reverse("drive:create_folder", args=[winter.pk]), {"name": "Referater"})
+    client.post(reverse("drive:create_folder", args=[winter.uuid]), {"name": "Referater"})
     folder = Folder.objects.get(parent=winter, name="Referater")
-    client.post(reverse("drive:rename_folder", args=[folder.pk]), {"name": "Mødereferater"})
+    client.post(reverse("drive:rename_folder", args=[folder.uuid]), {"name": "Mødereferater"})
     folder.refresh_from_db()
     assert folder.name == "Mødereferater"
 
@@ -117,14 +119,14 @@ def test_moving_a_file_takes_it_there_and_tells_its_creator_once(
     _upload(_client(creator), winter, "a.txt", b"a")
     _upload(_client(creator), winter, "b.txt", b"b")
     client = _client(other)
-    client.post(reverse("drive:create_folder", args=[winter.pk]), {"name": "Arkiveret"})
+    client.post(reverse("drive:create_folder", args=[winter.uuid]), {"name": "Arkiveret"})
     target = Folder.objects.get(parent=winter, name="Arkiveret")
-    ids = list(File.objects.filter(folder=winter).values_list("pk", flat=True))
+    ids = list(File.objects.filter(folder=winter).values_list("uuid", flat=True))
 
     response = client.post(
-        reverse("drive:move", args=[winter.pk]), {"op": "move", "to": target.pk, "file": ids}
+        reverse("drive:move", args=[winter.uuid]), {"op": "move", "to": target.uuid, "file": ids}
     )
-    assert response["Location"] == reverse("drive:folder", args=[target.pk])
+    assert response["Location"] == reverse("drive:folder", args=[target.uuid])
     assert File.objects.filter(folder=target).count() == 2
     assert Event.objects.filter(action=Event.Action.MOVED).count() == 2
     assert _notes(creator) == [f"{other.full_name} flyttede 2 af dine filer"]
@@ -135,13 +137,13 @@ def test_a_move_where_the_name_is_taken_moves_nothing(
 ) -> None:
     client = _client(members[0])
     winter = _period_folder(group, WINTER)
-    client.post(reverse("drive:create_folder", args=[winter.pk]), {"name": "Ny"})
+    client.post(reverse("drive:create_folder", args=[winter.uuid]), {"name": "Ny"})
     target = Folder.objects.get(name="Ny")
     _upload(client, target, "a.txt", b"old")
     _upload(client, winter, "a.txt", b"new")
     _upload(client, winter, "b.txt", b"b")
-    ids = list(File.objects.filter(folder=winter).values_list("pk", flat=True))
-    client.post(reverse("drive:move", args=[winter.pk]), {"op": "move", "to": target.pk, "file": ids})
+    ids = list(File.objects.filter(folder=winter).values_list("uuid", flat=True))
+    client.post(reverse("drive:move", args=[winter.uuid]), {"op": "move", "to": target.uuid, "file": ids})
     assert File.objects.filter(folder=winter).count() == 2
 
 
@@ -150,27 +152,28 @@ def test_moving_a_folder_to_another_space_asks_then_takes_its_subtree_along(
 ) -> None:
     client = _client(members[0])
     winter = _period_folder(group, WINTER)
-    client.post(reverse("drive:create_folder", args=[winter.pk]), {"name": "Fest"})
+    client.post(reverse("drive:create_folder", args=[winter.uuid]), {"name": "Fest"})
     fest = Folder.objects.get(name="Fest")
-    client.post(reverse("drive:create_folder", args=[fest.pk]), {"name": "Billeder"})
+    client.post(reverse("drive:create_folder", args=[fest.uuid]), {"name": "Billeder"})
     pictures = Folder.objects.get(name="Billeder")
     _upload(client, pictures, "plan.txt", b"x")
     common_year = Folder.objects.get(kind=Folder.Kind.YEAR, period_start__year=2026)
 
     picker = client.get(
-        reverse("drive:move", args=[winter.pk]), {"op": "move", "folder": fest.pk, "at": common_year.pk}
+        reverse("drive:move", args=[winter.uuid]),
+        {"op": "move", "folder": str(fest.uuid), "at": str(common_year.uuid)},
     )
     assert "Det ændrer, hvem der kan se det." in picker.content.decode()
     asked = client.post(
-        reverse("drive:move", args=[winter.pk]), {"op": "move", "to": common_year.pk, "folder": fest.pk}
+        reverse("drive:move", args=[winter.uuid]), {"op": "move", "to": common_year.uuid, "folder": fest.uuid}
     )
     assert asked.status_code == 302
     assert "at=" in asked["Location"]
     assert Folder.objects.get(pk=fest.pk).parent_id == winter.pk
 
     client.post(
-        reverse("drive:move", args=[winter.pk]),
-        {"op": "move", "to": common_year.pk, "folder": fest.pk, "confirm": "1"},
+        reverse("drive:move", args=[winter.uuid]),
+        {"op": "move", "to": common_year.uuid, "folder": fest.uuid, "confirm": "1"},
     )
     pictures.refresh_from_db()
     assert (pictures.space, pictures.workgroup_id, pictures.period_start) == (
@@ -185,11 +188,13 @@ def test_moving_a_folder_to_another_space_asks_then_takes_its_subtree_along(
 def test_a_folder_cannot_go_inside_itself(members: tuple[Resident, Resident], group: Workgroup) -> None:
     client = _client(members[0])
     winter = _period_folder(group, WINTER)
-    client.post(reverse("drive:create_folder", args=[winter.pk]), {"name": "Ydre"})
+    client.post(reverse("drive:create_folder", args=[winter.uuid]), {"name": "Ydre"})
     outer = Folder.objects.get(name="Ydre")
-    client.post(reverse("drive:create_folder", args=[outer.pk]), {"name": "Indre"})
+    client.post(reverse("drive:create_folder", args=[outer.uuid]), {"name": "Indre"})
     inner = Folder.objects.get(name="Indre")
-    client.post(reverse("drive:move", args=[winter.pk]), {"op": "move", "to": inner.pk, "folder": outer.pk})
+    client.post(
+        reverse("drive:move", args=[winter.uuid]), {"op": "move", "to": inner.uuid, "folder": outer.uuid}
+    )
     outer.refresh_from_db()
     assert outer.parent_id == winter.pk
 
@@ -202,12 +207,14 @@ def test_a_copy_is_a_new_file_of_the_copier_sharing_the_bytes(
     _upload(_client(creator), winter, "Skabelon.docx", b"template")
     original = File.objects.get(folder=winter)
     client = _client(copier)
-    client.post(reverse("drive:move", args=[winter.pk]), {"op": "copy", "to": winter.pk, "file": original.pk})
+    client.post(
+        reverse("drive:move", args=[winter.uuid]), {"op": "copy", "to": winter.uuid, "file": original.uuid}
+    )
 
     copy = File.objects.exclude(pk=original.pk).get()
     assert (copy.name, copy.created_by_id, copy.versions.count()) == ("Skabelon (2).docx", copier.pk, 1)
     assert copy.latest_version().key == original.latest_version().key
-    assert _content(client.get(reverse("drive:download", args=[copy.pk]))) == b"template"
+    assert _content(client.get(reverse("drive:download", args=[copy.uuid]))) == b"template"
     assert list(copy.events.values_list("action", flat=True)) == [Event.Action.COPIED]
 
 
@@ -215,14 +222,15 @@ def test_copying_a_folder_copies_what_is_in_it(members: tuple[Resident, Resident
     client = _client(members[0])
     winter = _period_folder(group, WINTER)
     timeless = Folder.objects.get(workgroup=group, kind=Folder.Kind.TIMELESS)
-    client.post(reverse("drive:create_folder", args=[timeless.pk]), {"name": "Skabeloner"})
+    client.post(reverse("drive:create_folder", args=[timeless.uuid]), {"name": "Skabeloner"})
     templates = Folder.objects.get(name="Skabeloner")
-    client.post(reverse("drive:create_folder", args=[templates.pk]), {"name": "Breve"})
+    client.post(reverse("drive:create_folder", args=[templates.uuid]), {"name": "Breve"})
     _upload(client, templates, "a.txt", b"a")
     _upload(client, Folder.objects.get(name="Breve"), "b.txt", b"b")
 
     client.post(
-        reverse("drive:move", args=[timeless.pk]), {"op": "copy", "to": winter.pk, "folder": templates.pk}
+        reverse("drive:move", args=[timeless.uuid]),
+        {"op": "copy", "to": winter.uuid, "folder": templates.uuid},
     )
     copied = Folder.objects.get(parent=winter, name="Skabeloner")
     assert copied.period_start == WINTER.start
@@ -238,12 +246,14 @@ def test_a_reader_cannot_move_rename_or_delete(
     )
     FileVersion.objects.create(file=file, number=1, key=services.new_key(), size=1)
     former = _client(resident_in({(2026, 6): group, (2026, 11): None}))
-    assert former.get(reverse("drive:file", args=[file.pk])).status_code == 200
+    assert former.get(reverse("drive:file", args=[file.uuid])).status_code == 200
 
-    former.post(reverse("drive:rename_file", args=[file.pk]), {"name": "x.pdf"})
-    former.post(reverse("drive:delete", args=[summer.pk]), {"file": file.pk})
+    former.post(reverse("drive:rename_file", args=[file.uuid]), {"name": "x.pdf"})
+    former.post(reverse("drive:delete", args=[summer.uuid]), {"file": file.uuid})
     winter = _period_folder(group, WINTER)
-    former.post(reverse("drive:move", args=[summer.pk]), {"op": "move", "to": winter.pk, "file": file.pk})
+    former.post(
+        reverse("drive:move", args=[summer.uuid]), {"op": "move", "to": winter.uuid, "file": file.uuid}
+    )
     file.refresh_from_db()
     assert (file.name, file.deleted_at, file.folder_id) == ("Regnskab.pdf", None, summer.pk)
 
@@ -259,20 +269,20 @@ def test_a_deleted_file_waits_in_the_bin_and_comes_back(
     _upload(_client(creator), winter, "Budget.xlsx", b"one")
     file = File.objects.get()
     client = _client(other)
-    client.post(reverse("drive:delete", args=[winter.pk]), {"file": file.pk})
+    client.post(reverse("drive:delete", args=[winter.uuid]), {"file": file.uuid})
 
     file.refresh_from_db()
     assert file.deleted_at is not None
-    listing = client.get(reverse("drive:folder", args=[winter.pk])).content.decode()
-    assert reverse("drive:file", args=[file.pk]) not in listing
-    assert client.get(reverse("drive:file", args=[file.pk])).status_code == 404
+    listing = client.get(reverse("drive:folder", args=[winter.uuid])).content.decode()
+    assert reverse("drive:file", args=[file.uuid]) not in listing
+    assert client.get(reverse("drive:file", args=[file.uuid])).status_code == 404
     assert _notes(creator) == [f"{other.full_name} slettede din fil Budget.xlsx"]
     group_folder = Folder.objects.get(workgroup=group, kind=Folder.Kind.GROUP)
-    assert "Budget.xlsx" in client.get(reverse("drive:bin", args=[group_folder.pk])).content.decode()
+    assert "Budget.xlsx" in client.get(reverse("drive:bin", args=[group_folder.uuid])).content.decode()
 
     # The name is free meanwhile; the restored file takes a number.
     assert _upload(client, winter, "Budget.xlsx", b"new")["status"] == 201
-    client.post(reverse("drive:restore", args=[file.pk]))
+    client.post(reverse("drive:restore", args=[file.uuid]))
     file.refresh_from_db()
     assert (file.deleted_at, file.name) == (None, "Budget (2).xlsx")
 
@@ -283,7 +293,7 @@ def test_no_notification_about_your_own_files_or_a_folder_you_cannot_see(
     creator, other = members
     winter = _period_folder(group, WINTER)
     _upload(_client(creator), winter, "mine.txt", b"x")
-    _client(creator).post(reverse("drive:delete", args=[winter.pk]), {"file": File.objects.get().pk})
+    _client(creator).post(reverse("drive:delete", args=[winter.uuid]), {"file": File.objects.get().uuid})
     assert _notes(creator) == []
 
     # Somebody who lives here but was never in the group cannot see the folder, so is not told.
@@ -292,7 +302,7 @@ def test_no_notification_about_your_own_files_or_a_folder_you_cannot_see(
         folder=winter, name="old.txt", size=1, created_by=outsider, changed_at=timezone.now()
     )
     FileVersion.objects.create(file=file, number=1, key=services.new_key(), size=1)
-    _client(other).post(reverse("drive:delete", args=[winter.pk]), {"file": file.pk})
+    _client(other).post(reverse("drive:delete", args=[winter.uuid]), {"file": file.uuid})
     assert _notes(outsider) == []
 
 
@@ -301,22 +311,22 @@ def test_only_an_empty_folder_can_be_deleted_and_restoring_a_file_brings_it_back
 ) -> None:
     client = _client(members[0])
     winter = _period_folder(group, WINTER)
-    client.post(reverse("drive:create_folder", args=[winter.pk]), {"name": "Fest"})
+    client.post(reverse("drive:create_folder", args=[winter.uuid]), {"name": "Fest"})
     fest = Folder.objects.get(name="Fest")
     _upload(client, fest, "plan.txt", b"x")
     file = File.objects.get()
 
-    client.post(reverse("drive:delete", args=[winter.pk]), {"folder": fest.pk})
+    client.post(reverse("drive:delete", args=[winter.uuid]), {"folder": fest.uuid})
     fest.refresh_from_db()
     assert fest.deleted_at is None
 
-    client.post(reverse("drive:delete", args=[fest.pk]), {"file": file.pk})
-    client.post(reverse("drive:delete", args=[winter.pk]), {"folder": fest.pk})
+    client.post(reverse("drive:delete", args=[fest.uuid]), {"file": file.uuid})
+    client.post(reverse("drive:delete", args=[winter.uuid]), {"folder": fest.uuid})
     fest.refresh_from_db()
     assert fest.deleted_at is not None
-    assert client.get(reverse("drive:folder", args=[fest.pk])).status_code == 404
+    assert client.get(reverse("drive:folder", args=[fest.uuid])).status_code == 404
 
-    client.post(reverse("drive:restore", args=[file.pk]))
+    client.post(reverse("drive:restore", args=[file.uuid]))
     fest.refresh_from_db()
     file.refresh_from_db()
     assert (fest.deleted_at, file.deleted_at, file.folder_id) == (None, None, fest.pk)
@@ -332,8 +342,8 @@ def test_the_bin_is_emptied_after_30_days_and_shared_bytes_stay(
     _upload(client, winter, "a.txt", b"a")
     _upload(client, winter, "b.txt", b"b")
     a, b = File.objects.order_by("name")
-    client.post(reverse("drive:move", args=[winter.pk]), {"op": "copy", "to": winter.pk, "file": b.pk})
-    client.post(reverse("drive:delete", args=[winter.pk]), {"file": [a.pk, b.pk]})
+    client.post(reverse("drive:move", args=[winter.uuid]), {"op": "copy", "to": winter.uuid, "file": b.uuid})
+    client.post(reverse("drive:delete", args=[winter.uuid]), {"file": [a.uuid, b.uuid]})
     a_key, b_key = a.latest_version().key, b.latest_version().key
     store = services.storage()
 
@@ -357,13 +367,13 @@ def test_old_versions_download_and_restore_on_top(
     _upload(client, winter, "Budget.xlsx", b"one")
     _upload(client, winter, "Budget.xlsx", b"two", "replace")
     file = File.objects.get()
-    assert _content(client.get(reverse("drive:download_version", args=[file.pk, 1]))) == b"one"
+    assert _content(client.get(reverse("drive:download_version", args=[file.uuid, 1]))) == b"one"
 
-    client.post(reverse("drive:restore_version", args=[file.pk, 1]))
+    client.post(reverse("drive:restore_version", args=[file.uuid, 1]))
     latest = file.latest_version()
     assert (latest.number, latest.restored_from) == (3, 1)
-    assert _content(client.get(reverse("drive:download", args=[file.pk]))) == b"one"
-    page = client.get(reverse("drive:file", args=[file.pk])).content.decode()
+    assert _content(client.get(reverse("drive:download", args=[file.uuid]))) == b"one"
+    page = client.get(reverse("drive:file", args=[file.uuid])).content.decode()
     assert "Gendannede version 1 af Budget.xlsx som version 3" in page
     assert "Lagde version 2 af Budget.xlsx op" in page
 
@@ -387,7 +397,7 @@ def test_replacing_a_file_changed_since_you_downloaded_it_asks_first(
     winter = _period_folder(group, WINTER)
     _upload(mine, winter, "Budget.xlsx", b"one")
     file = File.objects.get()
-    mine.get(reverse("drive:download", args=[file.pk]))
+    mine.get(reverse("drive:download", args=[file.uuid]))
     # Your own new version is no surprise.
     assert _upload(mine, winter, "Budget.xlsx", b"two", "replace")["status"] == 201
 
@@ -406,7 +416,7 @@ def test_a_folder_shows_its_history(members: tuple[Resident, Resident], group: W
     client = _client(members[0])
     winter = _period_folder(group, WINTER)
     _upload(client, winter, "a.txt", b"a")
-    client.post(reverse("drive:rename_file", args=[File.objects.get().pk]), {"name": "b.txt"})
-    page = client.get(reverse("drive:folder_history", args=[winter.pk])).content.decode()
+    client.post(reverse("drive:rename_file", args=[File.objects.get().uuid]), {"name": "b.txt"})
+    page = client.get(reverse("drive:folder_history", args=[winter.uuid])).content.decode()
     assert "Oprettede a.txt" in page
     assert "Omdøbte a.txt til b.txt" in page
