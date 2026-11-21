@@ -165,6 +165,11 @@ class WorkerJobLog(models.Model):
     lines = models.JSONField(default=list)
     # Lines past core.worker_logs.MAX_LINES, counted but not kept.
     omitted = models.PositiveIntegerField(default=0)
+    # How far a job that reports its progress has got (core/job_progress.py): a fraction of the
+    # whole, what it was doing, and when that was written. Empty for a job that does not report.
+    progress = models.FloatField(null=True, blank=True)
+    progress_step = models.CharField(max_length=200, blank=True)
+    progressed_at = models.DateTimeField(null=True, blank=True)
 
     class Meta:
         indexes = [models.Index(fields=["finished_at"]), models.Index(fields=["parent_id"])]

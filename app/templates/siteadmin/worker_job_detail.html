@@ -3,6 +3,12 @@
 {% block title %}{{ job.name }} - Worker-jobs - GAHK{% endblock %}
 {% block content_width %}max-w-6xl{% endblock %}
 {% block content %}
+  {% comment %}
+    While the job runs, the page fetches itself every 10 seconds and swaps the answer in: its state,
+    progress and log so far, which the worker writes as they come (core/job_progress.py). The answer
+    for a finished job carries no hx-trigger, so the polling ends with the job, showing its result.
+  {% endcomment %}
+  <div id="job-live"{% if job.status == "STARTED" %} hx-get="{{ request.path }}" hx-trigger="every 10s [document.visibilityState === 'visible']" hx-select="#job-live" hx-swap="outerHTML"{% endif %}>
   <div class="page-head">
     <div class="min-w-0">
       <div class="eyebrow"><a href="{% url 'siteadmin:home' %}">Administration</a> › <a href="{% url 'siteadmin:worker_jobs' %}">Worker-jobs</a></div>
@@ -32,6 +38,15 @@
         <b>{{ job.finished_at|date:"j. b Y H:i:s"|default:"–" }}</b>
       </li>
     </ol>
+    {% if job.progress_percent is not None %}
+      <div class="card-pad jobs-limit">
+        <div class="jobs-progress" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="{{ job.progress_percent }}" aria-label="Fremskridt"><span style="width:{{ job.progress_percent }}%"></span></div>
+        <p class="jobs-sub">
+          <b class="num">{{ job.progress_percent }} %</b>{% if job.progress_step %} · {{ job.progress_step }}{% endif %}{% if job.progressed_at and job.status == "STARTED" %} · målt {{ job.progressed_at|date:"H:i:s" }}{% endif %}.
+          {% if job.watched %}Jobbet skal komme mindst 10 procentpoint videre hver time (eller blive færdigt); ellers stopper worker'en det.{% endif %}
+        </p>
+      </div>
+    {% endif %}
     {% if job.status == "STARTED" %}
       <div class="card-pad jobs-limit">
         <div class="jobs-meter{% if job.limit_used >= 75 %} is-near{% endif %}"><span style="width:{{ job.limit_used }}%"></span></div>
@@ -106,7 +121,7 @@
   {% endif %}
 
   <section class="card-flat jobs-section">
-    <div class="card-head"><h2>Worker-log</h2>{% if job_log.lines %}<span class="muted text-sm">{{ job_log.lines|length }} linje{{ job_log.lines|length|pluralize:"r" }}</span>{% endif %}</div>
+    <div class="card-head"><h2>Worker-log</h2>{% if job_log.lines %}<span class="muted text-sm">{{ job_log.lines|length }} linje{{ job_log.lines|length|pluralize:"r" }}{% if job.status == "STARTED" %} · opdateres, mens jobbet kører{% endif %}</span>{% endif %}</div>
     {% if job_log.lines %}
       <div class="overflow-x-auto">
         <table class="zebra jobs-table jobs-log">
@@ -123,4 +138,5 @@
       <p class="jobs-empty">Jobbet har ikke logget noget{% if not job.finished_at %} endnu{% endif %}. Logge fra vellykkede jobs gemmes i 30 dage. Andre gemmes, til der er over 1000 af samme job med samme status; så slettes de ældste ud over de 1000, når de er over 60 dage gamle.</p>
     {% endif %}
   </section>
+  </div>
 {% endblock %}
