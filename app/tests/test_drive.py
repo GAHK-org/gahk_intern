@@ -6,6 +6,7 @@ Every test runs on 19 November 2026: the current period is `2026-27 Vinter`, the
 
 from collections.abc import Callable
 from datetime import date
+from io import BytesIO
 
 import pytest
 from django.test import Client
@@ -17,6 +18,7 @@ from drive.access import Level, Viewer
 from drive.models import File, Folder, Space, validate_name
 from drive.periods import Period, period_containing, periods_with_folders, years_with_folders
 from drive.structure import ensure_structure
+from photo_album import direct_upload
 from residents.models import Residency, Resident, Role
 
 from .drive_support import (  # noqa: F401 - fixtures, used by name
@@ -330,6 +332,32 @@ def test_uploads_need_write_access(
     summer = _period_folder(group, SUMMER)  # read-only for a former member
     assert _upload(client, summer, "a.txt", b"x")["status"] == 403
     assert not File.objects.exists()
+
+
+def test_a_bucket_upload_names_its_folder_and_file_by_uuid_in_the_ticket(
+    member: Client, group: Workgroup, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The ticket the browser carries between begin and commit: what it names is found again."""
+    monkeypatch.setattr(direct_upload, "_storage", object)  # any bucket at all
+
+    def finish(ticket: str, etags: object, *, purpose: str, owner: int) -> dict:
+        upload = direct_upload._load(ticket, purpose=purpose)
+        services.store_local(upload["key"], BytesIO(b"x" * upload["size"]))
+        return upload
+
+    monkeypatch.setattr(direct_upload, "finish", finish)
+    winter = _period_folder(group, WINTER)
+
+    def commit(begun: dict) -> int:
+        assert begun["direct"] is True
+        return member.post(reverse("drive:upload_commit"), {"ticket": begun["ticket"]}).status_code
+
+    begin = member.post(reverse("drive:upload_begin", args=[winter.uuid]), {"name": "Plan.txt", "size": 3})
+    assert commit(begin.json()) == 201
+    file = File.objects.get(folder=winter, name="Plan.txt")
+    begin = member.post(reverse("drive:version_begin", args=[file.uuid]), {"name": "Plan.txt", "size": 5})
+    assert commit(begin.json()) == 201
+    assert file.versions.count() == 2
 
 
 def test_a_download_rechecks_access(

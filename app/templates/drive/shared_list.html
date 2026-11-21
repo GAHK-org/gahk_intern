@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+{% block title %}{{ title }} - Drive - GAHK Intern{% endblock %}
+{% block content_width %}max-w-5xl{% endblock %}
+
+{% block content %}
+  <div class="page-head">
+    <div>
+      <p class="eyebrow">Drive</p>
+      <h1>{{ title }}</h1>
+    </div>
+  </div>
+  {% include "drive/_crumbs.html" with ancestors=ancestors current="" %}
+  {% if items %}
+    <ul class="drive-list">
+      {% for item in items %}
+        <li>
+          <a href="{{ item.url }}">
+            <svg class="ni" aria-hidden="true"><use href="#i-{% if item.file %}file{% else %}folder{% endif %}"></use></svg>
+            <span class="drive-name">{{ item.name }}</span>
+          </a>
+          <span class="muted drive-meta">{{ item.where }} · {% if item.can_edit %}kan redigere{% else %}kan læse{% endif %}{% if item.by %} · delt af {{ item.by }}{% endif %}</span>
+        </li>
+      {% endfor %}
+    </ul>
+  {% else %}
+    <p class="muted">Intet er delt{% if folder %} med gruppen herfra{% else %} med dig{% endif %}.</p>
+  {% endif %}
+{% endblock %}

@@ -32,7 +32,7 @@
 
   <div class="drive-actions mb-4">
     <a class="btn" href="{% url 'drive:download' file.uuid %}">Hent</a>
-    {% if can_change %}
+    {% if can_version %}
       {% include "drive/_upload.html" with label="Upload ny version" multiple=False %}
     {% endif %}
   </div>
@@ -50,7 +50,7 @@
       </details>
       <a href="{% url 'drive:move' file.folder.uuid %}?op=move&{{ move_query }}">Flyt</a>
     {% endif %}
-    <a href="{% url 'drive:move' file.folder.uuid %}?op=copy&{{ move_query }}">Kopier</a>
+    {% if can_copy %}<a href="{% url 'drive:move' file.folder.uuid %}?op=copy&{{ move_query }}">Kopier</a>{% endif %}
     {% if can_change %}
       <form method="post" action="{% url 'drive:delete' file.folder.uuid %}" data-drive-confirm="Læg „{{ file.name }}“ i papirkurven?">
         {% csrf_token %}
@@ -63,6 +63,9 @@
       </form>
     {% endif %}
   </div>
+
+  {% url 'drive:share_file' file.uuid as share_action %}
+  {% include "drive/_share_panel.html" with share_action=share_action %}
 
   <h2 class="drive-h2">Versioner</h2>
   <ul class="drive-list mb-6">

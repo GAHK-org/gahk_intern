@@ -153,6 +153,7 @@ def test_seed_demo_fills_drive_for_every_login() -> None:
     _check_drive_files(seeded)
     _check_drive_locks(seeded)
     _check_drive_shared(seeded)
+    _check_drive_sharing(seeded)
 
 
 class _DriveSeed:
@@ -326,6 +327,31 @@ def _check_drive_shared(seeded: _DriveSeed) -> None:
     lines = set(Event.objects.filter(shared=theme.shared).values_list("action", flat=True))
     assert lines >= {"member_added", "member_removed", "member_left", "role_changed", "expiry_changed"}
     assert Event.objects.filter(action="archived").exists()
+
+
+def _check_drive_sharing(seeded: _DriveSeed) -> None:
+    """`Delt med mig` for the logins, `Delt med <gruppe>` for beboer@'s group, and both kinds of
+    edit share used."""
+    from drive import sharing
+    from drive.access import Level
+    from drive.models import Event, File, Share
+
+    for email in ("ak@gahk.dk", "oel@gahk.dk", "regnskab@gahk.dk"):
+        assert sharing.shared_with_me(seeded.viewer(email)), email
+    assert not Share.objects.filter(resident__email="beboer@gahk.dk").exists()  # see drive.demo
+    beboer = seeded.viewer("beboer@gahk.dk")
+    for_group = Share.objects.filter(workgroup__isnull=False)
+    assert for_group.filter(file__folder__period_start__isnull=True).exists()
+    assert for_group.filter(file__folder__period_start__isnull=False).exists()
+    shared_files = [row.file for row in for_group if row.file is not None]
+    assert any(beboer.file_level(file) >= Level.READ for file in shared_files)
+    # Edit shares used: a version added to a file, and a file added in a folder, by the recipients.
+    plan = File.objects.get(name="Arbejdsplan.csv")
+    assert plan.versions.filter(created_by=seeded.by_email["regnskab@gahk.dk"]).exists()
+    assert File.objects.filter(
+        name="Kvittering Ølkælderen.jpg", created_by=seeded.by_email["oel@gahk.dk"]
+    ).exists()
+    assert Event.objects.filter(action="unshared").exists()
 
 
 @pytest.mark.django_db

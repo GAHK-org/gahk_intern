@@ -1062,6 +1062,18 @@ erDiagram
         datetime added_at
     }
 
+    drive_Share {
+        int id PK
+        string uuid
+        int file_id FK
+        int folder_id FK
+        int resident_id FK
+        int workgroup_id FK
+        bool can_edit
+        int created_by_id FK
+        datetime created_at
+    }
+
     regnskab_EconomicLedgerEntry {
         int id PK
         int resident_id FK
@@ -1236,6 +1248,11 @@ erDiagram
     drive_SharedFolder }o--|o residents_Resident : "created_by"
     drive_SharedMember }o--|| drive_SharedFolder : "shared"
     drive_SharedMember }o--|| residents_Resident : "resident"
+    drive_Share }o--|o drive_File : "file"
+    drive_Share }o--|o drive_Folder : "folder"
+    drive_Share }o--|o residents_Resident : "resident"
+    drive_Share }o--|o core_Workgroup : "workgroup"
+    drive_Share }o--|o residents_Resident : "created_by"
     regnskab_EconomicLedgerEntry }o--|| residents_Resident : "resident"
     regnskab_AlumneregningSend }o--|| residents_Resident : "resident"
     regnskab_AlumneregningSend }o--|o core_OutgoingMail : "mail"
@@ -1703,6 +1720,18 @@ erDiagram
         datetime added_at
     }
 
+    drive_Share {
+        int id PK
+        string uuid
+        int file_id FK
+        int folder_id FK
+        int resident_id FK
+        int workgroup_id FK
+        bool can_edit
+        int created_by_id FK
+        datetime created_at
+    }
+
     core_Workgroup { }
 
     residents_Resident { }
@@ -1735,6 +1764,11 @@ erDiagram
     drive_SharedFolder }o--|o residents_Resident : "created_by"
     drive_SharedMember }o--|| drive_SharedFolder : "shared"
     drive_SharedMember }o--|| residents_Resident : "resident"
+    drive_Share }o--|o drive_File : "file"
+    drive_Share }o--|o drive_Folder : "folder"
+    drive_Share }o--|o residents_Resident : "resident"
+    drive_Share }o--|o core_Workgroup : "workgroup"
+    drive_Share }o--|o residents_Resident : "created_by"
 ```
 
 ## events

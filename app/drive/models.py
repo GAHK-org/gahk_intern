@@ -313,6 +313,8 @@ class Event(models.Model):
         ROLE_CHANGED = "role_changed", "Rolle ændret"
         EXPIRY_CHANGED = "expiry_changed", "Udløb ændret"
         ARCHIVED = "archived", "Arkiveret"
+        SHARED = "shared", "Delt"
+        UNSHARED = "unshared", "Deling stoppet"
 
     at = models.DateTimeField(auto_now_add=True, db_index=True)
     actor = models.ForeignKey(
@@ -391,6 +393,10 @@ class Event(models.Model):
                 return f"Gjorde {d.get('member')} til {d.get('role')}"
             case self.Action.EXPIRY_CHANGED:
                 return f"Satte udløbet til {d.get('expires_on')}, hvor mappen {d.get('then')}"
+            case self.Action.SHARED:
+                return f"Delte {self.name} med {d.get('recipient')}, der kan {d.get('access')}"
+            case self.Action.UNSHARED:
+                return f"Stoppede delingen af {self.name} med {d.get('recipient')}"
             case self.Action.ARCHIVED:
                 return f"{self.name} blev arkiveret ved udløbet"
             case self.Action.PURGED:
@@ -516,3 +522,50 @@ class SharedMember(models.Model):
 
     def __str__(self) -> str:
         return f"{self.resident_id} in {self.shared_id} ({self.role})"
+
+
+class Share(models.Model):
+    """A file or a resident's folder in a group's space, shared with one resident or one embedsgruppe,
+    to read or to edit. It covers a folder's whole subtree, and never makes the item more open than
+    the item is: editing needs an edit share while the item's period can still be written, and for a
+    group the recipient's own matching folder decides who in the group sees it (drive/access.py).
+    Shares do not expire; they end when the item leaves the group's space."""
+
+    uuid = models.UUIDField(default=uuid4, unique=True, editable=False)  # in URLs, not the key
+    file = models.ForeignKey(File, null=True, blank=True, on_delete=models.CASCADE, related_name="shares")
+    folder = models.ForeignKey(Folder, null=True, blank=True, on_delete=models.CASCADE, related_name="shares")
+    resident = models.ForeignKey(
+        "residents.Resident", null=True, blank=True, on_delete=models.CASCADE, related_name="+"
+    )
+    workgroup = models.ForeignKey(
+        "core.Workgroup", null=True, blank=True, on_delete=models.CASCADE, related_name="drive_shares"
+    )
+    can_edit = models.BooleanField(default=False)
+    created_by = models.ForeignKey(
+        "residents.Resident", null=True, blank=True, on_delete=models.SET_NULL, related_name="+"
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        # One item and one recipient each; drive/sharing.py keeps a pair to one share.
+        constraints = [
+            models.CheckConstraint(
+                condition=(Q(file__isnull=True) & Q(folder__isnull=False))
+                | (Q(file__isnull=False) & Q(folder__isnull=True)),
+                name="drive_share_one_item",
+            ),
+            models.CheckConstraint(
+                condition=(Q(resident__isnull=True) & Q(workgroup__isnull=False))
+                | (Q(resident__isnull=False) & Q(workgroup__isnull=True)),
+                name="drive_share_one_recipient",
+            ),
+        ]
+
+    def __str__(self) -> str:
+        return f"Share {self.pk}"
+
+    @property
+    def recipient(self) -> str:
+        if self.resident_id:
+            return self.resident.full_name if self.resident else ""
+        return self.workgroup.name if self.workgroup else ""
