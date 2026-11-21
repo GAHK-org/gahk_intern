@@ -29,6 +29,7 @@ from core.back_navigation import not_a_write
 from core.emoji import EMOJI_SHORTLIST
 from core.markdown import embed_references, image_sources, render_markdown
 from core.reactions import CREATED, apply_toggle, reaction_rows
+from core.resend import already_sent, one_send_at_a_time
 from core.uploads import attached_image, validate_image_upload
 from residents.permissions import current_resident, is_kitchen
 
@@ -290,9 +291,14 @@ def create(request: HttpRequest) -> HttpResponse:
     if shared:
         form.fields["body"].widget.attrs["autofocus"] = True
     if request.method == "POST" and form.is_valid():
-        with transaction.atomic():
+        author = current_resident(request)
+        with one_send_at_a_time(author):
+            # The same post sent twice (a second press during a slow send, a retry) is saved once,
+            # and the copy goes where the first went (core.resend).
+            if sent := already_sent(Notice.objects.filter(author=author), "body", form.cleaned_data["body"]):
+                return redirect("opslagstavle:detail", pk=sent.pk)
             notice = form.save(commit=False)
-            notice.author = current_resident(request)
+            notice.author = author
             notice.save()
             sync_images(notice)
         mentioned = services.notify_mentions_in_notice(notice)
@@ -419,11 +425,16 @@ def create_comment(request: HttpRequest, pk: int) -> HttpResponseRedirect:
         messages.error(request, "Skriv en kommentar, eller vedhæft et billede.")
         return redirect("opslagstavle:detail", pk=notice.pk)
 
-    comment.notice = notice
-    comment.author = current_resident(request)
-    if image is not None:
-        comment.image = image
-    comment.save()
+    author = current_resident(request)
+    with one_send_at_a_time(author):
+        # The same comment sent twice is saved once (core.resend).
+        if already_sent(NoticeComment.objects.filter(notice=notice, author=author), "body", comment.body):
+            return redirect("opslagstavle:detail", pk=notice.pk)
+        comment.notice = notice
+        comment.author = author
+        if image is not None:
+            comment.image = image
+        comment.save()
     services.notify_new_comment(comment)
     live.notice_changed(notice.pk)
     return redirect("opslagstavle:detail", pk=notice.pk)

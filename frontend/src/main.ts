@@ -3,6 +3,7 @@ import "htmx.org";
 import "idiomorph/htmx"; // registers hx-ext="morph" (Den Hurtige's feed; see ./feed)
 import Alpine from "alpinejs";
 import "./htmx-csrf"; // X-CSRFToken on every htmx request (site-wide; must precede any hx-post)
+import "./send-once"; // one press, one send: no message or post saved twice (site-wide)
 import "./back-navigation"; // a page brought back by Back reloads if something changed since (site-wide)
 import "./charts"; // interactive charts on /statistik/ (no-op elsewhere)
 import "./imageupload"; // downscale room-inspection photo uploads client-side (no-op elsewhere)

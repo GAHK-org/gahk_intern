@@ -19,6 +19,8 @@
 // shows. So when it is left by a link, everything written so far counts as shown. When it is left by
 // SUBMITTING A FORM it does not, because that write is exactly what the kept copy is missing.
 
+import { plainPost } from "./send-once";
+
 // The name carries __Host- in production only (settings.LAST_WRITE_COOKIE_NAME).
 const LAST_WRITE = /(?:^|;\s*)(?:__Host-)?intern_last_write=(\d+)/;
 
@@ -54,10 +56,9 @@ if (rendered) {
   // the sent text back in when this page is shown again, even into a freshly loaded copy. Not on a
   // form with a password, where the attribute could confuse a password manager.
   window.addEventListener("submit", (event: SubmitEvent) => {
-    const form = event.target;
-    if (event.defaultPrevented || !(form instanceof HTMLFormElement)) return;
-    const method = (event.submitter?.getAttribute("formmethod") ?? form.method).toLowerCase();
-    if (method !== "post" || form.target === "_blank") return;
+    const form = plainPost(event);
+    // A download (data-sends-again, send-once.ts) does not leave the page.
+    if (!form || form.hasAttribute("data-sends-again")) return;
     leftBySubmit = true;
     if (!form.querySelector('input[type="password"]')) form.setAttribute("autocomplete", "off");
   });

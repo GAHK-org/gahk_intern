@@ -75,7 +75,7 @@
   {% endcomment %}
   {% if folder %}
     <div class="arkiv-folder-actions mb-4">
-      <form method="post" action="{% url 'arkiv:download_folder' folder.pk %}">
+      <form method="post" action="{% url 'arkiv:download_folder' folder.pk %}" data-sends-again>
         {% csrf_token %}
         <input type="hidden" name="done_token" value="" data-batch-token>
         <button type="submit" class="btn btn-secondary" data-batch-submit>Hent hele mappen</button>
@@ -170,7 +170,7 @@
       posts, and an empty selection comes back as a message rather than a broken page.
     {% endcomment %}
     <form method="post" action="{% url 'arkiv:download_selected' folder.pk %}"
-          id="arkiv-batch" class="arkiv-batch" data-arkiv-batch>
+          id="arkiv-batch" class="arkiv-batch" data-arkiv-batch data-sends-again>
       {% csrf_token %}
       {% comment %}
         Filled in by the script with a nonce before the form goes; the response echoes it back as a

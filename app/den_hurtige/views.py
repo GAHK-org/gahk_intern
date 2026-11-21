@@ -39,6 +39,7 @@ from django.views.decorators.http import require_POST
 
 from core.clock import current_date, current_datetime
 from core.reactions import CREATED, apply_toggle, reaction_rows
+from core.resend import already_sent, one_send_at_a_time
 from core.uploads import attached_image
 from notifications.categories import chat_room_key
 from notifications.models import NotificationPreference
@@ -706,13 +707,18 @@ def create_post(request: HttpRequest) -> HttpResponse:
     if minutes not in VALID_DURATIONS:
         return _reject(request, channel, content, "Vælg hvor længe beskeden skal være relevant.")
 
-    post = QuickPost.objects.create(
-        author=author,
-        channel=channel.slug,
-        content=content,
-        image=_validated_image(request) or "",
-        expires_at=current_datetime() + timedelta(minutes=minutes),
-    )
+    # The same message sent twice (a second press during a slow upload, a retry) is saved once, and
+    # the copy is answered exactly as the first was (core.resend).
+    with one_send_at_a_time(author):
+        if already_sent(QuickPost.objects.filter(author=author, channel=channel.slug), "content", content):
+            return _posted(request, channel)
+        post = QuickPost.objects.create(
+            author=author,
+            channel=channel.slug,
+            content=content,
+            image=_validated_image(request) or "",
+            expires_at=current_datetime() + timedelta(minutes=minutes),
+        )
     services.notify_new_post(post)
     live.message_changed(post.channel, post.pk, "created")
     # No success message on purpose: the message appearing at the bottom of the feed *is* the
@@ -721,6 +727,10 @@ def create_post(request: HttpRequest) -> HttpResponse:
     #
     # The composer sends with htmx and gets the live list back, so a message adds no step to the Back
     # button, and Back cannot show the page from before the send with the text still typed (#365).
+    return _posted(request, channel)
+
+
+def _posted(request: HttpRequest, channel: Channel) -> HttpResponse:
     if request.headers.get("HX-Request") and not len(messages.get_messages(request)):
         return _posts_response(request, channel)
     return _reload_feed(request, channel)
@@ -793,13 +803,16 @@ def create_comment(request: HttpRequest, pk: int) -> HttpResponse:
         messages.error(request, "Skriv et svar, eller vedhæft et billede.")
         return _comment_response(request, post, back)
 
-    comment = QuickComment.objects.create(
-        post=post,
-        author=author,
-        content=content,
-        image=image or "",
-        notify_everyone=request.POST.get("notify") == "alle",
-    )
+    with one_send_at_a_time(author):
+        if already_sent(QuickComment.objects.filter(post=post, author=author), "content", content):
+            return _comment_response(request, post, back)  # the same reply, sent twice (core.resend)
+        comment = QuickComment.objects.create(
+            post=post,
+            author=author,
+            content=content,
+            image=image or "",
+            notify_everyone=request.POST.get("notify") == "alle",
+        )
     services.notify_new_comment(comment)
     live.message_changed(post.channel, post.pk)
     return _comment_response(request, post, back)
