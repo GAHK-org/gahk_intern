@@ -4,38 +4,36 @@ Every test runs on 19 November 2026: the current period is `2026-27 Vinter`, the
 `2026 Sommer`, and the next one, `2027 Sommer`, gets its folder on 18 March 2027.
 """
 
-from collections.abc import Callable, Iterator
+from collections.abc import Callable
 from datetime import date
 
 import pytest
-from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import Client
 from django.urls import reverse
 
 from core.models import Room, Workgroup
-from drive import access, services
+from drive import services
 from drive.access import Level, Viewer
 from drive.models import File, Folder, Space, validate_name
 from drive.periods import Period, period_containing, periods_with_folders, years_with_folders
 from drive.structure import ensure_structure
 from residents.models import Residency, Resident, Role
 
-TODAY = date(2026, 11, 19)
-WINTER = Period(date(2026, 10, 1))
-SUMMER = Period(date(2026, 4, 1))
-OLD = Period(date(2025, 10, 1))
-NEXT = Period(date(2027, 4, 1))
-
-
-@pytest.fixture(autouse=True)
-def _today(monkeypatch: pytest.MonkeyPatch) -> None:
-    import core.clock
-    import drive.access
-    import drive.structure
-
-    for module in (core.clock, drive.access, drive.structure):
-        monkeypatch.setattr(module, "current_date", lambda: TODAY)
-
+from .drive_support import (  # noqa: F401 - fixtures, used by name
+    NEXT,
+    OLD,
+    SUMMER,
+    TODAY,
+    WINTER,
+    _period_folder,
+    _today,
+    _upload,
+    group,
+    member,
+    open_gate,
+    resident_in,
+    room,
+)
 
 # --- Periods ---------------------------------------------------------------------------------------
 
@@ -90,29 +88,6 @@ def test_names_that_would_not_survive_a_zip_are_refused(name: str) -> None:
 # --- The folders the system makes ------------------------------------------------------------------
 
 
-@pytest.fixture
-def group(db: None) -> Workgroup:
-    return Workgroup.objects.create(name="Regnskabsgruppen-test")
-
-
-def _period_folder(workgroup: Workgroup, period: Period) -> Folder:
-    folder = Folder.objects.filter(
-        workgroup=workgroup, kind=Folder.Kind.PERIOD, period_start=period.start
-    ).first()
-    if folder is None:  # an earlier period, made by hand: the system only makes current and next
-        group_folder = Folder.objects.get(workgroup=workgroup, kind=Folder.Kind.GROUP)
-        folder = Folder(
-            parent=group_folder,
-            name=period.name,
-            kind=Folder.Kind.PERIOD,
-            space=Space.GROUP,
-            workgroup=workgroup,
-            period_start=period.start,
-        )
-        folder.save()
-    return folder
-
-
 def test_the_structure_has_roots_a_folder_per_group_and_the_current_period(group: Workgroup) -> None:
     ensure_structure(TODAY)
     ensure_structure(TODAY)  # idempotent
@@ -143,27 +118,6 @@ def test_a_group_folder_name_is_a_valid_folder_name_and_follows_a_rename(db: Non
 
 
 # --- Access ----------------------------------------------------------------------------------------
-
-
-@pytest.fixture
-def room(db: None) -> Room:
-    return Room.objects.create(legacy_index=99, number=999, floor="stuen", side="mod gaden")
-
-
-@pytest.fixture
-def resident_in(room: Room, make_resident: Callable[..., Resident]) -> Callable[..., Resident]:
-    """A resident and the months they lived here, with the group they were in each month."""
-    counter = iter(range(1000))
-
-    def _make(months: dict[tuple[int, int], Workgroup | None], roles: tuple[str, ...] = ()) -> Resident:
-        resident = make_resident(email=f"drive{next(counter)}@gahk.dk", roles=roles)
-        for (year, month), workgroup in months.items():
-            Residency.objects.create(
-                resident=resident, room=room, year=year, month=month, workgroup=workgroup
-            )
-        return resident
-
-    return _make
 
 
 def _viewer(resident: Resident, *, oversees: bool = False) -> Viewer:
@@ -280,19 +234,6 @@ def test_faelles_is_written_by_everyone_except_old_years(resident_in: Callable[.
 # --- Views -----------------------------------------------------------------------------------------
 
 
-@pytest.fixture
-def open_gate(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(access, "ACCESS_ROLES", None)
-
-
-@pytest.fixture
-def member(group: Workgroup, resident_in: Callable[..., Resident], open_gate: None) -> Iterator[Client]:
-    client = Client()
-    client.force_login(resident_in({(2026, 11): group}))
-    ensure_structure(TODAY)
-    yield client
-
-
 def test_the_rollout_gate_keeps_plain_residents_out(
     group: Workgroup, resident_in: Callable[..., Resident]
 ) -> None:
@@ -351,15 +292,6 @@ def test_no_folders_directly_in_a_group_folder(member: Client, group: Workgroup)
         member.post(reverse("drive:create_folder", args=[group_folder.uuid]), {"name": "x"}).status_code
         == 403
     )
-
-
-def _upload(client: Client, folder: Folder, name: str, content: bytes, on_conflict: str = "") -> dict:
-    response = client.post(
-        reverse("drive:upload_direct", args=[folder.uuid]),
-        {"file": SimpleUploadedFile(name, content, content_type="text/plain"), "on_conflict": on_conflict},
-    )
-    body = response.json() if response["Content-Type"] == "application/json" else {}
-    return {"status": response.status_code, **body}
 
 
 def test_upload_and_download_round_trip_under_the_name(member: Client, group: Workgroup) -> None:

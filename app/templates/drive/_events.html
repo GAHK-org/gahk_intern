@@ -1,0 +1,13 @@
+{% comment %} History lines, newest first (drive.models.Event.summary). {% endcomment %}
+{% if events %}
+  <ul class="drive-history">
+    {% for event in events %}
+      <li>
+        <span>{{ event.summary }}</span>
+        <span class="muted">{{ event.at|date:"j. M Y H:i" }}{% if event.actor %} · {{ event.actor.full_name }}{% endif %}</span>
+      </li>
+    {% endfor %}
+  </ul>
+{% else %}
+  <p class="muted">Ingen historik endnu.</p>
+{% endif %}

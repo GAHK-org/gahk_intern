@@ -21,8 +21,9 @@ from django.utils import timezone
 from photo_album.storage import get_photo_album_storage
 from residents.models import Resident
 
+from . import history
 from .access import Viewer
-from .models import File, FileVersion, Folder, name_key, normalize_name, validate_name
+from .models import Event, File, FileVersion, Folder, LastDownload, name_key, normalize_name, validate_name
 
 KEY_PREFIX = "drive/"
 
@@ -33,6 +34,10 @@ CONFLICT_CHOICES = (REPLACE, KEEP_BOTH)
 
 class NameTaken(ValidationError):
     """A file of that name is already there, and the resident has not said what to do about it."""
+
+
+class Stale(ValidationError):
+    """Replacing a file somebody else has changed since this resident last downloaded it."""
 
 
 def max_upload_bytes() -> int:
@@ -48,10 +53,11 @@ def storage():  # noqa: ANN201
     return get_photo_album_storage()
 
 
-def _taken(folder: Folder, key: str, *, files: bool = True) -> bool:
-    if Folder.objects.filter(parent=folder, name_key=key).exists():
+def taken(folder: Folder, key: str) -> bool:
+    """A file or folder outside the bin has the name in `folder`."""
+    if Folder.objects.filter(parent=folder, name_key=key, deleted_at__isnull=True).exists():
         return True
-    return files and File.objects.filter(folder=folder, name_key=key).exists()
+    return File.objects.filter(folder=folder, name_key=key, deleted_at__isnull=True).exists()
 
 
 def check_name(folder: Folder, name: str) -> str:
@@ -65,7 +71,7 @@ def create_folder(viewer: Viewer, parent: Folder, name: str, resident: Resident)
     if not viewer.can_create_in(parent):
         raise PermissionDenied
     name = check_name(parent, name)
-    if _taken(parent, name_key(name)):
+    if taken(parent, name_key(name)):
         raise ValidationError(f"Der er allerede noget, der hedder „{name}“, i mappen.")
     folder = Folder(
         parent=parent,
@@ -80,12 +86,22 @@ def create_folder(viewer: Viewer, parent: Folder, name: str, resident: Resident)
             folder.save()
     except IntegrityError as exc:
         raise ValidationError(f"Der er allerede noget, der hedder „{name}“, i mappen.") from exc
+    history.record(Event.Action.CREATED, actor=resident, folder=folder, name=folder.name)
     return folder
 
 
-def check_upload(viewer: Viewer, folder: Folder, name: str, size: int, on_conflict: str) -> str:
+def check_upload(
+    viewer: Viewer,
+    folder: Folder,
+    name: str,
+    size: int,
+    on_conflict: str,
+    *,
+    ignore_stale: bool = False,
+) -> str:
     """Before a byte is sent: may the resident put this file here? Returns the name to store it
-    under. Raises NameTaken when a file of that name is there and `on_conflict` is not given."""
+    under. Raises NameTaken when a file of that name is there and `on_conflict` is not given, and
+    Stale when it is to be replaced but has changed since the resident last downloaded it."""
     if not viewer.can_upload_to(folder):
         raise PermissionDenied
     name = check_name(folder, name)
@@ -94,19 +110,52 @@ def check_upload(viewer: Viewer, folder: Folder, name: str, size: int, on_confli
     if size > max_upload_bytes():
         raise ValidationError(f"Filen er for stor (over {settings.DRIVE_MAX_UPLOAD_GB:g} GB).")
     key = name_key(name)
-    if Folder.objects.filter(parent=folder, name_key=key).exists():
+    if Folder.objects.filter(parent=folder, name_key=key, deleted_at__isnull=True).exists():
         raise ValidationError(f"Der er allerede en mappe, der hedder „{name}“.")
-    if on_conflict not in CONFLICT_CHOICES and File.objects.filter(folder=folder, name_key=key).exists():
+    existing = File.objects.filter(folder=folder, name_key=key, deleted_at__isnull=True).first()
+    if existing is None:
+        return name
+    if on_conflict not in CONFLICT_CHOICES:
         raise NameTaken(f"Der er allerede en fil, der hedder „{name}“.")
+    if on_conflict == REPLACE and not ignore_stale:
+        check_stale(existing, viewer.resident_id)
     return name
 
 
-def _free_name(folder: Folder, name: str) -> str:
-    """`Budget.xlsx` -> `Budget (2).xlsx`, or the first number not taken."""
+def check_stale(file: File, resident_id: int) -> None:
+    """Raise Stale when somebody else has saved a version since the resident last downloaded one. A
+    resident who never downloaded the file is not warned: their upload is not an edit of it."""
+    seen = (
+        LastDownload.objects.filter(file=file, resident_id=resident_id)
+        .values_list("number", flat=True)
+        .first()
+    )
+    if seen is None:
+        return
+    newer = (
+        file.versions.filter(number__gt=seen).exclude(created_by_id=resident_id).select_related("created_by")
+    )
+    last = newer.order_by("-number").first()
+    if last is None:
+        return
+    who = last.created_by.full_name if last.created_by else "En anden"
+    when = timezone.localtime(last.created_at).strftime("%-d/%-m kl. %H:%M")
+    raise Stale(f"{who} har ændret „{file.name}“ ({when}), efter du hentede den.")
+
+
+def remember_download(file: File, resident_id: int, number: int) -> None:
+    LastDownload.objects.update_or_create(file=file, resident_id=resident_id, defaults={"number": number})
+
+
+def free_name(folder: Folder, name: str, *, keep_suffix: bool = True) -> str:
+    """`Budget.xlsx` -> `Budget (2).xlsx`, or the first number not taken. A folder's name has no
+    suffix: `Fest 1.5` -> `Fest 1.5 (2)`."""
+    if not taken(folder, name_key(name)):
+        return name
     path = Path(name)
-    stem, suffix = (path.stem, path.suffix) if path.stem else (name, "")
+    stem, suffix = (path.stem, path.suffix) if keep_suffix and path.stem else (name, "")
     number = 2
-    while _taken(folder, name_key(candidate := f"{stem} ({number}){suffix}")):
+    while taken(folder, name_key(candidate := f"{stem} ({number}){suffix}")):
         number += 1
     return candidate
 
@@ -134,7 +183,11 @@ def add_upload(
         raise PermissionDenied
     name = check_name(folder, name)
     now = timezone.now()
-    existing = File.objects.select_for_update().filter(folder=folder, name_key=name_key(name)).first()
+    existing = (
+        File.objects.select_for_update()
+        .filter(folder=folder, name_key=name_key(name), deleted_at__isnull=True)
+        .first()
+    )
     if existing is not None and on_conflict == REPLACE:
         number = (existing.versions.order_by("-number").values_list("number", flat=True).first() or 0) + 1
         FileVersion.objects.create(
@@ -143,10 +196,11 @@ def add_upload(
         existing.size, existing.content_type = size, content_type
         existing.changed_by, existing.changed_at = resident, now
         existing.save()
+        history.record(Event.Action.VERSION, actor=resident, file=existing, name=existing.name, number=number)
         return Added(existing, replaced=True)
     if existing is not None:
         # Keep both - also when the other file appeared while this one was uploading.
-        name = _free_name(folder, name)
+        name = free_name(folder, name)
     file = File.objects.create(
         folder=folder,
         name=name,
@@ -159,6 +213,7 @@ def add_upload(
     FileVersion.objects.create(
         file=file, number=1, key=key, size=size, content_type=content_type, created_by=resident
     )
+    history.record(Event.Action.CREATED, actor=resident, file=file, name=file.name)
     return Added(file, replaced=False)
 
 
@@ -173,7 +228,7 @@ def subtree_totals(folders: list[Folder]) -> dict[int, tuple[int, int]]:
     """(file count, total size) of each folder's whole subtree."""
     totals: dict[int, tuple[int, int]] = {}
     for folder in folders:
-        row = File.objects.filter(folder__path__startswith=folder.path).aggregate(
+        row = File.objects.filter(folder__path__startswith=folder.path, deleted_at__isnull=True).aggregate(
             count=Count("pk"), size=Sum("size")
         )
         totals[folder.pk] = (row["count"] or 0, row["size"] or 0)

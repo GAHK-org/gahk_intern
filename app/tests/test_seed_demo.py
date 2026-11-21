@@ -1,10 +1,14 @@
 """Smoke test for the seed_demo dev fixture command: it should run, be idempotent, and produce
 data that lights up the app's real queries (active period, roles, derived ølkælder balances)."""
 
+from datetime import date
+
 import pytest
 from django.core.management import call_command
 
 from den_hurtige.models import QuickPost
+from drive.access import Viewer
+from drive.models import Folder
 from oelkaelder.models import Shopper
 from residents.models import Resident, active_period
 from residents.permissions import real_roles
@@ -138,44 +142,71 @@ def test_seed_demo_gives_the_logins_notifications_in_every_state() -> None:
 
 @pytest.mark.django_db
 def test_seed_demo_fills_drive_for_every_login() -> None:
-    """Drive starts empty, so a fresh checkout needs files in every space - and folders some logins
-    may open, some only see the size of, and some not see at all."""
-    from django.utils import timezone
+    """Drive starts empty, so a fresh checkout needs something in every state each part of Drive
+    has. One seed for all of them, as a seed run is slow, with the default number of residents:
+    some cases are a colleague's change to a login's file, so a group needs more than one member.
+    The first test above covers a second --fresh run over Drive's rows."""
+    call_command("seed_demo", "--fresh", "--force", verbosity=0)
+    seeded = _DriveSeed()
 
+    _check_drive_structure(seeded)
+    _check_drive_files(seeded)
+
+
+class _DriveSeed:
+    def __init__(self) -> None:
+        from django.utils import timezone
+
+        from drive.periods import period_containing
+
+        self.today = timezone.localdate()
+        self.current = period_containing(self.today)
+        self.by_email = {r.email: r for r in Resident.objects.all()}
+
+    def viewer(self, email: str, *, oversees: bool = False) -> Viewer:
+        return Viewer.build(self.by_email[email].pk, oversees=oversees, today=self.today)
+
+    def group(self, email: str) -> Folder:
+        """The login's group folder this month."""
+        residency = self.by_email[email].residencies.get(year=self.today.year, month=self.today.month)
+        return Folder.objects.get(kind=Folder.Kind.GROUP, workgroup=residency.workgroup)
+
+    def period(self, email: str, start: date) -> Folder:
+        return self.group(email).children.get(period_start=start)
+
+
+def _check_drive_structure(seeded: _DriveSeed) -> None:
+    """Folders some logins may open, some only see the size of, and some not see at all."""
     from drive import services
-    from drive.access import Level, Viewer
-    from drive.models import File, Folder
-    from drive.periods import period_containing
+    from drive.access import Level
+    from drive.models import File
 
-    call_command("seed_demo", "--fresh", "--force", "--residents", "12", verbosity=0)
-    call_command("seed_demo", "--fresh", "--force", "--residents", "12", verbosity=0)  # still idempotent
-
-    today = timezone.localdate()
-    current = period_containing(today)
-    by_email = {r.email: r for r in Resident.objects.all()}
-
-    def viewer(email: str, *, oversees: bool = False) -> Viewer:
-        return Viewer.build(by_email[email].pk, oversees=oversees, today=today)
-
-    regnskab_group = Folder.objects.get(kind=Folder.Kind.GROUP, name="Regnskabsgruppen")
-    periods = {f.period_start: f for f in regnskab_group.children.filter(kind=Folder.Kind.PERIOD)}
-    now_folder = periods[current.start]
-    older = periods[current.previous().previous().start]
+    today, current = seeded.today, seeded.current
+    now_folder = seeded.period("regnskab@gahk.dk", current.start)
+    older = seeded.period("regnskab@gahk.dk", current.previous().previous().start)
     assert File.objects.filter(folder__path__startswith=now_folder.path).count() >= 4
-    assert viewer("regnskab@gahk.dk").level(now_folder) == Level.WRITE
-    assert viewer("regnskab@gahk.dk").level(older) == Level.READ
-    assert viewer("formand@gahk.dk", oversees=True).level(now_folder) == Level.META
-    assert viewer("formand@gahk.dk", oversees=True).level(older) == Level.READ
+    assert seeded.viewer("regnskab@gahk.dk").level(now_folder) == Level.WRITE
+    assert seeded.viewer("regnskab@gahk.dk").level(older) == Level.READ
+    # The overseers read earlier periods, and see only the name and size of a current one of a group
+    # they are not in themselves.
+    formand = seeded.viewer("formand@gahk.dk", oversees=True)
+    assert formand.level(older) == Level.READ
+    others = [
+        seeded.period(email, current.start)
+        for email in ("regnskab@gahk.dk", "ak@gahk.dk", "oel@gahk.dk")
+        if seeded.group(email) != seeded.group("formand@gahk.dk")
+    ]
+    assert others
+    assert all(formand.level(folder) == Level.META for folder in others)
     # A plain resident sees only the groups they have been in, and their note is in this month's.
-    beboer = viewer("beboer@gahk.dk")
+    beboer = seeded.viewer("beboer@gahk.dk")
     groups = list(Folder.objects.filter(kind=Folder.Kind.GROUP))
     visible = [group for group in groups if beboer.level(group) > Level.NONE]
     assert 0 < len(visible) < len(groups)
-    residency = by_email["beboer@gahk.dk"].residencies.get(year=today.year, month=today.month)
-    own = Folder.objects.get(kind=Folder.Kind.GROUP, workgroup=residency.workgroup)
+    own = seeded.group("beboer@gahk.dk")
     assert own in visible
     assert File.objects.filter(
-        folder__path__startswith=own.path, created_by=by_email["beboer@gahk.dk"]
+        folder__path__startswith=own.path, created_by=seeded.by_email["beboer@gahk.dk"]
     ).exists()
 
     # Fælles: this year and last year to write in, the year before to read only.
@@ -192,6 +223,50 @@ def test_seed_demo_fills_drive_for_every_login() -> None:
         version = file.latest_version()
         with services.storage().open(version.key, "rb") as stored:
             assert len(stored.read()) == file.size > 0
+
+
+def _check_drive_files(seeded: _DriveSeed) -> None:
+    """The bin, versions and history: each needs something done to a file after it was uploaded."""
+    from datetime import timedelta
+
+    from django.utils import timezone
+
+    from drive import services
+    from drive.models import BIN_DAYS, Event, File
+    from notifications.models import Notification
+
+    regnskab = seeded.by_email["regnskab@gahk.dk"]
+    # In the bin: one deleted by a colleague (its creator is told), one about to go for good, and a
+    # deleted folder kept for the binned file in it.
+    binned = File.objects.filter(deleted_at__isnull=False)
+    receipt = binned.get(name="Kvittering 3.jpg")
+    assert receipt.deleted_by != regnskab
+    assert Notification.objects.filter(recipient=regnskab, url__endswith="/bin").exists()
+    assert binned.filter(deleted_at__lt=timezone.now() - timedelta(days=BIN_DAYS - 5)).exists()
+    assert binned.filter(folder__deleted_at__isnull=False).exists()
+    # Versions: a colleague's version after regnskab@ downloaded the file warns on replacing it, and
+    # an old version restored on top.
+    budget = File.objects.get(name=f"Budget {seeded.current.name}.xlsx")
+    try:
+        services.check_stale(budget, regnskab.pk)
+        raise AssertionError("replacing the budget should warn that a colleague changed it")
+    except services.Stale:
+        pass
+    assert File.objects.get(name="Kontoplan.xlsx").versions.filter(restored_from=1).exists()
+    # History: every kind of line, and ak@ told that somebody renamed their file.
+    lines = set(Event.objects.values_list("action", flat=True))
+    assert lines >= {
+        "created",
+        "version",
+        "version_restored",
+        "renamed",
+        "moved",
+        "copied",
+        "deleted",
+        "restored",
+    }
+    assert Notification.objects.filter(recipient__email="ak@gahk.dk", title__contains="omdøbte").exists()
+    assert Folder.objects.filter(deleted_at__isnull=False).count() == 1
 
 
 @pytest.mark.django_db

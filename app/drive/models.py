@@ -4,10 +4,16 @@ Every folder carries the three things access is decided by, so a folder's rights
 own row rather than by walking up the tree: its SPACE (Fælles or an embedsgruppe's), its WORKGROUP
 (for a group's folders), and PERIOD_START, the first day of the period or year it is filed under,
 or null for the timeless folders (`Uden periode`, `Uden årstal`) and what is below them. They are
-set when a folder is created, from its parent, and folders do not move yet.
+set when a folder is created, from its parent, and again when it is moved.
 
 `path` is the materialised path of primary keys (`/3/17/42/`), so a folder's whole subtree - for
-its file count and size - is one indexed prefix match.
+its file count and size - is one indexed prefix match. A move rewrites the three columns and the
+path for the whole moved subtree at once (drive/operations.py).
+
+Deleting a file or folder puts it in the bin: `deleted_at` is set and the row stays for BIN_DAYS,
+so it can be restored with its versions and history. Names are unique only among what is not in
+the bin. A deleted folder is kept for the binned files in it, so restoring one brings its folder
+back.
 
 Folders and files are named in URLs and forms by a random `uuid`, never by their primary key, so
 nobody can count them or watch the numbers climb. The keys stay integers inside: `path` stays short
@@ -22,6 +28,8 @@ from django.db import models
 from django.db.models import Q
 
 NAME_MAX_LENGTH = 200
+# How long a deleted file stays in the bin before it is removed with all its versions.
+BIN_DAYS = 30
 
 
 def normalize_name(value: str) -> str:
@@ -92,10 +100,18 @@ class Folder(models.Model):
         "residents.Resident", null=True, blank=True, on_delete=models.SET_NULL, related_name="+"
     )
     created_at = models.DateTimeField(auto_now_add=True)
+    deleted_at = models.DateTimeField(null=True, blank=True)
+    deleted_by = models.ForeignKey(
+        "residents.Resident", null=True, blank=True, on_delete=models.SET_NULL, related_name="+"
+    )
 
     class Meta:
         constraints = [
-            models.UniqueConstraint(fields=["parent", "name_key"], name="drive_folder_unique_name"),
+            models.UniqueConstraint(
+                fields=["parent", "name_key"],
+                condition=Q(deleted_at__isnull=True),
+                name="drive_folder_unique_name",
+            ),
             models.UniqueConstraint(
                 fields=["kind"], condition=Q(parent__isnull=True), name="drive_one_root_of_each_kind"
             ),
@@ -131,6 +147,10 @@ class Folder(models.Model):
         by_id = Folder.objects.in_bulk(ids)
         return [by_id[pk] for pk in ids if pk in by_id]
 
+    def display_path(self) -> str:
+        """`Embedsgrupper / Regnskabsgruppen / 2026-27 Vinter / Budget`, for history lines and the bin."""
+        return " / ".join([*(folder.name for folder in self.ancestors()), self.name])
+
 
 class File(models.Model):
     uuid = models.UUIDField(default=uuid4, unique=True, editable=False)  # in URLs, not the key
@@ -149,9 +169,19 @@ class File(models.Model):
         "residents.Resident", null=True, blank=True, on_delete=models.SET_NULL, related_name="+"
     )
     changed_at = models.DateTimeField()
+    deleted_at = models.DateTimeField(null=True, blank=True)
+    deleted_by = models.ForeignKey(
+        "residents.Resident", null=True, blank=True, on_delete=models.SET_NULL, related_name="+"
+    )
 
     class Meta:
-        constraints = [models.UniqueConstraint(fields=["folder", "name_key"], name="drive_file_unique_name")]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["folder", "name_key"],
+                condition=Q(deleted_at__isnull=True),
+                name="drive_file_unique_name",
+            )
+        ]
 
     def __str__(self) -> str:
         return self.name
@@ -171,8 +201,11 @@ class FileVersion(models.Model):
     file = models.ForeignKey(File, on_delete=models.CASCADE, related_name="versions")
     number = models.PositiveIntegerField()
     # Where the bytes are: `drive/<uuid>`, never the name, which lives on the row and is put back on
-    # every download.
-    key = models.CharField(max_length=100, unique=True)
+    # every download. Not unique: a copy, and a restored old version, point at the bytes that are
+    # already there instead of copying up to 5 GB. The bytes go only when no version points at them.
+    key = models.CharField(max_length=100, db_index=True)
+    # The version this one brings back, when it was made by restoring an old one.
+    restored_from = models.PositiveIntegerField(null=True, blank=True)
     size = models.BigIntegerField()
     content_type = models.CharField(max_length=200, blank=True)
     created_by = models.ForeignKey(
@@ -185,3 +218,77 @@ class FileVersion(models.Model):
 
     def __str__(self) -> str:
         return f"{self.file.name} v{self.number}"
+
+
+class LastDownload(models.Model):
+    """The version a resident last downloaded of a file, so replacing it can say when somebody else
+    has changed it since."""
+
+    file = models.ForeignKey(File, on_delete=models.CASCADE, related_name="+")
+    resident = models.ForeignKey("residents.Resident", on_delete=models.CASCADE, related_name="+")
+    number = models.PositiveIntegerField()
+    at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=["file", "resident"], name="drive_one_last_download_each")
+        ]
+
+
+class Event(models.Model):
+    """One line of an item's history. It outlives what it describes: the file and folder are set to
+    null when they are removed for good, and `name` and `details` still say what happened."""
+
+    class Action(models.TextChoices):
+        CREATED = "created", "Oprettet"
+        VERSION = "version", "Ny version"
+        VERSION_RESTORED = "version_restored", "Version gendannet"
+        RENAMED = "renamed", "Omdøbt"
+        MOVED = "moved", "Flyttet"
+        COPIED = "copied", "Kopieret"
+        DELETED = "deleted", "Slettet"
+        RESTORED = "restored", "Gendannet"
+
+    at = models.DateTimeField(auto_now_add=True, db_index=True)
+    actor = models.ForeignKey(
+        "residents.Resident", null=True, blank=True, on_delete=models.SET_NULL, related_name="+"
+    )
+    action = models.CharField(max_length=30, choices=Action.choices)
+    # One of the two: what the line is about.
+    file = models.ForeignKey(File, null=True, blank=True, on_delete=models.SET_NULL, related_name="events")
+    folder = models.ForeignKey(
+        Folder, null=True, blank=True, on_delete=models.SET_NULL, related_name="events"
+    )
+    # The item's name at the time, and what else the line needs: old and new names, paths, a
+    # version number.
+    name = models.CharField(max_length=NAME_MAX_LENGTH)
+    details = models.JSONField(default=dict, blank=True)
+
+    class Meta:
+        ordering = ["-at", "-pk"]
+
+    def __str__(self) -> str:
+        return f"{self.get_action_display()}: {self.name}"
+
+    @property
+    def summary(self) -> str:
+        """The line as the history shows it, without who and when."""
+        d = self.details
+        match self.action:
+            case self.Action.CREATED:
+                return f"Oprettede {self.name}"
+            case self.Action.VERSION:
+                return f"Lagde version {d.get('number')} af {self.name} op"
+            case self.Action.VERSION_RESTORED:
+                return f"Gendannede version {d.get('restored_from')} af {self.name} som version {d.get('number')}"
+            case self.Action.RENAMED:
+                return f"Omdøbte {d.get('old')} til {self.name}"
+            case self.Action.MOVED:
+                return f"Flyttede {self.name} fra {d.get('origin')} til {d.get('to')}"
+            case self.Action.COPIED:
+                return f"Kopierede {self.name} fra {d.get('origin')}"
+            case self.Action.DELETED:
+                return f"Lagde {self.name} i papirkurven"
+            case self.Action.RESTORED:
+                return f"Gendannede {self.name} fra papirkurven"
+        return str(self)

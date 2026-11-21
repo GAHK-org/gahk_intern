@@ -3,15 +3,21 @@
 What each documented login (password demo1234) finds:
 
   * admin@ and formand@ oversee (administrator holds Inspektionen's role): every group's
-    `Uden periode` and earlier periods to read, and the name, size and file count of each group's
-    current period without its contents. Only they could make Fælles' first-level folders
-    (`Vejledninger`, `Skabeloner`), so formand@ made them.
+    `Uden periode` and earlier periods to read, and the name, size and file count of the current
+    period of each group they are not in this month, without its contents. Only they could make
+    Fælles' first-level folders (`Vejledninger`, `Skabeloner`), so formand@ made them.
   * regnskab@, ak@ and oel@ write their own group's `Uden periode` and current period, and the
-    previous period they were in; they read the period before that and see no other group.
+    previous period they were in; they read the period before that. Other groups they see only
+    when the residency seed put them there in one of its months.
   * beboer@ has a note in this month's group (whichever the residency seed put them in) and sees
     only the groups they have been in over the seeded months, not the others.
   * Everyone living here reads all of Fælles and writes in `Uden årstal` below its first level, this
     year and last year. The year before last is there to be read-only.
+
+Then what happens to files after they are uploaded (`_seed_changes`): a colleague's new version of
+regnskab@'s budget after regnskab@ downloaded it (so replacing it warns), an old version restored, a
+copy, a move, a rename that tells ak@, and the bin - a receipt a colleague deleted (regnskab@ is
+told), a file three days from going for good, and beboer@'s deleted folder kept for the file in it.
 
 The system only makes the current period and year (drive.structure: no back-filling), so the
 earlier periods and years here are made by hand, as they would have been made in their time.
@@ -39,9 +45,9 @@ from core.models import Workgroup
 from residents.models import Residency, Resident, Role
 from residents.permissions import has_active_role
 
-from . import services
+from . import operations, services
 from .access import Viewer
-from .models import File, FileVersion, Folder, Space
+from .models import Event, File, FileVersion, Folder, Space
 from .periods import Period, period_containing
 from .structure import COMMON_TIMELESS, ensure_structure, folder_name
 
@@ -123,6 +129,46 @@ class _Seeder:
             )
         return added.file
 
+    # --- changes ---------------------------------------------------------------------------------
+
+    def rename(self, file: File, name: str, by: Resident, when: datetime) -> None:
+        viewer = self.viewer(by, when)
+        with _at(when):
+            operations.rename_file(viewer, file, name, by)
+
+    def move(self, file: File, destination: Folder, by: Resident, when: datetime) -> None:
+        viewer = self.viewer(by, when)
+        with _at(when):
+            operations.move(viewer, operations.select(file.folder, [file.uuid], []), destination, by)
+
+    def copy(self, file: File, destination: Folder, by: Resident, when: datetime) -> None:
+        viewer = self.viewer(by, when)
+        with _at(when):
+            operations.copy(viewer, operations.select(file.folder, [file.uuid], []), destination, by)
+
+    def delete(self, item: File | Folder, by: Resident, when: datetime) -> None:
+        viewer = self.viewer(by, when)
+        source = item.folder if isinstance(item, File) else item.parent
+        assert source is not None  # noqa: S101  # nosec B101 - the demo deletes no root
+        files, folders = ([item.uuid], []) if isinstance(item, File) else ([], [item.uuid])
+        with _at(when):
+            operations.delete(viewer, operations.select(source, files, folders), by)
+
+    def restore(self, file: File, by: Resident, when: datetime) -> None:
+        viewer = self.viewer(by, when)
+        with _at(when):
+            operations.restore(viewer, file, by)
+
+    def restore_version(self, file: File, number: int, by: Resident, when: datetime) -> None:
+        viewer = self.viewer(by, when)
+        with _at(when):
+            operations.restore_version(viewer, file, number, by)
+
+    def download(self, file: File, by: Resident, when: datetime) -> None:
+        """What the download view remembers, for the warning when somebody else changed it since."""
+        with _at(when):
+            services.remember_download(file, by.pk, file.latest_version().number)
+
 
 def _noon(day: date) -> datetime:
     return timezone.make_aware(datetime.combine(day, time(12)))
@@ -135,6 +181,23 @@ def _group_of(resident: Resident, today: date) -> Workgroup | None:
         .first()
     )
     return residency.workgroup if residency else None
+
+
+def _colleague(workgroup: Workgroup, login: Resident, today: date) -> Resident:
+    """Another of this month's members, not one of the logins, so a login sees somebody else's
+    changes to their files; the login themselves when they are the group's only member."""
+    others = (
+        Resident.objects.filter(
+            residencies__year=today.year, residencies__month=today.month, residencies__workgroup=workgroup
+        )
+        .exclude(email__in=LOGINS)
+        .order_by("pk")
+    )
+    return others.first() or login
+
+
+def _in(folder: Folder, name: str) -> File:
+    return File.objects.get(folder=folder, name=name, deleted_at__isnull=True)
 
 
 def _group_folder(workgroup: Workgroup, kind: str, period: Period | None = None) -> Folder:
@@ -182,6 +245,7 @@ def seed(residents: list[Resident], now: datetime, _rng: random.Random) -> int:
     s = _Seeder(residents, now)
     _seed_common(s)
     _seed_groups(s)
+    _seed_changes(s)
     return File.objects.count()
 
 
@@ -319,12 +383,76 @@ def _seed_groups(s: _Seeder) -> None:
         )
 
 
+def _seed_changes(s: _Seeder) -> None:
+    """Versions, the bin and the history: renamed, moved, copied, deleted, restored. Each case a
+    login would otherwise have to make by hand, at a time that makes sense, and by somebody else
+    where the point is the creator's notification or the stale-download warning."""
+    current = period_containing(s.today)
+    starts = current.start
+    regnskab = s.login("regnskab@gahk.dk")
+    if (group := _group_of(regnskab, s.today)) is not None:
+        colleague = _colleague(group, regnskab, s.today)
+        now_folder = _group_folder(group, Folder.Kind.PERIOD, current)
+        timeless = _group_folder(group, Folder.Kind.TIMELESS)
+        # Downloaded by regnskab@, then changed by a colleague: replacing it now warns who changed it
+        # since (services.check_stale). Version 1 and 2 to compare on the file's page.
+        budget = _in(now_folder, f"Budget {current.name}.xlsx")
+        s.download(budget, regnskab, s.ago(20, not_before=starts))
+        s.upload(now_folder, budget.name, _xlsx(_BUDGET_REVISED), colleague, s.ago(8, not_before=starts))
+        # Three versions, the last a restored first one: "Gendannede version 1 ... som version 3".
+        accounts = _in(timeless, "Kontoplan.xlsx")
+        s.upload(
+            timeless, accounts.name, _xlsx([*_ACCOUNTS, [2300, "Diverse", "Udgift"]]), colleague, s.ago(100)
+        )
+        s.restore_version(accounts, 1, regnskab, s.ago(90))
+        # A copy from Fælles: a new file with its own creator and no history but "Kopierede".
+        template = File.objects.get(name="Budgetskabelon.xlsx", folder__space=Space.COMMON)
+        s.copy(template, now_folder, regnskab, s.ago(26, not_before=starts))
+        # Deleted by the colleague: in the bin, and regnskab@ is told, with a link to restore it.
+        receipts = Folder.objects.get(parent__parent=now_folder, name="Indkøb")
+        s.delete(_in(receipts, "Kvittering 3.jpg"), colleague, s.ago(2, not_before=starts))
+
+    oel = s.login("oel@gahk.dk")
+    if (group := _group_of(oel, s.today)) is not None:
+        now_folder = _group_folder(group, Folder.Kind.PERIOD, current)
+        # Binned 27 days ago: the bin says it goes for good in 3 days.
+        old = s.upload(
+            now_folder, "Gammel prisliste.csv", _csv(_PRICES[:3]), oel, s.ago(40, not_before=starts)
+        )
+        s.delete(old, oel, s.ago(27, not_before=starts))
+        # Moved within the group: "Flyttede ... fra ... / 2026-27 Vinter til ... / Uden periode".
+        suppliers = s.upload(
+            now_folder, "Leverandører.xlsx", _xlsx(_SUPPLIERS), oel, s.ago(30, not_before=starts)
+        )
+        s.move(suppliers, _group_folder(group, Folder.Kind.TIMELESS), oel, s.ago(29, not_before=starts))
+
+        # Deleted by mistake and restored from the bin straight away.
+        prices = _in(now_folder, "Prisliste.csv")
+        s.delete(prices, oel, s.ago(14, not_before=starts))
+        s.restore(prices, oel, s.ago(14, not_before=starts) + timedelta(minutes=3))
+
+    # Renamed by somebody else than its creator, so ak@ is told.
+    guide = File.objects.get(name="Vaskeriet.pdf")
+    s.rename(guide, "Vaskeriet – åbningstider.pdf", oel, s.ago(10))
+
+    # A deleted folder kept for the binned file in it: restoring the file brings the folder back.
+    beboer = s.login("beboer@gahk.dk")
+    year_start = date(s.today.year, 1, 1)
+    party = s.folder(_year_folder(s.today.year), "Sommerfest", beboer, s.ago(70, not_before=year_start))
+    program = s.upload(
+        party, "Program.pdf", _pdf("Sommerfest", _PARTY_PROGRAMME), beboer, s.ago(70, not_before=year_start)
+    )
+    s.delete(program, beboer, s.ago(5, not_before=year_start))
+    s.delete(party, beboer, s.ago(5, not_before=year_start))
+
+
 def wipe() -> None:
     """Every Drive row, and the bytes they point at. Folders go from the leaves up: a parent is
     PROTECTed by its children."""
     store = services.storage()
     for key in set(FileVersion.objects.values_list("key", flat=True)):
         store.delete(key)
+    Event.objects.all().delete()  # history outlives its items (SET_NULL), so it goes by itself
     File.objects.all().delete()
     while Folder.objects.exists():
         Folder.objects.filter(children__isnull=True).delete()
@@ -503,6 +631,18 @@ _BUDGET: list[list[object]] = [
     ["Rengøringsartikler", 8000, 3100],
     ["I alt", "=SUM(B2:B4)", "=SUM(C2:C4)"],
 ]
+_BUDGET_REVISED: list[list[object]] = [
+    ["Post", "Budget (kr.)", "Forbrugt (kr.)"],
+    ["Vedligehold", 45000, 18900],
+    ["Fester", 15000, 9400],
+    ["Rengøringsartikler", 8000, 3650],
+    ["I alt", "=SUM(B2:B4)", "=SUM(C2:C4)"],
+]
+_SUPPLIERS: list[list[object]] = [
+    ["Leverandør", "Kontakt", "Leveringsdag"],
+    ["Bryggeriet", "ordre@bryggeriet.example", "Tirsdag"],
+    ["Grossisten", "salg@grossisten.example", "Fredag"],
+]
 _BUDGET_TEMPLATE: list[list[object]] = [["Post", "Budget (kr.)", "Forbrugt (kr.)"], ["", 0, 0]]
 _TOOLS: list[list[object]] = [
     ["Værktøj", "Antal", "Placering"],
@@ -522,6 +662,7 @@ _LAUNDRY = [
     "Tøm filteret i tørretumbleren efter brug.",
 ]
 _EXPENSE_FORM = ["Navn:", "Værelse:", "Beløb:", "Formål:", "Vedlæg kvitteringen."]
+_PARTY_PROGRAMME = ["Kl. 14: Gårdspil", "Kl. 18: Grill i gården", "Kl. 22: Band i fællesrummet"]
 _GENERAL_MEETING = [
     "Dagsorden: valg af dirigent, beretning, regnskab, indkomne forslag, eventuelt.",
     "Beretningen og regnskabet blev godkendt.",

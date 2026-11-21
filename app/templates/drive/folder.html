@@ -11,42 +11,34 @@
   </div>
 
   {% if folder %}
-    <nav class="drive-crumbs mb-4" aria-label="Sti">
-      <a href="{% url 'drive:home' %}">Drive</a>
-      {% for crumb in ancestors %}
-        <span aria-hidden="true">/</span>
-        <a href="{% url 'drive:folder' crumb.uuid %}">{{ crumb.name }}</a>
-      {% endfor %}
-      <span aria-hidden="true">/</span>
-      <span aria-current="page">{{ folder.name }}</span>
-    </nav>
+    {% include "drive/_crumbs.html" with ancestors=ancestors current=folder.name %}
+
+    <div class="drive-links mb-4">
+      <a href="{% url 'drive:folder_history' folder.uuid %}">Historik</a>
+      {% if in_bin %}<a href="{% url 'drive:bin' folder.uuid %}">Papirkurv ({{ in_bin }})</a>{% endif %}
+      {% if can_change_folder %}
+        <details class="drive-inline">
+          <summary>Omdøb</summary>
+          <form method="post" action="{% url 'drive:rename_folder' folder.uuid %}" class="drive-newfolder">
+            {% csrf_token %}
+            <label class="sr-only" for="drive-rename-folder">Nyt navn</label>
+            <input id="drive-rename-folder" type="text" name="name" maxlength="200" value="{{ folder.name }}" required>
+            <button type="submit" class="btn btn-secondary">Gem navn</button>
+          </form>
+        </details>
+        <form method="post" action="{% url 'drive:delete' folder.parent.uuid %}" data-drive-confirm="Læg mappen „{{ folder.name }}“ i papirkurven? Den skal være tom.">
+          {% csrf_token %}
+          <input type="hidden" name="folder" value="{{ folder.uuid }}">
+          <button type="submit" class="btn-link-danger">Slet mappe</button>
+        </form>
+      {% endif %}
+    </div>
   {% endif %}
 
   {% if can_write or can_create_folder %}
     <div class="drive-actions mb-4">
       {% if can_write %}
-        {% comment %}
-          The bytes go straight to the bucket, not through Django (drive/services.py,
-          frontend/src/drive.ts). Without JavaScript there is no upload.
-        {% endcomment %}
-        <div class="drive-upload" data-drive-upload>
-          {{ upload_config|json_script:"drive-upload-config" }}
-          <label class="btn btn-secondary">
-            Læg filer op
-            <input type="file" multiple hidden data-drive-files>
-          </label>
-          <span class="muted" data-upload-status aria-live="polite"></span>
-          <dialog class="drive-dialog" data-drive-conflict aria-labelledby="drive-conflict-text">
-            <form method="dialog">
-              <p id="drive-conflict-text" data-conflict-text></p>
-              <div class="drive-dialog-buttons">
-                <button class="btn" value="replace">Erstat (ny version)</button>
-                <button class="btn btn-secondary" value="keep_both">Behold begge</button>
-                <button class="btn-link" value="skip">Spring over</button>
-              </div>
-            </form>
-          </dialog>
-        </div>
+        {% include "drive/_upload.html" with label="Læg filer op" multiple=True %}
       {% endif %}
       {% if can_create_folder %}
         <form method="post" action="{% url 'drive:create_folder' folder.uuid %}" class="drive-newfolder">
@@ -63,10 +55,31 @@
     <p class="muted">{% if folder %}Mappen er tom.{% else %}Der er ingen mapper, du har adgang til.{% endif %}</p>
   {% endif %}
 
+  {% if can_select %}
+    {% comment %}
+      Shown by drive.ts once something is ticked. Moving and copying open the folder picker
+      (views_items.move); deleting asks first, then posts the ticked ids.
+    {% endcomment %}
+    {{ selection_config|json_script:"drive-selection-config" }}
+    <div class="drive-selection mb-4" data-drive-selection hidden>
+      <span data-selection-count></span>
+      {% if can_change_files or can_create_folder %}<button type="button" class="btn btn-secondary" data-selection-op="move">Flyt</button>{% endif %}
+      <button type="button" class="btn btn-secondary" data-selection-op="copy">Kopier</button>
+      {% if can_change_files or can_create_folder %}<button type="button" class="btn-link-danger" data-selection-op="delete">Slet</button>{% endif %}
+    </div>
+  {% endif %}
+
   {% if rows %}
     <ul class="drive-list mb-4">
       {% for row in rows %}
         <li{% if row.is_current %} class="drive-current"{% endif %}>
+          {% if can_select %}
+            {% if row.can_open and not row.folder.is_system %}
+              <input type="checkbox" class="drive-tick" data-drive-tick="folder" value="{{ row.folder.uuid }}" aria-label="Vælg {{ row.folder.name }}">
+            {% else %}
+              <span class="drive-tick" aria-hidden="true"></span>
+            {% endif %}
+          {% endif %}
           {% if row.can_open %}
             <a href="{% url 'drive:folder' row.folder.uuid %}">
               <svg class="ni" aria-hidden="true"><use href="#i-folder"></use></svg>
@@ -95,17 +108,21 @@
     <ul class="drive-list">
       {% for file in files %}
         <li>
-          {% comment %}
-            Through the download view, never a presigned URL in the page: that URL would work for
-            whoever has it, after the reader has left the group too.
-          {% endcomment %}
-          <a href="{% url 'drive:download' file.uuid %}">
+          {% if can_select %}
+            <input type="checkbox" class="drive-tick" data-drive-tick="file" value="{{ file.uuid }}" aria-label="Vælg {{ file.name }}">
+          {% endif %}
+          <a href="{% url 'drive:file' file.uuid %}">
             <svg class="ni" aria-hidden="true"><use href="#i-file"></use></svg>
             <span class="drive-name">{{ file.name }}</span>
           </a>
           <span class="muted drive-meta">
             {{ file.size|filesizeformat }} · {{ file.changed_at|date:"j. M Y" }}{% if file.changed_by %} · {{ file.changed_by.full_name }}{% endif %}
           </span>
+          {% comment %}
+            Through the download view, never a presigned URL in the page: that URL would work for
+            whoever has it, after the reader has left the group too.
+          {% endcomment %}
+          <a class="drive-download" href="{% url 'drive:download' file.uuid %}" aria-label="Hent {{ file.name }}">Hent</a>
         </li>
       {% endfor %}
     </ul>

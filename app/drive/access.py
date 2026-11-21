@@ -25,8 +25,8 @@ from django.http import HttpRequest
 
 from core.clock import current_date
 from core.rollout import Gate
-from residents.models import Residency, Role, RoleAssignment, active_period
-from residents.permissions import current_resident, request_has_role
+from residents.models import Residency, Resident, Role, RoleAssignment, active_period
+from residents.permissions import current_resident, has_active_role, request_has_role
 
 from .models import Folder, Space
 from .periods import Period, period_containing
@@ -78,6 +78,13 @@ class Viewer:
             cached.living = cached.living or request.user.is_superuser
             request._drive_viewer = cached  # type: ignore[attr-defined]
         return cached
+
+    @classmethod
+    def for_resident(cls, resident: Resident) -> "Viewer":
+        """Somebody other than the one asking: whether a file's creator can still see its folder."""
+        viewer = cls.build(resident.pk, oversees=has_active_role(resident, Role.INSPEKTION))
+        viewer.living = viewer.living or resident.is_superuser
+        return viewer
 
     @classmethod
     def build(cls, resident_id: int, *, oversees: bool, today: date | None = None) -> "Viewer":
@@ -186,3 +193,15 @@ class Viewer:
         if folder.kind in (Folder.Kind.COMMON_ROOT, Folder.Kind.GROUPS_ROOT, Folder.Kind.GROUP):
             return False
         return self.level(folder) >= Level.WRITE
+
+    def can_change_folder(self, folder: Folder) -> bool:
+        """Rename, move or delete a folder: never one the system made, and only where a folder like it
+        could be created - so the first level of Fælles' `Uden årstal` stays admins' and
+        Inspektionen's to arrange."""
+        if folder.is_system or folder.parent is None:
+            return False
+        return self.can_create_in(folder.parent)
+
+    def can_change_file_in(self, folder: Folder) -> bool:
+        """Rename, move, delete or restore a file in this folder, or add a version."""
+        return self.can_upload_to(folder)

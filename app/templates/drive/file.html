@@ -1,0 +1,71 @@
+{% extends "base.html" %}
+{% block title %}{{ file.name }} - Drive - GAHK Intern{% endblock %}
+{% block content_width %}max-w-5xl{% endblock %}
+
+{% block content %}
+  <div class="page-head">
+    <div>
+      <p class="eyebrow">Drive</p>
+      <h1 class="drive-title">{{ file.name }}</h1>
+    </div>
+  </div>
+
+  {% include "drive/_crumbs.html" with ancestors=ancestors current="" %}
+
+  <p class="muted mb-4">
+    {{ file.size|filesizeformat }} · version {{ latest.number }} · ændret {{ file.changed_at|date:"j. M Y H:i" }}{% if file.changed_by %} af {{ file.changed_by.full_name }}{% endif %}{% if file.created_by %} · oprettet af {{ file.created_by.full_name }}{% endif %}
+  </p>
+
+  <div class="drive-actions mb-4">
+    <a class="btn" href="{% url 'drive:download' file.uuid %}">Hent</a>
+    {% if can_change %}
+      {% include "drive/_upload.html" with label="Upload ny version" multiple=False %}
+    {% endif %}
+  </div>
+
+  <div class="drive-links mb-6">
+    {% if can_change %}
+      <details class="drive-inline">
+        <summary>Omdøb</summary>
+        <form method="post" action="{% url 'drive:rename_file' file.uuid %}" class="drive-newfolder">
+          {% csrf_token %}
+          <label class="sr-only" for="drive-rename-file">Nyt navn</label>
+          <input id="drive-rename-file" type="text" name="name" maxlength="200" value="{{ file.name }}" required>
+          <button type="submit" class="btn btn-secondary">Gem navn</button>
+        </form>
+      </details>
+      <a href="{% url 'drive:move' file.folder.uuid %}?op=move&{{ move_query }}">Flyt</a>
+    {% endif %}
+    <a href="{% url 'drive:move' file.folder.uuid %}?op=copy&{{ move_query }}">Kopier</a>
+    {% if can_change %}
+      <form method="post" action="{% url 'drive:delete' file.folder.uuid %}" data-drive-confirm="Læg „{{ file.name }}“ i papirkurven?">
+        {% csrf_token %}
+        <input type="hidden" name="file" value="{{ file.uuid }}">
+        <button type="submit" class="btn-link-danger">Slet</button>
+      </form>
+    {% endif %}
+  </div>
+
+  <h2 class="drive-h2">Versioner</h2>
+  <ul class="drive-list mb-6">
+    {% for version in versions %}
+      <li>
+        <span class="drive-version">
+          <strong>Version {{ version.number }}</strong>
+          {% if forloop.first %}<span class="chip">Nyeste</span>{% endif %}
+          <span class="muted">{{ version.created_at|date:"j. M Y H:i" }}{% if version.created_by %} · {{ version.created_by.full_name }}{% endif %} · {{ version.size|filesizeformat }}{% if version.restored_from %} · gendannet fra version {{ version.restored_from }}{% endif %}</span>
+        </span>
+        <a class="drive-download" href="{% url 'drive:download_version' file.uuid version.number %}">Hent</a>
+        {% if can_change and not forloop.first %}
+          <form method="post" action="{% url 'drive:restore_version' file.uuid version.number %}" data-drive-confirm="Gør version {{ version.number }} til den nyeste? De andre versioner bliver.">
+            {% csrf_token %}
+            <button type="submit" class="btn-link">Gendan</button>
+          </form>
+        {% endif %}
+      </li>
+    {% endfor %}
+  </ul>
+
+  <h2 class="drive-h2">Historik</h2>
+  {% include "drive/_events.html" %}
+{% endblock %}

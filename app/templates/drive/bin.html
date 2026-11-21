@@ -1,0 +1,35 @@
+{% extends "base.html" %}
+{% block title %}Papirkurv - {{ folder.name }} - Drive - GAHK Intern{% endblock %}
+{% block content_width %}max-w-5xl{% endblock %}
+
+{% block content %}
+  <div class="page-head">
+    <div>
+      <p class="eyebrow">Drive</p>
+      <h1>Papirkurv</h1>
+    </div>
+  </div>
+  {% include "drive/_crumbs.html" with ancestors=ancestors current="" %}
+  <p class="muted mb-4">
+    Slettede filer i <a href="{% url 'drive:folder' folder.uuid %}">{{ folder.name }}</a>, som du kan gendanne.
+    De slettes for altid efter 30 dage.
+  </p>
+  {% if binned %}
+    <ul class="drive-list">
+      {% for item in binned %}
+        <li>
+          <span class="drive-version">
+            <strong class="drive-name">{{ item.file.name }}</strong>
+            <span class="muted">{{ item.where }} · slettet {{ item.file.deleted_at|date:"j. M Y" }}{% if item.file.deleted_by %} af {{ item.file.deleted_by.full_name }}{% endif %} · væk {{ item.gone_at|date:"j. M" }}</span>
+          </span>
+          <form method="post" action="{% url 'drive:restore' item.file.uuid %}">
+            {% csrf_token %}
+            <button type="submit" class="btn btn-secondary">Gendan</button>
+          </form>
+        </li>
+      {% endfor %}
+    </ul>
+  {% else %}
+    <p class="muted">Papirkurven er tom.</p>
+  {% endif %}
+{% endblock %}
