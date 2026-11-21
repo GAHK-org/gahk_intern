@@ -69,6 +69,10 @@ class Page(models.Model):  # gahk_page
         verbose_name="Beskrivelse",
         help_text="Kort tekst til søgemaskiner og delte links. Valgfri.",
     )
+    # A page type (cms.page_types) makes this a fixed page on gahk.dk whose texts are `fields`
+    # ({field name: text}) instead of `body`; "" for an ordinary page. Only migrations set it.
+    page_type = models.CharField(max_length=40, blank=True, default="", editable=False)
+    fields = models.JSONField(default=dict, blank=True, editable=False)
     updated_at = models.DateTimeField(default=timezone.now, verbose_name="Sidst rettet")
     updated_by = models.ForeignKey(
         settings.AUTH_USER_MODEL,
@@ -280,6 +284,7 @@ class PageVersion(models.Model):
     body = models.TextField(blank=True)
     background_image = models.CharField(max_length=255, blank=True)
     description = models.CharField(max_length=300, blank=True)
+    fields = models.JSONField(default=dict, blank=True)  # a typed page's texts (Page.fields)
     created_at = models.DateTimeField(auto_now_add=True)
     created_by = models.ForeignKey(
         settings.AUTH_USER_MODEL,

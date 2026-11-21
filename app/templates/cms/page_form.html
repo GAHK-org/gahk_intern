@@ -24,7 +24,14 @@
     <div class="cms-editor-grid">
       <div class="card-flat card-pad cms-editor-main">
         {% include "cms/_field.html" with field=form.header %}
-        {% include "cms/_field.html" with field=form.body %}
+        {% if page_type %}
+          <p class="cms-note">{{ page_type.help_text }}</p>
+          {% for text_field in form.text_fields %}
+            {% include "cms/_field.html" with field=text_field %}
+          {% endfor %}
+        {% else %}
+          {% include "cms/_field.html" with field=form.body %}
+        {% endif %}
       </div>
       <div class="cms-editor-side">
         <div class="card-flat card-pad">
@@ -39,6 +46,11 @@
               <p class="muted cms-help">{{ form.path_segment.help_text }}</p>
               {{ form.path_parent.errors }}{{ form.path_segment.errors }}
             </fieldset>
+          {% elif page_type %}
+            <div class="cms-field">
+              <p class="cms-label">Adresse på gahk.dk</p>
+              <p><span class="cms-path">/{{ page.slug }}</span> <span class="muted text-sm">Siden har en fast adresse.</span></p>
+            </div>
           {% else %}
             <div class="cms-field">
               <p class="cms-label">Adresse på gahk.dk</p>

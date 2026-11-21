@@ -27,7 +27,7 @@
       </div>
       <div class="card-pad">
         {% if entry.previous %}
-          {% if entry.changed or entry.body_diff %}
+          {% if entry.changed or entry.body_diff or entry.field_diffs %}
             {% for label, before, after in entry.changed %}
               <p class="cms-change"><b>{{ label }}:</b> <del>{{ before }}</del> → <ins>{{ after }}</ins></p>
             {% endfor %}
@@ -37,6 +37,12 @@
                 {% include "cms/_diff.html" with rows=entry.body_diff %}
               </details>
             {% endif %}
+            {% for label, rows in entry.field_diffs %}
+              <details{% if forloop.parentloop.first %} open{% endif %}>
+                <summary>Ændringer i {{ label|lower }}</summary>
+                {% include "cms/_diff.html" with rows=rows %}
+              </details>
+            {% endfor %}
           {% else %}
             <p class="muted text-sm">Ingen ændringer i forhold til udgaven før.</p>
           {% endif %}

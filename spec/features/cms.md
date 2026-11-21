@@ -15,8 +15,18 @@ working when intern or the image storage is down; editing needs intern.
 - **Pages:** address (at most two levels, e.g. `faciliteter/kokken`), heading, text, background
   image and a short description for search engines. A page without an address is kept but not shown.
   The front page is shown at `/` whatever its own address is.
-- **Optagelse** is an ordinary page at `/optagelse`, so the rent and the criteria can be changed
-  there. Its two forms, `/optagelse/ansoeg` and `/optagelse/fremlej`, belong to gahk.dk.
+- **Fixed pages with texts of their own (page types):** a page can have a fixed layout on gahk.dk
+  and, instead of one text, a few named texts. **Optagelse** (`/optagelse`) is the first. It looks
+  as the old admissions page did, and its editor has four texts in place of the one:
+  - *Tekst øverst*: the introduction, formatted text;
+  - *Boksen*: criteria, rent, when rooms come free and language, formatted text. It also stands
+    beside the tour form on `/optagelse/ansoeg`. A heading starts a section and turns green,
+    italics turn grey;
+  - *Citat* and *Citat af*: the quote below the box, one line of plain text each.
+  An empty text leaves its part of the page out. The steps and the two buttons to the forms are
+  fixed. The forms, `/optagelse/ansoeg` and `/optagelse/fremlej`, belong to gahk.dk.
+- A fixed page keeps its address and cannot be deleted: gahk.dk's layout and the forms depend on it.
+  Its title, description and background picture are edited as on any page.
 - **News and front-page events** (title, text, date). Not the residents' own events.
 - **The menu:** its entries, their order and their links (a page on gahk.dk or an outside address).
 - **Images:** a library of pictures for pages, news, events and backgrounds, and the default
@@ -63,6 +73,11 @@ working when intern or the image storage is down; editing needs intern.
 - Every saved version of a page is kept and can be restored. A restore is itself a change, so it can
   be undone too. If the old address is taken by another page by then, the content comes back and the
   address does not, and the editor is told so.
+- A fixed page's history and the change log show each of its texts on its own: formatted ones as a
+  line-by-line difference. Restoring a version from before the page had its texts leaves them as
+  they are, and says so.
+- When `/optagelse` became a fixed page, its texts were filled with the old site's, and what the
+  page said until then was kept in its history.
 - Renaming a page keeps the old address working: it sends visitors on to the new one.
 - A page that nothing in the menu leads to (neither itself nor its section) is pointed out.
 
@@ -128,6 +143,14 @@ working when intern or the image storage is down; editing needs intern.
   normalized (a Mac sends "å" as two characters) and percent-encoded where it is part of an address.
 - **Plain-text headings.** They were shown as HTML without ever being cleaned.
 - **The menu is data.** It was written into the code, so changing it needed a developer.
+- **Fixed layouts are code, their words are content.** The old admissions page had cards and a box
+  that one free text cannot hold without tying the content to the design. A page type keeps the
+  design in gahk.dk's template and gives the editors the words. Which texts a type has, and whether
+  each is formatted, is defined on intern (`cms.page_types`); a new kind of page is a page type here
+  and a template on gahk.dk. A page gets its type from a migration, not in the editor, since the
+  layout depends on its address.
+- **The box's look comes from the box.** Editors mark headings and italics as anywhere else; gahk.dk
+  colours them. No colour is stored in a text, so the sanitizing stays as it is.
 - **A visual editor that keeps the old pages intact.** Editors should not need HTML, but the old
   pages' picture layout must survive being opened and saved, and anything the editor cannot show is
   left as HTML rather than silently dropped.
