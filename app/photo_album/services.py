@@ -8,6 +8,7 @@ import shutil
 import struct
 import subprocess  # nosec B404
 import tempfile
+import time
 import zipfile
 from collections import defaultdict
 from collections.abc import Callable, Iterator
@@ -33,6 +34,7 @@ from django.utils import timezone
 from PIL import ExifTags, Image, ImageFile, ImageOps, ImageSequence, IptcImagePlugin
 
 from core.job_directories import job_directory
+from core.job_progress import stage
 from residents.models import Resident
 
 from . import file_metadata, raw
@@ -812,7 +814,10 @@ def import_zip_album(
     Returns the albums (root first), the log of files deliberately left out and how many were
     stored. Raises ValidationError carrying every error when the import is refused.
     """
-    archive.seek(0)  # an S3 file is downloaded here, which reports no progress of its own
+    # An S3 file is downloaded here, which reports no progress of its own: the watchdog
+    # (core.job_progress) starts watching at the report below, so the download's time is not held
+    # against the import.
+    archive.seek(0)
     progress("reading", 0, 0)
     with job_directory("photo-album-import") as directory:
         try:
@@ -1044,13 +1049,16 @@ def build_derivatives(media: Media) -> bool:
         if video:
             # Stored inside the block: the copies are files in the encode's directory until it ends.
             with video_variants(source, filename) as variants:
-                return _finish_derivatives(media, variants, filename)
+                return _finish_derivatives(media, variants, filename, video=True)
         variants = image_variants(source, filename)
     return _finish_derivatives(media, variants, filename)
 
 
-def _finish_derivatives(media: Media, variants: "Variants | None", filename: str) -> bool:
-    """Store what build_derivatives made, or count a source that could not be decoded."""
+def _finish_derivatives(
+    media: Media, variants: "Variants | None", filename: str, *, video: bool = False
+) -> bool:
+    """Store what build_derivatives made, or count a source that could not be decoded. A video's
+    storing is reported as the last step of its progress (an image reports none)."""
     if variants is None:
         media.derivative_state = (
             DerivativeState.FAILED
@@ -1067,7 +1075,11 @@ def _finish_derivatives(media: Media, variants: "Variants | None", filename: str
         )
         media.save(update_fields=["derivative_state", "derivative_attempts"])
         return False
+    if video:
+        STORE_STAGE(0.0)
     _store_variants(media, variants)
+    if video:
+        STORE_STAGE(1.0)
     return True
 
 
@@ -1221,7 +1233,7 @@ def video_variants(uploaded_file: File, filename: str) -> Iterator[Variants | No
     with ExitStack() as stack:
         try:
             directory = Path(stack.enter_context(job_directory("photo-album-video")))
-            source = _copy_to_disk(uploaded_file, directory, filename)
+            source = _copy_to_disk(uploaded_file, directory, filename, progress=COPY_STAGE)
             encoded: EncodedVideo | None = _encode_video(_ffmpeg(), source, directory, filename)
         except ImportError:
             encoded = None
@@ -1248,12 +1260,30 @@ def _ffmpeg() -> str:
     return str(imageio_ffmpeg.get_ffmpeg_exe())
 
 
-def _copy_to_disk(uploaded_file: File, directory: Path, filename: str) -> Path:
+# How a video's conversion reports its progress (core.job_progress), as parts of the whole job. The
+# encode is nearly all of it; the first chunk read from the bucket downloads the whole original
+# (PhotoAlbumS3Storage), which reports nothing until it is done.
+COPY_STAGE = stage(0.0, 0.10, "Henter originalen")
+ENCODE_STAGE = stage(0.10, 0.95, "Konverterer")
+FINISH_STAGE = stage(0.95, 0.98, "Undertekster og miniature")
+STORE_STAGE = stage(0.98, 1.0, "Gemmer versionerne")
+
+
+def _copy_to_disk(
+    uploaded_file: File, directory: Path, filename: str, progress: Callable[[float], None] = lambda _: None
+) -> Path:
     source = directory / f"source{Path(filename).suffix or '.upload'}"
     uploaded_file.seek(0)
+    size = getattr(uploaded_file, "size", None) or 0
+    copied = 0
+    progress(0.0)
     with source.open("wb") as target:
         for chunk in uploaded_file.chunks():
             target.write(chunk)
+            copied += len(chunk)
+            if size:
+                progress(copied / size)
+    progress(1.0)
     return source
 
 
@@ -1293,6 +1323,7 @@ TEXT_SUBTITLE_CODECS = frozenset(
 )
 _STREAM = re.compile(r"^\s*Stream #0:(\d+)\S*: (Video|Audio|Subtitle): (\w+)(.*)$", re.MULTILINE)
 _DIMENSIONS = re.compile(r", (\d{2,5})x(\d{2,5})\b")
+_DURATION = re.compile(r"Duration: (\d+):(\d{2}):(\d{2}(?:\.\d+)?)")
 
 
 @dataclass
@@ -1307,6 +1338,14 @@ class VideoProbe:
         for match in _STREAM.finditer(self.text):
             if match.group(2) == "Video" and (size := _DIMENSIONS.search(match.group(4))):
                 return int(size.group(1)), int(size.group(2))
+        return None
+
+    @property
+    def duration(self) -> float | None:
+        """The length in seconds, or None when ffmpeg could not tell ("Duration: N/A")."""
+        if match := _DURATION.search(self.text):
+            seconds = int(match.group(1)) * 3600 + int(match.group(2)) * 60 + float(match.group(3))
+            return seconds or None
         return None
 
     @property
@@ -1361,8 +1400,10 @@ def _encode_video(ffmpeg: str, source: Path, directory: Path, filename: str) -> 
     probe = probe_video(ffmpeg, str(source))
     high_definition = directory / "high-definition.mp4"
     thumbnail = directory / "thumbnail.jpg"
-    _run_ffmpeg(
+    _run_ffmpeg_with_progress(
         ffmpeg,
+        probe.duration,
+        _EncodeLog(filename, probe.duration, ENCODE_STAGE),
         "-i",
         str(source),
         # ffmpeg picks the streams: the best video, and of the audio the stream with the most
@@ -1384,6 +1425,7 @@ def _encode_video(ffmpeg: str, source: Path, directory: Path, filename: str) -> 
         *KEEP_VIDEO_METADATA,
         str(high_definition),
     )
+    FINISH_STAGE(0.0)
     _add_text_subtitles(ffmpeg, source, high_definition, probe, filename)
     _run_ffmpeg(
         ffmpeg,
@@ -1474,7 +1516,7 @@ def shrink_enlarged_video(media: Media) -> str:
     check_encode_disk_space(media)
     ffmpeg = _ffmpeg()
     with media.original.open("rb") as original, job_directory("photo-album-video") as directory:
-        source = _copy_to_disk(File(original, name=name), Path(directory), name)
+        source = _copy_to_disk(File(original, name=name), Path(directory), name, progress=COPY_STAGE)
         dimensions = probe_video(ffmpeg, str(source)).dimensions
         if dimensions is None:
             return f"{name}: ffmpeg could not tell the original's size; left as it is."
@@ -1483,6 +1525,7 @@ def shrink_enlarged_video(media: Media) -> str:
         old_size = media.high_definition.size
         encoded = _encode_video(ffmpeg, source, Path(directory), name)
         # Inside the block, from disk: the directory and the files in it go when it ends.
+        STORE_STAGE(0.0)
         with encoded.opened(name) as variants:
             _store_variants(media, variants)
     return (
@@ -1525,6 +1568,77 @@ def _run_ffmpeg(executable: str, *arguments: str) -> None:
         text=True,
         errors="replace",
     )
+
+
+def _run_ffmpeg_with_progress(
+    executable: str, duration: float | None, on_progress: Callable[[float], None], *arguments: str
+) -> None:
+    """As `_run_ffmpeg`, telling `on_progress` how far through the video it is (0 to 1): from
+    ffmpeg's `-progress` report, its position in the output against the video's `duration`.
+
+    ffmpeg is killed if this is left by an exception — the watchdog's or the time limit's
+    SoftTimeLimitExceeded included — rather than left encoding for nobody.
+    """
+    with tempfile.TemporaryFile() as errors:
+        process = subprocess.Popen(  # noqa: S603  # nosec B603
+            [
+                executable,
+                "-y",
+                "-hide_banner",
+                "-nostats",
+                "-loglevel",
+                "error",
+                "-progress",
+                "pipe:1",
+                *arguments,
+            ],
+            stdout=subprocess.PIPE,
+            stderr=errors,
+        )
+        try:
+            for raw in process.stdout or ():  # never None: PIPE was asked for
+                key, _, value = raw.decode("utf-8", errors="replace").strip().partition("=")
+                if key == "out_time_us" and duration and value.isdigit():  # "N/A" before the first frame
+                    on_progress(int(value) / 1_000_000 / duration)
+            returncode = process.wait()
+        finally:
+            if process.poll() is None:
+                process.kill()
+                process.wait()
+        if returncode:
+            errors.seek(0)
+            said = errors.read().decode("utf-8", errors="replace")
+            raise subprocess.CalledProcessError(returncode, process.args, stderr=said)
+
+
+class _EncodeLog:
+    """Passes an encode's progress on to `progress`, and logs a line at each tenth of the way, which
+    the worker-jobs page shows as the job runs."""
+
+    def __init__(self, filename: str, duration: float | None, progress: Callable[[float], None]) -> None:
+        self.filename, self.duration, self.progress = filename, duration, progress
+        self.logged = 0
+        self.started = time.monotonic()
+
+    def __call__(self, fraction: float) -> None:
+        self.progress(fraction)
+        tenth = min(10, int(fraction * 10))
+        if tenth > self.logged:
+            self.logged = tenth
+            elapsed = time.monotonic() - self.started
+            logger.info(
+                "Encoding %s: %d%% (%s of %s) after %s.",
+                self.filename,
+                tenth * 10,
+                _clock(fraction * (self.duration or 0)),
+                _clock(self.duration or 0),
+                _clock(elapsed),
+            )
+
+
+def _clock(seconds: float) -> str:
+    whole = int(seconds)
+    return f"{whole // 3600}:{whole % 3600 // 60:02d}:{whole % 60:02d}"
 
 
 def ffmpeg_failure(exc: subprocess.CalledProcessError) -> str:
