@@ -158,6 +158,7 @@ def test_seed_demo_fills_drive_for_every_login() -> None:
     _check_drive_preview(seeded)
     _check_drive_search(seeded)
     _check_drive_office(seeded)
+    _check_drive_readme(seeded)
 
 
 class _DriveSeed:
@@ -426,3 +427,16 @@ def _check_drive_office(seeded: _DriveSeed) -> None:
     assert {office.document_type(name) for name in names} >= {"word", "cell", "slide"}
     assert any(office.document_type(name) and not office.editable(name) for name in names)
     assert any(version.editors.count() >= 3 for version in FileVersion.objects.filter(editors__isnull=False))
+
+
+def _check_drive_readme(seeded: _DriveSeed) -> None:
+    """READMEs in three cases of the name, one with HTML that must not come through."""
+    from drive import preview
+    from drive.models import File
+
+    readmes = File.objects.filter(name_key=preview.README, deleted_at__isnull=True)
+    assert {file.name for file in readmes} == {"README.md", "Readme.md", "readme.md"}
+    for file in readmes:
+        shown = preview.readme(file.latest_version())
+        assert shown is not None and shown.html
+        assert "<span" not in shown.html

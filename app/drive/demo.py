@@ -40,6 +40,8 @@ same name in several periods and groups.
 Live editing (`_seed_office`): a presentation from `Ny præsentation`, a version saved by a live
 session with its three editors, and an OpenDocument file to view and copy.
 
+READMEs (`_seed_readmes`) above three lists, in three cases of the name, one with HTML of its own.
+
 Last, locks (`_seed_locks`), as they stop changes: what the nightly task locked, regnskab@'s
 closed accounts and `Årsafslutning` folder locked by hand, and the requests page for admin@ and
 formand@ with an unlock and a purge in each state - pending, approved (the logo is unlocked for now
@@ -404,6 +406,7 @@ def seed(residents: list[Resident], now: datetime, _rng: random.Random) -> int:
     _seed_previews(s)
     _seed_search(s)
     _seed_office(s)
+    _seed_readmes(s)
     # Last: a lock stops the changes above.
     _seed_locks(s)
     # The viewer copies and thumbnails the "thumbnails" queue makes, made here so the lists show them
@@ -970,6 +973,30 @@ def _seed_office(s: _Seeder) -> None:
     s.upload(guides, "Gammel husorden.odt", _odt("Husorden (2019)", _OLD_RULES), formand, s.ago(190))
 
 
+def _seed_readmes(s: _Seeder) -> None:
+    """A README above the list, in any case of its name: `README.md` in Fælles' `Vejledninger`, which
+    everyone sees; `Readme.md` in Regnskabsgruppen's `Uden periode`, for the group and its overseers;
+    and `readme.md` in beboer@'s Delt mappe with HTML of its own, shown as text, never as HTML."""
+    formand, regnskab, beboer = (
+        s.login("formand@gahk.dk"),
+        s.login("regnskab@gahk.dk"),
+        s.login("beboer@gahk.dk"),
+    )
+    guides = Folder.objects.get(name="Vejledninger", kind=Folder.Kind.FOLDER)
+    s.upload(guides, "README.md", _GUIDES_README.encode(), formand, s.ago(180))
+    if (group := _group_of(regnskab, s.today)) is not None:
+        s.upload(
+            _group_folder(group, Folder.Kind.TIMELESS),
+            "Readme.md",
+            _ACCOUNTS_README.encode(),
+            regnskab,
+            s.ago(250),
+        )
+    theme = Folder.objects.filter(kind=Folder.Kind.SHARED, name="Temafest").first()
+    if theme is not None:
+        s.upload(theme, "readme.md", _THEME_README.encode(), beboer, s.ago(40))
+
+
 def _seed_locks(s: _Seeder) -> None:
     """Locks, and requests in every state: the requests page (admin@, formand@) has two pending, two
     approved and two rejected, and whoever asked for a decided one has been told the outcome."""
@@ -1422,6 +1449,31 @@ _THERMOSTATS = """{
 }
 """
 _OLD_RULES = ["Den gamle husorden, fra før den blev skrevet om.", "Ro på gangene efter kl. 22."]
+_GUIDES_README = """# Vejledninger
+
+Her ligger det, man skal vide som beboer. Nye vejledninger lægges i denne mappe; spørg
+**Inspektionen**, hvis en mappe mangler.
+
+- Husorden i kort udgave
+- Telefonliste over vicevært, Inspektionen og vaskeriet
+- Affaldssortering og vaskeriets åbningstider
+"""
+_ACCOUNTS_README = """# Regnskabsgruppens faste filer
+
+Det, der bruges på tværs af perioderne: kontoplanen og vejledningen i bogføring. Bilag hører til
+i den periode, de er fra, ikke her.
+
+| Fil | Hvad |
+| --- | --- |
+| Kontoplan.xlsx | Kontiene i e-conomic |
+| Sådan bogfører vi.md | Fremgangsmåden trin for trin |
+"""
+_THEME_README = """# Temafest
+
+Planen ligger i **Plan.docx**, musikken i Playliste.txt.
+
+<span style="color:red">Husk at melde festen på opslagstavlen!</span>
+"""
 _PARTY_PROGRAMME = ["Kl. 14: Gårdspil", "Kl. 18: Grill i gården", "Kl. 22: Band i fællesrummet"]
 _GENERAL_MEETING = [
     "Dagsorden: valg af dirigent, beretning, regnskab, indkomne forslag, eventuelt.",
