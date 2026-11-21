@@ -22,6 +22,7 @@ from django.db import transaction
 from django.db.models import Max, Prefetch
 from django.http import Http404, HttpRequest, HttpResponse, HttpResponseRedirect, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
+from django.urls import reverse
 from django.utils import timezone
 from django.views.decorators.http import require_POST
 
@@ -29,7 +30,7 @@ from core.back_navigation import not_a_write
 from core.emoji import EMOJI_SHORTLIST
 from core.markdown import embed_references, image_sources, render_markdown
 from core.reactions import CREATED, apply_toggle, reaction_rows
-from core.resend import already_sent, one_send_at_a_time
+from core.send_once import send_once
 from core.uploads import attached_image, validate_image_upload
 from residents.permissions import current_resident, is_kitchen
 
@@ -291,16 +292,16 @@ def create(request: HttpRequest) -> HttpResponse:
     if shared:
         form.fields["body"].widget.attrs["autofocus"] = True
     if request.method == "POST" and form.is_valid():
-        author = current_resident(request)
-        with one_send_at_a_time(author):
-            # The same post sent twice (a second press during a slow send, a retry) is saved once,
-            # and the copy goes where the first went (core.resend).
-            if sent := already_sent(Notice.objects.filter(author=author), "body", form.cleaned_data["body"]):
-                return redirect("opslagstavle:detail", pk=sent.pk)
+        with send_once(request) as send:
+            # The same send arriving twice (a second press during a slow send, a retry) is saved
+            # once, and the copy goes where the first went (core.send_once).
+            if send.repeated:
+                return redirect(send.landed or "opslagstavle:board")
             notice = form.save(commit=False)
-            notice.author = author
+            notice.author = current_resident(request)
             notice.save()
             sync_images(notice)
+            send.landed = reverse("opslagstavle:detail", args=[notice.pk])
         mentioned = services.notify_mentions_in_notice(notice)
         services.notify_new_notice(notice, skip=mentioned)
         live.notice_created(notice)
@@ -425,13 +426,11 @@ def create_comment(request: HttpRequest, pk: int) -> HttpResponseRedirect:
         messages.error(request, "Skriv en kommentar, eller vedhæft et billede.")
         return redirect("opslagstavle:detail", pk=notice.pk)
 
-    author = current_resident(request)
-    with one_send_at_a_time(author):
-        # The same comment sent twice is saved once (core.resend).
-        if already_sent(NoticeComment.objects.filter(notice=notice, author=author), "body", comment.body):
+    with send_once(request) as send:
+        if send.repeated:  # the same send, arriving twice (core.send_once)
             return redirect("opslagstavle:detail", pk=notice.pk)
         comment.notice = notice
-        comment.author = author
+        comment.author = current_resident(request)
         if image is not None:
             comment.image = image
         comment.save()

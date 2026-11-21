@@ -80,6 +80,14 @@ erDiagram
         datetime beat_at
     }
 
+    core_SentForm {
+        int id PK
+        int resident_id FK
+        string token
+        string landed
+        datetime created_at
+    }
+
     residents_Resident {
         int id PK
         string password
@@ -591,6 +599,7 @@ erDiagram
         int reported_by_id FK
         datetime created_at
         datetime updated_at
+        datetime status_changed_at
         datetime archived_at
     }
 
@@ -600,6 +609,14 @@ erDiagram
         int author_id FK
         text body
         datetime created_at
+    }
+
+    reparationer_RepairImage {
+        int id PK
+        int task_id FK
+        int comment_id FK
+        string file
+        datetime uploaded_at
     }
 
     arkiv_ArchiveFolder {
@@ -983,6 +1000,7 @@ erDiagram
     }
 
     core_PushSubscription }o--|| residents_Resident : "user"
+    core_SentForm }o--|| residents_Resident : "resident"
     residents_Resident }o--|o residents_Resident : "sponsor"
     residents_Residency }o--|| residents_Resident : "resident"
     residents_Residency }o--|| core_Room : "room"
@@ -1049,6 +1067,8 @@ erDiagram
     reparationer_RepairTask }o--|| residents_Resident : "reported_by"
     reparationer_RepairComment }o--|| reparationer_RepairTask : "task"
     reparationer_RepairComment }o--|| residents_Resident : "author"
+    reparationer_RepairImage }o--|| reparationer_RepairTask : "task"
+    reparationer_RepairImage }o--|o reparationer_RepairComment : "comment"
     arkiv_ArchiveFolder }o--|o arkiv_ArchiveFolder : "parent"
     arkiv_ArchiveFolder }o--|o core_Workgroup : "workgroup"
     arkiv_ArchiveFolder }o--|o core_Workgroup : "effective_workgroup"
@@ -1431,9 +1451,18 @@ erDiagram
         datetime beat_at
     }
 
+    core_SentForm {
+        int id PK
+        int resident_id FK
+        string token
+        string landed
+        datetime created_at
+    }
+
     residents_Resident { }
 
     core_PushSubscription }o--|| residents_Resident : "user"
+    core_SentForm }o--|| residents_Resident : "resident"
 ```
 
 ## den_hurtige
@@ -2152,6 +2181,7 @@ erDiagram
         int reported_by_id FK
         datetime created_at
         datetime updated_at
+        datetime status_changed_at
         datetime archived_at
     }
 
@@ -2163,11 +2193,21 @@ erDiagram
         datetime created_at
     }
 
+    reparationer_RepairImage {
+        int id PK
+        int task_id FK
+        int comment_id FK
+        string file
+        datetime uploaded_at
+    }
+
     residents_Resident { }
 
     reparationer_RepairTask }o--|| residents_Resident : "reported_by"
     reparationer_RepairComment }o--|| reparationer_RepairTask : "task"
     reparationer_RepairComment }o--|| residents_Resident : "author"
+    reparationer_RepairImage }o--|| reparationer_RepairTask : "task"
+    reparationer_RepairImage }o--|o reparationer_RepairComment : "comment"
 ```
 
 ## residents

@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% load send_once %}
 {% block title %}{{ channel.name }} - Den Hurtige - GAHK Intern{% endblock %}
 {% comment %}
   A bespoke class rather than Tailwind's max-w-3xl, because the cap has to CHANGE when a thread is
@@ -262,7 +263,7 @@
           enctype="multipart/form-data" id="js-composer"
           hx-post="{% url 'den_hurtige:create_post' %}" hx-target="#js-live"
           hx-ext="morph" hx-swap="morph:innerHTML">
-      {% csrf_token %}
+      {% csrf_token %}{% send_token %}
       {% comment %}
         Which feed this lands in. Rendered server-side, so the composer cannot disagree with the
         page it is on — there is no client state to fall out of sync.

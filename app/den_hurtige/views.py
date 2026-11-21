@@ -39,7 +39,7 @@ from django.views.decorators.http import require_POST
 
 from core.clock import current_date, current_datetime
 from core.reactions import CREATED, apply_toggle, reaction_rows
-from core.resend import already_sent, one_send_at_a_time
+from core.send_once import send_once
 from core.uploads import attached_image
 from notifications.categories import chat_room_key
 from notifications.models import NotificationPreference
@@ -707,10 +707,10 @@ def create_post(request: HttpRequest) -> HttpResponse:
     if minutes not in VALID_DURATIONS:
         return _reject(request, channel, content, "Vælg hvor længe beskeden skal være relevant.")
 
-    # The same message sent twice (a second press during a slow upload, a retry) is saved once, and
-    # the copy is answered exactly as the first was (core.resend).
-    with one_send_at_a_time(author):
-        if already_sent(QuickPost.objects.filter(author=author, channel=channel.slug), "content", content):
+    # The same send arriving twice (a second press during a slow upload, a retry) is saved once, and
+    # the copy is answered as the first was (core.send_once).
+    with send_once(request) as send:
+        if send.repeated:
             return _posted(request, channel)
         post = QuickPost.objects.create(
             author=author,
@@ -803,9 +803,9 @@ def create_comment(request: HttpRequest, pk: int) -> HttpResponse:
         messages.error(request, "Skriv et svar, eller vedhæft et billede.")
         return _comment_response(request, post, back)
 
-    with one_send_at_a_time(author):
-        if already_sent(QuickComment.objects.filter(post=post, author=author), "content", content):
-            return _comment_response(request, post, back)  # the same reply, sent twice (core.resend)
+    with send_once(request) as send:
+        if send.repeated:
+            return _comment_response(request, post, back)  # the same send, arriving twice
         comment = QuickComment.objects.create(
             post=post,
             author=author,

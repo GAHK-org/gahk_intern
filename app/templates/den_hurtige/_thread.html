@@ -1,3 +1,4 @@
+{% load send_once %}
 {% comment %}
   The thread side panel: swapped into #js-thread, which is a SIBLING of #js-feed, never inside it.
   That placement is the whole design:
@@ -123,7 +124,7 @@
           hx-post="{% url 'den_hurtige:create_comment' post.pk %}"
           hx-target="#js-replies-{{ post.pk }}" hx-swap="innerHTML"
           hx-on::after-request="if (event.detail.successful) this.reset()">
-      {% csrf_token %}
+      {% csrf_token %}{% send_token %}
       <label class="reply-attach" for="id_reply_image_{{ post.pk }}" title="Vedhæft billede">
         <span aria-hidden="true">📎</span>
         <span class="sr-only">Vedhæft billede til svar</span>
