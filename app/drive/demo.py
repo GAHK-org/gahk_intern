@@ -22,6 +22,14 @@ told), a file three days from going for good, and beboer@'s deleted folder kept 
 Delte mapper (`_seed_shared`): one moderated by beboer@ with every kind of member change, one by
 oel@ and regnskab@ about to expire, and an expired one archived for everyone to read.
 
+Shares (`_seed_sharing`): `Delt med mig` for ak@ (read), oel@ (edit on a folder partway down,
+used) and regnskab@ (edit on a file, a version added), and `Delt med <gruppe>` in beboer@'s group's
+current period and `Uden periode`.
+
+Standing folders (`_seed_standing`): `Fællesmøder` with meetings in this year and last, written only
+by Inspektionen and admins, and in groups one just defined and one stopped. Opening any `Uden
+periode` or `Uden årstal` a login can write in asks the current-period question.
+
 Last, locks (`_seed_locks`), as they stop changes: what the nightly task locked, regnskab@'s
 closed accounts and `Årsafslutning` folder locked by hand, and the requests page for admin@ and
 formand@ with an unlock and a purge in each state - pending, approved (the logo is unlocked for now
@@ -55,11 +63,21 @@ from notifications.models import Notification
 from residents.models import Residency, Resident, Role
 from residents.permissions import has_active_role
 
-from . import locks, operations, services, shared
+from . import locks, operations, services, shared, sharing, standing
 from .access import Viewer
-from .models import ApprovalRequest, Event, File, FileVersion, Folder, SharedFolder, SharedMember, Space
+from .models import (
+    ApprovalRequest,
+    Event,
+    File,
+    FileVersion,
+    Folder,
+    SharedFolder,
+    SharedMember,
+    Space,
+    StandingFolder,
+)
 from .periods import Period, period_containing
-from .structure import COMMON_TIMELESS, ensure_structure, folder_name
+from .structure import COMMON_TIMELESS, _standing, ensure_structure, folder_name
 
 LOGINS = (
     "admin@gahk.dk",
@@ -249,6 +267,45 @@ class _Seeder:
         with _at(when):
             shared.set_expiry(viewer, folder.shared, expires_on, on_expiry, by)
 
+    # --- sharing ------------------------------------------------------------------------------------
+
+    def share(
+        self,
+        item: File | Folder,
+        by: Resident,
+        when: datetime,
+        *,
+        edit: bool = False,
+        resident: Resident | None = None,
+        group: Workgroup | None = None,
+    ) -> None:
+        viewer = self.viewer(by, when)
+        with _at(when):
+            sharing.share(
+                viewer,
+                file=item if isinstance(item, File) else None,
+                folder=item if isinstance(item, Folder) else None,
+                resident_id=resident.pk if resident else None,
+                workgroup_id=group.pk if group else None,
+                access=sharing.EDIT if edit else sharing.READ,
+                actor=by,
+            )
+
+    def unshare(self, item: File, recipient: Resident, by: Resident, when: datetime) -> None:
+        viewer = self.viewer(by, when)
+        with _at(when):
+            sharing.stop(viewer, item.shares.get(resident=recipient), by)
+
+    def add_version(self, file: File, data: bytes, by: Resident, when: datetime) -> None:
+        """From the file's own page, as one it is shared with to edit."""
+        key = services.new_key()
+        services.store_local(key, ContentFile(data))
+        viewer = self.viewer(by, when)
+        with _at(when):
+            services.add_version(
+                viewer, file, key=key, size=len(data), content_type=file.content_type, resident=by
+            )
+
 
 def _noon(day: date) -> datetime:
     return timezone.make_aware(datetime.combine(day, time(12)))
@@ -327,6 +384,8 @@ def seed(residents: list[Resident], now: datetime, _rng: random.Random) -> int:
     _seed_groups(s)
     _seed_changes(s)
     _seed_shared(s)
+    _seed_sharing(s)
+    _seed_standing(s)
     # Last: a lock stops the changes above.
     _seed_locks(s)
     # What the nightly purge (notifications.services.purge_expired) would have removed by now: the
@@ -609,6 +668,141 @@ def _seed_shared(s: _Seeder) -> None:
         shared.run_expiry(s.today)
 
 
+def _seed_sharing(s: _Seeder) -> None:
+    """Shares, so `Delt med mig` has something for ak@, oel@ and regnskab@, and beboer@'s group has
+    `Delt med <gruppe>` in both its current period and `Uden periode`. beboer@ gets nothing shared in
+    person: a share with a resident notifies them, and notifications.demo sets beboer@'s bell."""
+    current = period_containing(s.today)
+    starts = current.start
+    regnskab, ak, oel = s.login("regnskab@gahk.dk"), s.login("ak@gahk.dk"), s.login("oel@gahk.dk")
+    regnskab_group, ak_group, oel_group = (_group_of(login, s.today) for login in (regnskab, ak, oel))
+    if regnskab_group is None or ak_group is None or oel_group is None:
+        return
+    beboer_group = _group_of(s.login("beboer@gahk.dk"), s.today)
+
+    def target(sharer: Workgroup) -> Workgroup:
+        """beboer@'s group, or another one when it is the sharer's own."""
+        if beboer_group is not None and beboer_group != sharer:
+            return beboer_group
+        other = Workgroup.objects.exclude(pk=sharer.pk).order_by("name").first()
+        assert other is not None  # noqa: S101  # nosec B101 - seed_demo makes many groups
+        return other
+
+    regnskab_now = _group_folder(regnskab_group, Folder.Kind.PERIOD, current)
+    # Read: ak@ finds the budget under `Delt med mig`.
+    s.share(
+        _in(regnskab_now, f"Budget {current.name}.xlsx"),
+        regnskab,
+        s.ago(6, not_before=starts),
+        resident=ak,
+    )
+    # Edit, on a folder partway down: oel@ adds Ølkælderen's receipts, and sees the folders above
+    # `Bilag` as names only.
+    receipts = Folder.objects.get(parent=regnskab_now, name="Bilag")
+    s.share(receipts, regnskab, s.ago(12, not_before=starts), edit=True, resident=oel)
+    s.upload(
+        receipts.children.get(name="Indkøb"),
+        "Kvittering Ølkælderen.jpg",
+        _jpg("Kvittering Ølkælderen", "#517544", (800, 1100)),
+        oel,
+        s.ago(4, not_before=starts),
+    )
+    # Shared and then stopped, for the history's "Stoppede delingen".
+    accounts = _in(_group_folder(regnskab_group, Folder.Kind.TIMELESS), "Kontoplan.xlsx")
+    s.share(accounts, regnskab, s.ago(60), resident=oel)
+    s.unshare(accounts, oel, regnskab, s.ago(50))
+
+    # Edit, on a file: regnskab@ adds a version from the file's page.
+    ak_now = _group_folder(ak_group, Folder.Kind.PERIOD, current)
+    plan = _in(ak_now, "Arbejdsplan.csv")
+    s.share(plan, ak, s.ago(7, not_before=starts), edit=True, resident=regnskab)
+    s.add_version(
+        plan, _csv([*_WORK_PLAN, ["49", "Opsæt julebelysning", "2"]]), regnskab, s.ago(5, not_before=starts)
+    )
+
+    # With a group: from a current period it lands in the recipient's current period, from
+    # `Uden periode` in theirs.
+    oel_now = _group_folder(oel_group, Folder.Kind.PERIOD, current)
+    s.share(
+        _in(oel_now, "Prisliste.csv"),
+        oel,
+        s.ago(11, not_before=starts),
+        group=target(oel_group),
+    )
+    tools = _in(_group_folder(ak_group, Folder.Kind.TIMELESS), "Værktøjsliste.xlsx")
+    s.share(tools, ak, s.ago(100), group=target(ak_group))
+
+
+def _seed_standing(s: _Seeder) -> None:
+    """Standing folders. `Fællesmøder` in Fælles, written only by Inspektionen and admins, with a
+    meeting folder per date in this year's and last year's copy, so `Fællesmøder (alle år)` spans two
+    years and beboer@ can read but not add. In groups: one AK has just defined (it starts next
+    period) and one Regnskabsgruppen defined and stopped."""
+    formand = s.login("formand@gahk.dk")
+    this_year, last_year = s.today.year, s.today.year - 1
+    inspection = Workgroup.objects.filter(name="Inspektionen").first()
+    # Defined before last year began, so it applies from then: a definition today would apply from
+    # next year only (standing.next_start). Made as the row it would have been, and its copies as
+    # the system makes them - last year's by hand, as that year's folder is (`_year_folder`).
+    with _at(_noon(date(last_year - 1, 12, 10))):
+        meetings = StandingFolder.objects.create(
+            space=Space.COMMON,
+            name="Fællesmøder",
+            item_label="Fællesmøde",
+            limited=True,
+            starts_on=date(last_year, 1, 1),
+            created_by=formand,
+        )
+    if inspection is not None:
+        meetings.writer_groups.set([inspection])
+    _standing(_year_folder(last_year), [meetings])
+    ensure_structure(s.today)
+    latest = s.today - timedelta(days=18)
+    for day in [date(last_year, 3, 12), date(last_year, 10, 8), date(this_year, 3, 5), latest]:
+        if day > latest:
+            continue  # early in the year: the March meeting has not been held yet
+        # Made a week ahead with the agenda; the minutes follow two days after.
+        before, after = _noon(day - timedelta(days=7)), _noon(day + timedelta(days=2))
+        viewer = s.viewer(formand, before)
+        with _at(before):
+            meeting = standing.create_item(viewer, meetings, day, formand)
+        title = f"{day:%-d/%-m %Y}"
+        s.upload(meeting, "Dagsorden.pdf", _pdf(f"Dagsorden {title}", _MEETING_AGENDA), formand, before)
+        if after < s.now:
+            s.upload(meeting, "Referat.docx", _docx(f"Referat {title}", _MEETING_MINUTES), formand, after)
+
+    ak, regnskab = s.login("ak@gahk.dk"), s.login("regnskab@gahk.dk")
+    if (group := _group_of(ak, s.today)) is not None:
+        root = Folder.objects.get(kind=Folder.Kind.GROUP, workgroup=group)
+        viewer = s.viewer(ak, s.ago(3))
+        with _at(s.ago(3)):
+            standing.define(
+                viewer,
+                root,
+                name="Erfaringsrapporter",
+                item_label="",
+                limited=False,
+                writer_groups=[],
+                actor=ak,
+            )
+    if (group := _group_of(regnskab, s.today)) is not None:
+        root = Folder.objects.get(kind=Folder.Kind.GROUP, workgroup=group)
+        viewer = s.viewer(regnskab, s.ago(20))
+        with _at(s.ago(20)):
+            item = standing.define(
+                viewer,
+                root,
+                name="Kvartalsrapporter",
+                item_label="Kvartal",
+                limited=False,
+                writer_groups=[],
+                actor=regnskab,
+            )
+        viewer = s.viewer(regnskab, s.ago(10))
+        with _at(s.ago(10)):
+            standing.stop(viewer, item, root, regnskab)
+
+
 def _seed_locks(s: _Seeder) -> None:
     """Locks, and requests in every state: the requests page (admin@, formand@) has two pending, two
     approved and two rejected, and whoever asked for a decided one has been told the outcome."""
@@ -697,6 +891,7 @@ def wipe() -> None:
     while Folder.objects.exists():
         Folder.objects.filter(children__isnull=True).delete()
     SharedFolder.objects.all().delete()  # after its folders, which PROTECT it
+    StandingFolder.objects.all().delete()  # likewise
 
 
 # --- Contents ------------------------------------------------------------------------------------
@@ -925,6 +1120,12 @@ _PLAYLIST = """Playliste til temafesten
 2. Girls Just Want to Have Fun
 3. Don't You (Forget About Me)
 """
+_MEETING_AGENDA = ["1. Godkendelse af dagsorden", "2. Nyt fra Inspektionen", "3. Fester", "4. Eventuelt"]
+_MEETING_MINUTES = [
+    "Til stede: 20 beboere.",
+    "Dagsordenen blev godkendt.",
+    "Næste fællesmøde holdes om en måned.",
+]
 _PARTY_PROGRAMME = ["Kl. 14: Gårdspil", "Kl. 18: Grill i gården", "Kl. 22: Band i fællesrummet"]
 _GENERAL_MEETING = [
     "Dagsorden: valg af dirigent, beretning, regnskab, indkomne forslag, eventuelt.",
