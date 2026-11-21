@@ -9,11 +9,13 @@ from django.contrib.auth.tokens import default_token_generator
 from django.core import mail
 from django.db import DatabaseError, connection, transaction
 from django.test import Client, RequestFactory
+from django.urls import reverse
 from django.utils.encoding import force_bytes
 from django.utils.http import urlsafe_base64_encode
 
 from audit import trail
 from audit.models import AppendOnlyError, AuditChange, AuditEntity, AuditEvent
+from core.models import OutgoingMail
 from residents.models import AdminAccessGrant, Resident, Role, RoleAssignment, active_period
 
 LOGIN = "/admin/login"
@@ -405,6 +407,84 @@ def test_roles_admin_access_preview_and_refusals(make_resident: Callable[..., Re
         anna.pk,
         {"path": "/admin/roles", "roles": ["administrator"]},
     )
+
+
+# --- sending mail again ---------------------------------------------------------------------------
+
+
+def _failed_mail(recipient: str, status: str = "failed") -> OutgoingMail:
+    from datetime import timedelta
+
+    from django.utils import timezone
+
+    return OutgoingMail.objects.create(
+        subject="Alumneregning",
+        recipients=recipient,
+        status=status,
+        payload={"body": "Hej"},
+        expires_at=timezone.now() + timedelta(days=3),
+    )
+
+
+@pytest.mark.django_db
+def test_the_outbox_itself_is_left_out_but_sending_a_mail_again_is_an_event(
+    make_resident: Callable[..., Resident], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The deliverer rewrites a mail on every attempt (core.auditing); a person sending one again acts."""
+    from core import mail as outbox
+
+    monkeypatch.setattr(outbox, "_schedule_delivery", lambda mail_kind: None)
+    admin = make_resident(email="admin@gahk.dk", roles=[Role.ADMINISTRATOR], is_superuser=True)
+    failed, sent = _failed_mail("anna@gahk.dk"), _failed_mail("bo@gahk.dk", status="sent")
+    assert not AuditEvent.objects.exists(), "queueing and delivering a mail writes no event"
+    client = Client()
+    client.force_login(admin)
+
+    client.post(
+        "/django-admin/core/outgoingmail/",
+        {"action": "send_again", "_selected_action": [failed.pk, sent.pk]},
+    )
+
+    event = AuditEvent.objects.get(action="core.mail.sent_again")
+    assert (event.actor, event.details, event.unclaimed) == (admin, {"count": 1}, False)
+    [mail_entity] = event.entities.all()
+    assert (mail_entity.kind, mail_entity.entity_id) == ("core.mail", failed.pk)
+    assert mail_entity.name == "Alumneregning → anna@gahk.dk"
+    assert OutgoingMail.objects.get(pk=failed.pk).status == OutgoingMail.Status.QUEUED
+
+    client.post("/django-admin/core/outgoingmail/", {"action": "send_again", "_selected_action": [sent.pk]})
+    assert AuditEvent.objects.filter(action="core.mail.sent_again").count() == 1, "nothing sent again"
+
+
+@pytest.mark.django_db
+def test_regnskab_sending_the_alumneregninger_and_one_again_are_events(
+    make_resident: Callable[..., Resident], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from regnskab import tasks
+    from regnskab.models import AlumneregningSend
+
+    monkeypatch.setattr(tasks.send_alumneregninger_task, "delay", lambda *args: None)
+    regnskab = make_resident(email="acc@gahk.dk", roles=("regnskab",))
+    anna = make_resident(email="anna@gahk.dk", phone="111")
+    period = {"date_from": "2026-08-01", "date_to": "2026-08-31"}
+    lost = AlumneregningSend.objects.create(
+        resident=anna, outcome="sent", mail=_failed_mail("anna@gahk.dk", status="unknown"), **period
+    )
+    client = Client()
+    client.force_login(regnskab)
+
+    client.post(reverse("regnskab:send_alumneregninger"), {"fra": "2026-08-01", "til": "2026-08-31"})
+    sent = AuditEvent.objects.get(action="regnskab.alumneregninger.sent")
+    assert (sent.actor, sent.details) == (regnskab, period)
+
+    not_received = reverse("regnskab:alumneregning_not_received", args=[lost.pk])
+    client.post(not_received)
+    client.post(not_received)  # the mail is failed now: nothing more to send again, and no event
+
+    [again] = AuditEvent.objects.filter(action="regnskab.alumneregning.not_received")
+    assert (again.actor, again.details) == (regnskab, period)
+    entities = {(e.kind, e.role): e.entity_id for e in again.entities.all()}
+    assert entities == {("residents.resident", "subject"): anna.pk, ("core.mail", ""): lost.mail_id}
 
 
 # --- coverage --------------------------------------------------------------------------------------

@@ -25,6 +25,7 @@ from django.utils import timezone
 
 from audit import trail
 from core.job_directories import job_directory
+from core.job_progress import report_progress
 from photo_album.models import validate_tag_name
 from residents.models import Resident
 
@@ -331,6 +332,7 @@ def commit_upload(ticket: UploadTicket, resident: Resident, stored_size: int | N
 
 def _heartbeat(video_file: VideoFile) -> encoding.Throttle:
     def write(fraction: float) -> None:
+        report_progress(fraction, "Behandler filmen")  # for the worker-jobs page and its watchdog
         VideoFile.objects.filter(pk=video_file.pk).update(progress=round(fraction * 100), heartbeat_at=_now())
 
     return encoding.Throttle(write)
