@@ -5,7 +5,7 @@
 {% if preview.kind == "image" %}
   <section class="drive-preview mb-6" aria-label="Billede">
     {% if preview.state == "ready" %}
-      <img class="drive-image" src="{% url 'drive:image' file.pk %}?v={{ latest.number }}" alt="{{ file.name }}">
+      <img class="drive-image" src="{% url 'drive:image' file.uuid %}?v={{ latest.number }}" alt="{{ file.name }}">
     {% elif preview.state == "pending" %}
       <p class="muted drive-preview-note" data-drive-preview-pending>Billedet gøres klar til visning …</p>
     {% elif preview.state == "too_big" %}
@@ -27,16 +27,16 @@
   </section>
 {% elif preview.kind == "pdf" %}
   <section class="drive-preview mb-6" aria-label="PDF">
-    <iframe class="drive-pdf" src="{% url 'drive:inline' file.pk %}" title="{{ file.name }}"></iframe>
-    <p class="drive-links mt-2"><a href="{% url 'drive:inline' file.pk %}" target="_blank" rel="noopener">Åbn i et nyt vindue</a></p>
+    <iframe class="drive-pdf" src="{% url 'drive:inline' file.uuid %}" title="{{ file.name }}"></iframe>
+    <p class="drive-links mt-2"><a href="{% url 'drive:inline' file.uuid %}" target="_blank" rel="noopener">Åbn i et nyt vindue</a></p>
   </section>
 {% elif preview.kind == "video" %}
   <section class="drive-preview mb-6" aria-label="Video">
-    <video class="drive-video" src="{% url 'drive:inline' file.pk %}" controls preload="metadata" playsinline></video>
+    <video class="drive-video" src="{% url 'drive:inline' file.uuid %}" controls preload="metadata" playsinline></video>
   </section>
 {% elif preview.kind == "audio" %}
   <section class="drive-preview mb-6" aria-label="Lyd">
-    <audio class="drive-audio" src="{% url 'drive:inline' file.pk %}" controls preload="metadata"></audio>
+    <audio class="drive-audio" src="{% url 'drive:inline' file.uuid %}" controls preload="metadata"></audio>
   </section>
 {% elif preview.text %}
   <section class="drive-preview mb-6" aria-label="Indhold">

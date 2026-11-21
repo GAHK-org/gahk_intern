@@ -66,7 +66,7 @@ def _names(results: search.Results) -> list[str]:
 
 
 def _folder(client: Client, parent: Folder, name: str) -> Folder:
-    client.post(reverse("drive:create_folder", args=[parent.pk]), {"name": name})
+    client.post(reverse("drive:create_folder", args=[parent.uuid]), {"name": name})
     return Folder.objects.get(parent=parent, name=name)
 
 
@@ -141,7 +141,7 @@ def test_the_search_page(people: dict[str, Resident], group: Workgroup) -> None:
 
 def _zip_of(client: Client, source: Folder, captured: Callable, **items: object) -> ZipDownload:
     with captured(execute=True):
-        response = client.post(reverse("drive:request_zip", args=[source.pk]), items)
+        response = client.post(reverse("drive:request_zip", args=[source.uuid]), items)
     download = ZipDownload.objects.order_by("-pk").first()
     assert download is not None, response
     assert response["Location"] == reverse("drive:zip", args=[download.token])
@@ -172,8 +172,8 @@ def test_ticked_files_and_folders_come_as_one_zip(
         member,
         winter,
         django_capture_on_commit_callbacks,
-        file=[File.objects.get(name="Budget.xlsx").pk],
-        folder=[festen.pk],
+        file=[File.objects.get(name="Budget.xlsx").uuid],
+        folder=[festen.uuid],
     )
     assert download.name == "2026-27 Vinter.zip"
     assert download.state == ZipDownload.State.READY
@@ -234,8 +234,8 @@ def test_a_zip_over_the_limit_is_refused(
     member = _client(people["member"])
     winter = _period_folder(group, WINTER)
     _upload(member, winter, "Stor.bin", b"x" * 11)
-    response = member.post(reverse("drive:request_zip", args=[winter.pk]))
-    assert response["Location"] == reverse("drive:folder", args=[winter.pk])
+    response = member.post(reverse("drive:request_zip", args=[winter.uuid]))
+    assert response["Location"] == reverse("drive:folder", args=[winter.uuid])
     assert not ZipDownload.objects.exists()
 
 
@@ -308,12 +308,12 @@ def test_the_files_sort_by_each_column(people: dict[str, Resident], group: Workg
     _upload(member, winter, "c-mellem.txt", b"x" * 10)
 
     def order(**query: str) -> list[str]:
-        page = member.get(reverse("drive:folder", args=[winter.pk]), query).content.decode()
+        page = member.get(reverse("drive:folder", args=[winter.uuid]), query).content.decode()
         return sorted(["a-lille.txt", "b-stor.txt", "c-mellem.txt"], key=page.index)
 
     assert order() == ["a-lille.txt", "b-stor.txt", "c-mellem.txt"]
     assert order(sort="size") == ["b-stor.txt", "c-mellem.txt", "a-lille.txt"]
     assert order(sort="size", order="asc") == ["a-lille.txt", "c-mellem.txt", "b-stor.txt"]
     assert order(sort="name", order="desc") == ["c-mellem.txt", "b-stor.txt", "a-lille.txt"]
-    page = member.get(reverse("drive:folder", args=[winter.pk]), {"sort": "size"}).content.decode()
+    page = member.get(reverse("drive:folder", args=[winter.uuid]), {"sort": "size"}).content.decode()
     assert '<a href="?sort=size&amp;order=asc" aria-current="true">' in page

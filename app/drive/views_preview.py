@@ -7,6 +7,7 @@ uploader's browser sent, and with nosniff: the local-disk path serves from the a
 """
 
 from pathlib import PurePosixPath
+from uuid import UUID
 
 from django.http import FileResponse, Http404, HttpRequest, HttpResponseBase
 from django.shortcuts import redirect
@@ -49,17 +50,17 @@ def _inline(key: str, name: str, content_type: str, *, cache_control: str = "") 
 
 @access.access_required
 @xframe_options_sameorigin  # the PDF is shown in a frame on the file's page
-def inline(request: HttpRequest, pk: int) -> HttpResponseBase:
+def inline(request: HttpRequest, uuid: UUID) -> HttpResponseBase:
     """A PDF, video or sound, for the browser's own viewer or player."""
-    file, _ = live_file(request, pk)
+    file, _ = live_file(request, uuid)
     content_type = preview.inline_type(file.name)
     if content_type is None:
         raise Http404("not shown in the browser")
     return _inline(file.latest_version().key, file.name, content_type)
 
 
-def _preview_key(request: HttpRequest, pk: int, *, thumbnail: bool) -> HttpResponseBase:
-    file, _ = live_file(request, pk)
+def _preview_key(request: HttpRequest, uuid: UUID, *, thumbnail: bool) -> HttpResponseBase:
+    file, _ = live_file(request, uuid)
     if preview.kind_of(file.name) != preview.Kind.IMAGE:
         raise Http404("not an image")
     ready = preview.ready(file.latest_version())
@@ -83,11 +84,11 @@ def _preview_key(request: HttpRequest, pk: int, *, thumbnail: bool) -> HttpRespo
 
 
 @access.access_required
-def image(request: HttpRequest, pk: int) -> HttpResponseBase:
+def image(request: HttpRequest, uuid: UUID) -> HttpResponseBase:
     """An image's viewer copy, at most 1600 px."""
-    return _preview_key(request, pk, thumbnail=False)
+    return _preview_key(request, uuid, thumbnail=False)
 
 
 @access.access_required
-def thumbnail(request: HttpRequest, pk: int) -> HttpResponseBase:
-    return _preview_key(request, pk, thumbnail=True)
+def thumbnail(request: HttpRequest, uuid: UUID) -> HttpResponseBase:
+    return _preview_key(request, uuid, thumbnail=True)
