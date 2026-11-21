@@ -1,0 +1,99 @@
+{% extends "base.html" %}
+{% block title %}Medlemmer og udløb - {{ folder.name }} - Drive - GAHK Intern{% endblock %}
+{% block content_width %}max-w-3xl{% endblock %}
+
+{% block content %}
+  <div class="page-head">
+    <div>
+      <p class="eyebrow">Delt mappe {{ shared.number }}</p>
+      <h1>Medlemmer og udløb</h1>
+    </div>
+  </div>
+  {% include "drive/_crumbs.html" with ancestors=ancestors current="" %}
+
+  {% if shared.archived_at %}
+    <p class="muted mb-4">Arkiveret {{ shared.archived_at|date:"j. M Y" }}. Alle beboere kan læse den, og den udløber ikke.</p>
+  {% else %}
+    <p class="mb-4">Udløber <strong>{{ shared.expires_on|date:"j. F Y" }}</strong> og {{ shared.get_on_expiry_display }} da.</p>
+  {% endif %}
+
+  <h2 class="drive-h2">Medlemmer</h2>
+  <ul class="drive-list mb-6">
+    {% for member in members %}
+      <li class="drive-member">
+        <span class="drive-version">
+          <strong>{{ member.resident.full_name }}</strong>
+          <span class="muted">{{ member.get_role_display }}</span>
+        </span>
+        {% if moderates and not shared.archived_at %}
+          <form method="post" action="{% url 'drive:shared_role' shared.uuid %}" class="drive-inline-form">
+            {% csrf_token %}
+            <input type="hidden" name="resident" value="{{ member.resident_id }}">
+            <label class="sr-only" for="role-{{ forloop.counter }}">Rolle</label>
+            <select id="role-{{ forloop.counter }}" name="role">
+              {% for value, label in roles %}<option value="{{ value }}"{% if value == member.role %} selected{% endif %}>{{ label }}</option>{% endfor %}
+            </select>
+            <button type="submit" class="btn-link">Skift</button>
+          </form>
+          {% if member.resident_id != me %}
+            <form method="post" action="{% url 'drive:shared_remove' shared.uuid %}" data-drive-confirm="Fjern {{ member.resident.full_name }} fra mappen?">
+              {% csrf_token %}
+              <input type="hidden" name="resident" value="{{ member.resident_id }}">
+              <button type="submit" class="btn-link-danger">Fjern</button>
+            </form>
+          {% endif %}
+        {% endif %}
+      </li>
+    {% endfor %}
+  </ul>
+
+  {% if moderates and not shared.archived_at %}
+    <h2 class="drive-h2">Tilføj medlem</h2>
+    <form method="post" action="{% url 'drive:shared_add' shared.uuid %}" class="drive-inline-form mb-6">
+      {% csrf_token %}
+      <label class="sr-only" for="add-resident">Beboer</label>
+      <select id="add-resident" name="resident" required>
+        <option value="">Vælg beboer…</option>
+        {% for resident in others %}<option value="{{ resident.pk }}">{{ resident.full_name }}</option>{% endfor %}
+      </select>
+      <label class="sr-only" for="add-role">Rolle</label>
+      <select id="add-role" name="role">
+        {% for value, label in roles %}<option value="{{ value }}"{% if value == "edit" %} selected{% endif %}>{{ label }}</option>{% endfor %}
+      </select>
+      <button type="submit" class="btn btn-secondary">Tilføj</button>
+    </form>
+
+    <h2 class="drive-h2">Udløb</h2>
+    <form method="post" action="{% url 'drive:shared_expiry' shared.uuid %}" class="drive-form mb-6">
+      {% csrf_token %}
+      <label>Udløber <input type="date" name="expires_on" value="{{ shared.expires_on|date:'Y-m-d' }}" max="{{ latest }}" required></label>
+      {% if can_archive %}
+        <label class="drive-choice"><input type="radio" name="on_expiry" value="archive" checked> Arkiveres</label>
+      {% endif %}
+      <label class="drive-choice"><input type="radio" name="on_expiry" value="delete"{% if not can_archive %} checked{% endif %}> Slettes for altid</label>
+      {% if not can_archive %}<p class="muted">Mappen skal slettes, og det kan ikke laves om til arkivering.</p>{% endif %}
+      <div><button type="submit" class="btn btn-secondary">Gem udløb</button></div>
+    </form>
+
+    <h2 class="drive-h2">Navn</h2>
+    <form method="post" action="{% url 'drive:shared_rename' shared.uuid %}" class="drive-inline-form mb-6">
+      {% csrf_token %}
+      <label class="sr-only" for="shared-name">Navn</label>
+      <input id="shared-name" type="text" name="name" maxlength="200" value="{{ folder.name }}" required>
+      <button type="submit" class="btn btn-secondary">Gem navn</button>
+    </form>
+
+    <form method="post" action="{% url 'drive:shared_delete' shared.uuid %}" class="mb-4" data-drive-confirm="Læg den delte mappe i papirkurven? Den skal være tom.">
+      {% csrf_token %}
+      <button type="submit" class="btn-link-danger">Slet den delte mappe</button>
+    </form>
+  {% endif %}
+
+  {% if is_member and not shared.archived_at %}
+    <form method="post" action="{% url 'drive:shared_remove' shared.uuid %}" data-drive-confirm="Forlad mappen? Du kan kun komme tilbage, hvis en moderator inviterer dig igen.">
+      {% csrf_token %}
+      <input type="hidden" name="resident" value="{{ me }}">
+      <button type="submit" class="btn-link-danger">Forlad mappen</button>
+    </form>
+  {% endif %}
+{% endblock %}

@@ -11,6 +11,7 @@ from uuid import UUID
 
 from django.contrib import messages
 from django.core.exceptions import PermissionDenied, ValidationError
+from django.db.models import Count
 from django.http import FileResponse, Http404, HttpRequest, HttpResponse, HttpResponseBase, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
@@ -23,7 +24,7 @@ from residents.permissions import current_resident
 
 from . import access, locks, operations, services
 from .access import Level, Viewer
-from .models import MAX_UNLOCK_DAYS, ApprovalRequest, File, FileVersion, Folder
+from .models import MAX_UNLOCK_DAYS, ApprovalRequest, File, FileVersion, Folder, SharedMember
 from .periods import period_containing
 from .structure import ensure_structure_today
 
@@ -70,11 +71,27 @@ def _rows(viewer: Viewer, folders: list[Folder]) -> list[dict[str, Any]]:
     """The subfolders the viewer may see, with what they may know about each."""
     visible = [(folder, viewer.level(folder)) for folder in folders]
     visible = [(folder, level) for folder, level in visible if level > Level.NONE]
-    counted = [folder for folder, _ in visible if folder.kind != Folder.Kind.GROUP]
+    # Not a group folder, nor Delte mapper: their totals would count what the reader cannot see.
+    counted = [
+        folder for folder, _ in visible if folder.kind not in (Folder.Kind.GROUP, Folder.Kind.SHARED_ROOT)
+    ]
     totals = services.subtree_totals(counted)
+    members = dict(
+        SharedMember.objects.filter(
+            shared__in=[f.shared_id for f, _ in visible if f.kind == Folder.Kind.SHARED]
+        )
+        .values("shared")
+        .annotate(n=Count("pk"))
+        .values_list("shared", "n")
+    )
     return [
         {
             "folder": folder,
+            # Admins and Inspektionen see a Delt mappe only by its number.
+            "name": f"Delt mappe {folder.shared.number}"
+            if folder.kind == Folder.Kind.SHARED and level == Level.META and folder.shared
+            else folder.name,
+            "members": members.get(folder.shared_id or 0) if folder.kind == Folder.Kind.SHARED else None,
             "can_open": level >= Level.READ,
             "count": totals.get(folder.pk, (None, None))[0],
             "size": totals.get(folder.pk, (None, None))[1],
@@ -86,13 +103,17 @@ def _rows(viewer: Viewer, folders: list[Folder]) -> list[dict[str, Any]]:
 
 def _sorted_children(folder: Folder | None) -> list[Folder]:
     """Timeless first, then periods and years newest first, then residents' folders by name."""
-    children = list(Folder.objects.filter(parent=folder, deleted_at__isnull=True).select_related("workgroup"))
+    children = list(
+        Folder.objects.filter(parent=folder, deleted_at__isnull=True).select_related("workgroup", "shared")
+    )
     dated = sorted((f for f in children if f.period_start), key=lambda f: f.period_start, reverse=True)  # type: ignore[arg-type, return-value]
     timeless = [f for f in children if f.kind == Folder.Kind.TIMELESS]
     rest = sorted(
         (f for f in children if not f.period_start and f.kind != Folder.Kind.TIMELESS),
         key=lambda f: f.name_key,
     )
+    if folder is not None and folder.kind == Folder.Kind.SHARED_ROOT:
+        return rest + dated  # the Delte mapper in use, then the archived ones by year
     return timeless + dated + rest
 
 
@@ -108,8 +129,8 @@ def home(request: HttpRequest) -> HttpResponse:
             "folder": None,
             "rows": _rows(viewer, roots),
             "files": [],
-            "oversees": viewer.oversees,
-            "pending_requests": locks.pending_count() if viewer.oversees else 0,
+            "decides": viewer.oversees or any(viewer.moderates(pk) for pk in viewer.shared_roles),
+            "pending_requests": locks.pending_count(viewer),
         },
     )
 
@@ -123,6 +144,7 @@ def folder(request: HttpRequest, uuid: UUID) -> HttpResponse:
     )
     rows = _rows(viewer, _sorted_children(current))
     can_change_files = viewer.can_change_file_in(current)
+    shared = current.shared if current.kind == Folder.Kind.SHARED else None
     return _render(
         request,
         "drive/folder.html",
@@ -135,7 +157,10 @@ def folder(request: HttpRequest, uuid: UUID) -> HttpResponse:
             "can_create_folder": viewer.can_create_in(current),
             "can_change_folder": viewer.can_change_folder(current),
             **_lock_context(viewer, current),
-            "is_space": current.kind in (Folder.Kind.COMMON_ROOT, Folder.Kind.GROUP),
+            "is_space": current.kind in (Folder.Kind.COMMON_ROOT, Folder.Kind.GROUP, Folder.Kind.SHARED),
+            "shared": shared,
+            "shared_members": shared.members.count() if shared else 0,
+            "can_create_shared": current.kind == Folder.Kind.SHARED_ROOT and viewer.living,
             # Ticking is for moving, copying and deleting: residents' own folders and the files.
             "can_select": bool(files) or any(row["can_open"] and not row["folder"].is_system for row in rows),
             "can_change_files": can_change_files,

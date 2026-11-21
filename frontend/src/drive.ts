@@ -199,6 +199,22 @@ function initConfirm(): void {
   }
 }
 
+/** Narrow a long list of residents to those whose name contains what is typed. */
+function initPicker(): void {
+  for (const picker of document.querySelectorAll<HTMLElement>("[data-drive-pick]")) {
+    const filter = picker.querySelector<HTMLInputElement>("[data-drive-pick-filter]")
+    const rows = Array.from(picker.querySelectorAll<HTMLElement>("[data-drive-pick-name]"))
+    filter?.addEventListener("input", () => {
+      const query = filter.value.trim().toLowerCase()
+      for (const row of rows) {
+        const checked = row.querySelector<HTMLInputElement>("input:checked") !== null
+        row.hidden = query !== "" && !checked && !row.dataset.drivePickName!.includes(query)
+      }
+    })
+  }
+}
+
 initUpload()
 initSelection()
 initConfirm()
+initPicker()

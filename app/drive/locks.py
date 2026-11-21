@@ -5,8 +5,8 @@ file a year after its last new version, a folder after a year with no new file, 
 anywhere inside it. Renaming and moving do not count. The folders the system makes never lock.
 
 Lifting a lock, and deleting a version or a binned file before its time, take two people: a member
-who can write asks, with a reason, and an admin or a member of Inspektionen decides - never the one
-who asked. They decide from the name, the path and the version, and never see the contents. The
+who can write asks, with a reason, and an admin or a member of Inspektionen decides - or, in a Delt
+mappe, which they cannot see, one of its moderators - never the one who asked. They decide from the name, the path and the version, and never see the contents. The
 asker is told the outcome.
 
 An unlock is for at most MAX_UNLOCK_DAYS, and only ever of the item that holds the lock: a file in
@@ -17,6 +17,7 @@ from datetime import datetime, timedelta
 
 from django.core.exceptions import PermissionDenied, ValidationError
 from django.db import transaction
+from django.db.models import Q, QuerySet
 from django.urls import reverse
 from django.utils import timezone
 
@@ -133,6 +134,7 @@ def request_unlock(
         days=days,
         reason=reason,
         requested_by=actor,
+        shared_id=folder.shared_id,
         **kind,
     )
     history.record(
@@ -167,6 +169,7 @@ def request_purge(
         where=_where(file),
         reason=reason,
         requested_by=actor,
+        shared_id=file.folder.shared_id,
     )
     history.record(
         Event.Action.PURGE_REQUESTED, actor=actor, file=file, name=file.name, number=number, reason=reason
@@ -174,8 +177,18 @@ def request_purge(
     return request
 
 
-def pending_count() -> int:
-    return ApprovalRequest.objects.filter(state=ApprovalRequest.State.PENDING).count()
+def decides(viewer: Viewer) -> QuerySet[ApprovalRequest]:
+    """The requests this viewer decides: admins and Inspektionen those outside Delte mapper, a
+    moderator those in their Delte mapper."""
+    moderated = [pk for pk in viewer.shared_roles if viewer.moderates(pk)]
+    mine = Q(shared__in=moderated)
+    if viewer.oversees:
+        mine |= Q(shared__isnull=True)
+    return ApprovalRequest.objects.filter(mine)
+
+
+def pending_count(viewer: Viewer) -> int:
+    return decides(viewer).filter(state=ApprovalRequest.State.PENDING).count()
 
 
 # --- Deciding --------------------------------------------------------------------------------------
@@ -217,9 +230,9 @@ def _purge(request: ApprovalRequest, approver: Resident) -> None:
 
 @transaction.atomic
 def decide(viewer: Viewer, request: ApprovalRequest, *, approve: bool, reason: str, actor: Resident) -> None:
-    if not viewer.oversees:
-        raise PermissionDenied
     request = ApprovalRequest.objects.select_for_update().get(pk=request.pk)
+    if not (viewer.moderates(request.shared_id) if request.shared_id else viewer.oversees):
+        raise PermissionDenied
     if request.state != ApprovalRequest.State.PENDING:
         raise ValidationError("Anmodningen er allerede besluttet.")
     if request.requested_by_id == actor.pk:

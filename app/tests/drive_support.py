@@ -32,9 +32,10 @@ NEXT = Period(date(2027, 4, 1))
 def _today(monkeypatch: pytest.MonkeyPatch) -> None:
     import core.clock
     import drive.access
+    import drive.shared
     import drive.structure
 
-    for module in (core.clock, drive.access, drive.structure):
+    for module in (core.clock, drive.access, drive.shared, drive.structure):
         monkeypatch.setattr(module, "current_date", lambda: TODAY)
 
 

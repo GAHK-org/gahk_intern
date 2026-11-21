@@ -1,6 +1,6 @@
 from django.contrib import admin
 
-from .models import ApprovalRequest, Event, File, FileVersion, Folder
+from .models import ApprovalRequest, Event, File, FileVersion, Folder, SharedFolder, SharedMember
 
 
 @admin.register(Folder)
@@ -39,3 +39,17 @@ class ApprovalRequestAdmin(admin.ModelAdmin):
     list_filter = ("kind", "state")
     search_fields = ("name", "where")
     raw_id_fields = ("file", "folder", "requested_by", "decided_by")
+
+
+class SharedMemberInline(admin.TabularInline):
+    model = SharedMember
+    extra = 0
+    raw_id_fields = ("resident",)
+
+
+@admin.register(SharedFolder)
+class SharedFolderAdmin(admin.ModelAdmin):
+    list_display = ("number", "expires_on", "on_expiry", "archived_at")
+    list_filter = ("on_expiry",)
+    raw_id_fields = ("created_by",)
+    inlines = [SharedMemberInline]

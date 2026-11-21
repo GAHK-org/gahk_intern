@@ -2091,6 +2091,18 @@
     background:var(--surface); font-size:14px; }
   .drive-note p { margin:0 0 4px; }
   .drive-note p:last-child { margin:0; }
+  .drive-form { display:grid; gap:14px; max-width:560px; }
+  .drive-form label { display:grid; gap:4px; font-size:14px; }
+  .drive-form fieldset { border:1px solid var(--border); border-radius:10px; padding:12px 14px; display:grid; gap:8px; margin:0; }
+  .drive-form legend { font-weight:600; font-size:14px; padding:0 4px; }
+  .drive-form input[type=date] { max-width:200px; }
+  .drive-form .drive-choice, .drive-pick .drive-choice { display:flex; align-items:flex-start; gap:8px; font-size:14px; font-weight:400; margin:0; }
+  .drive-choice input { width:auto; margin:3px 0 0; flex:none; }
+  .drive-pick { list-style:none; margin:0; padding:0; max-height:320px; overflow:auto; display:grid; gap:4px; }
+  .drive-pick li[hidden] { display:none; }
+  .drive-inline-form { display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin:0; }
+  .drive-inline-form select, .drive-inline-form input[type=text] { width:auto; margin:0; max-width:100%; }
+  .drive-member { flex-wrap:wrap; }
   .drive-list .ni.drive-locked { width:14px; height:14px; color:var(--muted); }
   .drive-pending { font-size:12px; }
   .drive-request { flex-wrap:wrap; }

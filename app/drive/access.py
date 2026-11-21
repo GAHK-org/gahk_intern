@@ -14,6 +14,10 @@ asking for Inspektionen's covers both).
 A resident who has moved out has no access to anything. Nothing is deleted when they move: their
 past months stay in the residency lists, so they get exactly the same access back if they return.
 
+A DELT MAPPE is its members' only: moderators and editors write, readers read. Admins and
+Inspektionen see that it exists - its number, members, files and size - and nothing else. Once
+archived it is read by every resident.
+
 LOCKS narrow writing further (models.Lockable). A folder's lock covers everything below it; a
 file's covers only the file. `may_write` is the table alone, whatever is locked: it says who may
 lock by hand and ask for an unlock, so an unlock never gives anyone more than the table does.
@@ -33,11 +37,17 @@ from core.rollout import Gate
 from residents.models import Residency, Resident, Role, RoleAssignment, active_period
 from residents.permissions import current_resident, has_active_role, request_has_role
 
-from .models import File, Folder, Space
+from .models import File, Folder, SharedFolder, SharedMember, Space
 from .periods import Period, period_containing
 
 # Where nothing is put directly: residents' things go in the timeless, period and year folders.
-_ROOTS = (Folder.Kind.COMMON_ROOT, Folder.Kind.GROUPS_ROOT, Folder.Kind.GROUP)
+_ROOTS = (
+    Folder.Kind.COMMON_ROOT,
+    Folder.Kind.GROUPS_ROOT,
+    Folder.Kind.GROUP,
+    Folder.Kind.SHARED_ROOT,
+    Folder.Kind.ARCHIVE_YEAR,
+)
 
 # None = every logged-in resident.
 ACCESS_ROLES: tuple[str, ...] | None = (Role.ADMINISTRATOR, Role.INSPEKTION)
@@ -75,6 +85,10 @@ class Viewer:
     groups_now: set[int] = field(default_factory=set)
     groups_next: set[int] = field(default_factory=set)
     months: dict[int, set[tuple[int, int]]] = field(default_factory=dict)
+    # Delt mappe id -> this resident's role in it.
+    shared_roles: dict[int, str] = field(default_factory=dict)
+    # The archived Delte mapper, read by everyone.
+    archived: set[int] = field(default_factory=set)
     # folder id -> the folder whose lock covers it, per request.
     _locks: dict[int, Folder | None] = field(default_factory=dict, repr=False, compare=False)
 
@@ -129,6 +143,10 @@ class Viewer:
             groups_now=groups_now,
             groups_next=groups_next,
             months=dict(months),
+            shared_roles=dict(
+                SharedMember.objects.filter(resident_id=resident_id).values_list("shared_id", "role")
+            ),
+            archived=set(SharedFolder.objects.filter(archived_at__isnull=False).values_list("pk", flat=True)),
         )
 
     def was_member(self, workgroup: int, period: Period) -> bool:
@@ -141,7 +159,31 @@ class Viewer:
             return Level.NONE
         if folder.space == Space.COMMON:
             return self._common(folder)
+        if folder.space == Space.SHARED:
+            return self._shared(folder)
         return self._group(folder)
+
+    def _shared(self, folder: Folder) -> Level:
+        if folder.kind in (Folder.Kind.SHARED_ROOT, Folder.Kind.ARCHIVE_YEAR):
+            return Level.READ
+        shared = folder.shared_id
+        if shared is None:
+            return Level.NONE
+        if shared in self.archived:
+            return Level.READ
+        role = self.shared_roles.get(shared)
+        if role is None:
+            # That it exists, never what is in it: only the Delt mappe itself, under its number.
+            return Level.META if self.oversees and folder.kind == Folder.Kind.SHARED else Level.NONE
+        return Level.READ if role == SharedMember.Role.READ else Level.WRITE
+
+    def moderates(self, shared_id: int | None) -> bool:
+        return (
+            self.living
+            and shared_id is not None
+            and shared_id not in self.archived
+            and self.shared_roles.get(shared_id) == SharedMember.Role.MODERATOR
+        )
 
     def _common(self, folder: Folder) -> Level:
         if folder.kind == Folder.Kind.COMMON_ROOT:
@@ -219,8 +261,8 @@ class Viewer:
         """Rename, move or delete a folder: never one the system made, and only where a folder like it
         could be created - so the first level of Fælles' `Uden årstal` stays admins' and
         Inspektionen's to arrange."""
-        if folder.is_system or folder.parent is None:
-            return False
+        if folder.is_system or folder.parent is None or folder.kind == Folder.Kind.SHARED:
+            return False  # a Delt mappe itself: drive/shared.py, by its moderators
         return self.lock_holder(folder) is None and self.can_create_in(folder.parent)
 
     def can_change_file_in(self, folder: Folder) -> bool:
