@@ -87,6 +87,7 @@ _registry: dict[type[models.Model], Registration] = {}
 _by_kind: dict[str, Registration] = {}
 _exempt: dict[type[models.Model], str] = {}
 _actions: dict[str, str] = {}
+_kind_labels: dict[str, str] = {}
 
 
 def register(
@@ -132,6 +133,11 @@ def actions(labels: dict[str, str]) -> None:
     _actions.update(labels)
 
 
+def kind_labels(labels: dict[str, str]) -> None:
+    """Name kinds that are no single model, recorded with Event.change_kind ("cms.menu": "Menu")."""
+    _kind_labels.update(labels)
+
+
 def registration(model: type[models.Model]) -> Registration | None:
     return _registry.get(model)
 
@@ -158,7 +164,7 @@ def action_label(action: str) -> str:
 
 def kind_label(kind: str) -> str:
     reg = _by_kind.get(kind)
-    return reg.label if reg else kind
+    return reg.label if reg else _kind_labels.get(kind, kind)
 
 
 def known_actions() -> dict[str, str]:

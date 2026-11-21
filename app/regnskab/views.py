@@ -252,6 +252,10 @@ def send_alumneregninger_view(request: HttpRequest) -> HttpResponse:
     date_from, date_to = period
     _warn_missing_account_numbers(request, date_from, date_to)
 
+    trail.record(
+        "regnskab.alumneregninger.sent",
+        details={"date_from": date_from.isoformat(), "date_to": date_to.isoformat()},
+    )
     tasks.send_alumneregninger_task.delay(date_from.isoformat(), date_to.isoformat())
     messages.success(
         request,
@@ -311,10 +315,19 @@ def alumneregning_not_received_view(request: HttpRequest, pk: int) -> HttpRespon
     failed) — alumneregning.mark_not_received."""
     if request.method != "POST":
         return HttpResponseNotAllowed(["POST"])
-    send = get_object_or_404(AlumneregningSend.objects.select_related("resident"), pk=pk)
+    send = get_object_or_404(AlumneregningSend.objects.select_related("resident", "mail"), pk=pk)
     date_from, date_to = send.date_from.isoformat(), send.date_to.isoformat()
     status_url = f"{reverse('regnskab:alumneregninger_status')}?fra={date_from}&til={date_to}"
-    if not alumneregning.mark_not_received(send, by=current_resident(request).full_name):
+    with trail.event(
+        "regnskab.alumneregning.not_received",
+        subject=send.resident,
+        details={"date_from": date_from, "date_to": date_to},
+    ) as event:
+        if send.mail is not None:
+            event.involve_kind("core.mail", send.mail.pk, f"{send.mail.subject} → {send.mail.recipients}")
+        if not alumneregning.mark_not_received(send, by=current_resident(request).full_name):
+            event.cancel()
+    if event.cancelled:
         messages.info(request, f"Der er ikke noget at sende igen for {send.resident.full_name}.")
         return redirect(status_url)
     tasks.send_alumneregninger_task.delay(date_from, date_to)
