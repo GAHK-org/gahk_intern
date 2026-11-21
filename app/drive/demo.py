@@ -22,6 +22,10 @@ told), a file three days from going for good, and beboer@'s deleted folder kept 
 Delte mapper (`_seed_shared`): one moderated by beboer@ with every kind of member change, one by
 oel@ and regnskab@ about to expire, and an expired one archived for everyone to read.
 
+Shares (`_seed_sharing`): `Delt med mig` for ak@ (read), oel@ (edit on a folder partway down,
+used) and regnskab@ (edit on a file, a version added), and `Delt med <gruppe>` in beboer@'s group's
+current period and `Uden periode`.
+
 Last, locks (`_seed_locks`), as they stop changes: what the nightly task locked, regnskab@'s
 closed accounts and `Årsafslutning` folder locked by hand, and the requests page for admin@ and
 formand@ with an unlock and a purge in each state - pending, approved (the logo is unlocked for now
@@ -55,7 +59,7 @@ from notifications.models import Notification
 from residents.models import Residency, Resident, Role
 from residents.permissions import has_active_role
 
-from . import locks, operations, services, shared
+from . import locks, operations, services, shared, sharing
 from .access import Viewer
 from .models import ApprovalRequest, Event, File, FileVersion, Folder, SharedFolder, SharedMember, Space
 from .periods import Period, period_containing
@@ -249,6 +253,45 @@ class _Seeder:
         with _at(when):
             shared.set_expiry(viewer, folder.shared, expires_on, on_expiry, by)
 
+    # --- sharing ------------------------------------------------------------------------------------
+
+    def share(
+        self,
+        item: File | Folder,
+        by: Resident,
+        when: datetime,
+        *,
+        edit: bool = False,
+        resident: Resident | None = None,
+        group: Workgroup | None = None,
+    ) -> None:
+        viewer = self.viewer(by, when)
+        with _at(when):
+            sharing.share(
+                viewer,
+                file=item if isinstance(item, File) else None,
+                folder=item if isinstance(item, Folder) else None,
+                resident_id=resident.pk if resident else None,
+                workgroup_id=group.pk if group else None,
+                access=sharing.EDIT if edit else sharing.READ,
+                actor=by,
+            )
+
+    def unshare(self, item: File, recipient: Resident, by: Resident, when: datetime) -> None:
+        viewer = self.viewer(by, when)
+        with _at(when):
+            sharing.stop(viewer, item.shares.get(resident=recipient), by)
+
+    def add_version(self, file: File, data: bytes, by: Resident, when: datetime) -> None:
+        """From the file's own page, as one it is shared with to edit."""
+        key = services.new_key()
+        services.store_local(key, ContentFile(data))
+        viewer = self.viewer(by, when)
+        with _at(when):
+            services.add_version(
+                viewer, file, key=key, size=len(data), content_type=file.content_type, resident=by
+            )
+
 
 def _noon(day: date) -> datetime:
     return timezone.make_aware(datetime.combine(day, time(12)))
@@ -327,6 +370,7 @@ def seed(residents: list[Resident], now: datetime, _rng: random.Random) -> int:
     _seed_groups(s)
     _seed_changes(s)
     _seed_shared(s)
+    _seed_sharing(s)
     # Last: a lock stops the changes above.
     _seed_locks(s)
     # What the nightly purge (notifications.services.purge_expired) would have removed by now: the
@@ -607,6 +651,71 @@ def _seed_shared(s: _Seeder) -> None:
     s.upload(trip, "Budget.xlsx", _xlsx(_TRIP_BUDGET), regnskab, s.ago(50))
     with _at(s.ago(0)):
         shared.run_expiry(s.today)
+
+
+def _seed_sharing(s: _Seeder) -> None:
+    """Shares, so `Delt med mig` has something for ak@, oel@ and regnskab@, and beboer@'s group has
+    `Delt med <gruppe>` in both its current period and `Uden periode`. beboer@ gets nothing shared in
+    person: a share with a resident notifies them, and notifications.demo sets beboer@'s bell."""
+    current = period_containing(s.today)
+    starts = current.start
+    regnskab, ak, oel = s.login("regnskab@gahk.dk"), s.login("ak@gahk.dk"), s.login("oel@gahk.dk")
+    regnskab_group, ak_group, oel_group = (_group_of(login, s.today) for login in (regnskab, ak, oel))
+    if regnskab_group is None or ak_group is None or oel_group is None:
+        return
+    beboer_group = _group_of(s.login("beboer@gahk.dk"), s.today)
+
+    def target(sharer: Workgroup) -> Workgroup:
+        """beboer@'s group, or another one when it is the sharer's own."""
+        if beboer_group is not None and beboer_group != sharer:
+            return beboer_group
+        other = Workgroup.objects.exclude(pk=sharer.pk).order_by("name").first()
+        assert other is not None  # noqa: S101  # nosec B101 - seed_demo makes many groups
+        return other
+
+    regnskab_now = _group_folder(regnskab_group, Folder.Kind.PERIOD, current)
+    # Read: ak@ finds the budget under `Delt med mig`.
+    s.share(
+        _in(regnskab_now, f"Budget {current.name}.xlsx"),
+        regnskab,
+        s.ago(6, not_before=starts),
+        resident=ak,
+    )
+    # Edit, on a folder partway down: oel@ adds Ølkælderen's receipts, and sees the folders above
+    # `Bilag` as names only.
+    receipts = Folder.objects.get(parent=regnskab_now, name="Bilag")
+    s.share(receipts, regnskab, s.ago(12, not_before=starts), edit=True, resident=oel)
+    s.upload(
+        receipts.children.get(name="Indkøb"),
+        "Kvittering Ølkælderen.jpg",
+        _jpg("Kvittering Ølkælderen", "#517544", (800, 1100)),
+        oel,
+        s.ago(4, not_before=starts),
+    )
+    # Shared and then stopped, for the history's "Stoppede delingen".
+    accounts = _in(_group_folder(regnskab_group, Folder.Kind.TIMELESS), "Kontoplan.xlsx")
+    s.share(accounts, regnskab, s.ago(60), resident=oel)
+    s.unshare(accounts, oel, regnskab, s.ago(50))
+
+    # Edit, on a file: regnskab@ adds a version from the file's page.
+    ak_now = _group_folder(ak_group, Folder.Kind.PERIOD, current)
+    plan = _in(ak_now, "Arbejdsplan.csv")
+    s.share(plan, ak, s.ago(7, not_before=starts), edit=True, resident=regnskab)
+    s.add_version(
+        plan, _csv([*_WORK_PLAN, ["49", "Opsæt julebelysning", "2"]]), regnskab, s.ago(5, not_before=starts)
+    )
+
+    # With a group: from a current period it lands in the recipient's current period, from
+    # `Uden periode` in theirs.
+    oel_now = _group_folder(oel_group, Folder.Kind.PERIOD, current)
+    s.share(
+        _in(oel_now, "Prisliste.csv"),
+        oel,
+        s.ago(11, not_before=starts),
+        group=target(oel_group),
+    )
+    tools = _in(_group_folder(ak_group, Folder.Kind.TIMELESS), "Værktøjsliste.xlsx")
+    s.share(tools, ak, s.ago(100), group=target(ak_group))
 
 
 def _seed_locks(s: _Seeder) -> None:
