@@ -72,9 +72,9 @@ def test_a_file_locks_a_year_after_its_last_version_and_a_folder_after_a_year_wi
 ) -> None:
     client = _client(people["member"])
     winter = _period_folder(group, WINTER)
-    client.post(reverse("drive:create_folder", args=[winter.pk]), {"name": "Gammel"})
+    client.post(reverse("drive:create_folder", args=[winter.uuid]), {"name": "Gammel"})
     old_folder = Folder.objects.get(name="Gammel")
-    client.post(reverse("drive:create_folder", args=[winter.pk]), {"name": "Ny"})
+    client.post(reverse("drive:create_folder", args=[winter.uuid]), {"name": "Ny"})
     new_folder = Folder.objects.get(name="Ny")
     old = _file(client, old_folder, "old.txt")
     fresh = _file(client, new_folder, "fresh.txt")
@@ -99,20 +99,22 @@ def test_a_locked_file_can_be_read_and_copied_but_not_changed(
     client = _client(people["member"])
     winter = _period_folder(group, WINTER)
     file = _file(client, winter)
-    client.post(reverse("drive:lock_file", args=[file.pk]))
+    client.post(reverse("drive:lock_file", args=[file.uuid]))
     file.refresh_from_db()
     assert file.lock_active()
 
-    client.post(reverse("drive:rename_file", args=[file.pk]), {"name": "x.xlsx"})
-    client.post(reverse("drive:delete", args=[winter.pk]), {"file": file.pk})
+    client.post(reverse("drive:rename_file", args=[file.uuid]), {"name": "x.xlsx"})
+    client.post(reverse("drive:delete", args=[winter.uuid]), {"file": file.uuid})
     replaced = _upload(client, winter, "Budget.xlsx", b"two", "replace")
     assert replaced["status"] == 400
     assert "låst" in replaced["error"]
     file.refresh_from_db()
     assert (file.name, file.deleted_at, file.versions.count()) == ("Budget.xlsx", None, 1)
 
-    assert client.get(reverse("drive:download", args=[file.pk])).status_code == 200
-    client.post(reverse("drive:move", args=[winter.pk]), {"op": "copy", "to": winter.pk, "file": file.pk})
+    assert client.get(reverse("drive:download", args=[file.uuid])).status_code == 200
+    client.post(
+        reverse("drive:move", args=[winter.uuid]), {"op": "copy", "to": winter.uuid, "file": file.uuid}
+    )
     assert File.objects.filter(name="Budget (2).xlsx").exists()
     assert _upload(client, winter, "Budget.xlsx", b"two", "keep_both")["status"] == 201
 
@@ -120,20 +122,20 @@ def test_a_locked_file_can_be_read_and_copied_but_not_changed(
 def test_a_locked_folder_covers_everything_below_it(people: dict[str, Resident], group: Workgroup) -> None:
     client = _client(people["member"])
     winter = _period_folder(group, WINTER)
-    client.post(reverse("drive:create_folder", args=[winter.pk]), {"name": "Regnskab"})
+    client.post(reverse("drive:create_folder", args=[winter.uuid]), {"name": "Regnskab"})
     folder = Folder.objects.get(name="Regnskab")
-    client.post(reverse("drive:create_folder", args=[folder.pk]), {"name": "Bilag"})
+    client.post(reverse("drive:create_folder", args=[folder.uuid]), {"name": "Bilag"})
     inner = Folder.objects.get(name="Bilag")
     file = _file(client, inner)
-    client.post(reverse("drive:lock_folder", args=[folder.pk]))
+    client.post(reverse("drive:lock_folder", args=[folder.uuid]))
 
     assert _upload(client, inner, "new.txt", b"x")["status"] == 403
-    client.post(reverse("drive:rename_folder", args=[folder.pk]), {"name": "Andet"})
-    client.post(reverse("drive:delete", args=[inner.pk]), {"file": file.pk})
+    client.post(reverse("drive:rename_folder", args=[folder.uuid]), {"name": "Andet"})
+    client.post(reverse("drive:delete", args=[inner.uuid]), {"file": file.uuid})
     folder.refresh_from_db()
     file.refresh_from_db()
     assert (folder.name, file.deleted_at) == ("Regnskab", None)
-    assert "Låst" in client.get(reverse("drive:folder", args=[inner.pk])).content.decode()
+    assert "Låst" in client.get(reverse("drive:folder", args=[inner.uuid])).content.decode()
 
 
 # --- Unlocking -------------------------------------------------------------------------------------
@@ -145,8 +147,8 @@ def test_an_approved_unlock_lasts_its_days_then_the_lock_holds_again(
     member = _client(people["member"])
     winter = _period_folder(group, WINTER)
     file = _file(member, winter)
-    member.post(reverse("drive:lock_file", args=[file.pk]))
-    member.post(reverse("drive:unlock_file", args=[file.pk]), {"days": "7", "reason": "Rettelse"})
+    member.post(reverse("drive:lock_file", args=[file.uuid]))
+    member.post(reverse("drive:unlock_file", args=[file.uuid]), {"days": "7", "reason": "Rettelse"})
     request = ApprovalRequest.objects.get()
     assert (request.kind, request.days, request.where) == (
         ApprovalRequest.Kind.UNLOCK,
@@ -157,8 +159,8 @@ def test_an_approved_unlock_lasts_its_days_then_the_lock_holds_again(
     inspector = _client(people["inspector"])
     page = inspector.get(reverse("drive:requests")).content.decode()
     assert "Budget.xlsx" in page
-    assert reverse("drive:file", args=[file.pk]) not in page  # names and paths, never a way in
-    inspector.post(reverse("drive:decide", args=[request.pk]), {"decision": "approve"})
+    assert reverse("drive:file", args=[file.uuid]) not in page  # names and paths, never a way in
+    inspector.post(reverse("drive:decide", args=[request.uuid]), {"decision": "approve"})
 
     file.refresh_from_db()
     assert not file.lock_active()
@@ -214,7 +216,7 @@ def test_unlocking_a_folder_leaves_its_files_locked(people: dict[str, Resident],
     member = people["member"]
     client = _client(member)
     winter = _period_folder(group, WINTER)
-    client.post(reverse("drive:create_folder", args=[winter.pk]), {"name": "Gammelt"})
+    client.post(reverse("drive:create_folder", args=[winter.uuid]), {"name": "Gammelt"})
     folder = Folder.objects.get(name="Gammelt")
     file = _file(client, folder)
     locks.lock_file(_viewer(member), file, member)
@@ -241,13 +243,15 @@ def test_an_old_version_is_purged_only_with_a_second_person(
     _upload(member, winter, "Budget.xlsx", b"two", "replace")
     first_key = file.versions.get(number=1).key
 
-    member.post(reverse("drive:purge_request", args=[file.pk]), {"number": "2", "reason": "Nyeste"})
+    member.post(reverse("drive:purge_request", args=[file.uuid]), {"number": "2", "reason": "Nyeste"})
     assert not ApprovalRequest.objects.exists()  # the newest version is not purged; bin the file
-    member.post(reverse("drive:purge_request", args=[file.pk]), {"number": "1", "reason": "Persondata"})
+    member.post(reverse("drive:purge_request", args=[file.uuid]), {"number": "1", "reason": "Persondata"})
     request = ApprovalRequest.objects.get()
 
     with django_capture_on_commit_callbacks(execute=True):
-        _client(people["inspector"]).post(reverse("drive:decide", args=[request.pk]), {"decision": "approve"})
+        _client(people["inspector"]).post(
+            reverse("drive:decide", args=[request.uuid]), {"decision": "approve"}
+        )
     assert list(file.versions.values_list("number", flat=True)) == [2]
     assert not services.storage().exists(first_key)
     line = file.events.get(action=Event.Action.PURGED)
@@ -261,10 +265,10 @@ def test_a_binned_file_is_purged_from_the_bin(people: dict[str, Resident], group
     member = _client(people["member"])
     winter = _period_folder(group, WINTER)
     file = _file(member, winter)
-    member.post(reverse("drive:purge_request", args=[file.pk]), {"reason": "Fejl"})
+    member.post(reverse("drive:purge_request", args=[file.uuid]), {"reason": "Fejl"})
     assert not ApprovalRequest.objects.exists()  # only from the bin
-    member.post(reverse("drive:delete", args=[winter.pk]), {"file": file.pk})
-    member.post(reverse("drive:purge_request", args=[file.pk]), {"reason": "Fejl", "bin": winter.pk})
+    member.post(reverse("drive:delete", args=[winter.uuid]), {"file": file.uuid})
+    member.post(reverse("drive:purge_request", args=[file.uuid]), {"reason": "Fejl", "bin": winter.uuid})
     request = ApprovalRequest.objects.get()
     locks.decide(_viewer(people["inspector"]), request, approve=True, reason="", actor=people["inspector"])
     assert not File.objects.filter(pk=file.pk).exists()
@@ -288,7 +292,7 @@ def test_a_groups_activity_shows_each_line_to_who_could_read_it(
     _file(member, winter, "Nu.txt")
     _file(member, timeless, "Altid.txt")
     group_folder = Folder.objects.get(workgroup=group, kind=Folder.Kind.GROUP)
-    url = reverse("drive:activity", args=[group_folder.pk])
+    url = reverse("drive:activity", args=[group_folder.uuid])
 
     mine = member.get(url).content.decode()
     assert "Oprettede Nu.txt" in mine
