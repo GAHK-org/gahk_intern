@@ -160,7 +160,8 @@ def test_moving_a_folder_to_another_space_asks_then_takes_its_subtree_along(
     common_year = Folder.objects.get(kind=Folder.Kind.YEAR, period_start__year=2026)
 
     picker = client.get(
-        reverse("drive:move", args=[winter.uuid]), {"op": "move", "folder": fest.uuid, "at": common_year.uuid}
+        reverse("drive:move", args=[winter.uuid]),
+        {"op": "move", "folder": str(fest.uuid), "at": str(common_year.uuid)},
     )
     assert "Det ændrer, hvem der kan se det." in picker.content.decode()
     asked = client.post(
