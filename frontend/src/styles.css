@@ -131,7 +131,41 @@
   .topsearch input { width:100%; height:36px; border:0; border-radius:999px; padding:0 14px 0 38px; background:rgba(255,255,255,.14); color:#fff; font:inherit; font-size:14px; }
   .topsearch input::placeholder { color:rgba(255,255,255,.72); }
   .topsearch input:focus { outline:2px solid rgba(255,255,255,.5); background:rgba(255,255,255,.2); }
-  .topsearch svg { position:absolute; left:13px; top:9px; width:18px; height:18px; color:rgba(255,255,255,.75); }
+  .topsearch > svg { position:absolute; left:13px; top:9px; width:18px; height:18px; color:rgba(255,255,255,.75); }
+  .topsearch input::-webkit-search-cancel-button { filter:invert(1) brightness(2); cursor:pointer; }
+  /* The site-wide search's dropdown (search/_suggestions.html, search.ts) and its rows, which the
+     results page (search/results.html) draws too. */
+  .btn-top.topsearch-phone { display:none; padding:6px 9px; }
+  .search-suggestions { position:absolute; left:0; right:0; top:calc(100% + 8px); z-index:60; min-width:340px;
+    max-height:min(70vh, 560px); overflow:auto; padding:6px 0; background:var(--surface); color:var(--ink);
+    border:1px solid var(--border); border-radius:12px; box-shadow:0 12px 32px rgb(20 30 24 / .18); }
+  .search-suggestions[hidden] { display:none; }
+  .search-group + .search-group { border-top:1px solid var(--border); margin-top:4px; padding-top:4px; }
+  .search-group-label { padding:8px 14px 4px; font-size:10.5px; font-weight:700; letter-spacing:.13em;
+    text-transform:uppercase; color:var(--faint); }
+  .search-hit-row { display:flex; align-items:center; gap:11px; padding:7px 14px; color:var(--ink);
+    text-decoration:none; }
+  .search-hit-row:hover, .search-hit-row[aria-selected="true"] { background:var(--sunken); }
+  .search-hit-pic { width:32px; height:32px; border-radius:50%; flex:none; object-fit:cover; }
+  .search-hit-initials { display:grid; place-items:center; background:var(--brass); color:#fff; font-weight:700;
+    font-size:12px; }
+  .search-hit-icon { padding:6px; border-radius:8px; background:var(--green-050); color:var(--green-700);
+    stroke:currentColor; fill:none; box-sizing:border-box; }
+  .search-hit-text { display:flex; flex-direction:column; min-width:0; gap:1px; }
+  .search-hit-title { font-weight:600; font-size:14px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .search-hit-detail { font-size:12.5px; color:var(--muted); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .search-hit-snippet { font-size:13.5px; color:var(--muted); margin-top:2px; }
+  .search-suggestions .search-hit-snippet { font-size:12.5px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; margin:0; }
+  .search-none { margin:0; padding:10px 14px; color:var(--muted); font-size:14px; }
+  .search-all { display:block; margin-top:4px; padding:10px 14px; border-top:1px solid var(--border);
+    color:var(--green-700); font-weight:600; font-size:13.5px; text-decoration:none; }
+  .search-all:hover, .search-all[aria-selected="true"] { background:var(--sunken); }
+  .search-section { padding:14px 6px 10px; }
+  .search-section-head { display:flex; align-items:center; gap:9px; margin:0 14px 6px; font-size:15px; }
+  .search-section-head svg { width:18px; height:18px; color:var(--faint); stroke:currentColor; fill:none; }
+  .search-section .search-hit-row { border-radius:9px; padding:8px 14px; }
+  .search-section .search-hit-title, .search-section .search-hit-detail { white-space:normal; }
+  .search-more { display:inline-block; margin:6px 14px 2px; font-size:13.5px; font-weight:600; color:var(--green-700); }
   .topright { margin-left:auto; display:flex; align-items:center; gap:12px; }
   .topuser { display:flex; align-items:center; gap:9px; font-size:14px; color:#fff; }
   .avatar { width:30px; height:30px; border-radius:50%; background:var(--brass); color:#fff; display:grid; place-items:center; font-weight:700; font-size:12.5px; flex:none; }
@@ -1224,6 +1258,7 @@
     .topbar-hidden .album-selection-bar { top:8px; }
     .hamburger { display:block; }
     .topsearch { display:none; }
+    .btn-top.topsearch-phone { display:inline-flex; }
     .sidebar { position:fixed; top:0; left:0; bottom:0; width:264px; z-index:50; box-shadow:var(--shadow); transform:translateX(-100%); transition:transform .2s ease; }
     .sidebar.is-open { transform:none; }
     .backdrop { display:block; position:fixed; inset:0; background:rgba(20,30,24,.4); z-index:40; }

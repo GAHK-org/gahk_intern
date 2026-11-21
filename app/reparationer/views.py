@@ -124,20 +124,22 @@ def _move_response(request: HttpRequest, task: RepairTask, error: str = "") -> H
     return _redirect_after(request, task.pk)
 
 
-def _search(tasks: "QuerySet[RepairTask]", query: str) -> "QuerySet[RepairTask]":
+def search_tasks(tasks: "QuerySet[RepairTask]", query: str) -> "QuerySet[RepairTask]":
     """Title/location/description/reporter — everything a card actually shows, so a hit is never a
-    surprise ("why did this match?"). A plain icontains rather than a search index: the whole table
-    fits on a screen a few times over, so ranking would be over-engineering. Shared by the board and
-    the archive, which search the same fields over different base querysets (active vs. archived)."""
-    if not query:
-        return tasks
-    return tasks.filter(
-        Q(title__icontains=query)
-        | Q(location__icontains=query)
-        | Q(description__icontains=query)
-        | Q(reported_by__first_name__icontains=query)
-        | Q(reported_by__last_name__icontains=query)
-    )
+    surprise ("why did this match?"). Every word must match one of them, so "vask kælder" finds the
+    washing machine in the basement. A plain icontains rather than a search index: the whole table
+    fits on a screen a few times over, so ranking would be over-engineering. Shared by the board, the
+    archive and the site-wide search (search.sources), which search the same fields over different
+    base querysets."""
+    for word in query.split()[:6]:
+        tasks = tasks.filter(
+            Q(title__icontains=word)
+            | Q(location__icontains=word)
+            | Q(description__icontains=word)
+            | Q(reported_by__first_name__icontains=word)
+            | Q(reported_by__last_name__icontains=word)
+        )
+    return tasks
 
 
 @login_required
@@ -147,7 +149,7 @@ def board(request: HttpRequest) -> HttpResponse:
     if location_type not in {value for value, _ in LOCATION_TYPES}:
         location_type = ""  # an unknown value shows everything rather than 404ing
 
-    tasks = _search(
+    tasks = search_tasks(
         RepairTask.objects.active()
         .select_related("reported_by")
         # distinct: two to-many joins in one query would otherwise multiply each other's counts.
@@ -193,7 +195,7 @@ def archive_list(request: HttpRequest) -> HttpResponse:
     """Archived tickets: no columns (every one is Færdig by construction — see
     models.RepairTaskQuerySet.due_for_archive), just a searchable list, newest-archived first."""
     query = (request.GET.get("q") or "").strip()
-    tasks = _search(
+    tasks = search_tasks(
         RepairTask.objects.archived().select_related("reported_by").order_by("-archived_at"),
         query,
     )

@@ -69,6 +69,8 @@ from opslagstavle.models import Notice, NoticeComment, NoticeReaction
 from photo_album.demo import seed as seed_photo_album
 from photo_album.models import Album, Media
 from regnskab.models import AlumneregningSend, EconomicLedgerEntry
+from reparationer.demo import seed as seed_reparationer
+from reparationer.models import RepairComment, RepairImage, RepairTask
 from residents.models import (
     WORKGROUP_ROLE,
     Residency,
@@ -165,6 +167,11 @@ WIPE_ORDER: list[type[models.Model]] = [
     Notification,
     NotificationPreference,
     NotificationSettings,
+    # Before Resident, though a deleted Resident would cascade to them anyway: RepairImage's files go
+    # with its post_delete signal either way, and listing them keeps the wipe readable.
+    RepairImage,
+    RepairComment,
+    RepairTask,
     # Before Resident: uploaders, series creators and requesters are all PROTECTed.
     GahkflixRequest,
     GahkflixVideo,
@@ -246,6 +253,7 @@ class Command(BaseCommand):
             # After both: these posts embed an album and a film seeded just above.
             seed_opslagstavle_embeds(residents, self.now)
             seed_den_hurtige(residents, self.now, self.rng)
+            seed_reparationer(residents, self.now, self.rng)
             # Last: its rows link to the events, opslag and Den Hurtige posts seeded above.
             seed_notifications(residents, self.now, self.rng)
             # After the ølkælder and admissions: its mails are theirs (core.demo).

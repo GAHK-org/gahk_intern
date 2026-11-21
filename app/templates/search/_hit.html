@@ -1,0 +1,16 @@
+{% load search_marks %}
+{# One result: a link with a picture or an icon, the title, a detail line and maybe a snippet. Shared by the dropdown and the results page. #}
+<a class="search-hit-row" href="{{ hit.url }}"{% if hit.external %} target="_blank" rel="noopener"{% endif %}{% if option %} role="option" aria-selected="false" tabindex="-1"{% endif %}>
+  {% if hit.avatar %}
+    <img class="search-hit-pic" src="{{ hit.avatar }}" alt="" width="32" height="32" loading="lazy">
+  {% elif hit.initials %}
+    <span class="search-hit-pic search-hit-initials" aria-hidden="true">{{ hit.initials }}</span>
+  {% else %}
+    <svg class="search-hit-pic search-hit-icon" aria-hidden="true"><use href="#i-{{ hit.icon|default:section.icon }}"></use></svg>
+  {% endif %}
+  <span class="search-hit-text">
+    <span class="search-hit-title">{{ hit.title|marked:query.marks }}{% if hit.external %} <span aria-hidden="true">↗</span>{% endif %}</span>
+    {% if hit.detail %}<span class="search-hit-detail">{{ hit.detail|marked:query.marks }}</span>{% endif %}
+    {% if hit.snippet %}<span class="search-hit-snippet">{{ hit.snippet|marked:query.marks }}</span>{% endif %}
+  </span>
+</a>

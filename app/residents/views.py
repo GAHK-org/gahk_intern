@@ -22,6 +22,7 @@ from core.danish import MONTHS
 from core.mentions import mentionable
 from core.models import Cleaning, Room, Workgroup
 
+from . import search
 from .forms import ProfileEditForm, ResidentEditForm, password_link_mail
 from .models import (
     WORKGROUP_ROLE,
@@ -138,15 +139,7 @@ def _directory_rows(
         .select_related("resident", "resident__sponsor", "room", "workgroup", "cleaning")
         .order_by(*order)
     )
-    q = (query or "").strip()
-    if q:
-        qs = qs.filter(
-            Q(resident__first_name__icontains=q)
-            | Q(resident__last_name__icontains=q)
-            | Q(resident__study__icontains=q)
-            | Q(resident__email__icontains=q)
-        )
-    return qs
+    return search.matching(qs, query)
 
 
 def _parse_period(request: HttpRequest) -> tuple[int, int]:
