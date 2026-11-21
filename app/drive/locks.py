@@ -38,8 +38,8 @@ def _where(target: Target) -> str:
 
 def _page(target: Target) -> str:
     if isinstance(target, File):
-        return reverse("drive:file", args=[target.pk])
-    return reverse("drive:folder", args=[target.pk])
+        return reverse("drive:file", args=[target.uuid])
+    return reverse("drive:folder", args=[target.uuid])
 
 
 # --- Locking ---------------------------------------------------------------------------------------

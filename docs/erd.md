@@ -937,6 +937,7 @@ erDiagram
         datetime locked_at
         int locked_by_id FK
         datetime unlocked_until
+        string uuid
         int parent_id FK
         string name
         string name_key
@@ -956,6 +957,7 @@ erDiagram
         datetime locked_at
         int locked_by_id FK
         datetime unlocked_until
+        string uuid
         int folder_id FK
         string name
         string name_key
@@ -1005,6 +1007,7 @@ erDiagram
 
     drive_ApprovalRequest {
         int id PK
+        string uuid
         string kind
         string state
         int file_id FK
@@ -1529,6 +1532,7 @@ erDiagram
         datetime locked_at
         int locked_by_id FK
         datetime unlocked_until
+        string uuid
         int parent_id FK
         string name
         string name_key
@@ -1548,6 +1552,7 @@ erDiagram
         datetime locked_at
         int locked_by_id FK
         datetime unlocked_until
+        string uuid
         int folder_id FK
         string name
         string name_key
@@ -1597,6 +1602,7 @@ erDiagram
 
     drive_ApprovalRequest {
         int id PK
+        string uuid
         string kind
         string state
         int file_id FK
