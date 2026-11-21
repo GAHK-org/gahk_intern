@@ -11,7 +11,7 @@ class Migration(migrations.Migration):
     initial = True
 
     dependencies = [
-        ("core", "0018_drop_arkiv_tables"),
+        ("core", "0020_drop_arkiv_tables"),
         migrations.swappable_dependency(settings.AUTH_USER_MODEL),
     ]
 
