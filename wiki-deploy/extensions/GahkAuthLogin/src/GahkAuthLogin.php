@@ -19,8 +19,11 @@
 //    the forced reset would still open the wiki while the new ones would not. Reading live Postgres
 //    avoids that: a reset takes effect here immediately.
 //
-// Authentication *semantics* are otherwise unchanged (username-or-email, autocreate on first login,
-// md5 placeholder name rewritten by GahkAuthChangeName), so this stays a migration, not a redesign.
+// 2026-11-18 — accounts follow the resident (WikiAccount): one account per resident, tied to them
+// by id, always named after their current e-mail address and carrying their e-mail and real name.
+// The old login named the account after whatever was typed (e-mail or numeric id) and passed new
+// users through under an md5 placeholder that GahkAuthChangeName renamed afterwards; both are gone.
+// GahkSession keeps a session only as long as the intranet still lets the resident in.
 //
 // NOTE: strict() returns true and this is the only primaryauth provider, so local MediaWiki passwords
 // are disabled — if Postgres is unreachable, nobody can log in, sysops included. See CUTOVER.md for
@@ -32,12 +35,11 @@ use MediaWiki\Auth\AuthenticationRequest;
 use MediaWiki\Auth\AuthenticationResponse;
 use MediaWiki\Auth\LocalPasswordPrimaryAuthenticationProvider;
 use MediaWiki\Auth\PasswordAuthenticationRequest;
-use MediaWiki\MediaWikiServices;
-use Wikimedia\Rdbms\DBError;
 
 class GahkAuthLogin extends LocalPasswordPrimaryAuthenticationProvider
 {
-//    protected $loginOnly = true;
+    /** Authentication-session key handing the resident to GahkAccountSync after the login passes. */
+    const RESIDENT = 'gahk-resident';
 
     function userExists($username)
     {
@@ -55,33 +57,37 @@ class GahkAuthLogin extends LocalPasswordPrimaryAuthenticationProvider
             return AuthenticationResponse::newAbstain();
         }
 
-        $loginUsername = $req->username;
-        $usernameLow = strtolower(str_replace(' ', '_', $loginUsername));
-
-        $resident = ResidentDirectory::find($usernameLow);
-        if ($resident === null) {
-            return $this->failResponse($req);
-        }
-        if (!DjangoPasswords::check($req->password, $resident['password'])) {
-            return $this->failResponse($req);
-        }
-
+        // Residents log in with their e-mail address (or, as before, their numeric id).
         try {
-            $dbr = MediaWikiServices::getInstance()->getDBLoadBalancer()->getConnection(DB_REPLICA);
-            $existing = $dbr->selectRow(
-                'user',
-                'user_name',
-                ['user_name' => ucfirst($loginUsername)],
-                __METHOD__
-            );
-        } catch (DBError $e) {
-            wfLogWarning('GahkAuthLogin: wiki user lookup failed: ' . $e->getMessage());
-            return AuthenticationResponse::newAbstain();
+            $resident = ResidentDirectory::find(strtolower(str_replace(' ', '_', $req->username)));
+        } catch (ResidentDirectoryUnavailable $e) {
+            Log::get()->warning('GahkAuthLogin: cannot check a login: ' . $e->getMessage());
+            return AuthenticationResponse::newFail(wfMessage('gahkauthlogin-unavailable'));
+        }
+        if ($resident === null || !DjangoPasswords::check($req->password, $resident['password'])) {
+            return $this->failResponse($req);
+        }
+        unset($resident['password']);
+
+        // The same test every later request makes (GahkSession), asked fresh and remembered, so a
+        // login never lets in someone whose session would be dropped on the next page. Without an
+        // answer, find() already required is_active, which is the rule that matters most.
+        try {
+            $standing = Standing::refresh($resident['id']);
+            if ($standing === null || !$standing['allowed']) {
+                return AuthenticationResponse::newFail(wfMessage('gahkauthlogin-not-allowed'));
+            }
+        } catch (ResidentDirectoryUnavailable $e) {
+            Log::get()->warning('GahkAuthLogin: standing unknown at login: ' . $e->getMessage());
         }
 
-        // Unchanged legacy behaviour: a first-time user with no wiki account is passed through under
-        // an md5 placeholder name, which GahkAuthChangeName then rewrites to their e-mail address.
-        return AuthenticationResponse::newPass($existing ? $loginUsername : md5($loginUsername));
+        $name = WikiAccount::prepareLogin($resident);
+        if ($name === null) {
+            return AuthenticationResponse::newFail(wfMessage('gahkauthlogin-account-error'));
+        }
+
+        $this->manager->setAuthenticationSessionData(self::RESIDENT, $resident);
+        return AuthenticationResponse::newPass($name);
     }
 
     public function beginPrimaryAccountCreation($user, $creator, array $reqs)

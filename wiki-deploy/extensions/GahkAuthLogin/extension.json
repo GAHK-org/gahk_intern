@@ -6,5 +6,14 @@
 	"AutoloadNamespaces": {
 		"Gahk\\": "src/"
 	},
+	"Hooks": {
+		"SessionCheckInfo": "Gahk\\GahkSession::onSessionCheckInfo",
+		"UserEffectiveGroups": "Gahk\\GahkSession::onUserEffectiveGroups"
+	},
+	"MessagesDirs": {
+		"GahkAuthLogin": [
+			"i18n"
+		]
+	},
 	"manifest_version": 2
 }

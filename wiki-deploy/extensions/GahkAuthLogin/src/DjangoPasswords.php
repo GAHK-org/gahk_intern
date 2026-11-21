@@ -62,7 +62,7 @@ class DjangoPasswords
         }
 
         // Unknown or unsupported algorithm (e.g. scrypt): fail closed.
-        wfLogWarning('GahkAuthLogin: unsupported password hash algorithm ' . $algorithm);
+        Log::get()->warning('GahkAuthLogin: unsupported password hash algorithm ' . $algorithm);
         return false;
     }
 }
