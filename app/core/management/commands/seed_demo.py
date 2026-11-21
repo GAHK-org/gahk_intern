@@ -677,26 +677,7 @@ class Command(BaseCommand):
             Page.objects.update_or_create(
                 slug=slug, defaults={"header": header, "body": body, "menu_category": 1}
             )
-        # The admissions page is a typed page (cms.page_types): its texts are fields, not a body.
-        Page.objects.update_or_create(
-            slug="optagelse",
-            defaults={
-                "header": "Optagelse",
-                "body": "",
-                "menu_category": 1,
-                "page_type": "admissions",
-                "fields": {
-                    "intro": "<p>Vil du bo her, skal du først på en <strong>rundvisning</strong>.</p>",
-                    "criteria": (
-                        "<h2>Kriterier for at søge ind</h2><p>Studerende fra 3. semester.</p>"
-                        "<h2>Husleje</h2><p>Pt. <strong>5.616 kr. pr. måned</strong> med fuld madordning.</p>"
-                        "<h2>Sprog</h2><p>Dansktalende.</p><p><em>We prefer Danish-speaking applicants.</em></p>"
-                    ),
-                    "quote": "«Valget skal træffes under hensyn til vidnesbyrd, flid, begavelse og trang.»",
-                    "quote_by": "Gustav Adolph Hagemann",
-                },
-            },
-        )
+        self._seed_admissions_page()
         for _ in range(6):
             NewsItem.objects.create(
                 title=self.fake.sentence(nb_words=6),
@@ -715,6 +696,75 @@ class Command(BaseCommand):
         PylonEvent.objects.create(
             title="Arkiveret begivenhed", description="(migreret)", starts_on=today - timedelta(days=400)
         )
+
+    def _seed_admissions_page(self) -> None:
+        """/optagelse, the admissions page type (cms.page_types): its texts are fields, not a body.
+
+        With the history the migration (cms 0012) leaves on a real database, plus one edit since:
+          * "Før siden fik faste felter": the page as one body, no fields. Restoring it leaves the
+            fields alone with a warning, which only such a version shows;
+          * "Faste felter som den gamle optagelsesside": the first fields;
+          * an editor's change to the rent (HTML text) and the quote (plain text), so the history and
+            the change log each show a text diff and a before -> after.
+        Written with the services' own snapshot and change-log helpers, not save_page, which would
+        queue a publish to gahk.dk.
+        """
+        from cms.services import audit_state, field_changes, page_state, record_change, snapshot_page
+
+        old_body = (
+            '<p>Sådan søger du ind.</p><ul><li><a href="/optagelse/ansoeg">Anmod om rundvisning</a></li>'
+            '<li><a href="/optagelse/fremlej">Ansøg om fremleje</a></li></ul>'
+        )
+        first_fields = {
+            "intro": "<p>Vil du bo her, skal du først på en <strong>rundvisning</strong>.</p>",
+            "criteria": (
+                "<h2>Kriterier for at søge ind</h2><p>Studerende fra 3. semester.</p>"
+                "<h2>Husleje</h2><p>Pt. <strong>5.616 kr. pr. måned</strong> med fuld madordning.</p>"
+                "<h2>Sprog</h2><p>Dansktalende.</p><p><em>We prefer Danish-speaking applicants.</em></p>"
+            ),
+            "quote": "«Valget skal træffes under hensyn til vidnesbyrd, flid, begavelse og trang.»",
+            "quote_by": "Gustav Adolph Hagemann",
+        }
+        page, _ = Page.objects.update_or_create(
+            slug="optagelse",
+            defaults={
+                "header": "Optagelse",
+                "body": old_body,
+                "menu_category": 1,
+                "page_type": "",
+                "fields": {},
+            },
+        )
+        migrated_at = self.now - timedelta(days=12)
+        versions = [snapshot_page(page, None, note="Før siden fik faste felter")]
+        page.page_type, page.fields, page.body = "admissions", first_fields, ""
+        versions.append(snapshot_page(page, None, note="Faste felter som den gamle optagelsesside"))
+        PageVersion.objects.filter(pk__in=[v.pk for v in versions]).update(created_at=migrated_at)
+
+        editor = Resident.objects.filter(email="formand@gahk.dk").first()
+        edited_at = self.now - timedelta(days=2)
+        before = page_state(page)
+        page.fields = {
+            **first_fields,
+            "criteria": first_fields["criteria"].replace("5.616 kr.", "5.790 kr."),
+            "quote": (
+                "«Valget mellem dem, der kan komme i betragtning, skal træffes under hensyn til de "
+                "pågældendes vidnesbyrd, flid, begavelse og trang.»"
+            ),
+        }
+        page.updated_at, page.updated_by = edited_at, editor
+        page.save()
+        edit = snapshot_page(page, editor, note="Redigeret")
+        PageVersion.objects.filter(pk=edit.pk).update(created_at=edited_at)
+        change = record_change(
+            action=ContentChange.Action.UPDATE,
+            kind=ContentChange.Kind.PAGE,
+            object_id=page.pk,
+            label=page.header,
+            changes=field_changes(audit_state(before), audit_state(page_state(page))),
+            by=editor,
+        )
+        ContentChange.objects.filter(pk=change.pk).update(at=edited_at)
 
     # ------------------------------------------------------ room conditions
     def _seed_room_conditions(self, rooms: list[Room], residents: list[Resident]) -> None:
