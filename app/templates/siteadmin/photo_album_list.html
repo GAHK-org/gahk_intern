@@ -47,7 +47,15 @@
         <p class="jobs-empty">Lageret er ikke målt endnu.</p>
       {% endif %}
     {% else %}
-      <p class="jobs-sub pad-intro">{{ list.page.paginator.count }} i alt.</p>
+      <div class="pad-intro pad-retry">
+        <p class="jobs-sub">{{ list.page.paginator.count }} i alt.{% if can_retry %} {{ retryable|length }} kan prøves igen nu; de andre er i kø eller ved at blive konverteret.{% endif %}</p>
+        {% if can_retry and retryable %}
+          <form method="post" action="{% url 'siteadmin:photo_album_retry' kind %}">
+            {% csrf_token %}
+            <button type="submit" class="btn">Prøv alle {{ retryable|length }} igen nu</button>
+          </form>
+        {% endif %}
+      </div>
       <ul class="pad-items">
         {% for row in list.items %}
           {% with media=row.media %}
@@ -75,7 +83,16 @@
                   {% if kind == 'optagelsesdato' %}Vises ved {{ media.sort_at|date:"j. b Y" }} ({{ row.tier.label|lower }}).{% endif %}
                 </div>
               </div>
-              <div class="pad-actions">{% if media.original %}<a class="btn btn-secondary" href="{% url 'photo_album:download_original' media.pk %}">Originalen</a>{% endif %}</div>
+              <div class="pad-actions">
+                {% if media.pk in retryable %}
+                  <form method="post" action="{% url 'siteadmin:photo_album_retry' kind %}">
+                    {% csrf_token %}
+                    <input type="hidden" name="media" value="{{ media.pk }}">
+                    <button type="submit" class="btn btn-secondary">Prøv igen nu</button>
+                  </form>
+                {% endif %}
+                {% if media.original %}<a class="btn btn-secondary" href="{% url 'photo_album:download_original' media.pk %}">Originalen</a>{% endif %}
+              </div>
               <details class="pad-details">
                 <summary>Detaljer</summary>
                 <dl class="jobs-facts">

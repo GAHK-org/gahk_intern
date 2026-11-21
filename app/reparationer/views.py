@@ -15,6 +15,9 @@ strict subset of a manager's — splitting it would duplicate the "does this sta
 no real separation of concerns.
 """
 
+from typing import Any
+
+from django.conf import settings
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.core.exceptions import PermissionDenied
@@ -25,12 +28,14 @@ from django.utils import timezone
 from django.utils.cache import patch_vary_headers
 from django.views.decorators.http import require_POST
 
+from core.clock import current_datetime
+from core.uploads import EXTENSION_HELP, prepare_image_upload
 from residents.models import Role
 from residents.permissions import current_resident, request_has_role, role_required
 
 from . import live, services
 from .forms import COMMON_AREAS, RepairCommentForm, RepairTaskForm
-from .models import RepairComment, RepairTask
+from .models import RepairComment, RepairImage, RepairTask
 
 MANAGE_ROLES = (Role.REPPER, Role.INSPEKTION, Role.ADMINISTRATOR)
 MOVE_ROLES = (*MANAGE_ROLES, Role.VICEVAERT)
@@ -44,6 +49,34 @@ LOCATION_TYPES = [("faelles", "Fællesarealer"), ("vaerelser", "Værelser")]
 # via a replayed/crafted request. Færdig is closing the ticket; AK projekt is committing a slice of
 # Reppergruppen's AK hours to it — both are calls only that crew should make.
 MANAGER_ONLY_STATUSES = (RepairTask.Status.AK_PROJEKT, RepairTask.Status.FAERDIG)
+
+# Photos per report or note. Enough to show a fault from a few angles; the cap is what keeps one
+# submission from being a whole camera roll.
+MAX_IMAGES = 6
+
+
+def _attached_images(request: HttpRequest) -> list[Any]:
+    """The request's photos that passed core.uploads, ready to store — refused ones dropped with a
+    warning, never failing the submission. Same reaction as core.uploads.attached_image (which takes
+    exactly one file, hence this loop): losing a written report because one picture was wrong is
+    the worse outcome."""
+    uploads = request.FILES.getlist("images")
+    if len(uploads) > MAX_IMAGES:
+        messages.warning(request, f"Højst {MAX_IMAGES} billeder ad gangen — resten blev ikke gemt.")
+        uploads = uploads[:MAX_IMAGES]
+    prepared = []
+    for upload in uploads:
+        image, error = prepare_image_upload(upload, settings.REPAIR_IMAGE_MAX_MB)
+        if error is not None:
+            messages.warning(request, f"{upload.name}: {error} Billedet blev ikke gemt.")
+            continue
+        prepared.append(image)
+    return prepared
+
+
+def _save_images(task: RepairTask, images: list[Any], comment: RepairComment | None = None) -> None:
+    for image in images:
+        RepairImage.objects.create(task=task, comment=comment, file=image)
 
 
 def can_delete_comment(request: HttpRequest, comment: RepairComment) -> bool:
@@ -115,7 +148,10 @@ def board(request: HttpRequest) -> HttpResponse:
         location_type = ""  # an unknown value shows everything rather than 404ing
 
     tasks = _search(
-        RepairTask.objects.active().select_related("reported_by").annotate(comment_count=Count("comments")),
+        RepairTask.objects.active()
+        .select_related("reported_by")
+        # distinct: two to-many joins in one query would otherwise multiply each other's counts.
+        .annotate(comment_count=Count("comments", distinct=True), image_count=Count("images", distinct=True)),
         query,
     )
     if location_type == "faelles":
@@ -176,14 +212,20 @@ def archive_list(request: HttpRequest) -> HttpResponse:
 def create(request: HttpRequest) -> HttpResponse:
     form = RepairTaskForm(request.POST or None)
     if request.method == "POST" and form.is_valid():
+        images = _attached_images(request)
         task = form.save(commit=False)
         task.reported_by = current_resident(request)
         task.save()
+        _save_images(task, images)
         services.notify_new_task(task)
         live.task_changed(task.pk, "created")
         messages.success(request, "Reparationen er meldt ind.")
         return redirect("reparationer:board")
-    return render(request, "reparationer/form.html", {"form": form})
+    return render(
+        request,
+        "reparationer/form.html",
+        {"form": form, "max_images": MAX_IMAGES, "image_help": EXTENSION_HELP},
+    )
 
 
 @require_POST
@@ -198,9 +240,12 @@ def set_status(request: HttpRequest, pk: int) -> HttpResponse:
         # it deserves the card back plus a reason. The buttons on the detail page still never render
         # for them, so a form POST reaching here is a replayed request and gets the same refusal.
         return _move_response(request, task, "Kun Reppergruppen kan flytte en sag hertil.")
-    if status in RepairTask.Status.values:
+    if status in RepairTask.Status.values and status != task.status:
+        # Only a real move restarts the card's colour clock (models.RepairTask.column_age) — a
+        # replayed POST for the column it is already in must not quietly make it look fresh.
         task.status = status
-        task.save(update_fields=["status", "updated_at"])
+        task.status_changed_at = current_datetime()
+        task.save(update_fields=["status", "status_changed_at", "updated_at"])
         live.task_changed(task.pk)
     return _move_response(request, task)
 
@@ -289,7 +334,7 @@ def detail(request: HttpRequest, pk: int) -> HttpResponse:
     Works for an archived ticket too (RepairTask.objects is the unfiltered manager), which is the
     whole point of archiving rather than deleting: still findable, still readable."""
     task = get_object_or_404(RepairTask.objects.select_related("reported_by"), pk=pk)
-    comments = list(task.comments.select_related("author"))
+    comments = list(task.comments.select_related("author").prefetch_related("images"))
     for comment in comments:
         comment.can_delete = can_delete_comment(request, comment)  # type: ignore[attr-defined]
     can_manage = request_has_role(request, *MANAGE_ROLES)
@@ -298,8 +343,10 @@ def detail(request: HttpRequest, pk: int) -> HttpResponse:
         "reparationer/detail.html",
         {
             "task": task,
+            "task_images": task.images.filter(comment__isnull=True),
             "comments": comments,
             "comment_form": RepairCommentForm(),
+            "max_images": MAX_IMAGES,
             "statuses": RepairTask.Status.choices,
             "manager_only_statuses": MANAGER_ONLY_STATUSES,
             "can_manage": can_manage,
@@ -321,16 +368,24 @@ def detail(request: HttpRequest, pk: int) -> HttpResponse:
 @require_POST
 @login_required
 def create_comment(request: HttpRequest, pk: int) -> HttpResponseRedirect:
-    """Any resident may add a note — same openness as reporting. See can_delete_comment for removal."""
+    """Any resident may add a note — same openness as reporting. See can_delete_comment for removal.
+
+    Photos alone are a whole note. One whose photos were all refused has nothing left in it, and
+    lands in the empty branch below with the refusal warnings beside it (see _attached_images)."""
     task = get_object_or_404(RepairTask, pk=pk)
     form = RepairCommentForm(request.POST)
+    images = _attached_images(request)
     if not form.is_valid():
-        messages.error(request, "Skriv en note.")
+        messages.error(request, "Noten kunne ikke gemmes.")
         return redirect("reparationer:detail", pk=task.pk)
     comment = form.save(commit=False)
+    if not comment.body and not images:
+        messages.error(request, "Skriv en note, eller vedhæft et billede.")
+        return redirect("reparationer:detail", pk=task.pk)
     comment.task = task
     comment.author = current_resident(request)
     comment.save()
+    _save_images(task, images, comment)
     services.notify_new_comment(comment)
     live.task_changed(task.pk)  # the card's note count
     return redirect("reparationer:detail", pk=task.pk)

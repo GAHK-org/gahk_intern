@@ -179,6 +179,10 @@ class Job(_TaskName):
     # Set on a running job: how long it has run, and how long it may.
     elapsed: datetime.timedelta | None = None
     time_limit: datetime.timedelta | None = None
+    # From the worker's record, for a job that reports how far it has got (core/job_progress.py).
+    progress: float | None = None
+    progress_step: str = ""
+    progressed_at: datetime.datetime | None = None
 
     @property
     def state_label(self) -> str:
@@ -217,6 +221,15 @@ class Job(_TaskName):
         return bool(self.elapsed and self.time_limit and self.elapsed > self.time_limit)
 
     @property
+    def progress_percent(self) -> int | None:
+        return None if self.progress is None else min(100, int(self.progress * 100))
+
+    @property
+    def watched(self) -> bool:
+        """A running job the watchdog holds to its pace: one that reports its progress."""
+        return self.status == "STARTED" and self.progress is not None
+
+    @property
     def limit_used(self) -> int:
         """How much of its time limit a running job has used, in percent (at most 100)."""
         if not (self.elapsed and self.time_limit):
@@ -240,6 +253,9 @@ class Job(_TaskName):
         self.parent_id = record.parent_id or self.parent_id
         self.arguments = record.arguments or self.arguments
         self.keyword_arguments = record.keyword_arguments or self.keyword_arguments
+        self.progress = record.progress
+        self.progress_step = record.progress_step
+        self.progressed_at = record.progressed_at
 
 
 class _ResultUnpickler(pickle.Unpickler):

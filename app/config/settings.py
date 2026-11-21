@@ -4,6 +4,7 @@ Schema/decisions: see ../02-schema-etl.md. Target DB is PostgreSQL (via DATABASE
 """
 
 import os
+from datetime import timedelta
 from pathlib import Path
 
 import dj_database_url
@@ -31,7 +32,7 @@ CSRF_COOKIE_SECURE = not DEBUG
 # nothing else. It used to be ".gahk.dk", shared with the public site — which now runs on separate,
 # less trusted webhosting that must never see an intranet session. New names as well, because a
 # browser keeps the old ".gahk.dk" `sessionid` until it expires and would otherwise send two cookies
-# of the same name to intern.gahk.dk; core.middleware.ExpireLegacyCookies deletes the old pair.
+# of the same name to intern.gahk.dk.
 # In production the names carry the __Host- prefix: the browser then accepts them only host-only,
 # Secure and on Path=/, so a compromised gahk.dk cannot plant a ".gahk.dk" cookie of the same name
 # that intern would read (it is same-site). Development serves plain http, where a __Host- cookie
@@ -89,10 +90,6 @@ MIDDLEWARE = [
     "core.health.HealthCheckMiddleware",
     "django.middleware.security.SecurityMiddleware",
     "whitenoise.middleware.WhiteNoiseMiddleware",
-    # Deletes the pre-intern.gahk.dk ".gahk.dk" session/CSRF cookies (see SESSION_COOKIE_NAME). This
-    # high up so every response carries the deletion — a redirect, a 403 — but after WhiteNoise, so
-    # static files never carry a Set-Cookie.
-    "core.middleware.ExpireLegacyCookies",
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.common.CommonMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
@@ -229,7 +226,7 @@ CELERY_RESULT_EXPIRES = None
 CELERY_WORKER_REDIRECT_STDOUTS_LEVEL = "INFO"
 # The default ceiling for a scheduled job: generous for a sweep, and short enough that a wedged one
 # does not hold a worker slot all night. The two photo-album jobs legitimately run longer and set
-# their own limits at the task — see photo_album/tasks.py::MEDIA_TASK_TIME_LIMIT.
+# their own limits at the task — see photo_album/tasks.py::ENCODE_TASK_TIME_LIMIT.
 #
 # Redelivery from the two settings above does NOT re-run a lost download or import: by then its row
 # is BUILDING under the message's own task id, which the task takes as its worker having died and
@@ -346,6 +343,13 @@ CELERY_BEAT_SCHEDULE = {
         "task": "ak.tasks.apply_monthly_assessment",
         "schedule": crontab(minute=10, hour=4, day_of_month=1),
     },
+    # Each mail queues its own delivery, and a run the rate limit stops schedules the next; this
+    # only sends what is left if one of those messages was lost (core.mail), and gives up on mail
+    # whose lifetime has run out.
+    "deliver-mail": {
+        "task": "core.tasks.deliver_mail",
+        "schedule": crontab(minute="*/5"),
+    },
     # Every quarter of an hour, matching JOB_STALLED_AFTER: what it clears is a download the
     # resident is still watching a spinner for, so the gap between "the worker died" and "the page
     # says so" is the thing being minimised. Off the hour, like everything else here.
@@ -410,6 +414,10 @@ CELERY_BEAT_SCHEDULE = {
     "purge-delivered-broker-messages": {
         "task": "core.tasks.purge_delivered_broker_messages",
         "schedule": crontab(minute=50, hour=4),
+    },
+    "purge-outgoing-mail": {
+        "task": "core.tasks.purge_outgoing_mail",
+        "schedule": crontab(minute=55, hour=4),
     },
     "process-photo-album-media": {
         "task": "photo_album.tasks.process_pending_media",
@@ -574,8 +582,22 @@ CSRF_FAILURE_VIEW = "residents.auth.csrf_failure"
 LOGIN_REDIRECT_URL = "dashboard"
 LOGOUT_REDIRECT_URL = "login"
 
-# Email — defaults to the console backend in dev (prints instead of sending). SMTP from env in prod.
-EMAIL_BACKEND = os.environ.get("EMAIL_BACKEND", "django.core.mail.backends.console.EmailBackend")
+# Email (core.mail, #397). Two backends, and the names are on purpose:
+#   * the SETTING EMAIL_BACKEND is the outbox, always: every send_mail, ours or a third-party app's, is
+#     stored as an OutgoingMail and sent from there. core.checks warns if anything replaces it.
+#   * the ENV VAR EMAIL_BACKEND keeps meaning what it says to whoever sets it — where mail actually
+#     goes — and becomes MAIL_DELIVERY_BACKEND, what the outbox sends through. Unset (dev), that is
+#     the console backend, which prints each mail in the log of the process that sends it.
+EMAIL_BACKEND = "core.mail.OutboxBackend"
+MAIL_DELIVERY_BACKEND = os.environ.get("EMAIL_BACKEND", "django.core.mail.backends.console.EmailBackend")
+# one.com refuses the account after ~25 mails in 5 minutes. Only bulk mail (core.mail.Kind.BULK:
+# alumneregninger, ølkælder overviews) is held to this, counting every mail sent in the window; a
+# password reset or a welcome mail goes out at once, in the room this leaves below one.com's limit.
+MAIL_RATE_LIMIT = int(os.environ.get("MAIL_RATE_LIMIT", "10"))
+MAIL_RATE_WINDOW = timedelta(minutes=5)
+# Seconds before a send gives up on a mail server that does not answer. Django's default is to wait
+# for ever, and a hung send holds the outbox's lock: every mail would wait for the job's time limit.
+EMAIL_TIMEOUT = 30
 EMAIL_HOST = os.environ.get("SMTP_HOST", "")
 EMAIL_HOST_USER = os.environ.get("SMTP_USER", "")
 EMAIL_HOST_PASSWORD = os.environ.get("SMTP_PASSWORD", "")
@@ -688,6 +710,9 @@ NOTICE_IMAGE_MAX_MB = int(os.environ.get("NOTICE_IMAGE_MAX_MB", "5"))
 # post to another.
 EVENT_IMAGE_MAX_MB = int(os.environ.get("EVENT_IMAGE_MAX_MB", "5"))
 
+# Photos on a Reparationer ticket or note. Its own setting for the same reason as the ones above.
+REPAIR_IMAGE_MAX_MB = int(os.environ.get("REPAIR_IMAGE_MAX_MB", "5"))
+
 # The ceiling for an ANIMATED image, which cuts across the per-feature caps above rather than
 # joining them, because what it answers is a question about the FORMAT.
 #
@@ -755,24 +780,3 @@ GAHKFLIX_MAX_UPLOAD_GB = float(os.environ.get("GAHKFLIX_MAX_UPLOAD_GB", "5"))
 GAHKFLIX_PICTURE_MAX_MB = int(os.environ.get("GAHKFLIX_PICTURE_MAX_MB", "15"))
 # Local copies of its thumbnails, banners and frames, in MEDIA_CACHE_DIR/gahkflix/ (gahkflix/cache.py).
 GAHKFLIX_CACHE_MB = int(os.environ.get("GAHKFLIX_CACHE_MB", "1024"))
-
-# --- Transition (TEMPORARY: reverted in phase 3 with the rest of transition/; DEPLOY.md, "Transition") ---
-# Hosts that get the old public site (transition.urls_public) while this app still answers gahk.dk,
-# e.g. "gahk.dk,www.gahk.dk". Empty: none, and intern.gahk.dk is all there is. They must be in
-# DJANGO_ALLOWED_HOSTS too.
-TRANSITION_PUBLIC_HOSTS = [
-    host.strip().lower() for host in os.environ.get("TRANSITION_PUBLIC_HOSTS", "").split(",") if host.strip()
-]
-# Cloudflare Turnstile on the old site's admission forms, as the old code had it. Unset: not checked.
-TURNSTILE_SITE_KEY = os.environ.get("TURNSTILE_SITE_KEY", "")
-TURNSTILE_SECRET_KEY = os.environ.get("TURNSTILE_SECRET_KEY", "")
-INSTALLED_APPS += ["transition"]
-# First of all, ahead of core.health: the public hosts' URLconf, and their /health redirect.
-MIDDLEWARE.insert(0, "transition.middleware.PublicSiteHost")
-# Right after SessionMiddleware: an old ".gahk.dk" session carried over, every saved session marked.
-MIDDLEWARE.insert(
-    MIDDLEWARE.index("django.contrib.sessions.middleware.SessionMiddleware") + 1,
-    "transition.middleware.CarryOverLegacySession",
-)
-# The public hosts' CSRF failure page; residents.auth.csrf_failure for intern.gahk.dk.
-CSRF_FAILURE_VIEW = "transition.views.csrf_failure"

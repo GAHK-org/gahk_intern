@@ -10,8 +10,12 @@ from typing import Literal
 
 from django.conf import settings
 from django.core.mail import EmailMessage, get_connection
-from django.db.models import F, QuerySet
+from django.db import IntegrityError, transaction
+from django.db.models import F, Q, QuerySet
+from django.utils import timezone
 
+from core import mail as outbox
+from core.models import OutgoingMail
 from residents.models import Residency, Resident
 
 from . import economic, ledger, statement_pdf
@@ -34,6 +38,7 @@ class AlumneregningResult:
     resident: Resident
     outcome: Outcome
     detail: str = ""
+    retryable: bool = False  # a failure that may pass if tried again shortly (e-conomic's rate limit)
 
 
 @dataclass(frozen=True)
@@ -148,30 +153,21 @@ def _prepare_one(
     return PreparedStatement(resident, account_number, entries, balance, pdf, body)
 
 
-def _send_one(
-    resident: Resident,
-    account_number: int,
-    date_from: date,
-    date_to: date,
-    mail_settings: AlumneregningSettings,
-) -> AlumneregningResult:
-    prepared = _prepare_one(resident, account_number, date_from, date_to, mail_settings, persist=True)
-
+def _email(prepared: PreparedStatement, date_from: date) -> EmailMessage:
     email = EmailMessage(
         subject="Alumneregning",
         body=prepared.body,
         from_email=f"Regnskabsgruppen <{settings.ALUMNEREGNING_FROM_EMAIL}>",
-        to=[resident.email],
+        to=[prepared.resident.email],
         connection=None
         if settings.ALUMNEREGNING_SEND_MAIL
         else get_connection("django.core.mail.backends.console.EmailBackend"),
     )
     email.attach(f"alumneregning-{date_from.isoformat()}.pdf", prepared.pdf, "application/pdf")
-    try:
-        email.send()
-    except Exception as exc:  # SMTP errors, a bad address, etc. must not abort the batch
-        logger.warning("alumneregning: failed to mail resident %s: %s", resident.pk, exc)
-        return AlumneregningResult(resident, "failed", f"Kunne ikke sende mail: {exc}")
+    return email
+
+
+def _sent_detail(prepared: PreparedStatement) -> str:
     detail = (
         f"{len(prepared.entries)} posteringer, saldo {_kr(prepared.balance)} kr."
         if prepared.entries
@@ -179,51 +175,138 @@ def _send_one(
     )
     if not settings.ALUMNEREGNING_SEND_MAIL:
         detail += " Ikke mailet (test, ALUMNEREGNING_SEND_MAIL er slået fra): kun skrevet i loggen."
+    return detail
+
+
+# A statement mailed through the outbox counts as sent unless its mail is known not to have arrived.
+# A mail cut off mid-send (UNKNOWN) may well have, so it is not sent again by a rerun on its own —
+# only once regnskab says it did not arrive (mark_not_received).
+_NOT_DELIVERED = (OutgoingMail.Status.FAILED, OutgoingMail.Status.EXPIRED)
+
+
+def _already_sent(date_from: date, date_to: date) -> QuerySet[AlumneregningSend]:
+    """Sends of the period that count as done: made and mailed, or with their mail still on its way.
+    A failure — of the statement or, in the end, of its mail — is tried again by the next run."""
+    return AlumneregningSend.objects.filter(date_from=date_from, date_to=date_to, outcome="sent").exclude(
+        mail__status__in=_NOT_DELIVERED
+    )
+
+
+def _retryable(resident: Resident, date_from: date, date_to: date) -> QuerySet[AlumneregningSend]:
+    return AlumneregningSend.objects.filter(resident=resident, date_from=date_from, date_to=date_to).filter(
+        Q(outcome="failed") | Q(mail__status__in=_NOT_DELIVERED)
+    )
+
+
+def _record(resident: Resident, date_from: date, date_to: date, outcome: Outcome, detail: str) -> bool:
+    """Write the alumne's outcome for the period, unless another run has sent them their statement
+    meanwhile. Either way it is one statement only one of two concurrent runs can win: the update of a
+    retryable row, or the insert the unique constraint guards. Returns whether this run's outcome was
+    written."""
+    retryable = _retryable(resident, date_from, date_to)
+    replaced = list(retryable.exclude(mail=None).values_list("mail_id", flat=True))
+    if retryable.update(outcome=outcome, detail=detail, mail=None, sent_at=timezone.now()):
+        # The mail that did not arrive is replaced by this run's: emptied, so it cannot also be sent
+        # again by hand (core.mail.send_again) and reach the alumne beside the new one.
+        OutgoingMail.objects.filter(pk__in=replaced).update(payload={})
+        return True
+    try:
+        with transaction.atomic():
+            AlumneregningSend.objects.create(
+                resident=resident, date_from=date_from, date_to=date_to, outcome=outcome, detail=detail
+            )
+    except IntegrityError:  # sent by another run
+        return False
+    return True
+
+
+class _NotMailed(Exception):
+    pass
+
+
+def _queue_statement(
+    prepared: PreparedStatement, date_from: date, date_to: date
+) -> AlumneregningResult | None:
+    """Record the alumne's statement as sent and queue its mail, in one transaction: a mail is only
+    queued with its row, and a row only written with its mail. None if another run sent it first."""
+    resident = prepared.resident
+    detail = _sent_detail(prepared)
+    email = _email(prepared, date_from)
+    with transaction.atomic():
+        if not _record(resident, date_from, date_to, "sent", detail):
+            return None
+        try:
+            with outbox.kind(OutgoingMail.Kind.BULK):
+                email.send()  # through core.mail's outbox: stored here, sent after commit
+        except Exception as exc:  # only a backend that sends there and then (dev's console) gets here
+            raise _NotMailed(str(exc)) from exc  # rolls the "sent" row back with it
+        mail = getattr(email, "outgoing_mail", None)
+        if mail is not None:
+            AlumneregningSend.objects.filter(resident=resident, date_from=date_from, date_to=date_to).update(
+                mail=mail
+            )
     return AlumneregningResult(resident, "sent", detail)
 
 
-def send_alumneregninger(date_from: date, date_to: date) -> list[AlumneregningResult]:
-    """Email every billable resident their statement, skipping anyone already billed for this exact
-    period (AlumneregningSend) — so a retried/duplicate send (the task re-running, the button pressed
-    twice) never bills someone twice. Best-effort: one failing doesn't stop the rest."""
-    mail_settings = AlumneregningSettings.get_solo()
-    already_sent = set(
-        AlumneregningSend.objects.filter(date_from=date_from, date_to=date_to, outcome="sent").values_list(
-            "resident_id", flat=True
+def mark_not_received(send: AlumneregningSend, by: str) -> bool:
+    """Regnskab's answer to a statement whose mail was cut off mid-send (UNKNOWN): it did not arrive.
+    The mail then counts as failed, so the next run of the period sends the statement again. Returns
+    whether there was such a mail."""
+    if send.mail_id is None:
+        return False
+    return bool(
+        OutgoingMail.objects.filter(pk=send.mail_id, status=OutgoingMail.Status.UNKNOWN).update(
+            status=OutgoingMail.Status.FAILED, error=f"Kom ikke frem, ifølge {by}."
         )
     )
+
+
+def send_alumneregninger(date_from: date, date_to: date) -> list[AlumneregningResult]:
+    """Make every billable resident's statement and queue it to them, skipping anyone already sent
+    theirs for this exact period — so a retried/duplicate send (the task re-running, the button pressed
+    twice) never mails someone twice. Best-effort: one failing doesn't stop the rest. The mails go out
+    from core.mail's outbox within the mail server's rate limit; the status page follows them there."""
+    mail_settings = AlumneregningSettings.get_solo()
     results: list[AlumneregningResult] = []
     for resident in residents_billable_for(date_from, date_to):
-        if resident.pk in already_sent:
+        if _already_sent(date_from, date_to).filter(resident=resident).exists():
             continue
         account_number = resident.economic_account_number
         assert account_number is not None  # noqa: S101  # nosec B101 — residents_billable_for filters on it
+        failure: AlumneregningResult | None = None
         try:
-            result = _send_one(resident, account_number, date_from, date_to, mail_settings)
+            prepared = _prepare_one(resident, account_number, date_from, date_to, mail_settings, persist=True)
+            result = _queue_statement(prepared, date_from, date_to)
         except economic.EconomicAuthError as exc:
             logger.error("alumneregning: e-conomic access invalid/revoked: %s", exc)
             raise  # affects every remaining alumne equally — stop the batch, don't repeat the error
+        except _NotMailed as exc:
+            logger.warning("alumneregning: failed to mail resident %s: %s", resident.pk, exc)
+            failure = AlumneregningResult(resident, "failed", f"Kunne ikke sende mail: {exc}")
         except AccountNameMismatch as exc:
             logger.warning("alumneregning: account name mismatch for resident %s: %s", resident.pk, exc)
-            result = AlumneregningResult(resident, "failed", str(exc))
+            failure = AlumneregningResult(resident, "failed", str(exc))
         except economic.EconomicRateLimitError as exc:
             logger.warning("alumneregning: e-conomic rate limit for resident %s: %s", resident.pk, exc)
-            result = AlumneregningResult(
-                resident, "failed", "E-conomic rate-limit ramt — prøv at sende igen om lidt."
+            failure = AlumneregningResult(
+                resident, "failed", "E-conomic rate-limit ramt — prøves igen automatisk.", retryable=True
             )
         except economic.EconomicApiError as exc:
             logger.warning("alumneregning failed for resident %s: %s", resident.pk, exc)
             detail = (
                 f"Kontonr. {account_number} findes ikke i e-conomic." if exc.status_code == 404 else str(exc)
             )
-            result = AlumneregningResult(resident, "failed", detail)
-        AlumneregningSend.objects.update_or_create(
-            resident=resident,
-            date_from=date_from,
-            date_to=date_to,
-            defaults={"outcome": result.outcome, "detail": result.detail},
-        )
-        results.append(result)
+            failure = AlumneregningResult(
+                resident, "failed", detail, retryable=exc.status_code is None or exc.status_code >= 500
+            )
+        except Exception as exc:  # anything unforeseen for one alumne must not strand everyone after them
+            logger.exception("alumneregning: unexpected error for resident %s", resident.pk)
+            failure = AlumneregningResult(resident, "failed", f"Uventet fejl: {exc}")
+        if failure is not None:
+            if _record(resident, date_from, date_to, "failed", failure.detail):
+                results.append(failure)
+        elif result is not None:
+            results.append(result)
     return results
 
 
