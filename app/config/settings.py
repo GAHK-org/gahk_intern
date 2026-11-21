@@ -481,6 +481,12 @@ CELERY_BEAT_SCHEDULE = {
         "task": "drive.tasks.shared_expiry",
         "schedule": crontab(minute=15, hour=7),
     },
+    # Drive (drive.preview): an upload queues its own image preview; this queues again those a lost
+    # message or a killed worker left waiting.
+    "drive-image-previews": {
+        "task": "drive.tasks.queue_stranded_previews",
+        "schedule": crontab(minute=10, hour=2),
+    },
 }
 
 STATIC_URL = "static/"
@@ -802,6 +808,11 @@ NOTICE_IMAGE_CACHE_DAYS = int(os.environ.get("NOTICE_IMAGE_CACHE_DAYS", "30"))
 GAHKFLIX_MAX_UPLOAD_GB = float(os.environ.get("GAHKFLIX_MAX_UPLOAD_GB", "5"))
 # Drive (spec/features/Drive.md): the largest file a resident may upload.
 DRIVE_MAX_UPLOAD_GB = float(os.environ.get("DRIVE_MAX_UPLOAD_GB", "5"))
+# Drive (drive.preview): images up to this size get a viewer copy and a thumbnail; bigger ones are
+# only downloaded. Decoding one takes memory on the worker, as for the photo album's.
+DRIVE_PREVIEW_IMAGE_MAX_MB = int(os.environ.get("DRIVE_PREVIEW_IMAGE_MAX_MB", "50"))
+# Local copies of those previews, in MEDIA_CACHE_DIR/drive/ (drive.preview.cached).
+DRIVE_CACHE_MB = int(os.environ.get("DRIVE_CACHE_MB", "1024"))
 GAHKFLIX_PICTURE_MAX_MB = int(os.environ.get("GAHKFLIX_PICTURE_MAX_MB", "15"))
 # Local copies of its thumbnails, banners and frames, in MEDIA_CACHE_DIR/gahkflix/ (gahkflix/cache.py).
 GAHKFLIX_CACHE_MB = int(os.environ.get("GAHKFLIX_CACHE_MB", "1024"))

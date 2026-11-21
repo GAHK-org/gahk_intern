@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% load drive %}
 {% block title %}{{ item.all_name }} - Drive - GAHK Intern{% endblock %}
 {% block content_width %}max-w-5xl{% endblock %}
 
@@ -25,7 +26,7 @@
       {% for entry in entries %}
         <li>
           <a href="{% if entry.folder %}{% url 'drive:folder' entry.folder.uuid %}{% else %}{% url 'drive:file' entry.file.uuid %}{% endif %}">
-            <svg class="ni" aria-hidden="true"><use href="#i-{% if entry.folder %}folder{% else %}file{% endif %}"></use></svg>
+            <svg class="ni" aria-hidden="true"><use href="#i-{% if entry.folder %}folder{% else %}{{ entry.name|drive_icon }}{% endif %}"></use></svg>
             <span class="drive-name">{{ entry.name }}</span>
           </a>
           <span class="muted drive-meta">{{ entry.when }}</span>

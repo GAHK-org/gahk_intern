@@ -1,6 +1,6 @@
 from django.urls import path
 
-from . import views, views_items, views_locks, views_shared, views_sharing, views_standing
+from . import views, views_items, views_locks, views_preview, views_shared, views_sharing, views_standing
 
 app_name = "drive"
 
@@ -19,6 +19,9 @@ urlpatterns = [
     path("upload/commit", views.upload_commit, name="upload_commit"),
     path("file/<uuid:uuid>/", views.file_page, name="file"),
     path("file/<uuid:uuid>/download", views.download, name="download"),
+    path("file/<uuid:uuid>/view", views_preview.inline, name="inline"),
+    path("file/<uuid:uuid>/image", views_preview.image, name="image"),
+    path("file/<uuid:uuid>/thumbnail", views_preview.thumbnail, name="thumbnail"),
     path("file/<uuid:uuid>/rename", views_items.rename_file, name="rename_file"),
     path("file/<uuid:uuid>/restore", views_items.restore, name="restore"),
     path("file/<uuid:uuid>/version/<int:number>/download", views.download, name="download_version"),

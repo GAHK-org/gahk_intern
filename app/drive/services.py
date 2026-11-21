@@ -21,7 +21,7 @@ from django.utils import timezone
 from photo_album.storage import get_photo_album_storage
 from residents.models import Resident
 
-from . import history
+from . import history, preview
 from .access import Viewer
 from .models import Event, File, FileVersion, Folder, LastDownload, name_key, normalize_name, validate_name
 
@@ -209,9 +209,10 @@ def add_upload(
         changed_by=resident,
         changed_at=now,
     )
-    FileVersion.objects.create(
+    version = FileVersion.objects.create(
         file=file, number=1, key=key, size=size, content_type=content_type, created_by=resident
     )
+    preview.ensure(version, file.name)
     history.record(Event.Action.CREATED, actor=resident, file=file, name=file.name)
     return Added(file, replaced=False)
 
@@ -221,6 +222,7 @@ def drop_unreferenced(keys: set[str]) -> None:
     or a restored version, shares its original's key, so a key can outlive the version that made it."""
     unreferenced = keys - set(FileVersion.objects.filter(key__in=keys).values_list("key", flat=True))
     if unreferenced:
+        preview.drop(unreferenced)
         store = storage()
         transaction.on_commit(lambda: [store.delete(key) for key in sorted(unreferenced)])
 
@@ -233,6 +235,7 @@ def _new_version(file: File, *, key: str, size: int, content_type: str, resident
     file.size, file.content_type = size, content_type
     file.changed_by, file.changed_at = resident, timezone.now()
     file.save()
+    preview.ensure(version, file.name)
     history.record(Event.Action.VERSION, actor=resident, file=file, name=file.name, number=number)
     return version
 

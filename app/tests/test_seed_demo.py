@@ -155,6 +155,7 @@ def test_seed_demo_fills_drive_for_every_login() -> None:
     _check_drive_shared(seeded)
     _check_drive_sharing(seeded)
     _check_drive_standing(seeded)
+    _check_drive_preview(seeded)
 
 
 class _DriveSeed:
@@ -373,6 +374,26 @@ def _check_drive_standing(seeded: _DriveSeed) -> None:
     groups = StandingFolder.objects.filter(space="group")
     assert groups.filter(stopped_at__isnull=False).exists()
     assert groups.filter(stopped_at__isnull=True, starts_on__gt=seeded.today).exists()
+
+
+def _check_drive_preview(seeded: _DriveSeed) -> None:
+    """A file of every kind the preview knows (presentations come with live editing's blank one),
+    images with their thumbnails made, one that cannot be shown, and the text cases."""
+    from drive import preview
+    from drive.models import File, ImagePreview
+
+    kinds = {preview.kind_of(name) for name in File.objects.values_list("name", flat=True)}
+    assert kinds >= set(preview.Kind) - {preview.Kind.PRESENTATION}
+    previews = ImagePreview.objects.all()
+    assert previews.filter(state=ImagePreview.State.READY).count() >= 10
+    assert not previews.filter(state=ImagePreview.State.PENDING).exists()
+    assert previews.filter(state=ImagePreview.State.FAILED).count() == 1
+    # Excel's CSV: semicolons in Windows' encoding, read as a table with its Danish letters.
+    till = File.objects.get(name="Kasseopgørelse.csv")
+    assert ["", "I alt", "", "631,00"] in preview.text(till.latest_version(), till.name).rows
+    assert "Beløb" in preview.text(till.latest_version(), till.name).text
+    sales = File.objects.get(name="Salgshistorik.csv")
+    assert preview.text(sales.latest_version(), sales.name).more_rows
 
 
 @pytest.mark.django_db
