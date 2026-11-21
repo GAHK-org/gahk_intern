@@ -173,6 +173,14 @@ intern site's sidebar and top bar; its own header links back to the intern site.
   of everything stored, nothing is deleted and the error is logged: the database does not match the
   storage.
 
+## Development seed data
+
+- A demo database has a series with two episodes and two films, really encoded, each uploaded,
+  encoded, given pictures and details and published at its own time weeks back, so every film's
+  history starts at its upload. Around them: the series edited, an open proposal on a film past its
+  30 days, the newest film binned and brought back, and an upload the worker refused and its
+  uploader deleted. The audit trail tells the same story.
+
 ## Decisions
 
 - GAHKFlix is separate from the photo album, which keeps the videos it already holds.
