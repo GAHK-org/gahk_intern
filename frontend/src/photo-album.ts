@@ -1,5 +1,6 @@
 import { beginDirect, DirectUnavailable, type DirectUpload, refusal, sendToBucket, UploadRefused } from "./directupload"
 import { csrfToken } from "./htmx-csrf"
+import { bindZoom } from "./zoom"
 
 const uploadInput = document.querySelector<HTMLInputElement>("[data-album-upload-input]")
 const uploadSelection = document.querySelector<HTMLElement>("[data-album-upload-selection]")
@@ -967,9 +968,14 @@ if (gallery && dialog) {
   const countsViews = !gallery.hasAttribute("data-album-no-views")
   let current: HTMLButtonElement | undefined
   let touchStart: { x: number; y: number } | undefined
-  let zoomScale = 1
-  let pinchStartDistance = 0
-  let pinchStartScale = 1
+  const zoomChanged = (zoomed: boolean): void => {
+    dialog.classList.toggle("album-viewer-zoomed", zoomed)
+  }
+  // Pinch about the fingers, drag to pan, double-tap or double-click, the wheel: see zoom.ts.
+  const imageZoom = bindZoom(image, { onChange: zoomChanged })
+  // A video's own controls take its taps, clicks and wheel, so it only pinches.
+  const videoZoom = bindZoom(video, { onChange: zoomChanged, pinchOnly: true })
+  const zoomed = (): boolean => imageZoom.zoomed || videoZoom.zoomed
 
   // The aside on a desktop, the kebab menu on a phone: both show the same tags.
   const tagEditors: { show: (tags: TagEntry[], url: string) => void }[] = []
@@ -995,19 +1001,9 @@ if (gallery && dialog) {
   const entries = (): HTMLButtonElement[] =>
     Array.from(gallery.querySelectorAll<HTMLButtonElement>(".album-media-tile[data-detail-url]"))
 
-  const touchDistance = (touches: TouchList): number =>
-    Math.hypot(touches[0].clientX - touches[1].clientX, touches[0].clientY - touches[1].clientY)
-
   const resetZoom = (): void => {
-    zoomScale = 1
-    image.style.transform = ""
-    video.style.transform = ""
-  }
-
-  const applyZoom = (): void => {
-    const transform = zoomScale === 1 ? "" : `scale(${zoomScale})`
-    image.style.transform = transform
-    video.style.transform = transform
+    imageZoom.reset()
+    videoZoom.reset()
   }
 
   // One entry per item, kept for as long as the page lives. An album is browsed by paging through
@@ -1026,6 +1022,44 @@ if (gallery && dialog) {
       .catch(() => null)
     details.set(url, pending)
     return pending
+  }
+
+  // The neighbours' full-size pictures, fetched and decoded ahead, keyed by their detail URL. Paging
+  // then lands straight on the real picture instead of flashing the stretched thumbnail first. Only
+  // the open item's neighbours are held: each one keeps its decoded bitmap in memory.
+  let warmed = new Map<string, HTMLImageElement>()
+
+  const warmNeighbours = (entry: HTMLButtonElement): void => {
+    const all = entries()
+    const index = all.indexOf(entry)
+    const neighbours = [all[index - 1], all[index + 1]].filter((neighbour) => neighbour !== undefined)
+    void Promise.all(neighbours.map(detailFor)).then((found) => {
+      if (current !== entry) return
+      const next = new Map<string, HTMLImageElement>()
+      neighbours.forEach((neighbour, i) => {
+        const detail = found[i]
+        // Videos are not warmed: far bigger, and there is no low-quality frame to flash anyway.
+        if (detail?.kind !== "image" || !detail.full) return
+        const url = neighbour.dataset.detailUrl ?? ""
+        let picture = warmed.get(url)
+        if (!picture || picture.dataset.full !== detail.full) {
+          picture = new Image()
+          picture.dataset.full = detail.full
+          // After the picture on screen, which is the one being waited for.
+          picture.setAttribute("fetchpriority", "low")
+          picture.src = detail.full
+          void picture.decode().catch(() => undefined)
+        }
+        next.set(url, picture)
+      })
+      warmed = next
+    })
+  }
+
+  /** The full-size picture for `entry` when it has already arrived, so showing it costs nothing. */
+  const warmedPicture = (entry: HTMLButtonElement): HTMLImageElement | undefined => {
+    const picture = warmed.get(entry.dataset.detailUrl ?? "")
+    return picture?.complete && picture.naturalWidth > 0 ? picture : undefined
   }
 
   const definition = (term: string, value: string, href = ""): HTMLElement[] => {
@@ -1115,14 +1149,15 @@ if (gallery && dialog) {
     entry.scrollIntoView({ block: "nearest" })
 
     // The thumbnail is already decoded in the grid, so showing it stretched is instant and the
-    // viewer never opens on a blank stage. The real image replaces it when the fetch lands.
+    // viewer never opens on a blank stage. The real image replaces it when the fetch lands - unless
+    // it was warmed as a neighbour, in which case it is shown straight away.
     const thumbnail = entry.querySelector("img")
     image.hidden = false
     video.hidden = true
     video.removeAttribute("src")
     image.onload = null
     video.onloadeddata = null
-    image.src = thumbnail?.src ?? ""
+    image.src = warmedPicture(entry)?.src ?? thumbnail?.src ?? ""
     image.alt = thumbnail?.alt ?? ""
     title.textContent = thumbnail?.alt ?? ""
     mobileDate.textContent = ""
@@ -1155,7 +1190,9 @@ if (gallery && dialog) {
         image.onload = () => {
           if (image.src.endsWith(detail.full)) reportView(entry, detail)
         }
-        image.src = detail.full
+        // Already on screen from the warm-up: setting it again would only wait on a second load event.
+        if (image.src === new URL(detail.full, window.location.href).href && image.complete) reportView(entry, detail)
+        else image.src = detail.full
       }
       image.alt = detail.title
       title.textContent = detail.title
@@ -1172,11 +1209,7 @@ if (gallery && dialog) {
       tagEditors.forEach((editor) => editor.show(detail.tags, detail.tagUrl))
       renderViews(detail.uniqueViews, detail.totalViews)
       // Warm the neighbours, so paging with the arrows or a swipe does not wait on the network.
-      const all = entries()
-      const index = all.indexOf(entry)
-      for (const neighbour of [all[index - 1], all[index + 1]]) {
-        if (neighbour) void detailFor(neighbour)
-      }
+      warmNeighbours(entry)
     })
   }
 
@@ -1216,6 +1249,7 @@ if (gallery && dialog) {
   dialog.querySelector("[data-gallery-close]")?.addEventListener("click", () => dialog.close())
   dialog.addEventListener("close", () => {
     current = undefined
+    warmed = new Map()
     video.pause()
     setAddress("")
   })
@@ -1224,6 +1258,9 @@ if (gallery && dialog) {
     menuButton.setAttribute("aria-expanded", String(!menu.hidden))
   })
   dialog.addEventListener("click", (event) => {
+    // The click that ends a mouse drag across a zoomed picture lands wherever the button came up,
+    // which can be the backdrop. Dragging a picture too far is not asking to close the viewer.
+    if (imageZoom.takeDrag()) return
     if (event.target === dialog) dialog.close()
     // The album name leaves the viewer for the album; on that album already, closing is the trip.
     const album = (event.target as Element).closest<HTMLAnchorElement>("a[data-gallery-album]")
@@ -1233,25 +1270,13 @@ if (gallery && dialog) {
   })
   previous.addEventListener("click", () => void step(-1))
   next.addEventListener("click", () => void step(1))
+  // Swipe to page. Zoomed in, a sideways drag is a pan across the picture instead, and the two
+  // fingers of a pinch rarely lift level, so a sequence that ever had a second finger is no swipe.
   stage.addEventListener("touchstart", (event) => {
     if (!window.matchMedia("(max-width: 720px)").matches) return
-    if (event.touches.length === 2) {
-      pinchStartDistance = touchDistance(event.touches)
-      pinchStartScale = zoomScale
-      touchStart = undefined
-      return
-    }
     const touch = event.touches[0]
-    if (zoomScale === 1 && touch) {
-      touchStart = { x: touch.clientX, y: touch.clientY }
-    }
+    touchStart = event.touches.length === 1 && !zoomed() && touch ? { x: touch.clientX, y: touch.clientY } : undefined
   }, { passive: true })
-  stage.addEventListener("touchmove", (event) => {
-    if (event.touches.length !== 2 || pinchStartDistance === 0) return
-    event.preventDefault()
-    zoomScale = Math.min(4, Math.max(1, pinchStartScale * (touchDistance(event.touches) / pinchStartDistance)))
-    applyZoom()
-  }, { passive: false })
   stage.addEventListener("touchend", (event) => {
     const touch = event.changedTouches[0]
     if (!touchStart || !touch || !window.matchMedia("(max-width: 720px)").matches) return
@@ -1261,15 +1286,16 @@ if (gallery && dialog) {
     if (Math.abs(horizontalDistance) < 48 || Math.abs(horizontalDistance) <= Math.abs(verticalDistance)) return
     void step(horizontalDistance < 0 ? 1 : -1)
   }, { passive: true })
-  stage.addEventListener("touchend", () => {
-    if (pinchStartDistance > 0) pinchStartDistance = 0
-  }, { passive: true })
   document.addEventListener("keydown", (event) => {
     if (!dialog.open) return
     // Typing a tag: the arrows move the cursor, not to the next photograph.
     if ((event.target as Element | null)?.closest?.("input, textarea")) return
     if (event.key === "ArrowLeft") void step(-1)
     if (event.key === "ArrowRight") void step(1)
+    if (image.hidden) return
+    if (event.key === "+" || event.key === "=") imageZoom.zoomBy(1.4)
+    if (event.key === "-") imageZoom.zoomBy(1 / 1.4)
+    if (event.key === "0") imageZoom.reset(true)
   })
 
   // A shared link (`?media=<pk>`): the page was rendered around that item, so open it.
