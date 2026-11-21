@@ -80,6 +80,22 @@ erDiagram
         datetime beat_at
     }
 
+    core_OutgoingMail {
+        int id PK
+        datetime created_at
+        text subject
+        text recipients
+        json payload
+        string kind
+        string status
+        int attempts
+        datetime next_attempt_at
+        datetime last_attempt_at
+        datetime expires_at
+        datetime sent_at
+        text error
+    }
+
     residents_Resident {
         int id PK
         string password
@@ -1129,6 +1145,7 @@ erDiagram
         string outcome
         text detail
         datetime sent_at
+        int mail_id FK
     }
 
     core_PushSubscription }o--|| residents_Resident : "user"
@@ -1287,6 +1304,7 @@ erDiagram
     drive_ZipDownload }o--|o drive_Folder : "folder"
     regnskab_EconomicLedgerEntry }o--|| residents_Resident : "resident"
     regnskab_AlumneregningSend }o--|| residents_Resident : "resident"
+    regnskab_AlumneregningSend }o--|o core_OutgoingMail : "mail"
 ```
 
 ## admissions
@@ -1568,6 +1586,22 @@ erDiagram
         string name
         string hostname
         datetime beat_at
+    }
+
+    core_OutgoingMail {
+        int id PK
+        datetime created_at
+        text subject
+        text recipients
+        json payload
+        string kind
+        string status
+        int attempts
+        datetime next_attempt_at
+        datetime last_attempt_at
+        datetime expires_at
+        datetime sent_at
+        text error
     }
 
     residents_Resident { }
@@ -2487,12 +2521,16 @@ erDiagram
         string outcome
         text detail
         datetime sent_at
+        int mail_id FK
     }
+
+    core_OutgoingMail { }
 
     residents_Resident { }
 
     regnskab_EconomicLedgerEntry }o--|| residents_Resident : "resident"
     regnskab_AlumneregningSend }o--|| residents_Resident : "resident"
+    regnskab_AlumneregningSend }o--|o core_OutgoingMail : "mail"
 ```
 
 ## reparationer

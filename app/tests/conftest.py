@@ -90,6 +90,29 @@ def _isolate_from_dotenv(settings: object, tmp_path: Path) -> None:
     settings.ONLYOFFICE_URL = ""  # type: ignore[attr-defined]
 
 
+@pytest.fixture(autouse=True)
+def _mail_through_the_outbox(settings: object, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Every mail a test sends goes through core.mail's outbox, as in production: Django's test runner
+    sets EMAIL_BACKEND to locmem, which would send it straight past. The outbox then delivers it there
+    and then, through locmem (so `mail.outbox` has it), the way CELERY_TASK_ALWAYS_EAGER runs jobs;
+    a test of the queue itself asks for `mail_stays_queued` instead."""
+    from core import mail as outbox
+
+    settings.EMAIL_BACKEND = "core.mail.OutboxBackend"  # type: ignore[attr-defined]
+    settings.MAIL_DELIVERY_BACKEND = "django.core.mail.backends.locmem.EmailBackend"  # type: ignore[attr-defined]
+    settings.MAIL_RATE_LIMIT = 1000  # type: ignore[attr-defined]  # no test sends that much bulk mail by accident
+    monkeypatch.setattr(outbox, "_schedule_delivery", lambda mail_kind: outbox.deliver())
+
+
+@pytest.fixture
+def mail_stays_queued(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Queued mail waits to be delivered — by the test calling core.mail.deliver(), as deliver_mail
+    would — instead of going out as it is queued (_mail_through_the_outbox)."""
+    from core import mail as outbox
+
+    monkeypatch.setattr(outbox, "_schedule_delivery", lambda mail_kind: None)
+
+
 @pytest.fixture
 def make_resident(db: None) -> Callable[[str, str, bool, tuple], Resident]:
     def _make(
