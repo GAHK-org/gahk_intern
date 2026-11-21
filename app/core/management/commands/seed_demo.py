@@ -40,9 +40,13 @@ from cms.models import ContentChange, NewsItem, Page, PageVersion, PylonEvent
 # CmsEvent, never Event: the internal events app has one of the same name, and both are seeded
 # here. See events.models on the three-way collision.
 from cms.models import Event as CmsEvent
-from core.models import Cleaning, Room, Workgroup
+from core.demo import seed as seed_mail
+from core.models import Cleaning, OutgoingMail, Room, Workgroup
 from den_hurtige.demo import seed as seed_den_hurtige
 from den_hurtige.models import QuickComment, QuickPost, QuickReaction
+from drive.demo import seed as seed_drive
+from drive.demo import wipe as wipe_drive
+from drive.models import Folder as DriveFolder
 from events.demo import seed as seed_events
 from events.models import CalendarFeedToken, Event, EventInvite, Rsvp
 from gahkflix.demo import seed as seed_gahkflix
@@ -167,11 +171,16 @@ WIPE_ORDER: list[type[models.Model]] = [
     GahkflixVideo,
     GahkflixSeries,
     GahkflixTag,
+    # Before Workgroup, which a group's folders PROTECT. Wiped by drive.demo.wipe, with its files and
+    # their bytes.
+    DriveFolder,
     # Also before Resident: both PROTECT their resident — audit records (the local immutable mirror
     # of e-conomic postings, and what was actually billed) should never silently vanish because a
     # Resident row was deleted.
     EconomicLedgerEntry,
     AlumneregningSend,
+    # The demo outbox (core.demo). After AlumneregningSend, whose mail it would otherwise only null.
+    OutgoingMail,
     Resident,
     Room,
     Workgroup,
@@ -233,11 +242,14 @@ class Command(BaseCommand):
             seed_events(residents, self.now, self.rng)
             seed_photo_album(residents, self.now, self.rng)
             seed_gahkflix(residents, self.now, self.rng)
+            seed_drive(residents, self.now, self.rng)
             # After both: these posts embed an album and a film seeded just above.
             seed_opslagstavle_embeds(residents, self.now)
             seed_den_hurtige(residents, self.now, self.rng)
             # Last: its rows link to the events, opslag and Den Hurtige posts seeded above.
             seed_notifications(residents, self.now, self.rng)
+            # After the ølkælder and admissions: its mails are theirs (core.demo).
+            seed_mail(residents, self.now, self.rng)
 
         self._report(residents)
 
@@ -248,6 +260,9 @@ class Command(BaseCommand):
                 # A sub-album PROTECTs its parent, so the tree is cleared from the leaves up.
                 for depth in sorted(set(Album.objects.values_list("depth", flat=True)), reverse=True):
                     Album.objects.filter(depth=depth).delete()
+                continue
+            if model is DriveFolder:
+                wipe_drive()
                 continue
             model._default_manager.all().delete()
         self.stdout.write("  wiped existing demo data")
@@ -764,7 +779,8 @@ class Command(BaseCommand):
                 f"\nSeeded demo data: {len(residents)} residents, "
                 f"{Residency.objects.count()} residencies, {AkEntry.objects.count()} AK entries, "
                 f"{Event.objects.count()} begivenheder, {Notification.objects.count()} notifikationer, "
-                f"{Transaction.objects.count()} ølkælder purchases, {Application.objects.count()} applications."
+                f"{Transaction.objects.count()} ølkælder purchases, {Application.objects.count()} applications, "
+                f"{OutgoingMail.objects.count()} mails in the outbox."
             )
         )
         self.stdout.write(f"\nDev logins (password: {DEMO_PASSWORD}):")

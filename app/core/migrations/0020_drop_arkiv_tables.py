@@ -22,7 +22,7 @@ def forget_arkiv(apps: Apps, schema_editor: BaseDatabaseSchemaEditor) -> None:
 
 class Migration(migrations.Migration):
     dependencies = [
-        ("core", "0016_remove_admin_dummy_notification"),
+        ("core", "0019_merge_outgoingmail_and_workerjoblog_progress"),
         ("contenttypes", "0002_remove_content_type_name"),
     ]
 

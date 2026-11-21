@@ -8,9 +8,14 @@ set when a folder is created, from its parent, and folders do not move yet.
 
 `path` is the materialised path of primary keys (`/3/17/42/`), so a folder's whole subtree - for
 its file count and size - is one indexed prefix match.
+
+Folders and files are named in URLs and forms by a random `uuid`, never by their primary key, so
+nobody can count them or watch the numbers climb. The keys stay integers inside: `path` stays short
+and the joins small.
 """
 
 import unicodedata
+from uuid import uuid4
 
 from django.core.exceptions import ValidationError
 from django.db import models
@@ -68,6 +73,7 @@ class Folder(models.Model):
         {Kind.COMMON_ROOT, Kind.GROUPS_ROOT, Kind.GROUP, Kind.TIMELESS, Kind.PERIOD, Kind.YEAR}
     )
 
+    uuid = models.UUIDField(default=uuid4, unique=True, editable=False)  # in URLs, not the key
     parent = models.ForeignKey(
         "self", null=True, blank=True, on_delete=models.PROTECT, related_name="children"
     )
@@ -127,6 +133,7 @@ class Folder(models.Model):
 
 
 class File(models.Model):
+    uuid = models.UUIDField(default=uuid4, unique=True, editable=False)  # in URLs, not the key
     folder = models.ForeignKey(Folder, on_delete=models.PROTECT, related_name="files")
     name = models.CharField(max_length=NAME_MAX_LENGTH)
     name_key = models.CharField(max_length=NAME_MAX_LENGTH, editable=False)

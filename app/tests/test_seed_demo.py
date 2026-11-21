@@ -134,3 +134,124 @@ def test_seed_demo_gives_the_logins_notifications_in_every_state() -> None:
 
     call_command("seed_demo", "--fresh", "--force", "--residents", "12", verbosity=0)  # still idempotent
     assert Notification.objects.filter(recipient__email="beboer@gahk.dk").count() == 7
+
+
+@pytest.mark.django_db
+def test_seed_demo_fills_drive_for_every_login() -> None:
+    """Drive starts empty, so a fresh checkout needs files in every space - and folders some logins
+    may open, some only see the size of, and some not see at all."""
+    from django.utils import timezone
+
+    from drive import services
+    from drive.access import Level, Viewer
+    from drive.models import File, Folder
+    from drive.periods import period_containing
+
+    call_command("seed_demo", "--fresh", "--force", "--residents", "12", verbosity=0)
+    call_command("seed_demo", "--fresh", "--force", "--residents", "12", verbosity=0)  # still idempotent
+
+    today = timezone.localdate()
+    current = period_containing(today)
+    by_email = {r.email: r for r in Resident.objects.all()}
+
+    def viewer(email: str, *, oversees: bool = False) -> Viewer:
+        return Viewer.build(by_email[email].pk, oversees=oversees, today=today)
+
+    regnskab_group = Folder.objects.get(kind=Folder.Kind.GROUP, name="Regnskabsgruppen")
+    periods = {f.period_start: f for f in regnskab_group.children.filter(kind=Folder.Kind.PERIOD)}
+    now_folder = periods[current.start]
+    older = periods[current.previous().previous().start]
+    assert File.objects.filter(folder__path__startswith=now_folder.path).count() >= 4
+    assert viewer("regnskab@gahk.dk").level(now_folder) == Level.WRITE
+    assert viewer("regnskab@gahk.dk").level(older) == Level.READ
+    assert viewer("formand@gahk.dk", oversees=True).level(now_folder) == Level.META
+    assert viewer("formand@gahk.dk", oversees=True).level(older) == Level.READ
+    # A plain resident sees only the groups they have been in, and their note is in this month's.
+    beboer = viewer("beboer@gahk.dk")
+    groups = list(Folder.objects.filter(kind=Folder.Kind.GROUP))
+    visible = [group for group in groups if beboer.level(group) > Level.NONE]
+    assert 0 < len(visible) < len(groups)
+    residency = by_email["beboer@gahk.dk"].residencies.get(year=today.year, month=today.month)
+    own = Folder.objects.get(kind=Folder.Kind.GROUP, workgroup=residency.workgroup)
+    assert own in visible
+    assert File.objects.filter(
+        folder__path__startswith=own.path, created_by=by_email["beboer@gahk.dk"]
+    ).exists()
+
+    # Fælles: this year and last year to write in, the year before to read only.
+    years = {f.period_start.year: f for f in Folder.objects.filter(kind=Folder.Kind.YEAR)}
+    assert beboer.level(years[today.year]) == Level.WRITE
+    assert beboer.level(years[today.year - 1]) == Level.WRITE
+    assert beboer.level(years[today.year - 2]) == Level.READ
+    assert all(File.objects.filter(folder=years[y]).exists() for y in (today.year - 1, today.year - 2))
+
+    # Real bytes of many kinds, so each downloads and opens.
+    names = list(File.objects.values_list("name", flat=True))
+    assert {n.rsplit(".", 1)[-1] for n in names} >= {"pdf", "xlsx", "docx", "csv", "md", "png", "jpg", "txt"}
+    for file in File.objects.all():
+        version = file.latest_version()
+        with services.storage().open(version.key, "rb") as stored:
+            assert len(stored.read()) == file.size > 0
+
+
+@pytest.mark.django_db
+def test_seed_demo_fills_the_outbox_with_every_kind_and_status(settings: object) -> None:
+    """The mail page needs a mail in every state, and seeding must send none of them (core.demo)."""
+    from datetime import timedelta
+
+    from django.core import mail as django_mail
+    from django.utils import timezone
+
+    from core import mail as outbox
+    from core.models import OutgoingMail
+
+    Status, Kind = OutgoingMail.Status, OutgoingMail.Kind
+    # Low enough for the demo's dozen residents' ølkælder overview to fill the window (dev's is 10).
+    settings.MAIL_RATE_LIMIT = 3  # type: ignore[attr-defined]
+
+    call_command("seed_demo", "--fresh", "--force", "--residents", "12", verbosity=0)
+    now = timezone.now()
+    mails = OutgoingMail.objects.all()
+
+    # Nothing went out: conftest delivers any mail whose delivery is started, through locmem.
+    assert django_mail.outbox == []
+    assert {m.status for m in mails} == set(Status.values)
+    assert {m.kind for m in mails} == set(Kind.values)
+    residents = set(Resident.objects.values_list("email", flat=True))
+    assert all(m.recipients in residents for m in mails.exclude(subject__contains="henvendelse"))
+
+    # The bulk send under way: the window full, three overviews held back by it.
+    assert outbox.quota_wait(now) is not None
+    assert outbox._due(now, [Kind.BULK]).count() == 3
+    # Waiting again after a failed try: a full mailbox (bulk) and a greylisted reset (interactive).
+    retrying = mails.filter(status=Status.QUEUED).exclude(error="")
+    assert {m.kind for m in retrying} == {Kind.BULK, Kind.INTERACTIVE}
+    assert all(m.next_attempt_at > now and m.payload for m in retrying)
+
+    # Stored as the deliverer leaves them: content gone once sent or expired, kept while it may be resent.
+    assert not mails.filter(status__in=[Status.SENT, Status.EXPIRED]).exclude(payload={}).exists()
+    assert all(m.error.startswith(outbox.EXPIRED_ERROR) for m in mails.filter(status=Status.EXPIRED))
+    assert mails.get(status=Status.UNKNOWN).error == outbox.LOST_ERROR
+    failed = list(mails.filter(status=Status.FAILED))
+    assert any(outbox.can_send_again(m, now) for m in failed), "a failure to try Send igen on"
+    assert any(not m.payload for m in failed), "an old failure the purge has emptied"
+
+    # Spread over time, so each period filter shows a different set.
+    ages = [now - m.created_at for m in mails]
+    assert min(ages) < timedelta(minutes=5)
+    assert any(timedelta(days=1) < age < timedelta(days=7) for age in ages)
+    assert any(timedelta(days=7) < age < outbox.RETENTION for age in ages)
+
+
+@pytest.mark.django_db
+def test_seed_demo_leaves_no_mail_waiting_for_a_backend_that_really_sends(settings: object) -> None:
+    """A queued mail is sent by deliver_mail's next run: with SMTP configured, to the demo's gahk.dk addresses."""
+    from core.models import OutgoingMail
+
+    settings.MAIL_DELIVERY_BACKEND = "django.core.mail.backends.smtp.EmailBackend"  # type: ignore[attr-defined]
+    settings.MAIL_RATE_LIMIT = 3  # type: ignore[attr-defined]
+
+    call_command("seed_demo", "--fresh", "--force", "--residents", "12", verbosity=0)
+
+    assert not OutgoingMail.objects.filter(status=OutgoingMail.Status.QUEUED).exists()
+    assert OutgoingMail.objects.filter(status=OutgoingMail.Status.FAILED).exists()

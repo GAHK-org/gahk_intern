@@ -15,7 +15,7 @@
       <a href="{% url 'drive:home' %}">Drive</a>
       {% for crumb in ancestors %}
         <span aria-hidden="true">/</span>
-        <a href="{% url 'drive:folder' crumb.pk %}">{{ crumb.name }}</a>
+        <a href="{% url 'drive:folder' crumb.uuid %}">{{ crumb.name }}</a>
       {% endfor %}
       <span aria-hidden="true">/</span>
       <span aria-current="page">{{ folder.name }}</span>
@@ -40,7 +40,7 @@
             <form method="dialog">
               <p id="drive-conflict-text" data-conflict-text></p>
               <div class="drive-dialog-buttons">
-                <button class="btn btn-primary" value="replace">Erstat (ny version)</button>
+                <button class="btn" value="replace">Erstat (ny version)</button>
                 <button class="btn btn-secondary" value="keep_both">Behold begge</button>
                 <button class="btn-link" value="skip">Spring over</button>
               </div>
@@ -49,7 +49,7 @@
         </div>
       {% endif %}
       {% if can_create_folder %}
-        <form method="post" action="{% url 'drive:create_folder' folder.pk %}" class="drive-newfolder">
+        <form method="post" action="{% url 'drive:create_folder' folder.uuid %}" class="drive-newfolder">
           {% csrf_token %}
           <label class="sr-only" for="drive-new-folder">Navn på ny mappe</label>
           <input id="drive-new-folder" type="text" name="name" maxlength="200" placeholder="Navn på ny mappe…" required>
@@ -68,7 +68,7 @@
       {% for row in rows %}
         <li{% if row.is_current %} class="drive-current"{% endif %}>
           {% if row.can_open %}
-            <a href="{% url 'drive:folder' row.folder.pk %}">
+            <a href="{% url 'drive:folder' row.folder.uuid %}">
               <svg class="ni" aria-hidden="true"><use href="#i-folder"></use></svg>
               <span class="drive-name">{{ row.folder.name }}</span>
             </a>
@@ -99,7 +99,7 @@
             Through the download view, never a presigned URL in the page: that URL would work for
             whoever has it, after the reader has left the group too.
           {% endcomment %}
-          <a href="{% url 'drive:download' file.pk %}">
+          <a href="{% url 'drive:download' file.uuid %}">
             <svg class="ni" aria-hidden="true"><use href="#i-file"></use></svg>
             <span class="drive-name">{{ file.name }}</span>
           </a>

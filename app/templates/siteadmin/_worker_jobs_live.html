@@ -56,6 +56,10 @@
                 <span>startet {{ job.started_at|date:"H:i:s" }}</span>
               </div>
             </div>
+            {% if job.progress_percent is not None %}
+              <div class="jobs-progress" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="{{ job.progress_percent }}" aria-label="{{ job.name }}"><span style="width:{{ job.progress_percent }}%"></span></div>
+              <div class="jobs-sub"><b class="num">{{ job.progress_percent }} %</b>{% if job.progress_step %} · {{ job.progress_step }}{% endif %}</div>
+            {% endif %}
             <div class="jobs-meter{% if job.limit_used >= 75 %} is-near{% endif %}" title="{{ job.running_for }} af tidsgrænsen på {{ job.time_limit_label }}">
               <span style="width:{{ job.limit_used }}%"></span>
             </div>

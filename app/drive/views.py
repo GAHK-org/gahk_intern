@@ -6,6 +6,7 @@ not open - admins and Inspektionen on a group's current period - is a 403.
 """
 
 from typing import Any
+from uuid import UUID
 
 from django.contrib import messages
 from django.core.exceptions import PermissionDenied, ValidationError
@@ -32,8 +33,10 @@ def _render(request: HttpRequest, template: str, context: dict[str, Any]) -> Htt
     return render(request, template, {"limited_rollout": access.gate.is_limited(), **context})
 
 
-def _folder(request: HttpRequest, pk: int, *, at_least: Level = Level.READ) -> tuple[Folder, Viewer, Level]:
-    folder = get_object_or_404(Folder, pk=pk)
+def _folder(
+    request: HttpRequest, uuid: UUID, *, at_least: Level = Level.READ
+) -> tuple[Folder, Viewer, Level]:
+    folder = get_object_or_404(Folder, uuid=uuid)
     viewer = Viewer.for_request(request)
     level = viewer.level(folder)
     if level == Level.NONE:
@@ -93,9 +96,9 @@ def home(request: HttpRequest) -> HttpResponse:
 
 
 @access.access_required
-def folder(request: HttpRequest, pk: int) -> HttpResponse:
+def folder(request: HttpRequest, uuid: UUID) -> HttpResponse:
     ensure_structure_today()
-    current, viewer, level = _folder(request, pk)
+    current, viewer, level = _folder(request, uuid)
     files = list(current.files.select_related("changed_by").order_by("name_key"))
     return _render(
         request,
@@ -108,10 +111,10 @@ def folder(request: HttpRequest, pk: int) -> HttpResponse:
             "can_write": level >= Level.WRITE and viewer.can_upload_to(current),
             "can_create_folder": viewer.can_create_in(current),
             "upload_config": {
-                "beginUrl": reverse("drive:upload_begin", args=[current.pk]),
+                "beginUrl": reverse("drive:upload_begin", args=[current.uuid]),
                 "signUrl": reverse("drive:upload_sign"),
                 "commitUrl": reverse("drive:upload_commit"),
-                "directUrl": reverse("drive:upload_direct", args=[current.pk]),
+                "directUrl": reverse("drive:upload_direct", args=[current.uuid]),
                 "maxBytes": services.max_upload_bytes(),
             },
         },
@@ -120,16 +123,16 @@ def folder(request: HttpRequest, pk: int) -> HttpResponse:
 
 @access.access_required
 @require_POST
-def create_folder(request: HttpRequest, pk: int) -> HttpResponse:
-    parent, viewer, _ = _folder(request, pk, at_least=Level.WRITE)
+def create_folder(request: HttpRequest, uuid: UUID) -> HttpResponse:
+    parent, viewer, _ = _folder(request, uuid, at_least=Level.WRITE)
     try:
         created = services.create_folder(
             viewer, parent, request.POST.get("name", ""), current_resident(request)
         )
     except ValidationError as exc:
         messages.error(request, " ".join(exc.messages))
-        return redirect("drive:folder", parent.pk)
-    return redirect("drive:folder", created.pk)
+        return redirect("drive:folder", parent.uuid)
+    return redirect("drive:folder", created.uuid)
 
 
 def _error(message: str, status: int = 400, **extra: object) -> JsonResponse:
@@ -145,10 +148,10 @@ def _size(request: HttpRequest) -> int:
 
 @access.access_required
 @require_POST
-def upload_begin(request: HttpRequest, pk: int) -> JsonResponse:
+def upload_begin(request: HttpRequest, uuid: UUID) -> JsonResponse:
     """Before a byte is sent: a ticket for the bucket, `{"direct": false}` when the file is to be
     posted with the request instead, or a 409 when a file of the name is there already."""
-    target, viewer, _ = _folder(request, pk, at_least=Level.WRITE)
+    target, viewer, _ = _folder(request, uuid, at_least=Level.WRITE)
     on_conflict = request.POST.get("on_conflict", "")
     size = _size(request)
     try:
@@ -163,7 +166,7 @@ def upload_begin(request: HttpRequest, pk: int) -> JsonResponse:
         purpose=UPLOAD_PURPOSE,
         owner=current_resident(request).pk,
         content_type=request.POST.get("type", "") or "application/octet-stream",
-        folder=target.pk,
+        folder=str(target.uuid),
         name=name,
         on_conflict=on_conflict,
     )
@@ -202,7 +205,7 @@ def upload_commit(request: HttpRequest) -> JsonResponse:
         )
     except ValidationError as exc:
         return _error(" ".join(exc.messages))
-    target = Folder.objects.filter(pk=upload["folder"]).first()
+    target = Folder.objects.filter(uuid=upload["folder"]).first()
     viewer = Viewer.for_request(request)
     try:
         if target is None:
@@ -225,12 +228,12 @@ def upload_commit(request: HttpRequest) -> JsonResponse:
 
 @access.access_required
 @require_POST
-def upload_direct(request: HttpRequest, pk: int) -> JsonResponse:
+def upload_direct(request: HttpRequest, uuid: UUID) -> JsonResponse:
     """The no-bucket path (development, the tests): the file comes with the request. Refused when
     there is a bucket, or this would become the quiet way a 5 GB file goes through the app."""
     if direct_upload.available():
         raise PermissionDenied("direct upload is only for local storage")
-    target, viewer, _ = _folder(request, pk, at_least=Level.WRITE)
+    target, viewer, _ = _folder(request, uuid, at_least=Level.WRITE)
     upload = request.FILES.get("file")
     if upload is None:
         return _error("Der kom ingen fil med.")
@@ -257,12 +260,12 @@ def upload_direct(request: HttpRequest, pk: int) -> JsonResponse:
 
 
 @access.access_required
-def download(request: HttpRequest, pk: int) -> HttpResponseBase:
+def download(request: HttpRequest, uuid: UUID) -> HttpResponseBase:
     """The latest version, under its name. Access is checked on every request, and the bucket URL it
     redirects to lives for minutes: a link that keeps working after somebody leaves the group would
     be a key to the group's folder."""
-    file = get_object_or_404(File.objects.select_related("folder"), pk=pk)
-    _folder(request, file.folder_id)
+    file = get_object_or_404(File.objects.select_related("folder"), uuid=uuid)
+    _folder(request, file.folder.uuid)
     version = file.latest_version()
     store = services.storage()
     signed_url = getattr(store, "signed_url", None)
