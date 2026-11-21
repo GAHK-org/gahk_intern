@@ -152,6 +152,7 @@ def test_seed_demo_fills_drive_for_every_login() -> None:
     _check_drive_structure(seeded)
     _check_drive_files(seeded)
     _check_drive_locks(seeded)
+    _check_drive_shared(seeded)
 
 
 class _DriveSeed:
@@ -300,3 +301,28 @@ def _check_drive_locks(seeded: _DriveSeed) -> None:
     }
     # The space's activity page has lines with their place.
     assert not Event.objects.filter(Q(space="") | Q(space__isnull=True)).exists()
+
+
+def _check_drive_shared(seeded: _DriveSeed) -> None:
+    """Delte mapper: one per moderator login, a member's view and an outsider's, one near its expiry,
+    one archived, and every kind of member change in the activity."""
+    from drive.access import Level
+    from drive.models import ApprovalRequest, Event, Folder, SharedFolder
+
+    tops = {f.name: f for f in Folder.objects.filter(kind=Folder.Kind.SHARED)}
+    theme, trip, harvest = tops["Temafest"], tops["Studietur"], tops["Høstfest"]
+    assert seeded.viewer("beboer@gahk.dk").moderates(theme.shared_id)
+    assert seeded.viewer("formand@gahk.dk", oversees=True).level(trip) >= Level.READ
+    # admin@ is in none of them: the number, size and count only.
+    admin = seeded.viewer("admin@gahk.dk", oversees=True)
+    assert admin.level(theme) == admin.level(trip) == Level.META
+    # Archived: readable by everyone, under Delte mapper/<year>.
+    assert harvest.shared.archived_at is not None
+    assert harvest.parent.kind == Folder.Kind.ARCHIVE_YEAR
+    assert seeded.viewer("beboer@gahk.dk").level(harvest) == Level.READ
+    # Warned about its expiry, and a purge waiting for beboer@ as moderator.
+    assert SharedFolder.objects.filter(warned_for__isnull=False, archived_at__isnull=True).exists()
+    assert ApprovalRequest.objects.filter(shared=theme.shared, state=ApprovalRequest.State.PENDING).exists()
+    lines = set(Event.objects.filter(shared=theme.shared).values_list("action", flat=True))
+    assert lines >= {"member_added", "member_removed", "member_left", "role_changed", "expiry_changed"}
+    assert Event.objects.filter(action="archived").exists()
