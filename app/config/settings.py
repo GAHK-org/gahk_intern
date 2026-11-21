@@ -78,7 +78,6 @@ INSTALLED_APPS = [
     "opslagstavle",
     "events",
     "reparationer",
-    "arkiv",
     "photo_album",
     "notifications",
     "gahkflix",

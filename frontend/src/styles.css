@@ -1043,8 +1043,8 @@
   .file-note { display:flex; align-items:center; gap:8px; font-size:12px; color:var(--muted);
     margin-top:6px; }
   .file-note[hidden] { display:none; }
-  /* The same 40px box .arkiv-thumb uses, so a preview is a familiar size on this site. Sized in
-     CSS rather than by attributes: the intrinsic dimensions are whatever the camera produced. */
+  /* A small square preview. Sized in CSS rather than by attributes: the intrinsic dimensions are
+     whatever the camera produced. */
   .file-note img { width:40px; height:40px; flex:none; object-fit:cover; border-radius:6px;
     border:1px solid var(--border); background:var(--surface-2); }
   .file-note img[hidden] { display:none; }
@@ -2024,87 +2024,6 @@
   .repair-photos { display: flex; flex-wrap: wrap; gap: 8px; margin: 8px 0; }
   .repair-photos img { width: 120px; height: 120px; object-fit: cover; border-radius: 8px; border: 1px solid var(--border); display: block; }
 
-  /* --- Arkiv -------------------------------------------------------------------------------
-     A file browser is a list, not a grid: names are the thing being scanned, they are long and of
-     wildly different lengths, and a grid would either truncate them or leave rivers of whitespace.
-     Reuses .card-flat/.chip/.icon rather than inventing an Arkiv look. */
-  .breadcrumb { display:flex; flex-wrap:wrap; align-items:center; gap:6px; font-size:13px; }
-  .breadcrumb a { color:var(--brass); text-decoration:none; }
-  .breadcrumb a:hover { text-decoration:underline; }
-  .breadcrumb [aria-hidden] { color:var(--muted); }
-  .breadcrumb [aria-current] { color:var(--muted); }
-
-  .arkiv-list { list-style:none; margin:0; padding:0; border:1px solid var(--border); border-radius:10px;
-    overflow:hidden; background:var(--surface); }
-  .arkiv-list li { display:flex; align-items:center; gap:10px; padding:10px 14px;
-    border-bottom:1px solid var(--border); }
-  .arkiv-list li:last-child { border-bottom:0; }
-  .arkiv-list li > a { display:flex; align-items:center; gap:10px; flex:1 1 auto; min-width:0;
-    color:inherit; text-decoration:none; }
-  .arkiv-list li > a:hover .arkiv-name { text-decoration:underline; }
-  /* There is no base `.ni` rule in this stylesheet - every use states its own size, stroke and
-     fill (see .nav-item .ni, .chip .ni). Omitting them renders the symbol at its intrinsic
-     size, which is how the folder icon first came out enormous. */
-  .arkiv-list .ni { width:18px; height:18px; flex:none; stroke:currentColor; fill:none;
-    color:var(--brass); }
-   .arkiv-lock-status { width:14px; height:14px; flex:none; stroke:currentColor; fill:none;
-      color:var(--muted); }
-   .arkiv-list .arkiv-lock-status { color:var(--muted); }
-  /* The name truncates rather than wrapping: one row per file keeps a long folder scannable, and
-     the full name is still in the link's accessible name. */
-  .arkiv-name { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-  .arkiv-meta { flex:0 0 auto; font-size:12px; }
-
-  /* Same box as the .ni icon it replaces, so a folder of mixed images and documents does not
-     jag left and right down the list. object-fit keeps portraits from stretching. */
-  .arkiv-thumb { width:40px; height:40px; flex:none; object-fit:cover; border-radius:4px;
-    background:var(--surface-2); }
-
-  /* The gallery: a folder that is mostly pictures (views.is_gallery). */
-
-  .arkiv-grid { list-style:none; margin:0; padding:0; display:grid; gap:8px;
-    grid-template-columns:repeat(auto-fill, minmax(104px, 1fr)); }
-  /* minmax rather than a fixed count, so a phone gets three across and a desktop gets ten without
-     a breakpoint for each. 104px is about the smallest a face is still recognisable at. */
-  .arkiv-grid li { position:relative; }
-  /* -webkit-user-drag covers the anchor: a link is draggable in its own right, so without this a
-     drag beginning on a tile becomes the browser dragging a URL. draggable="false" on the image
-     handles the other half - see browse.html. */
-  .arkiv-grid li > a { display:block; border-radius:8px; overflow:hidden; text-decoration:none;
-    color:inherit; -webkit-user-drag:none; }
-  /* Square tiles whatever the photograph's shape: a ragged grid of mixed portraits and landscapes
-     is much harder to scan than a uniform one, and the viewer shows the real aspect ratio. */
-  .arkiv-tile-img { display:block; width:100%; aspect-ratio:1; object-fit:cover;
-    background:var(--surface-2); }
-  /* IN THE GRID, a long press means SELECT, so the native "save image" callout has to go. In the
-     viewer it means SAVE, and there the callout is the whole feature - see .imgviewer-stage img.
-     The split is deliberate: the same gesture on a thumbnail and on the full picture are different
-     requests. */
-  .arkiv-grid li > a img { -webkit-touch-callout:none; }
-  .arkiv-grid .arkiv-name { display:block; padding:4px 6px 6px; font-size:12px;
-    overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-  /* The grid earns its density by dropping the columns: size and uploader are still on the row in
-     list folders, and in the viewer. A tile that carries them is a row with extra steps. */
-  .arkiv-grid .arkiv-meta { display:none; }
-  /* Top right, opposite the checkbox, and only once the tile is under the cursor or holds focus.
-     It used to sit over the middle of the picture at all times, in link-coloured text on whatever
-     the photograph happened to be - unreadable on half of them and in the way on the rest. The pill
-     is what makes it legible over an arbitrary image; hiding it is what keeps a folder of two
-     hundred photographs from being a folder of two hundred delete buttons. */
-  .arkiv-grid .arkiv-remove { position:absolute; top:6px; right:6px; opacity:0; transition:opacity .12s; }
-  .arkiv-grid li:hover .arkiv-remove,
-  .arkiv-grid li:focus-within .arkiv-remove { opacity:1; }
-  .arkiv-grid .arkiv-remove .btn-link-danger { background:rgb(0 0 0 / 0.55); color:#fff;
-    border-radius:999px; padding:3px 8px; text-decoration:none; }
-  .arkiv-grid .arkiv-remove .btn-link-danger:hover { background:var(--neg); color:#fff; }
-  /* Touch has no hover, so the control would be unreachable. In selection mode it stays out of the
-     way, because that is when a stray tap on it would be most expensive. */
-  @media (hover:none) {
-    .arkiv-grid .arkiv-remove { opacity:1; }
-    .arkiv-selecting .arkiv-remove { opacity:0; pointer-events:none; }
-  }
-  .arkiv-grid .ni { width:40px; height:40px; margin:24px auto; display:block; color:var(--muted); }
-
    /* --- Photo album ------------------------------------------------------------------------- */
    /* .main's overflow:auto makes it the sticky elements' scroller, and as the window does the
       scrolling they never stuck. On album pages it clips instead, so the year bar and the selection
@@ -2369,42 +2288,7 @@
    .album-form-error { color:var(--neg); font-size:13px; }
    @media (max-width:720px) { .album-heading { align-items:start; flex-direction:column; }.album-actions { position:relative; align-self:stretch; }.album-menu { position:static; }.album-menu-panel { left:0; right:0; width:auto; max-width:none; }.album-upload-dialog { width:calc(100vw - 24px); }.album-upload > input { min-height:38px; }.album-media-grid { grid-template-columns:repeat(auto-fill, minmax(110px, 1fr)); }.album-viewer { width:100vw; height:100dvh; max-height:none; margin:0; border-radius:0; background:#111; }.album-viewer[open] { grid-template-columns:1fr; grid-template-rows:minmax(0, 1fr) auto; overflow:hidden; }.album-viewer-stage { height:auto; padding:58px 16px 16px; touch-action:pan-y; }.album-viewer-stage img { max-height:none; }.album-viewer aside { padding:12px 62px 14px 16px; overflow:visible; background:#111; }.album-viewer aside .album-eyebrow, .album-viewer aside dl, .album-viewer aside > .btn, .album-viewer aside form, .album-viewer-arrow { display:none; }.album-viewer h2 { margin:0; font-size:17px; }.album-viewer-mobile-date { display:block; margin:3px 0 0; color:#d2ddd4; font-size:13px; }.album-viewer-close { top:10px; right:10px; z-index:2; }.album-viewer-menu-button { position:absolute; z-index:2; top:10px; right:56px; display:grid; place-items:center; width:38px; height:38px; padding:0; border:0; border-radius:50%; background:rgb(0 0 0 / .64); color:#fff; font-size:25px; line-height:1; cursor:pointer; }.album-viewer-menu { position:absolute; z-index:3; top:56px; right:10px; display:block; width:min(300px, calc(100vw - 20px)); max-height:calc(100dvh - 130px); padding:16px; overflow:auto; box-sizing:border-box; border-radius:6px; color:#fffdf7; background:#26332d; box-shadow:0 12px 32px rgb(0 0 0 / .42); }.album-viewer-menu[hidden] { display:none; }.album-viewer-menu dl { margin:0 0 18px; }.album-viewer-menu dt { margin-top:10px; color:#d2ddd4; font-size:12px; }.album-viewer-menu dd { margin:2px 0 0; }.album-viewer-menu form { margin-top:12px; } }
 
-  /* The checkbox sits on the picture rather than beside it. Hidden until there is a reason to show
-     it - a selection in progress, a hover, or keyboard focus - so an ordinary browse is pictures
-     rather than pictures plus a hundred empty boxes. */
-  .arkiv-grid .arkiv-pick { position:absolute; top:6px; left:6px; z-index:1; margin:0;
-    width:22px; height:22px; opacity:0; transition:opacity .12s; }
-  .arkiv-grid li:hover .arkiv-pick,
-  .arkiv-grid .arkiv-pick:focus-visible,
-  .arkiv-grid .arkiv-pick:checked,
-  .arkiv-selecting .arkiv-pick { opacity:1; }
-  /* Touch has no hover, so without this the boxes would only ever appear once something was
-     already selected - which is the one moment you no longer need to be told they exist. */
-  @media (hover:none) {
-    .arkiv-grid .arkiv-pick { opacity:0; }
-    .arkiv-selecting .arkiv-pick { opacity:1; }
-  }
-
-  /* Selected, in either layout. A ring rather than a tint: a tint changes the photograph, and
-     picking the right ten pictures out of two hundred is exactly when you need them unaltered. */
-  .arkiv-grid li:has(.arkiv-pick:checked) > a { outline:3px solid var(--green-700);
-    outline-offset:-3px; }
-  .arkiv-grid li:has(.arkiv-pick:checked) .arkiv-tile-img { filter:brightness(.92); }
-  .arkiv-list li:has(.arkiv-pick:checked) { background:var(--surface-2); }
-
-  /* While a drag is in progress. Scrolling is suppressed on the container rather than the page, so
-     the gesture cannot be read as a scroll half way through and leave a partial selection. */
-  .arkiv-dragging { touch-action:none; -webkit-user-select:none; user-select:none; }
-  .arkiv-dragging a { pointer-events:none; }
-
-  /* Selection, and the viewer it sits beside. */
-
-  .arkiv-batch { display:flex; align-items:center; gap:10px; margin:0 0 10px; }
-  /* Wide enough to be a phone target without making every row taller: the checkbox is the only
-     control in the row that is hit by thumb rather than by cursor. */
-  .arkiv-pick { flex:none; width:18px; height:18px; margin:0; accent-color:var(--green-700); }
-
-  /* THE SHARED PICTURE VIEWER: Arkiv, opslagstavlen and Den Hurtige all open into this one.
+  /* THE SHARED PICTURE VIEWER: opslagstavlen and Den Hurtige both open into this one.
      Above everything, including the sticky header -- a viewer that something overlaps is a bug
      report. Fixed rather than absolute so it does not move if the page behind it scrolls. */
   /* touch-action:none because the pinch and the double-tap in here are ours (see
@@ -2466,45 +2350,13 @@
     .imgviewer-nav { display:none; }
   }
 
-  /* The folder's own actions: take a copy, or remove it. Baseline-aligned so the quiet danger
-     link sits with the button rather than under it. */
-  .arkiv-folder-actions { display:flex; align-items:baseline; gap:14px; flex-wrap:wrap; }
-  .arkiv-folder-actions form { margin:0; }
-
-  .arkiv-newfolder { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
-  .arkiv-newfolder input { flex:1 1 220px; max-width:340px; }
   /* A destructive action that is one row among many: styled as a quiet link rather than a button,
-     so a list of thirty files is not thirty red buttons. "Fjern" is a soft delete, so the weight of
-     the control matches the weight of the consequence -- and "Slet permanent", in the removed list
-     below, deliberately looks the same. The thing that makes the second one safe is that you have
-     to remove a file before you can reach it, not a louder button (see arkiv/access.py). A red
-     block would only train people to click past it. */
-  .arkiv-remove { margin:0; flex:0 0 auto; }
+     so a list of thirty items is not thirty red buttons. A red block would only train people to
+     click past it. */
   .btn-link, .btn-link-danger { background:none; border:0; padding:0; font:inherit; font-size:12px;
     color:var(--muted); cursor:pointer; text-decoration:underline; }
   .btn-link:hover { color:var(--green-700); }
   .btn-link-danger:hover { color:var(--neg); }
-
-  /* A row in the removed list has no <a> around its icon and name -- the bytes are still there but
-     it is out of the listing, and a working download link would make "fjernet" mean nothing. So it
-     needs `li > a`'s layout without being a link. */
-  .arkiv-list li > .arkiv-static { display:flex; align-items:center; gap:10px; flex:1 1 auto;
-    min-width:0; color:var(--muted); }
-  /* Sunk, so the second stage of the delete does not read as more of the folder. The heading and
-     the sentence above it say what it is; this is what makes it look it at a glance. */
-  .arkiv-removed .arkiv-list { background:var(--surface-2); }
-  .arkiv-removed .arkiv-list .ni { color:var(--muted); }
-
-  .arkiv-upload { display:flex; align-items:center; gap:12px; flex-wrap:wrap; }
-  /* The <input> is hidden and the <label> is the control, so the button matches every other
-     button on the site instead of rendering as a browser file picker. */
-  .arkiv-upload label { cursor:pointer; margin:0; }
-  .arkiv-upload [data-upload-status] { font-size:13px; }
-
-  @media (max-width: 560px) {
-    /* The metadata is the first thing to go: on a phone the name is the whole point. */
-    .arkiv-meta { display:none; }
-  }
 
   /* ---- Notifications (app/notifications): the topbar bell, its dropdown, the list and settings ---- */
   /* Alpine's x-cloak: hidden until Alpine has initialised, so the bell's panel never flashes open. */

@@ -1,8 +1,8 @@
 /**
- * The full-screen picture viewer, shared by Arkiv, opslagstavlen and Den Hurtige.
+ * The full-screen picture viewer, shared by opslagstavlen and Den Hurtige.
  *
  * IT EXISTS SO A LONG PRESS CAN SAVE THE PHOTOGRAPH. That is the whole reason it is shared rather
- * than living in Arkiv. On a phone, a long press on a bare <img> is how a picture gets into the
+ * than living in one feature. On a phone, a long press on a bare <img> is how a picture gets into the
  * photo library - iOS offers "Føj til Fotos", Android "Download image" - with no permission prompt
  * and no second copy of the bytes, because the browser already has them. But a long press on an
  * image wrapped in a LINK gets the link's menu instead ("Download Linked File", which lands in
@@ -350,7 +350,7 @@ function build(): HTMLElement {
  * staring at a blank frame while tens of megabytes arrive over dorm wifi, whereas the preview is
  * there at once and the swap, when it lands, is the same picture at higher resolution.
  *
- * Skipped when the two are the same URL, which is the case everywhere except Arkiv - an
+ * Skipped when the two are the same URL, which is the case everywhere today - an
  * opslagstavle photo is served at full size already, so there is nothing to upgrade to and no
  * second request to make.
  *
@@ -438,7 +438,7 @@ export function openViewer(link: HTMLAnchorElement): void {
 }
 
 // One delegated listener for every picture on the site. Bubble phase, so anything that wants to
-// claim the click first - Arkiv's selection mode, which toggles a tile instead of opening it - can
+// claim the click first - a selection mode that toggles a tile instead of opening it, say - can
 // stop it in capture.
 document.addEventListener('click', (event) => {
   const link = (event.target as HTMLElement | null)?.closest<HTMLAnchorElement>(GROUP)

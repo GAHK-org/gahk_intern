@@ -42,14 +42,12 @@ def test_backups_are_never_expired_on_a_clock() -> None:
             )
 
 
-def test_the_archive_prefixes_are_listed_separately() -> None:
-    """Prefix matching is literal: `arkiv/` does not cover `arkiv-thumb/`. A single bare `arkiv`
-    prefix would cover all four AND overlap the zip rules, where providers differ on how overlaps
-    resolve."""
+def test_every_kept_prefix_has_a_rule() -> None:
+    """Prefix matching is literal: `photo-album/` does not cover `photo-album-zips/`, so each prefix
+    with a lifetime of its own needs a rule that names it exactly."""
     prefixes = {r["Filter"].get("Prefix") for r in RULES}
-    for needed in ("arkiv/", "arkiv-thumb/", "arkiv-preview/", "arkiv-zip/", "media/", "data/"):
+    for needed in ("photo-album-zips/", "media/", "data/"):
         assert needed in prefixes, f"no rule covers {needed}"
-    assert "arkiv" not in prefixes, "a bare 'arkiv' prefix would overlap every other arkiv rule"
 
 
 def test_days_and_delete_marker_are_never_in_one_expiration() -> None:

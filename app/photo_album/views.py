@@ -38,7 +38,7 @@ from django.utils.http import url_has_allowed_host_and_scheme, urlencode
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_GET, require_POST
 
-from arkiv.storage import content_disposition
+from core.downloads import content_disposition
 from core.media import REDIRECT_CACHE_CONTROL
 from residents.models import Resident
 from residents.permissions import current_resident
