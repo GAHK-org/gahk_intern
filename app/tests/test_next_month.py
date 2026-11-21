@@ -7,6 +7,7 @@ month in effect on request (?period=current) so a mistake in the live list can b
 Gated to indstilling (+ admin/superuser).
 """
 
+import re
 from collections.abc import Callable
 from datetime import date
 
@@ -676,3 +677,17 @@ def test_cannot_replace_yourself_in_the_current_month(
     c.post(URL, {"action": "add_existing", "period": "current", "resident": newcomer.id, "replaces": ind.id})
     assert Residency.objects.filter(resident=ind, year=cy, month=cm).exists()
     assert not Residency.objects.filter(resident=newcomer, year=cy, month=cm).exists()
+
+
+@pytest.mark.django_db
+def test_the_chosen_room_workgroup_and_cleaning_are_findable_text(
+    make_resident: Callable, groups: dict[str, Room | Workgroup | Cleaning]
+) -> None:
+    # The browser's find never searches inside a <select>, so each chosen value is also plain text.
+    c, _, target = _setup(make_resident, groups)
+    Residency.objects.filter(resident=target).update(cleaning=groups["clean"])
+
+    html = c.get(URL, {"period": "current"}).content.decode()
+
+    labels = re.findall(r'<span class="findable-select-label" aria-hidden="true">([^<]*)</span>', html)
+    assert labels == ["001", "Indstillingen", "— ingen —", "002", "Festgruppen", "Køkken uge 1"]
