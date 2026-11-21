@@ -113,6 +113,8 @@ working when intern or the image storage is down; editing needs intern.
 
 ## Decisions
 
+- **A news item's time is typed in 24-hour form** next to a date box, never in the browser's own
+  time picker, which shows AM/PM on a device set to a US region.
 - **Edited on intern, shown by gahk.dk.** gahk.dk has no login and no access to intern's database or
   image storage; intern sends it signed snapshots. Losing the webhost loses no content.
 - **The Django admin no longer edits website content.** It would be a second way in that records no

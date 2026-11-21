@@ -1,0 +1,7 @@
+{% comment %}core.date_and_time.DateAndTimeInput: the date box, then "kl." and the 24-hour time box, which wrap as one.{% endcomment %}
+{% spaceless %}{% with date=widget.subwidgets.0 time=widget.subwidgets.1 %}
+<div class="date-and-time">
+  {% include date.template_name with widget=date %}
+  <span class="date-and-time-clock"><span aria-hidden="true">kl.</span>{% include time.template_name with widget=time %}</span>
+</div>
+{% endwith %}{% endspaceless %}

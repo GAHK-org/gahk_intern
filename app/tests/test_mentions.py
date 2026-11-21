@@ -25,6 +25,8 @@ from opslagstavle.models import Category, Notice
 from reparationer.models import RepairTask
 from residents.models import Residency, Resident, active_period
 
+from .form_data import date_and_time
+
 
 @pytest.fixture(autouse=True)
 def _open_and_quiet(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -276,7 +278,12 @@ def test_an_event_description_mention_notifies_on_create_and_on_edit(
 ) -> None:
     host, first, second, other = (live_here(f"{n}@gahk.dk") for n in "abcd")
     when = timezone.localtime(timezone.now() + datetime.timedelta(days=2)).strftime("%Y-%m-%dT%H:%M")
-    data = {"title": "Filmaften", "location": "TV-stuen", "starts_at": when, "visibility": Visibility.AABENT}
+    data = {
+        "title": "Filmaften",
+        "location": "TV-stuen",
+        **date_and_time("starts_at", when),
+        "visibility": Visibility.AABENT,
+    }
 
     client.force_login(host)
     client.post("/begivenheder/opret", {**data, "description": f"Med {token(first)}"})
@@ -308,7 +315,7 @@ def test_a_private_event_description_only_notifies_invitees(
         "/begivenheder/opret",
         {
             "title": "Middag",
-            "starts_at": when,
+            **date_and_time("starts_at", when),
             "visibility": Visibility.KUN_INVITEREDE,
             "invitees": [g.pk for g in guests],
             "description": f"{token(guests[0])} og {token(outsider)}",
