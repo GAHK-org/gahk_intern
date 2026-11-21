@@ -89,7 +89,7 @@ def test_creating_one_needs_three_members_and_tells_the_invited(people: dict[str
         },
     )
     folder = Folder.objects.get(kind=Folder.Kind.SHARED)
-    assert response["Location"] == reverse("drive:folder", args=[folder.pk])
+    assert response["Location"] == reverse("drive:folder", args=[folder.uuid])
     roles = dict(folder.shared.members.values_list("resident_id", "role"))
     assert roles == {anna.pk: "moderator", people["bo"].pk: "edit", people["cecilie"].pk: "edit"}
     assert Notification.objects.filter(
@@ -100,20 +100,20 @@ def test_creating_one_needs_three_members_and_tells_the_invited(people: dict[str
 def test_only_members_see_it_and_overseers_see_only_its_number(people: dict[str, Resident]) -> None:
     folder = _make(people)
     root = Folder.objects.get(kind=Folder.Kind.SHARED_ROOT)
-    url = reverse("drive:folder", args=[root.pk])
+    url = reverse("drive:folder", args=[root.uuid])
 
     assert "Temafest" in _client(people["bo"]).get(url).content.decode()
     outsider = _client(people["outsider"])
     assert "Temafest" not in outsider.get(url).content.decode()
-    assert outsider.get(reverse("drive:folder", args=[folder.pk])).status_code == 404
+    assert outsider.get(reverse("drive:folder", args=[folder.uuid])).status_code == 404
 
     inspector = _client(people["inspector"])
     page = inspector.get(url).content.decode()
     assert "Temafest" not in page
     assert f"Delt mappe {folder.shared.number}" in page
     assert "3 medlemmer" in page
-    assert inspector.get(reverse("drive:folder", args=[folder.pk])).status_code == 403
-    assert inspector.get(reverse("drive:shared", args=[folder.shared_id])).status_code == 404
+    assert inspector.get(reverse("drive:folder", args=[folder.uuid])).status_code == 403
+    assert inspector.get(reverse("drive:shared", args=[folder.shared.uuid])).status_code == 404
 
 
 def test_two_delte_mapper_may_have_the_same_name(people: dict[str, Resident]) -> None:
@@ -128,7 +128,7 @@ def test_readers_read_and_editors_write(people: dict[str, Resident]) -> None:
     assert _upload(_client(people["bo"]), folder, "plan.txt", b"x")["status"] == 201
     reader = _client(people["cecilie"])
     assert _upload(reader, folder, "mit.txt", b"x")["status"] == 403
-    assert reader.get(reverse("drive:folder", args=[folder.pk])).status_code == 200
+    assert reader.get(reverse("drive:folder", args=[folder.uuid])).status_code == 200
 
 
 def test_moving_into_a_delt_mappe_takes_the_subtree_and_says_who_sees_it(
@@ -137,15 +137,15 @@ def test_moving_into_a_delt_mappe_takes_the_subtree_and_says_who_sees_it(
     folder = _make(people)
     anna = _client(people["anna"])
     winter = _period_folder(group, WINTER)
-    anna.post(reverse("drive:create_folder", args=[winter.pk]), {"name": "Plakater"})
+    anna.post(reverse("drive:create_folder", args=[winter.uuid]), {"name": "Plakater"})
     posters = Folder.objects.get(name="Plakater")
     picker = anna.get(
-        reverse("drive:move", args=[winter.pk]), {"op": "move", "folder": posters.pk, "at": folder.pk}
+        reverse("drive:move", args=[winter.uuid]), {"op": "move", "folder": posters.uuid, "at": folder.uuid}
     )
     assert "Kun den delte mappes medlemmer kan se det." in picker.content.decode()
     anna.post(
-        reverse("drive:move", args=[winter.pk]),
-        {"op": "move", "folder": posters.pk, "to": folder.pk, "confirm": "1"},
+        reverse("drive:move", args=[winter.uuid]),
+        {"op": "move", "folder": posters.uuid, "to": folder.uuid, "confirm": "1"},
     )
     posters.refresh_from_db()
     assert (posters.shared_id, posters.workgroup_id) == (folder.shared_id, None)
@@ -226,7 +226,7 @@ def test_expiry_with_deletion_removes_everything_for_good(
 ) -> None:
     folder = _make(people, on_expiry="delete")
     client = _client(people["anna"])
-    client.post(reverse("drive:create_folder", args=[folder.pk]), {"name": "Billeder"})
+    client.post(reverse("drive:create_folder", args=[folder.uuid]), {"name": "Billeder"})
     _upload(client, Folder.objects.get(name="Billeder"), "a.txt", b"a")
     key = File.objects.get().latest_version().key
 
@@ -259,7 +259,7 @@ def test_expiry_with_archiving_shelves_it_by_year_for_everyone(people: dict[str,
     assert outsider.level(File.objects.get().folder) == Level.READ
     assert not outsider.can_upload_to(first)
     assert not _viewer(people["anna"]).can_upload_to(first)
-    page = _client(people["outsider"]).get(reverse("drive:folder", args=[shelf.pk])).content.decode()
+    page = _client(people["outsider"]).get(reverse("drive:folder", args=[shelf.uuid])).content.decode()
     assert "Temafest (2)" in page
 
 
@@ -288,7 +288,7 @@ def test_its_moderators_decide_its_requests_not_inspektionen(people: dict[str, R
 def test_its_activity_shows_member_changes_to_members(people: dict[str, Resident]) -> None:
     folder = _make(people)
     shared.add_member(_viewer(people["anna"]), folder.shared, people["dan"].pk, "read", people["anna"])
-    url = reverse("drive:activity", args=[folder.pk])
+    url = reverse("drive:activity", args=[folder.uuid])
     page = _client(people["bo"]).get(url).content.decode()
     assert f"Gav {people['dan'].full_name} adgang som læser" in page
     assert _client(people["inspector"]).get(url).status_code == 403
@@ -298,7 +298,7 @@ def test_its_activity_shows_member_changes_to_members(people: dict[str, Resident
 def test_the_history_of_delte_mapper_does_not_tell_others_what_is_in_it(people: dict[str, Resident]) -> None:
     _make(people)
     root = Folder.objects.get(kind=Folder.Kind.SHARED_ROOT)
-    url = reverse("drive:folder_history", args=[root.pk])
+    url = reverse("drive:folder_history", args=[root.uuid])
     assert "Temafest" in _client(people["bo"]).get(url).content.decode()
     for name in ("outsider", "inspector"):
         page = _client(people[name]).get(url).content.decode()
