@@ -1,0 +1,7 @@
+{% comment %}
+  A resident's face in Den Hurtige: their picture, or their initials on the brass circle the
+  enclosing box draws (.msg-avatar, .preview-avatar). `person` is the Resident. One copy for the
+  messages, the replies in a thread and the reply previews under a message, so the three cannot
+  disagree about who somebody looks like.
+{% endcomment %}
+{% if person.profile_picture %}<img class="avatar-img" src="{{ person.avatar_url }}" alt="" loading="lazy">{% else %}{{ person.first_name|slice:":1" }}{{ person.last_name|slice:":1" }}{% endif %}

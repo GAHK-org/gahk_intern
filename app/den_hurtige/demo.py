@@ -8,7 +8,7 @@ from django.core.files.base import ContentFile
 
 from residents.models import Resident
 
-from .models import DEFAULT_CHANNEL_SLUG, QuickComment, QuickPost, QuickReaction
+from .models import DEFAULT_CHANNEL_SLUG, QuickComment, QuickCommentReaction, QuickPost, QuickReaction
 
 POSTS = [
     # channel, message age, expiry relative to now, replies, post image, reply image, reactions
@@ -231,8 +231,18 @@ def seed(residents: list[Resident], now: datetime, rng: random.Random) -> int:
             QuickComment.objects.filter(pk=comment.pk).update(
                 created_at=created_at + timedelta(minutes=reply_index + 1)
             )
+            # Every other reply gets a reaction from the person who asked, so the thread panel shows
+            # reactions on replies without a hand-made fixture.
+            if reply_index % 2 == 0 and comment.author_id != post.author_id:
+                QuickCommentReaction.objects.create(
+                    comment=comment, author=post.author, emoji=rng.choice(EMOJI)
+                )
         for resident in rng.sample(residents, k=min(reaction_count, len(residents))):
             QuickReaction.objects.create(post=post, author=resident, emoji=rng.choice(EMOJI))
+        made += 1
+
+    if made and len(residents) >= 6:
+        _seed_long_thread(residents, now)
         made += 1
 
     # One tombstone, with replies -- awkward to reach by hand, since deleting a message you have
@@ -257,6 +267,51 @@ def seed(residents: list[Resident], now: datetime, rng: random.Random) -> int:
         doomed.soft_delete()
         made += 1
     return made
+
+
+def _seed_long_thread(residents: list[Resident], now: datetime) -> None:
+    """A live message with more replies than the feed previews, built for what the thread shows:
+
+    * five replies, so the preview reads "5 svar · Se alle" over the newest two (the matrix above
+      has at most two replies on a message that has not expired);
+    * the asker answering twice in a row, a run drawn with the name once and the tail at the end;
+    * a reply by beboer@, so that login sees its own reply on the right;
+    * one reply several people reacted to, so a reply's pills count more than one;
+    * a mention and a link in the newest reply, which the preview shows as plain `@Name` and short
+      link text (the `|plain` filter).
+
+    No rng, so adding it leaves every random draw after it as it was.
+    """
+    asker, beboer = residents[2], residents[5]
+    post = QuickPost.objects.create(
+        author=asker,
+        channel=DEFAULT_CHANNEL_SLUG,
+        content="Skal vi bestille pizza i fællesskab til kampen i aften?",
+        expires_at=now + timedelta(hours=9),
+    )
+    created_at = now - timedelta(minutes=50)
+    QuickPost.objects.filter(pk=post.pk).update(created_at=created_at)
+    replies = [
+        (residents[1], "Ja tak, jeg er med! 🍕"),
+        (beboer, "Mig også. En med skinke, tak."),
+        (residents[3], "Jeg vil gerne have en vegetar."),
+        (asker, "Super, jeg bestiller kl. 18."),
+        (
+            asker,
+            (
+                f"@[{beboer.full_name}]({beboer.pk}) kan du tage imod buddet? Menuen er her: "
+                "https://www.example.com/pizzeria/menu"
+            ),
+        ),
+    ]
+    for reply_index, (author, content) in enumerate(replies):
+        reply = QuickComment.objects.create(post=post, author=author, content=content)
+        QuickComment.objects.filter(pk=reply.pk).update(
+            created_at=created_at + timedelta(minutes=4 * reply_index + 2)
+        )
+        if reply_index == 0:
+            for reactor, emoji in zip(residents[2:6], ["👍", "👍", "🎉", "❤️"], strict=True):
+                QuickCommentReaction.objects.create(comment=reply, author=reactor, emoji=emoji)
 
 
 def _image(label: str, index: int) -> bytes:
