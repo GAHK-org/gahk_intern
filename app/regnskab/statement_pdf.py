@@ -16,6 +16,14 @@ from residents.models import Resident
 from . import economic
 
 
+class _StatementPDF(FPDF):
+    """fpdf's built-in fonts are latin-1 only: draw "?" for anything else (an en dash, "€", "Ł") rather
+    than raise, which stopped the statement and with it the whole send."""
+
+    def normalize_text(self, text: str) -> str:
+        return super().normalize_text(text.encode("latin-1", "replace").decode("latin-1"))
+
+
 def _kr(amount: Decimal) -> str:
     return f"{amount:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
 
@@ -40,7 +48,7 @@ def render(
     date_to: date,
 ) -> bytes:
     """The period's postings (if any) with a running subtotal, plus the account's current balance."""
-    pdf = FPDF()
+    pdf = _StatementPDF()
     pdf.add_page()
 
     pdf.set_font("helvetica", "B", 16)
