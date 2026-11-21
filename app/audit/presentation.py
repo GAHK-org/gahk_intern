@@ -261,7 +261,6 @@ def _event_line(row: AuditEvent, names: "_RelatedNames") -> EventLine:
 
 
 def _entity_line(entity: AuditEntity, names: "_RelatedNames") -> EntityLine:
-    reg = trail.registration_for_kind(entity.kind)
     return EntityLine(
         kind=entity.kind,
         kind_label=trail.kind_label(entity.kind),
@@ -270,18 +269,36 @@ def _entity_line(entity: AuditEntity, names: "_RelatedNames") -> EntityLine:
         operation=entity.operation,
         operation_label=entity.get_operation_display(),
         role=entity.role,
-        changes=[_change_line(reg, change, names) for change in entity.changes.all()],
+        changes=[_change_line(entity.kind, change, names) for change in entity.changes.all()],
     )
 
 
-def _change_line(reg: trail.Registration | None, change: AuditChange, names: "_RelatedNames") -> ChangeLine:
-    model_field = _model_field(reg, change.field)
-    if reg is not None and change.field in reg.labels:
-        label = reg.labels[change.field]
-    elif model_field is not None:
-        label = capfirst(str(model_field.verbose_name))
-    else:
-        label = change.field
+class Values:
+    """Field names and values as the audit page shows them, for a feature's own page of the trail."""
+
+    def __init__(self) -> None:
+        self._names = _RelatedNames()
+
+    def label(self, kind: str, field_name: str) -> str:
+        return _field_label(kind, field_name)
+
+    def text(self, kind: str, field_name: str, value: Any) -> str:  # noqa: ANN401
+        return _value(_model_field(trail.registration_for_kind(kind), field_name), value, self._names)
+
+
+def _field_label(kind: str, name: str) -> str:
+    reg = trail.registration_for_kind(kind)
+    if reg is None and name == kind.rsplit(".", 1)[-1]:
+        return trail.kind_label(kind)  # a kind with no model, changed as a whole: "Menu"
+    if reg is not None and name in reg.labels:
+        return reg.labels[name]
+    model_field = _model_field(reg, name)
+    return capfirst(str(model_field.verbose_name)) if model_field is not None else name
+
+
+def _change_line(kind: str, change: AuditChange, names: "_RelatedNames") -> ChangeLine:
+    model_field = _model_field(trail.registration_for_kind(kind), change.field)
+    label = _field_label(kind, change.field)
     if change.redacted:
         return ChangeLine(change.field, label, "", "", redacted=True, before_long=False, after_long=False)
     before = _value(model_field, change.before, names)
@@ -338,6 +355,9 @@ def _plain(value: Any) -> str:  # noqa: ANN401
         return "ja" if value else "nej"
     if isinstance(value, list) and all(isinstance(v, str | int) for v in value):
         return ", ".join(str(v) for v in value) or "—"
+    if isinstance(value, list) and all(isinstance(v, dict) for v in value):
+        # A list of entries (a menu): one per line, its values side by side.
+        return "\n".join(" ".join(str(part) for part in entry.values()) for entry in value) or "—"
     return json.dumps(value, ensure_ascii=False)
 
 

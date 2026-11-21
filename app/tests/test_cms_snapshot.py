@@ -15,13 +15,11 @@ from PIL import Image
 
 from cms.models import (
     CmsImage,
-    ContentChange,
     Event,
     MenuItem,
     NewsItem,
     Page,
     PageRedirect,
-    PageVersion,
     SiteSettings,
 )
 from cms.services import upload_image
@@ -125,35 +123,6 @@ def test_bodies_are_sanitized_before_they_are_sent(front_page: Page) -> None:
     assert data["pages"][0]["body"] == "<p>Hej</p>"
     assert "javascript" not in data["news"][0]["body"]
     assert data["events"][0]["description"] == "<p>e</p>"
-
-
-@pytest.mark.django_db
-def test_the_stored_html_is_cleaned_once_and_audited(front_page: Page) -> None:
-    import importlib
-
-    from django.apps import apps
-
-    migration = importlib.import_module("cms.migrations.0008_clean_stored_html")
-    Page.objects.filter(pk=front_page.pk).update(body="<p>ok</p><script>x()</script>")
-    clean = Page.objects.create(slug="ren", header="Ren", body="<p>ren</p>")
-    news = NewsItem.objects.create(
-        title="N", body='<img src="x" onerror="y()">', published_at="2026-11-01T12:00:00+01:00"
-    )
-    version = PageVersion.objects.create(page=front_page, header="V", body="<script>x()</script><p>v</p>")
-    ContentChange.objects.all().delete()
-
-    migration.clean_stored_html(apps, None)
-
-    front_page.refresh_from_db()
-    news.refresh_from_db()
-    version.refresh_from_db()
-    assert front_page.body == "<p>ok</p>" and news.body == '<img src="x">' and version.body == "<p>v</p>"
-    system = ContentChange.objects.filter(by__isnull=True, by_name__startswith="System")
-    page_change = system.get(kind="page", object_id=front_page.pk)
-    assert page_change.changes == {"body": ["<p>ok</p><script>x()</script>", "<p>ok</p>"]}
-    assert system.filter(kind="news", object_id=news.pk).exists()
-    assert system.filter(label__contains="1 gamle sideversioner").exists()
-    assert not system.filter(object_id=clean.pk, kind="page").exists()  # unchanged: no entry
 
 
 @pytest.mark.django_db

@@ -223,6 +223,68 @@ def test_seed_demo_writes_weeks_of_audit_history(settings: Any) -> None:  # noqa
 
 
 @pytest.mark.django_db
+def test_seed_demo_gives_the_hjemmeside_change_log_weeks_of_edits(settings: Any) -> None:  # noqa: ANN401
+    """The content is seeded unaudited, so the change log needs its own history: every type and
+    person its filters offer, text diffs, a rename, a restore, and a change made outside the editor."""
+    from datetime import timedelta
+
+    from django.test import Client
+    from django.urls import reverse
+    from django.utils import timezone
+
+    from audit.models import AuditEntity
+    from cms.models import Page, PageVersion
+    from cms.views import LOG_KINDS
+
+    settings.AUDIT_FALLBACK = True  # as outside the tests, so the shell fix is recorded (as System)
+    call_command("seed_demo", "--fresh", "--force", "--residents", "12", verbosity=0)
+    cms_events = AuditEvent.objects.filter(
+        pk__in=AuditEntity.objects.filter(kind__startswith="cms.").values("event_id")
+    )
+
+    for key, (_label, kinds) in LOG_KINDS.items():
+        assert AuditEntity.objects.filter(kind__in=kinds).exists(), f"nothing for the {key} filter"
+    assert {
+        "cms.page.created",
+        "cms.page.updated",
+        "cms.page.restored",
+        "cms.news.created",
+        "cms.news.deleted",
+        "cms.event.created",
+        "cms.event.updated",
+        "cms.event.deleted",
+        "cms.image.uploaded",
+        "cms.image.updated",
+        "cms.menu.updated",
+        "cms.redirect.created",
+        "cms.settings.updated",
+        "cms.site.published",
+        "cms.site.update_requested",
+    } <= set(cms_events.values_list("action", flat=True))
+    assert cms_events.exclude(actor=None).values("actor").distinct().count() >= 3
+    assert cms_events.filter(actor=None, unclaimed=True, source="system").exists(), (
+        "System, outside the editor"
+    )
+    assert "version_from" in cms_events.get(action="cms.page.restored").details
+
+    # The editor's bookkeeping is dated with the trail: versions weeks old, and the newest save hours
+    # old, so a page's editor has a recent "saved by" to show.
+    now = timezone.now()
+    assert PageVersion.objects.filter(created_at__lt=now - timedelta(days=7)).exists()
+    newest = cms_events.filter(action="cms.page.updated").order_by("-at").first()
+    assert now - timedelta(days=1) < newest.at < now
+    assert Page.objects.get(slug="arkiv/gamle-sider").redirects.filter(old_path="arkiv/gammel-side").exists()
+
+    client = Client()
+    client.force_login(Resident.objects.get(email="formand@gahk.dk"))
+    log = reverse("cms:change_log")
+    page = client.get(log).content.decode()
+    assert "Gendannede siden" in page and "Uden for editoren" in page
+    assert "Ændrede menuen" in client.get(f"{log}?type=menu").content.decode()
+    assert "Rettede nyheden" in client.get(f"{log}?person=system").content.decode()
+
+
+@pytest.mark.django_db
 def test_seed_demo_fills_the_outbox_with_every_kind_and_status(settings: object) -> None:
     """The mail page needs a mail in every state, and seeding must send none of them (core.demo)."""
     from datetime import timedelta

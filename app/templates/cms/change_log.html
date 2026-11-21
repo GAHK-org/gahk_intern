@@ -26,16 +26,16 @@
 
   <section class="card-flat cms-section">
     <ul class="cms-log">
-      {% for change, link, fields in rows %}
+      {% for row in rows %}
         <li>
           <details>
             <summary>
-              <span class="cms-when">{{ change.at|date:"j. b Y, H:i" }}</span>
-              <span class="cms-log-what"><b>{{ change.by_name|default:"System" }}</b> · {{ change.get_action_display }} · {{ change.get_kind_display }}{% if change.label %}: {{ change.label }}{% endif %}</span>
+              <span class="cms-when">{{ row.event.at|date:"j. b Y, H:i" }}</span>
+              <span class="cms-log-what"><b>{{ row.event.actor_name|default:"System" }}</b> · {{ row.what }}{% if row.label %}: {{ row.label }}{% endif %}{% if row.event.unclaimed %} <span class="chip chip-brass">Uden for editoren</span>{% endif %}</span>
             </summary>
             <div class="cms-log-body">
-              {% if link %}<p><a href="{% url link change.object_id %}">Åbn {{ change.get_kind_display|lower }}</a></p>{% endif %}
-              {% for item in fields %}
+              {% if row.link %}<p><a href="{% url row.link row.object_id %}">Åbn {{ row.kind_label|lower }}</a></p>{% endif %}
+              {% for item in row.fields %}
                 <div class="cms-log-field">
                   <p class="cms-label">{{ item.label }}</p>
                   {% if item.diff is not None %}

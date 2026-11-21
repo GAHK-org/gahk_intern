@@ -26,7 +26,6 @@ PENDING_APPS = {
     "admissions",
     "ak",
     "arkiv",
-    "cms",
     "core",
     "den_hurtige",
     "events",
@@ -158,6 +157,17 @@ def test_a_subject_made_inside_the_event_is_named_with_its_id() -> None:
         "created",
         "Ny Beboer",
     )
+
+
+@pytest.mark.django_db
+def test_a_subject_renamed_by_the_event_is_named_as_it_ended(make_resident: Callable[..., Resident]) -> None:
+    anna = make_resident(email="anna@gahk.dk", first_name="Anna", last_name="Berg")
+    stale = Resident.objects.get(pk=anna.pk)  # what a view passes in; the service saves a fresh copy
+    with trail.event("residents.resident.updated", actor=None, subject=stale):
+        fresh = Resident.objects.get(pk=anna.pk)
+        fresh.first_name = "Annie"
+        fresh.save()
+    assert AuditEntity.objects.get(role="subject").name == "Annie Berg"
 
 
 @pytest.mark.django_db

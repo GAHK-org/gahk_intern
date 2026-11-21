@@ -41,11 +41,12 @@ from arkiv.models import ArchiveFile, ArchiveFolder
 from audit import trail
 from audit.demo import seed as seed_audit_trail
 from audit.models import AuditChange, AuditEntity, AuditEvent
-from cms.models import ContentChange, NewsItem, Page, PageVersion, PylonEvent
+from cms.demo import history as cms_history
 
 # CmsEvent, never Event: the internal events app has one of the same name, and both are seeded
 # here. See events.models on the three-way collision.
 from cms.models import Event as CmsEvent
+from cms.models import NewsItem, Page, PageVersion, PylonEvent
 from core.demo import seed as seed_mail
 from core.models import Cleaning, OutgoingMail, Room, Workgroup
 from den_hurtige.demo import seed as seed_den_hurtige
@@ -153,7 +154,6 @@ WIPE_ORDER: list[type[models.Model]] = [
     Application,
     RoleAssignment,
     Residency,
-    ContentChange,
     PageVersion,
     Page,
     NewsItem,
@@ -229,7 +229,7 @@ class Command(BaseCommand):
             with trail.unaudited():
                 residents = self._seed_data(opts)
             # Then, on purpose and audited, the weeks of history before today, for the audit page.
-            seed_audit_trail(residents, self.now, self.rng)
+            seed_audit_trail(residents, self.now, self.rng, cms_history)
 
         self._report(residents)
 
