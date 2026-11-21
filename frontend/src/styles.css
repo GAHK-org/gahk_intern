@@ -2235,6 +2235,10 @@
    .album-viewer[open] { display:grid; grid-template-columns:minmax(0, 1fr) 260px; grid-template-rows:minmax(0, 1fr); overflow:visible; }
    .album-viewer-stage { min-width:0; min-height:0; display:grid; place-items:center; overflow:hidden; padding:24px; box-sizing:border-box; background:#111; }
    .album-viewer-stage img, .album-viewer-stage video { display:block; width:100%; height:100%; min-width:0; min-height:0; max-width:100%; max-height:100%; object-fit:contain; transform-origin:center; }
+   /* Zoom (zoom.ts). The cursor is all that tells a desktop reader the picture can be magnified, so it
+      changes before the click. Zoomed in, every touch on the stage is the viewer's: pan, not scroll. */
+   .album-viewer-stage img { cursor:zoom-in; }.album-viewer-zoomed .album-viewer-stage img { cursor:grab; }.album-viewer-zoomed .album-viewer-stage img:active { cursor:grabbing; }
+   .album-viewer-zoomed .album-viewer-stage { touch-action:none; }
    .album-viewer aside { padding:28px 20px; overflow:auto; color:#f6f3ea; background:#26332d; }.album-viewer h2 { margin:0 0 18px; color:#fffdf7; font-family:Georgia, serif; font-size:22px; }.album-viewer dl { margin:0 0 24px; }.album-viewer dt { margin-top:10px; color:#d2ddd4; font-size:12px; }.album-viewer dd { margin:2px 0 0; color:#fffdf7; }
    .album-viewer-mobile-date, .album-viewer-menu, .album-viewer-menu-button { display:none; }.album-viewer-close, .album-viewer-arrow { position:absolute; display:grid; place-items:center; width:38px; height:38px; border:0; border-radius:50%; background:rgb(0 0 0 / .64); color:#fff; font-size:24px; cursor:pointer; }.album-viewer-close { top:-12px; right:-12px; }.album-viewer-arrow { top:calc(50% - 19px); }.album-viewer-previous { left:-48px; }.album-viewer-next { right:-48px; }
    /* Album tree: breadcrumbs, sub-album cards, the "this album / everything below" switch. */
