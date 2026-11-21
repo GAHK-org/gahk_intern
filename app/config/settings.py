@@ -77,6 +77,7 @@ INSTALLED_APPS = [
     "den_hurtige",
     "opslagstavle",
     "events",
+    "calendar_feed",
     "reparationer",
     "arkiv",
     "photo_album",

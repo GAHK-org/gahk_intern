@@ -18,8 +18,6 @@ urlpatterns = [
     path("opret", views.create, name="create"),
     # Before <int:pk>, so these fixed segments are never read as an event id.
     path("kalender", views.calendar, name="calendar"),
-    path("kalender/abonnement", views.feed_settings, name="feed_settings"),
-    path("kalender/nyt-link", views.rotate_token, name="rotate_token"),
     # Keyed on the COMMENT's pk, not the event's, so it belongs with the fixed segments up here
     # rather than nested under <int:pk> (mirrors reparationer/urls.py).
     path("kommentar/<int:pk>/slet", views.delete_comment, name="delete_comment"),

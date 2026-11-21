@@ -37,6 +37,8 @@ from ak.models import AkEntry, AkMonthlyCharge
 from ak.services import apply_monthly_charge
 from arkiv.demo import seed as seed_arkiv
 from arkiv.models import ArchiveFile, ArchiveFolder
+from calendar_feed.demo import seed as seed_calendar_feed
+from calendar_feed.models import CalendarSubscription
 from cms.models import ContentChange, NewsItem, Page, PageVersion, PylonEvent
 
 # CmsEvent, never Event: the internal events app has one of the same name, and both are seeded
@@ -47,7 +49,7 @@ from core.models import Cleaning, OutgoingMail, Room, Workgroup
 from den_hurtige.demo import seed as seed_den_hurtige
 from den_hurtige.models import QuickComment, QuickPost, QuickReaction
 from events.demo import seed as seed_events
-from events.models import CalendarFeedToken, Event, EventInvite, Rsvp
+from events.models import Event, EventInvite, Rsvp
 from gahkflix.demo import seed as seed_gahkflix
 from gahkflix.models import ChangeRequest as GahkflixRequest
 from gahkflix.models import Series as GahkflixSeries
@@ -128,7 +130,7 @@ ROOM_CRITERIA = [
 WIPE_ORDER: list[type[models.Model]] = [
     Rsvp,
     EventInvite,
-    CalendarFeedToken,
+    CalendarSubscription,
     Event,
     NoticeReaction,
     NoticeComment,
@@ -240,6 +242,7 @@ class Command(BaseCommand):
             self._seed_stats()
             seed_opslagstavle(residents, self.now, self.rng)
             seed_events(residents, self.now, self.rng)
+            seed_calendar_feed(residents, self.now, self.rng)
             seed_arkiv(residents, self.now, self.rng)
             seed_photo_album(residents, self.now, self.rng)
             seed_gahkflix(residents, self.now, self.rng)

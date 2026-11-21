@@ -120,6 +120,26 @@ def waitlist(event: Event) -> list[Rsvp]:
 
 
 @transaction.atomic
+def my_state(event: Event, resident: Resident) -> str | None:
+    """ "kommer" / "venteliste" / "nej" / None, from rows already prefetched.
+
+    Seating is positional, so a card cannot read a column to know where you stand — it has to know
+    where you fall in the order. Done over the prefetch rather than by calling services.seated per
+    card, which would be a query each.
+    """
+    committed = sorted(
+        (r for r in event.rsvps.all() if r.answer == Answer.JA),
+        key=lambda r: (r.answered_at, r.pk),
+    )
+    coming = committed if event.capacity is None else committed[: event.capacity]
+    mine = next((r for r in event.rsvps.all() if r.resident_id == resident.pk), None)
+    if mine is None:
+        return None
+    if mine.answer == Answer.NEJ:
+        return "nej"
+    return "kommer" if any(r.pk == mine.pk for r in coming) else "venteliste"
+
+
 def set_answer(event_pk: int, resident: Resident, answer: str) -> RsvpOutcome:
     """Record one resident's ja or nej, and notify whoever that let in.
 

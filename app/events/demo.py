@@ -104,7 +104,9 @@ def seed(residents: list[Resident], now: datetime, rng: random.Random) -> int:
         rsvp_deadline_at=_at(now, 7, 12),
     )
     events.append(full)
-    for i, resident in enumerate(residents[2:9]):
+    # beboer@ (residents[5]) answers last, so a documented login is on the venteliste: its event page
+    # says "du er nr. 3", and its calendar subscription shows the "Venteliste:" entry.
+    for i, resident in enumerate([*residents[2:5], *residents[6:9], *residents[5:6]]):
         _answer(full, resident, Answer.JA, now - timedelta(hours=len(residents) - i))
 
     # Deadline already gone, so the locked state renders without anyone touching the dev clock.
