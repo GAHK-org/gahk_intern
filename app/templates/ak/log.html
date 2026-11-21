@@ -13,19 +13,19 @@
       <input type="text" name="delta" placeholder="+2" required>
       <label>Note</label>
       <input type="text" name="reason" placeholder="Hvad blev der lavet?">
-      <p style="margin-top:.8rem"><button type="submit">Gem</button></p>
+      <p style="margin-top:.8rem"><button type="submit" class="btn">Gem</button></p>
     </form>
   </div>
 
   <table cellpadding="6" style="width:100%; border-collapse:collapse">
-    <thead><tr style="text-align:left; border-bottom:1px solid #e6e8ec"><th>Dato</th><th>Ændring</th><th>Type</th><th>Note</th><th></th></tr></thead>
+    <thead><tr style="text-align:left; border-bottom:1px solid var(--border-strong)"><th>Dato</th><th>Ændring</th><th>Type</th><th>Note</th><th></th></tr></thead>
     <tbody>
     {% for e in entries %}
-      <tr style="border-bottom:1px solid #f0f1f4">
+      <tr style="border-bottom:1px solid var(--border)">
         <td>{{ e.created_at|date:"Y-m-d" }}</td>
         <td class="{{ e.delta|sign_class }}">{{ e.delta }}</td>
         <td>{{ e.get_kind_display }}</td><td>{{ e.reason }}</td>
-        <td><form method="post" action="{% url 'ak:delete' resident.id e.id %}">{% csrf_token %}<button type="submit" style="background:#c00">Slet</button></form></td>
+        <td><form method="post" action="{% url 'ak:delete' resident.id e.id %}">{% csrf_token %}<button type="submit" class="btn btn-danger">Slet</button></form></td>
       </tr>
     {% empty %}<tr><td colspan="5" class="muted">Ingen krydser.</td></tr>{% endfor %}
     </tbody>

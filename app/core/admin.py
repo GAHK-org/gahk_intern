@@ -24,7 +24,7 @@ from collections.abc import Sequence
 
 from django.contrib import admin
 from django.contrib.auth.models import Group
-from django.db.models import Model
+from django.db.models import Model, QuerySet
 from django.http import HttpRequest
 from django_celery_beat.models import (
     ClockedSchedule,
@@ -34,7 +34,7 @@ from django_celery_beat.models import (
     SolarSchedule,
 )
 
-from .models import Cleaning, PushDeliveryDay, PushSubscription, Room, Workgroup
+from .models import Cleaning, OutgoingMail, PushDeliveryDay, PushSubscription, Room, Workgroup
 
 
 class ReadOnlyAdmin(admin.ModelAdmin):
@@ -153,3 +153,25 @@ class PushSubscriptionAdmin(ReadOnlyAdmin):
 @admin.register(PushDeliveryDay)
 class PushDeliveryDayAdmin(ReadOnlyAdmin):
     list_display = ("date", "delivered", "failed", "removed")
+
+
+@admin.register(OutgoingMail)
+class OutgoingMailAdmin(ReadOnlyAdmin):
+    """The mail queue (core.mail): what is waiting, what went out, and why a mail failed. Read-only —
+    a failed mail is sent again with the action, once whatever refused it is fixed. The action is
+    the one write here, because nothing else on the site can send a mail again yet."""
+
+    list_display = ("created_at", "kind", "subject", "recipients", "status", "attempts", "sent_at", "error")
+    list_filter = ("status", "kind")
+    search_fields = ("subject", "recipients")
+    exclude = ("payload",)
+    actions = ("send_again",)
+
+    @admin.action(description="Send valgte fejlede mails igen")
+    def send_again(self, request: HttpRequest, queryset: QuerySet[OutgoingMail]) -> None:
+        from . import mail
+
+        # Only a failed or cut-off mail that still has its content and lifetime (core.mail.can_send_again):
+        # a sent one is not sent twice, and an alumneregning replaced by a rerun has lost its content.
+        count = mail.send_again(list(queryset))
+        self.message_user(request, f"{count} mail(s) sat i kø igen.")

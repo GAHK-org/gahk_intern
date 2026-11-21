@@ -30,6 +30,11 @@ EXCEPTIONS = {
     "events.calendarfeedtoken": (False, False, True),
     "django_celery_beat.periodictask": (False, True, False),  # enabled only
 }
+# Admin actions are writes too. Every one besides Django's own delete_selected (which follows the
+# delete right above) is listed; any other model offers none.
+ACTIONS = {
+    "core.outgoingmail": {"send_again"},  # until /admin/mails can send a failed mail again
+}
 # Arkiv keeps its own role-gated admin (its root folders have no other screen) until Drive replaces it.
 UNCHANGED_APPS = {"arkiv"}
 
@@ -63,7 +68,10 @@ def test_only_the_listed_models_can_be_changed(superuser: Resident) -> None:
         )
         assert rights == EXCEPTIONS.get(key, (False, False, False)), key
         assert model_admin.has_view_permission(request), key
+        actions = set(model_admin.get_actions(request)) - {"delete_selected"}
+        assert actions == ACTIONS.get(key, set()), key
     assert not set(EXCEPTIONS) - seen, "an exception names a model that is not registered"
+    assert not set(ACTIONS) - seen, "an action exception names a model that is not registered"
 
 
 @pytest.mark.django_db
