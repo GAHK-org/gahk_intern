@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+{% block title %}Postkasser - GAHK Intern{% endblock %}
+{% block content_width %}max-w-3xl{% endblock %}
+
+{% block content %}
+  <div class="page-head">
+    <div>
+      <p class="eyebrow">Grupper & konti · Postkasser</p>
+      <h1>Postkasser</h1>
+    </div>
+  </div>
+
+  <p class="muted mb-4">Gruppernes fælles mailadresser. Du ser dem, du har adgang til via din embedsgruppe eller rolle.</p>
+
+  <div class="board-list">
+    {% for mailbox in mailboxes %}
+      <div class="card-flat card-pad">
+        <h3><a href="{% url 'postkasser:board' mailbox.slug %}">{{ mailbox.name }}</a></h3>
+        <p class="muted">{{ mailbox.address }}</p>
+        <p class="muted text-sm">
+          {% if mailbox.unread %}<span class="chip">{{ mailbox.unread }} ulæst{{ mailbox.unread|pluralize:"e" }}</span>{% else %}Ingen ulæste{% endif %}
+        </p>
+      </div>
+    {% empty %}
+      <p class="muted">Du har ikke adgang til nogen postkasser.</p>
+    {% endfor %}
+  </div>
+{% endblock %}

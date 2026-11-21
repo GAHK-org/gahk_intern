@@ -1,0 +1,58 @@
+{% extends "base.html" %}
+{% block title %}Tags - {{ mailbox.name }}{% endblock %}
+{% block content_width %}max-w-3xl{% endblock %}
+
+{% block content %}
+  <div class="page-head">
+    <div>
+      <p class="eyebrow">Grupper & konti · Postkasser · {{ mailbox.name }}</p>
+      <h1>Tags</h1>
+      <p class="muted">Kategorier på sagerne, jeres egne. Alle med adgang til postkassen kan ændre dem. De ligger kun her i intranettet, ikke i one.com.</p>
+    </div>
+    <div class="head-actions">
+      <a class="btn btn-secondary" href="{% url 'postkasser:board' mailbox.slug %}">‹ Til tavlen</a>
+    </div>
+  </div>
+
+  <div class="board-list mb-4">
+    {% for tag in tags %}
+      <div class="card-flat card-pad">
+        <form method="post" class="board-search">
+          {% csrf_token %}
+          <input type="hidden" name="tag" value="{{ tag.pk }}">
+          <input type="text" name="name" value="{{ tag.name }}" maxlength="40" aria-label="Navn på tag">
+          <select name="color" aria-label="Farve">
+            {% for value, label in colors %}
+              <option value="{{ value }}"{% if value == tag.color %} selected{% endif %}>{{ label }}</option>
+            {% endfor %}
+          </select>
+          <button type="submit" name="action" value="rename" class="btn btn-secondary">Omdøb</button>
+          <button type="submit" name="action" value="color" class="btn btn-secondary">Skift farve</button>
+          <button type="submit" name="action" value="up" class="btn btn-secondary" title="Flyt op"{% if forloop.first %} disabled{% endif %}>↑</button>
+          <button type="submit" name="action" value="down" class="btn btn-secondary" title="Flyt ned"{% if forloop.last %} disabled{% endif %}>↓</button>
+        </form>
+        <p class="muted text-sm mt-1">
+          {% include "postkasser/_tag.html" %}
+          {{ tag.thread_count }} sag{{ tag.thread_count|pluralize:"er" }}
+        </p>
+        <form method="post" class="mt-1"
+              onsubmit="return confirm('Slet «{{ tag.name|escapejs }}»?{% if tag.thread_count %} Det fjernes fra {{ tag.thread_count }} sag{{ tag.thread_count|pluralize:"er" }} (sagerne slettes ikke).{% endif %}');">
+          {% csrf_token %}
+          <input type="hidden" name="tag" value="{{ tag.pk }}">
+          <button type="submit" name="action" value="delete" class="btn btn-secondary kanban-danger">Slet</button>
+        </form>
+      </div>
+    {% empty %}
+      <p class="muted">Ingen tags endnu — tilføj det første herunder.</p>
+    {% endfor %}
+  </div>
+
+  <form method="post" class="board-search mb-4">
+    {% csrf_token %}
+    <input type="text" name="name" maxlength="40" placeholder="Nyt tag…" aria-label="Navn på nyt tag" required>
+    <select name="color" aria-label="Farve">
+      {% for value, label in colors %}<option value="{{ value }}">{{ label }}</option>{% endfor %}
+    </select>
+    <button type="submit" name="action" value="add" class="btn">Tilføj tag</button>
+  </form>
+{% endblock %}

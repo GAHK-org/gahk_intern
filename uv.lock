@@ -958,6 +958,7 @@ source = { virtual = "." }
 dependencies = [
     { name = "celery" },
     { name = "channels" },
+    { name = "cryptography" },
     { name = "dj-database-url" },
     { name = "django" },
     { name = "django-celery-beat" },
@@ -1002,6 +1003,7 @@ dev = [
 requires-dist = [
     { name = "celery", specifier = ">=5.5,<5.7" },
     { name = "channels", specifier = ">=4.2,<5.0" },
+    { name = "cryptography", specifier = ">=43" },
     { name = "dj-database-url", specifier = ">=2.1" },
     { name = "django", specifier = ">=5.2,<5.3" },
     { name = "django-celery-beat", specifier = ">=2.8,<2.10" },

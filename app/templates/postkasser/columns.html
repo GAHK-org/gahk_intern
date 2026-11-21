@@ -1,0 +1,76 @@
+{% extends "base.html" %}
+{% block title %}Kolonner - {{ mailbox.name }}{% endblock %}
+{% block content_width %}max-w-3xl{% endblock %}
+
+{% block content %}
+  <div class="page-head">
+    <div>
+      <p class="eyebrow">Grupper & konti · Postkasser · {{ mailbox.name }}</p>
+      <h1>Kolonner</h1>
+      <p class="muted">Tavlens kolonner er jeres egne. Alle med adgang til postkassen kan ændre dem.</p>
+    </div>
+    <div class="head-actions">
+      <a class="btn btn-secondary" href="{% url 'postkasser:board' mailbox.slug %}">‹ Til tavlen</a>
+    </div>
+  </div>
+
+  {% comment %}
+    The program never looks at a column's NAME, only at the part it plays (columns.py): a new sag
+    lands in "Indgående", answering moves it to "Afventer svar" (if the group has one), and
+    "Færdig" is what the 30-day window and the Arkiv go by. Rename and reorder freely.
+  {% endcomment %}
+  <div class="board-list mb-4">
+    {% for column in columns %}
+      <div class="card-flat card-pad">
+        <form method="post" class="board-search">
+          {% csrf_token %}
+          <input type="hidden" name="column" value="{{ column.pk }}">
+          <input type="text" name="name" value="{{ column.name }}" maxlength="60" aria-label="Navn på kolonne">
+          <button type="submit" name="action" value="rename" class="btn btn-secondary">Omdøb</button>
+          <button type="submit" name="action" value="up" class="btn btn-secondary" title="Flyt til venstre"{% if forloop.first %} disabled{% endif %}>↑</button>
+          <button type="submit" name="action" value="down" class="btn btn-secondary" title="Flyt til højre"{% if forloop.last %} disabled{% endif %}>↓</button>
+        </form>
+        <p class="muted text-sm mt-1">
+          {{ column.thread_count }} sag{{ column.thread_count|pluralize:"er" }}
+          {% if column.role %}· Funktion: {{ column.get_role_display }}{% endif %}
+        </p>
+        {% if not column.role %}
+          <form method="post" class="mt-1"
+                onsubmit="return confirm('Slet «{{ column.name|escapejs }}»?{% if column.thread_count %} {{ column.thread_count }} sag{{ column.thread_count|pluralize:"er" }} flyttes til «{{ ny.name|escapejs }}».{% endif %}');">
+            {% csrf_token %}
+            <input type="hidden" name="column" value="{{ column.pk }}">
+            <button type="submit" name="action" value="delete" class="btn btn-secondary kanban-danger">Slet</button>
+          </form>
+        {% endif %}
+      </div>
+    {% endfor %}
+  </div>
+
+  <form method="post" class="board-search mb-4">
+    {% csrf_token %}
+    <input type="text" name="name" maxlength="60" placeholder="Ny kolonne…" aria-label="Navn på ny kolonne" required>
+    <button type="submit" name="action" value="add" class="btn">Tilføj kolonne</button>
+  </form>
+
+  <h2>Funktioner</h2>
+  <p class="muted text-sm mb-2">
+    Hvilken kolonne gør hvad? «Indgående» og «Færdig» skal altid findes. Ændr funktionen her, før
+    en kolonne med en funktion kan slettes.
+  </p>
+  <form method="post" class="card-flat card-pad">
+    {% csrf_token %}
+    <input type="hidden" name="action" value="roles">
+    {% for role, label, holder in roles %}
+      <div class="mb-3">
+        <label for="role_{{ role.value }}" class="font-semibold block mb-1">{{ label }}</label>
+        <select name="role_{{ role.value }}" id="role_{{ role.value }}">
+          {% if role.value == "afventer" %}<option value="">Ingen kolonne</option>{% endif %}
+          {% for column in columns %}
+            <option value="{{ column.pk }}"{% if holder and holder.pk == column.pk %} selected{% endif %}>{{ column.name }}</option>
+          {% endfor %}
+        </select>
+      </div>
+    {% endfor %}
+    <button type="submit" class="btn">Gem funktioner</button>
+  </form>
+{% endblock %}
