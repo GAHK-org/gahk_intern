@@ -25,7 +25,7 @@ share nothing else.
 
 | Action | Who |
 | --- | --- |
-| Read, post, comment, react | every logged-in resident |
+| Read, post, comment, reply to a comment, react (to a post or a comment) | every logged-in resident |
 | Edit a post | **the author only** |
 | Delete a post | the author, or `administrator` / `inspektion` |
 | Delete a comment | the comment's author, or `administrator` / `inspektion` |
@@ -43,14 +43,15 @@ disputes Inspektionen exists to settle.
 ## Routes
 
 `/opslagstavle/` (board), `<pk>` (permalink), `opret`, `<pk>/rediger`, `<pk>/slet`,
-`<pk>/fastgoer`, `<pk>/kommentar`, `kommentar/<pk>/slet`, `<pk>/reaktion`, `forhaandsvisning`,
+`<pk>/fastgoer`, `<pk>/kommentar`, `kommentar/<pk>/slet`, `kommentar/<pk>/reaktion`, `<pk>/reaktion`, `forhaandsvisning`,
 `billede`, `abonner`, `indlejret`, `indlejr/album`, `indlejr/album/<pk>/billeder`, `indlejr/gahkflix`. `opret?album=<pk>` and
 `opret?gahkflix=<pk>` open the composer with that album or film embedded. Namespaced `opslagstavle:`.
 
 ## Data model
 
 `Notice` (author, title, category, Markdown body, `created_at`, `edited_at`, `pinned_at`,
-`pinned_by`, `event`), `NoticeComment`, `NoticeReaction`, `NoticeImage`. Category is a fixed
+`pinned_by`, `event`), `NoticeComment` (with an optional `parent`), `NoticeReaction`,
+`NoticeCommentReaction`, `NoticeImage`. Category is a fixed
 `TextChoices` set with ASCII values (they appear in `?kategori=`) and Danish labels.
 
 **Pinning is a nullable timestamp, not a boolean.** One column answers three questions: is it
@@ -193,12 +194,27 @@ push endpoint per service-worker registration, so consent is two boolean columns
 
 New post → all board subscribers except the author. New comment → **the post's author only** (a
 thread with twenty replies must not be twenty dorm-wide pushes, which is why there is no "underret
-alle" checkbox here). Reactions → nobody, ever. The notification links to the individual post.
+alle" checkbox here). A reply also tells **the comment it answers**. A reaction tells the author of
+the post or comment it is on, and only when it is new. Comment notifications link to the comment.
+
+## Comment threads
+
+- A comment can be answered with "Svar". Replies are **one level deep**: a reply to a reply joins
+  the same thread, under the top-level comment, and its box starts with an @-mention of the person
+  answered (which is also what notifies them).
+- Every comment and reply has its own reaction row, with the same one-emoji-per-person rule as posts.
+- Deleting a comment deletes its replies; the confirmation says how many.
+- A reply to a comment that was deleted meanwhile is kept as a top-level comment, with a notice.
+- The same threads, rows and rules apply to comments on begivenheder.
 
 ## Decisions and rejected alternatives
 
 Each of these is something a future contributor will reasonably want to "improve". They were
 considered and rejected on purpose.
+
+**Nested replies of any depth.** Rejected. On a phone each level of indent narrows the column, and
+deep trees make "where did my answer go" a real question. One level plus an @-mention covers
+answering a specific person, as Facebook does.
 
 **Storing rendered HTML in a `body_html` column.** Rejected. The sanitiser allowlist is security
 config and *will* change; render-on-read means a tightening applies to every existing post the

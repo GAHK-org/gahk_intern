@@ -1,0 +1,20 @@
+{% comment %}
+  Under every comment, on opslagstavlen and on an event alike: its reaction row and "Svar".
+
+  `comment` is the one this row belongs to, `thread` the top-level comment it sits in (the same one
+  for a top-level comment). Replies are one level deep (core.comment_threads), so "Svar" always opens
+  the reply box at the end of `thread` — and on a REPLY it starts that box with an @-mention of who
+  wrote it, which is how the person answered is told (core.mentions) and how a reader of the thread
+  sees who is being answered. Not on your own reply: you do not mention yourself.
+
+  The button does nothing without JavaScript (frontend/src/comments.ts shows the box). That is the
+  site's baseline already — reactions are htmx — and a reply box per comment shown at all times
+  would make every thread twice as tall.
+{% endcomment %}
+<div class="comment-actions">
+  {% include "opslagstavle/_reactions.html" with item=comment reactions=comment.reaction_rows %}
+  <button type="button" class="comment-reply-btn" data-reply-to="svar-{{ thread.pk }}"
+          {% if comment.pk != thread.pk and comment.author_id != request.user.pk %}data-reply-mention="@[{{ comment.author.full_name }}]({{ comment.author_id }}) "{% endif %}
+          aria-controls="svar-{{ thread.pk }}"
+          aria-label="Svar {{ comment.author.full_name }}">Svar</button>
+</div>

@@ -22,6 +22,7 @@ urlpatterns = [
     path("indlejr/album/<int:pk>/billeder", views.embed_album_pictures, name="embed_album_pictures"),
     path("billede", views.upload_image, name="upload_image"),
     path("kommentar/<int:pk>/slet", views.delete_comment, name="delete_comment"),
+    path("kommentar/<int:pk>/reaktion", views.toggle_comment_reaction, name="toggle_comment_reaction"),
     # What a live signal re-fetches: fragments, never pages (see views.live_cards).
     path("kort", views.live_cards, name="live_cards"),
     path("<int:pk>", views.detail, name="detail"),

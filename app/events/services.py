@@ -358,13 +358,36 @@ def notify_new_comment(comment: EventComment) -> None:
         url=_url(event),
         audience=_audience(event) | access.allowed_residents(Resident.objects.filter(pk__in=hosts)),
     )
-    hosts -= mentioned
-    hosts.discard(comment.author_id)
-    if not hosts:
-        return
     # The title always carries the event, so a photo-only comment still has something to say; the
     # glyph is what tells the reader there is a picture.
     body = push.preview(f"{event.title}: {to_plain(comment.body) or '📷 Billede'}")
+    url = comment_url(comment)
+    told = set(mentioned)
+    # A reply tells the comment it answers, host or not: "Kan man tage børn med?" was asked by a
+    # guest, and the answer is for them. Narrowed by _audience (plus the hosts, who are not on their
+    # own guest list), so somebody since uninvited is not told about a thread they cannot open.
+    parent = comment.parent
+    if (
+        parent is not None
+        and parent.author_id not in told
+        and (_audience(event) | access.allowed_residents(Resident.objects.filter(pk__in=hosts)))
+        .filter(pk=parent.author_id)
+        .exists()
+    ):
+        notifications.notify_grouped(
+            parent.author_id,
+            category=categories.EVENTS_COMMENTS,
+            group_key=f"events.comments:comment:{parent.pk}",
+            actor=comment.author,
+            verb="svarede på din kommentar",
+            body=body,
+            url=url,
+        )
+        told.add(parent.author_id)
+    hosts -= told
+    hosts.discard(comment.author_id)
+    if not hosts:
+        return
     for host_id in access.allowed_residents(Resident.objects.filter(pk__in=hosts)).values_list(
         "pk", flat=True
     ):
@@ -375,8 +398,34 @@ def notify_new_comment(comment: EventComment) -> None:
             actor=comment.author,
             verb="kommenterede",
             body=body,
-            url=_url(event),
+            url=url,
         )
+
+
+def comment_url(comment: EventComment) -> str:
+    """The event, scrolled to the comment."""
+    return f"{_url(comment.event)}#kommentar-{comment.pk}"
+
+
+def notify_comment_reaction(comment: EventComment, reactor: Resident, emoji: str) -> None:
+    """Somebody reacted to `comment`: its author only, grouped per comment, NEW reactions only —
+    the policy every reaction on the site follows (core.reactions). Only if the author can still see
+    the event: hosts always can, anyone else through _audience."""
+    event = comment.event
+    hosts = {event.organiser_id, *event.co_organisers.values_list("pk", flat=True)}
+    if comment.author_id not in hosts and not _audience(event).filter(pk=comment.author_id).exists():
+        return
+    if not access.allowed_residents(Resident.objects.filter(pk=comment.author_id)).exists():
+        return
+    notifications.notify_grouped(
+        comment.author_id,
+        category=categories.EVENTS_LIKES,
+        group_key=f"events.likes:comment:{comment.pk}",
+        actor=reactor,
+        verb="reagerede på din kommentar",
+        body=push.preview(f"{emoji} {to_plain(comment.body) or '📷 Billede'}"),
+        url=comment_url(comment),
+    )
 
 
 def events_needing_reminder(now: datetime.datetime | None = None) -> list[Event]:

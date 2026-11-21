@@ -40,6 +40,7 @@ from django.conf import settings
 from django.db import models
 from django.db.models.signals import post_delete
 from django.dispatch import receiver
+from django.urls import reverse
 
 from core.clock import current_datetime
 from core.files import delete_attached_files
@@ -389,9 +390,11 @@ class EventComment(models.Model):
         the same call reparationer.RepairComment already made. Importing that abstract base would
         also make events depend on opslagstavle at import time, which views.py goes out of its way
         to avoid (see _related_notices).
-      * **No reactions.** A reaction is a cheap way to say "seen" on a board post. Here the answer
-        panel is the way to say anything that matters, and a second, weaker signal beside it just
-        raises "does a 👍 count as tilmeldt?".
+      * **No reactions on the event itself.** A reaction is a cheap way to say "seen" on a board
+        post. Here the answer panel is the way to say anything that matters, and a second, weaker
+        signal beside it just raises "does a 👍 count as tilmeldt?". A COMMENT may carry them
+        (EventCommentReaction): a 👍 on "jeg tager kage med" answers the comment, not the
+        invitation, so nobody mistakes it for an RSVP.
       * **No retention of its own.** CASCADE from the event, which is deleted a week after it is
         held. That is not an oversight to fix later: the module docstring commits to there being no
         record of what happened, and a comment thread outliving its event would be exactly the
@@ -405,9 +408,20 @@ class EventComment(models.Model):
     `body` is blank-able because the photo can be the whole comment; a row with NEITHER is what the
     view refuses (see views.create_comment), because only the view knows whether the attached file
     survived validation.
+
+    Replies are one level deep, as on opslagstavlen (see NoticeComment): `parent` is a top-level
+    comment or nothing, and deleting a comment takes its replies with it.
     """
 
     event = models.ForeignKey(Event, on_delete=models.CASCADE, related_name="comments")
+    parent = models.ForeignKey(
+        "self",
+        null=True,
+        blank=True,
+        on_delete=models.CASCADE,
+        related_name="replies",
+        verbose_name="Svar på",
+    )
     author = models.ForeignKey(
         settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="event_comments"
     )
@@ -432,6 +446,40 @@ class EventComment(models.Model):
 
     def __str__(self) -> str:
         return f"Kommentar af {self.author} på #{self.event_id}"
+
+    # What the shared reaction row (opslagstavle/_reactions.html) needs: see opslagstavle's Notice.
+    @property
+    def reaction_key(self) -> str:
+        return f"kommentar-{self.pk}"
+
+    @property
+    def reaction_url(self) -> str:
+        return reverse("events:toggle_comment_reaction", args=[self.pk])
+
+
+class EventCommentReaction(models.Model):
+    """One emoji one resident put on one comment. Same toggle and constraint as every other
+    reaction table (core.reactions); CASCADE from the comment, so it goes with the event."""
+
+    comment = models.ForeignKey(EventComment, on_delete=models.CASCADE, related_name="reactions")
+    author = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="event_comment_reactions"
+    )
+    emoji = models.CharField(max_length=32)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["created_at"]
+        verbose_name = "Reaktion på kommentar"
+        verbose_name_plural = "Reaktioner på kommentarer"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["comment", "author"], name="uniq_event_comment_reaction_per_author"
+            )
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.emoji} af {self.author}"
 
 
 class CalendarFeedToken(models.Model):

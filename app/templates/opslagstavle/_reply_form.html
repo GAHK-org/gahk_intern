@@ -1,0 +1,32 @@
+{% comment %}
+  The reply box at the end of one thread, hidden until a "Svar" in it is pressed
+  (frontend/src/comments.ts). `thread` is the top-level comment, `action` the app's create_comment
+  URL: a reply is an ordinary comment with a `parent`, posted to the same view, so the photo, the
+  empty check and the notifications are the comment's own.
+
+  data-morph-skip for the reason the main comment form carries it: a live re-draw must not wipe a
+  half-written answer, or hide a box the reader just opened. The id is what idiomorph matches it by.
+  enctype is load-bearing; see the main comment form.
+{% endcomment %}
+<form method="post" enctype="multipart/form-data" data-morph-skip hidden
+      id="svar-{{ thread.pk }}" action="{{ action }}" class="comment-form comment-reply-form">
+  {% csrf_token %}
+  <input type="hidden" name="parent" value="{{ thread.pk }}">
+  <label class="sr-only" for="id_reply_body_{{ thread.pk }}">Svar til {{ thread.author.full_name }}</label>
+  <textarea id="id_reply_body_{{ thread.pk }}" name="body" rows="2" maxlength="{{ max_comment_chars }}"
+            placeholder="Skriv et svar…" data-mentionable></textarea>
+  <div class="file-note" data-file-note hidden>
+    <img data-file-note-thumb alt="" hidden>
+    <span data-file-note-name></span>
+    <button type="button" data-file-note-clear>Fjern</button>
+  </div>
+  <div class="comment-reply-bar">
+    <label class="reply-attach" for="id_reply_image_{{ thread.pk }}" title="Vedhæft billede">
+      <span aria-hidden="true">📎</span>
+      <span class="sr-only">Vedhæft billede til svaret</span>
+      <input type="file" id="id_reply_image_{{ thread.pk }}" name="image" accept="image/*,.heic,.heif">
+    </label>
+    <button type="button" class="btn btn-secondary" data-reply-cancel>Annullér</button>
+    <button type="submit" class="btn">Svar</button>
+  </div>
+</form>

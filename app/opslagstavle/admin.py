@@ -6,7 +6,8 @@ from .models import Notice, NoticeComment, NoticeImage, NoticeReaction
 class NoticeCommentInline(admin.TabularInline):
     model = NoticeComment
     extra = 0
-    readonly_fields = ("author", "created_at")
+    # `parent` read-only: as a select it would list every comment on the board, per row.
+    readonly_fields = ("author", "parent", "created_at")
 
 
 @admin.register(Notice)
@@ -20,8 +21,8 @@ class NoticeAdmin(admin.ModelAdmin):
 
 @admin.register(NoticeComment)
 class NoticeCommentAdmin(admin.ModelAdmin):
-    list_display = ("author", "notice", "created_at")
-    readonly_fields = ("created_at",)
+    list_display = ("author", "notice", "parent", "created_at")
+    readonly_fields = ("parent", "created_at")
 
 
 @admin.register(NoticeImage)

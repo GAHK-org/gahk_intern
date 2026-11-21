@@ -16,6 +16,7 @@ from django import forms
 from django.conf import settings
 
 from core.clock import current_datetime
+from core.emoji import is_emoji, is_only_one_emoji, normalize_emoji
 from core.uploads import validate_image_upload
 from residents.models import Residency, Resident, active_period
 
@@ -266,3 +267,21 @@ class EventCommentForm(forms.ModelForm):
 
     def clean_body(self) -> str:
         return (self.cleaned_data.get("body") or "").strip()
+
+
+class ReactionForm(forms.Form):
+    """Exactly one emoji, for a reaction on a comment. opslagstavle.forms.ReactionForm's twin: this
+    app does not import opslagstavle at module level (see views._related_notices), and the grammar
+    itself lives in core.emoji, so only the wording is repeated."""
+
+    emoji = forms.CharField(max_length=32)
+
+    def clean_emoji(self) -> str:
+        value = normalize_emoji(self.cleaned_data["emoji"])
+        if not value:
+            raise forms.ValidationError("Vælg en emoji.")
+        if not is_only_one_emoji(value):
+            raise forms.ValidationError("Kun emoji kan bruges som reaktion.")
+        if not is_emoji(value):
+            raise forms.ValidationError("Vælg kun én emoji.")
+        return value

@@ -23,6 +23,7 @@ urlpatterns = [
     # Keyed on the COMMENT's pk, not the event's, so it belongs with the fixed segments up here
     # rather than nested under <int:pk> (mirrors reparationer/urls.py).
     path("kommentar/<int:pk>/slet", views.delete_comment, name="delete_comment"),
+    path("kommentar/<int:pk>/reaktion", views.toggle_comment_reaction, name="toggle_comment_reaction"),
     path("<int:pk>", views.detail, name="detail"),
     path("<int:pk>/rediger", views.edit, name="edit"),
     path("<int:pk>/indhold", views.live_detail, name="live_detail"),  # what a live signal re-reads

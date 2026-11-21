@@ -204,7 +204,7 @@ def test_a_non_admin_cannot_preview_as_the_kitchen(beboer: Resident) -> None:
 
 def test_its_settings_list_only_what_it_can_be_sent(kitchen: Resident) -> None:
     html = _client(kitchen).get("/notifikationer/indstillinger").content.decode()
-    assert "Køkkenet" in html and "Kommentarer på dine opslag" in html and "Generelle beskeder" in html
+    assert "Køkkenet" in html and "Kommentarer og svar" in html and "Generelle beskeder" in html
     assert "TV-Rezz" not in html and "Nye opslag" not in html and "Nye begivenheder" not in html
 
 
