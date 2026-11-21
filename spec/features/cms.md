@@ -119,6 +119,12 @@ working when intern or the image storage is down; editing needs intern.
   "Opdatér gahk.dk nu" (administrators only). An update that takes longer than the request waits
   goes on by itself on gahk.dk; how it ended, an error included, shows after the next sync.
 
+## Development seed data
+
+- A demo database's change log shows five weeks of made-up editing: every type and person its
+  filters offer, text changes, a rename, a restore, and a fix made outside the editor. The newest
+  save is a few hours old, so an editor has a recent "saved by" to show.
+
 ## Decisions
 
 - **Edited on intern, shown by gahk.dk.** gahk.dk has no login and no access to intern's database or

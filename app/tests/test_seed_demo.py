@@ -1,9 +1,12 @@
 """Smoke test for the seed_demo dev fixture command: it should run, be idempotent, and produce
 data that lights up the app's real queries (active period, roles, derived ølkælder balances)."""
 
+from typing import Any
+
 import pytest
 from django.core.management import call_command
 
+from audit.models import AuditEvent
 from den_hurtige.models import QuickPost
 from oelkaelder.models import Shopper
 from residents.models import Resident, active_period
@@ -19,11 +22,14 @@ def test_seed_demo_populates_and_is_idempotent() -> None:
     # without leaving the alumneliste a person short.
     first_count = Resident.objects.count()
     assert first_count == 13
+    first_trail = AuditEvent.objects.count()
 
     # Re-running with --fresh must not duplicate or raise (idempotent).
     # --force because Django's test runner forces DEBUG=False, which the safety guard blocks.
     call_command("seed_demo", "--fresh", "--force", "--residents", "12", verbosity=0)
     assert Resident.objects.count() == first_count
+    # The append-only trail too: emptied and written again, not doubled.
+    assert AuditEvent.objects.count() == first_trail
 
     # active_period follows the seeded current-month residencies.
     year, month = active_period()
@@ -142,3 +148,137 @@ def test_seed_demo_gives_the_logins_notifications_in_every_state() -> None:
 
     call_command("seed_demo", "--fresh", "--force", "--residents", "12", verbosity=0)  # still idempotent
     assert Notification.objects.filter(recipient__email="beboer@gahk.dk").count() == 7
+
+
+@pytest.mark.django_db
+def test_seed_demo_writes_weeks_of_audit_history(settings: Any) -> None:  # noqa: ANN401
+    """The rest of the seed is unaudited (loading demo data is nobody's action), so without its own
+    step the audit page would be empty on a fresh checkout. The step writes the weeks before today:
+    every kind of line the page shows, by different people from different addresses, with before and
+    after values that are true because the history ends at the seeded data."""
+    from datetime import timedelta
+
+    from django.test import Client
+    from django.utils import timezone
+
+    from residents.models import Role, RoleAssignment
+
+    settings.AUDIT_FALLBACK = True  # as outside the tests, so the shell fix is recorded (as System)
+    call_command("seed_demo", "--fresh", "--force", "--residents", "12", verbosity=0)
+    events = AuditEvent.objects.all()
+
+    assert {
+        "auth.login",
+        "auth.login.failed",
+        "auth.logout",
+        "auth.password.changed",
+        "auth.password_reset.requested",
+        "auth.password_reset.completed",
+        "auth.access.denied",
+        "residents.role.added",
+        "residents.role.removed",
+        "residents.admin_access.approved",
+        "residents.admin_access.denied",
+        "residents.resident.updated",
+        "residents.profile.updated",
+        "residents.month_list.saved",
+        "residents.month_list.added",
+        "residents.preview.set",
+        "residents.preview.cleared",
+        "rooms.round.ended",
+        "regnskab.account_number.updated",
+    } <= set(events.values_list("action", flat=True))
+    failed = events.filter(action="auth.login.failed")
+    assert {e.details["reason"] for e in failed} == {"wrong password", "no account"}
+    assert failed.filter(details__email="'form\\xe5nd@gahk.dk'").exists(), "the typed å, as ascii() shows it"
+    # "Uden handling" both ways: the Django admin (whoever was logged in) and a shell (nobody).
+    assert events.filter(unclaimed=True, source="web", actor_name="Admin Istrator").exists()
+    assert events.filter(unclaimed=True, source="system", actor=None).exists()
+
+    # Spread out like a real trail: people, addresses (an IPv6 one too), weeks; never in the future.
+    now = timezone.now()
+    assert events.exclude(actor=None).values("actor").distinct().count() >= 8
+    addresses = set(events.exclude(ip=None).values_list("ip", flat=True))
+    assert len(addresses) >= 4 and any(":" in ip for ip in addresses)
+    assert events.order_by("at").first().at < now - timedelta(days=21)
+    assert not events.filter(at__gt=now).exists()
+    # The page lists by id, so the history was written in time order.
+    times = list(events.order_by("id").values_list("at", flat=True))
+    assert times == sorted(times)
+
+    # The history ends at the seeded data: the two administrators it approved and refused lost the
+    # role again, and the passwords it changed are still the documented one.
+    assert set(
+        RoleAssignment.objects.filter(role=Role.ADMINISTRATOR).values_list("resident__email", flat=True)
+    ) == {"formand@gahk.dk"}
+    for email in ("ak@gahk.dk", "oel@gahk.dk"):
+        assert Resident.objects.get(email=email).check_password("demo1234")
+
+    client = Client()
+    client.force_login(Resident.objects.get(email="formand@gahk.dk"))
+    page = client.get("/admin/audit").content.decode()
+    assert "Ældre" in page, "more than one page of history"
+    assert "mislykket login" in page
+    assert "Uden handling" in client.get("/admin/audit?unclaimed=1").content.decode()
+
+
+@pytest.mark.django_db
+def test_seed_demo_gives_the_hjemmeside_change_log_weeks_of_edits(settings: Any) -> None:  # noqa: ANN401
+    """The content is seeded unaudited, so the change log needs its own history: every type and
+    person its filters offer, text diffs, a rename, a restore, and a change made outside the editor."""
+    from datetime import timedelta
+
+    from django.test import Client
+    from django.urls import reverse
+    from django.utils import timezone
+
+    from audit.models import AuditEntity
+    from cms.models import Page, PageVersion
+    from cms.views import LOG_KINDS
+
+    settings.AUDIT_FALLBACK = True  # as outside the tests, so the shell fix is recorded (as System)
+    call_command("seed_demo", "--fresh", "--force", "--residents", "12", verbosity=0)
+    cms_events = AuditEvent.objects.filter(
+        pk__in=AuditEntity.objects.filter(kind__startswith="cms.").values("event_id")
+    )
+
+    for key, (_label, kinds) in LOG_KINDS.items():
+        assert AuditEntity.objects.filter(kind__in=kinds).exists(), f"nothing for the {key} filter"
+    assert {
+        "cms.page.created",
+        "cms.page.updated",
+        "cms.page.restored",
+        "cms.news.created",
+        "cms.news.deleted",
+        "cms.event.created",
+        "cms.event.updated",
+        "cms.event.deleted",
+        "cms.image.uploaded",
+        "cms.image.updated",
+        "cms.menu.updated",
+        "cms.redirect.created",
+        "cms.settings.updated",
+        "cms.site.published",
+        "cms.site.update_requested",
+    } <= set(cms_events.values_list("action", flat=True))
+    assert cms_events.exclude(actor=None).values("actor").distinct().count() >= 3
+    assert cms_events.filter(actor=None, unclaimed=True, source="system").exists(), (
+        "System, outside the editor"
+    )
+    assert "version_from" in cms_events.get(action="cms.page.restored").details
+
+    # The editor's bookkeeping is dated with the trail: versions weeks old, and the newest save hours
+    # old, so a page's editor has a recent "saved by" to show.
+    now = timezone.now()
+    assert PageVersion.objects.filter(created_at__lt=now - timedelta(days=7)).exists()
+    newest = cms_events.filter(action="cms.page.updated").order_by("-at").first()
+    assert now - timedelta(days=1) < newest.at < now
+    assert Page.objects.get(slug="arkiv/gamle-sider").redirects.filter(old_path="arkiv/gammel-side").exists()
+
+    client = Client()
+    client.force_login(Resident.objects.get(email="formand@gahk.dk"))
+    log = reverse("cms:change_log")
+    page = client.get(log).content.decode()
+    assert "Gendannede siden" in page and "Uden for editoren" in page
+    assert "Ændrede menuen" in client.get(f"{log}?type=menu").content.decode()
+    assert "Rettede nyheden" in client.get(f"{log}?person=system").content.decode()
