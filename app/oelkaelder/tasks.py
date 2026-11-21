@@ -7,6 +7,8 @@ from django.db.models import Sum
 from django.utils import timezone
 from django.utils.formats import date_format
 
+from core import mail as outbox
+
 from .models import Shopper
 
 
@@ -75,10 +77,11 @@ def send_monthly_statements() -> int:
                 f"Saldo ved månedens udgang: {_kr(_balance_at(shopper, upper))} kr",
             ]
         )
-        sent += send_mail(
-            f"Ølkælderoversigt for {_month_name(start)}",
-            body,
-            settings.OELKAELDER_FROM_EMAIL,
-            [shopper.resident.email],
-        )
+        with outbox.kind(outbox.Kind.BULK):  # one to every shopper: last, within MAIL_RATE_LIMIT
+            sent += send_mail(
+                f"Ølkælderoversigt for {_month_name(start)}",
+                body,
+                settings.OELKAELDER_FROM_EMAIL,
+                [shopper.resident.email],
+            )
     return sent
