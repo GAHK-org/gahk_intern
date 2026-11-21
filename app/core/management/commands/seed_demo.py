@@ -37,6 +37,7 @@ from ak.models import AkEntry, AkMonthlyCharge
 from ak.services import apply_monthly_charge
 from arkiv.demo import seed as seed_arkiv
 from arkiv.models import ArchiveFile, ArchiveFolder
+from calendar_feed.demo import seed as seed_calendar_feed
 from calendar_feed.models import CalendarSubscription
 from cms.models import ContentChange, NewsItem, Page, PageVersion, PylonEvent
 
@@ -238,6 +239,7 @@ class Command(BaseCommand):
             self._seed_stats()
             seed_opslagstavle(residents, self.now, self.rng)
             seed_events(residents, self.now, self.rng)
+            seed_calendar_feed(residents, self.now, self.rng)
             seed_arkiv(residents, self.now, self.rng)
             seed_photo_album(residents, self.now, self.rng)
             seed_gahkflix(residents, self.now, self.rng)
