@@ -1,10 +1,11 @@
 """Startup validation of configuration whose mistakes have no server-side symptom.
 
-Two unrelated subjects share this module, and what they have in common is the only thing that
-matters: get either wrong and Django starts, pages render, and nothing is logged.
+Unrelated subjects share this module, and what they have in common is the only thing that matters:
+get any wrong and Django starts, pages render, and nothing is logged.
 
   E001-E006  the VAPID key pair (Web Push)
   E007-E009  the media URL/prefix invariants (see the second block, and core/storage.py)
+  W001       the mail outbox bypassed (the last block, and core/mail.py)
 
 VAPID lives in core because the keys are shared by every feature that pushes (Den Hurtige and
 opslagstavlen), not owned by whichever one shipped first. The check IDs moved with it:
@@ -38,7 +39,7 @@ from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import ec
 from django.apps.config import AppConfig
 from django.conf import settings
-from django.core.checks import CheckMessage, Error
+from django.core.checks import CheckMessage, Error, Warning
 
 # An uncompressed P-256 point: the 0x04 tag byte followed by the 32-byte X and Y coordinates. This
 # is what the browser wants as `applicationServerKey` - NOT the SPKI PEM openssl writes by default.
@@ -239,5 +240,27 @@ def check_media_storage_prefix(
             hint='Set "location": "media" in STORAGES["default"]["OPTIONS"], or omit the key and '
             "let core.storage.MediaS3Storage default it.",
             id="core.E009",
+        )
+    ]
+
+
+# --- The mail outbox (core.W001) ---------------------------------------------------------------------
+
+OUTBOX_BACKEND = "core.mail.OutboxBackend"
+
+
+def check_mail_outbox(app_configs: Sequence[AppConfig] | None, **kwargs: object) -> list[CheckMessage]:
+    """Every mail goes through core.mail's outbox because the SETTING EMAIL_BACKEND is the outbox (the
+    env var of that name sets MAIL_DELIVERY_BACKEND behind it — see config/settings.py). Anything that
+    replaces the setting sends straight past the queue: no rate limit, no retries, nothing in the mail
+    list. A warning, not an error: tests and one-off scripts may mean to."""
+    if settings.EMAIL_BACKEND == OUTBOX_BACKEND:
+        return []
+    return [
+        Warning(
+            f"EMAIL_BACKEND is {settings.EMAIL_BACKEND!r}, so mail bypasses the outbox (core.mail).",
+            hint="Set where mail goes with MAIL_DELIVERY_BACKEND (the EMAIL_BACKEND env var), and leave "
+            f"the EMAIL_BACKEND setting at {OUTBOX_BACKEND!r}.",
+            id="core.W001",
         )
     ]
