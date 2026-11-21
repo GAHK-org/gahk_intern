@@ -33,19 +33,43 @@
   --shadow-sm:0 1px 2px rgba(24,40,30,.06);
 }
 
-/* Element defaults so existing templates (bare <button>/<input>/<table>) look right without rewrites. */
+/* Element defaults. Tailwind's reset strips the browser's own look from links, buttons, form controls,
+   headings and table cells; what a template leaves bare gets its look back here. Buttons are the
+   exception: a bare <button> stays unstyled (toolbars, menus and close crosses build on that), so an
+   action button carries .btn. Anything in a later layer — the components below, utilities — wins. */
 @layer base {
+  :root { accent-color: var(--green); }  /* checkboxes, radios, range, progress: house green, not browser blue */
   body { font-family: "Ubuntu", system-ui, "Segoe UI", Roboto, sans-serif; background: var(--paper); color: var(--ink); }
   h1 { @apply text-2xl font-bold my-3; letter-spacing:-.01em; text-wrap:balance; }
   h2 { @apply text-lg font-semibold my-2; }
-  h3 { text-wrap:balance; }
+  h3 { font-weight:600; text-wrap:balance; }
   label { @apply block font-semibold mt-3 mb-1; }
-  input[type=text], input[type=email], input[type=password], input[type=search],
-  input[type=number], input[type=date], textarea, select {
+  /* A checkbox or radio inside its own label (Django's RadioSelect, "Fremhævet" and the like): one
+     option on a line, not a bold block heading. */
+  label:not([class]):has(> input:is([type=checkbox], [type=radio])) { display:flex; align-items:center; gap:8px; font-weight:400; margin:4px 0; }
+  input:not([type]), input[type=text], input[type=email], input[type=password], input[type=search],
+  input[type=number], input[type=date], input[type=datetime-local], input[type=time], input[type=month],
+  input[type=week], input[type=url], input[type=tel], textarea, select {
     @apply w-full rounded-md p-2;
     border:1px solid var(--border-strong); background:var(--surface); color:var(--ink);
   }
   input:focus, textarea:focus, select:focus { outline:2px solid var(--green); outline-offset:1px; border-color:var(--green); }
+  /* The file picker's own button, drawn like .btn-secondary rather than as bare "Choose File" text. */
+  input[type=file] { max-width:100%; font-size:14px; color:var(--muted); }
+  input[type=file]::file-selector-button { margin-right:10px; padding:7px 13px; border:1px solid var(--border-strong);
+    border-radius:var(--radius-sm); background:var(--surface); color:var(--ink); font:inherit; font-weight:600; cursor:pointer; }
+  input[type=file]::file-selector-button:hover { background:var(--surface-2); border-color:var(--faint); }
+  /* The reset gives buttons the arrow cursor (Tailwind v4); everything clickable gets the hand. */
+  button:not(:disabled), [role=button]:not([aria-disabled=true]), summary, select:not(:disabled),
+  input:is([type=checkbox], [type=radio], [type=submit], [type=button], [type=reset]):not(:disabled) { cursor:pointer; }
+  /* A link with no class of its own is a link in running text: green and underlined, since the house
+     green is too close to the ink to tell apart by colour alone. Classed links (cards, menus, chips)
+     are styled by their class. */
+  a:not([class]) { color:var(--green-700); text-decoration:underline; text-decoration-color:color-mix(in srgb, currentColor 40%, transparent); text-underline-offset:2px; }
+  a:not([class]):hover { color:var(--green); text-decoration-color:currentColor; }
+  /* Templates ask for room with cellpadding="6", which the reset's padding:0 overrides; this is that
+     room, with a little more between columns. Tables with their own class (.zebra etc.) set theirs. */
+  th, td { padding:6px 10px; }
   th { @apply text-left; }
 }
 
@@ -135,6 +159,8 @@
   .content { padding:26px 30px 48px; }
   .page-head { display:flex; align-items:flex-end; justify-content:space-between; gap:16px; margin-bottom:18px; }
   .eyebrow { font-size:11px; font-weight:700; letter-spacing:.15em; text-transform:uppercase; color:var(--brass); }
+  .eyebrow a { color:inherit; text-decoration:none; }  /* a breadcrumb back up ("Sider", "Notifikationer") */
+  .eyebrow a:hover { text-decoration:underline; }
   .page-head h1 { font-size:26px; font-weight:750; margin:4px 0 0; }
   .head-actions { display:flex; gap:10px; flex-wrap:wrap; }
 
@@ -147,7 +173,8 @@
   .card-flat { background:var(--surface); border:1px solid var(--border); border-radius:var(--radius); box-shadow:var(--shadow); overflow:hidden; }
   .card-head { display:flex; align-items:center; justify-content:space-between; gap:10px; padding:14px 18px; border-bottom:1px solid var(--border); }
   .card-head h2 { font-size:15px; font-weight:700; margin:0; }
-  .card-head a { font-size:13px; font-weight:600; color:var(--green-700); }
+  .card-head a { font-size:13px; font-weight:600; color:var(--green-700); text-decoration:none; }
+  .card-head a:hover { text-decoration:underline; }
   .card-pad { padding:16px 18px; }
   .quick { display:flex; flex-direction:column; gap:8px; }
   .quick a { display:flex; align-items:center; gap:11px; border:1px solid var(--border); border-radius:9px; padding:11px 13px; font-weight:600; font-size:14px; background:var(--surface-2); text-decoration:none; color:var(--ink); }
@@ -2157,6 +2184,7 @@
    }
    .album-folder { border-top:1px solid var(--border); padding-top:16px; }
    .album-folder h2 { display:flex; align-items:center; gap:8px; margin:0 0 12px; font-size:16px; }
+   .album-folder h2 a { color:inherit; text-decoration:none; }.album-folder h2 a:hover { text-decoration:underline; }
    .album-folder h2 svg, .album-subtitle svg { width:19px; height:19px; color:var(--brass); fill:none; stroke:currentColor; }
    .album-folder-grid { display:grid; grid-template-columns:repeat(auto-fill, minmax(min(100%, 150px), 1fr)); gap:14px; }
    /* Cover on top, name below: every card in a row is the same height whatever the album is called.
@@ -2634,6 +2662,8 @@
   .jobs-meter > span { display:block; height:100%; border-radius:2px; background:var(--green); }
   .jobs-meter.is-near { background:var(--warn-bg); }
   .jobs-meter.is-near > span { background:var(--brass); }
+  .jobs-progress { height:8px; margin-top:10px; border-radius:4px; background:var(--green-100); overflow:hidden; }
+  .jobs-progress > span { display:block; height:100%; border-radius:4px; background:var(--green); transition:width .4s ease; }
   .jobs-stale { padding:11px 18px; border-bottom:1px solid var(--border); background:var(--neg-bg); font-size:13px; }
   .jobs-stale a { font-weight:600; color:var(--neg); }
 
@@ -2718,6 +2748,7 @@
   .jobs-facts dd { margin:2px 0 0; }
   .jobs-pre { margin:0; padding:14px 18px; overflow-x:auto; font-size:12.5px; line-height:1.5; }
   .jobs-log td { padding:6px 14px; }
+  .jobs-log td:first-child { white-space:nowrap; }
   .jobs-log .jobs-message { white-space:pre-wrap; overflow-wrap:anywhere; }
   .jobs-log tr.is-warning td { background:var(--warn-bg); }
   .jobs-log tr.is-error td, .jobs-log tr.is-critical td { background:var(--neg-bg); }

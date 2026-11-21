@@ -43,7 +43,8 @@ from cms.models import CmsImage, ContentChange, NewsItem, Page, PageVersion, Pyl
 # CmsEvent, never Event: the internal events app has one of the same name, and both are seeded
 # here. See events.models on the three-way collision.
 from cms.models import Event as CmsEvent
-from core.models import Cleaning, Room, Workgroup
+from core.demo import seed as seed_mail
+from core.models import Cleaning, OutgoingMail, Room, Workgroup
 from den_hurtige.demo import seed as seed_den_hurtige
 from den_hurtige.models import QuickComment, QuickPost, QuickReaction
 from events.demo import seed as seed_events
@@ -177,6 +178,8 @@ WIPE_ORDER: list[type[models.Model]] = [
     # Resident row was deleted.
     EconomicLedgerEntry,
     AlumneregningSend,
+    # The demo outbox (core.demo). After AlumneregningSend, whose mail it would otherwise only null.
+    OutgoingMail,
     Resident,
     # Before Workgroup: ArchiveFolder references it with PROTECT (a SET_NULL would silently turn a
     # gated folder into a world-readable one), so the archive has to go first or --fresh cannot run.
@@ -250,6 +253,8 @@ class Command(BaseCommand):
             seed_den_hurtige(residents, self.now, self.rng)
             # Last: its rows link to the events, opslag and Den Hurtige posts seeded above.
             seed_notifications(residents, self.now, self.rng)
+            # After the ølkælder and admissions: its mails are theirs (core.demo).
+            seed_mail(residents, self.now, self.rng)
 
         self._report(residents)
 
@@ -776,7 +781,8 @@ class Command(BaseCommand):
                 f"\nSeeded demo data: {len(residents)} residents, "
                 f"{Residency.objects.count()} residencies, {AkEntry.objects.count()} AK entries, "
                 f"{Event.objects.count()} begivenheder, {Notification.objects.count()} notifikationer, "
-                f"{Transaction.objects.count()} ølkælder purchases, {Application.objects.count()} applications."
+                f"{Transaction.objects.count()} ølkælder purchases, {Application.objects.count()} applications, "
+                f"{OutgoingMail.objects.count()} mails in the outbox."
             )
         )
         self.stdout.write(f"\nDev logins (password: {DEMO_PASSWORD}):")

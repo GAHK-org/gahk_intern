@@ -10,7 +10,7 @@
     <div class="head-actions">
       {% if unseen %}
         <form method="post" action="{% url 'notifications:mark_all_seen' %}">
-          {% csrf_token %}<button type="submit" class="btn-secondary">Markér alle som læst</button>
+          {% csrf_token %}<button type="submit" class="btn btn-secondary">Markér alle som læst</button>
         </form>
       {% endif %}
       <a class="btn notif-head-link" href="{% url 'notifications:preferences' %}"><svg><use href="#i-gear"></use></svg>Indstillinger</a>
