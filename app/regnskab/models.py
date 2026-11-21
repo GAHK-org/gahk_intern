@@ -93,11 +93,17 @@ class AlumneregningSend(models.Model):
     resident = models.ForeignKey(Resident, on_delete=models.PROTECT, related_name="alumneregning_sends")
     date_from = models.DateField()
     date_to = models.DateField()
+    # "sent": the statement was made and its mail queued (core.mail) — `mail` says whether it has gone
+    # out yet. Written in the same transaction as the mail, so of two runs of a period only one bills.
     outcome = models.CharField(max_length=10, choices=[("sent", "Sendt"), ("failed", "Fejlede")])
     # TextField, not CharField: this can hold a raw e-conomic error body (see
     # regnskab.economic._error_for_status), whose length is outside our control.
     detail = models.TextField(blank=True)
     sent_at = models.DateTimeField(auto_now=True)
+    # None when not mailed through the outbox: a failure, or ALUMNEREGNING_SEND_MAIL off.
+    mail = models.ForeignKey(
+        "core.OutgoingMail", null=True, blank=True, on_delete=models.SET_NULL, related_name="+"
+    )
 
     class Meta:
         ordering = ["resident__first_name", "resident__last_name"]

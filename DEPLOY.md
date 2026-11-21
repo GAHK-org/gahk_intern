@@ -58,7 +58,8 @@ GAHK_WEB_KEY=<64 random chars>                     # = [sync] key in gahk.dk's c
 # EDITOR_HINT_COOKIE_DOMAIN=.gahk.dk                # default; the "gahk_editor" hint cookie for gahk.dk's "Rediger siden"
 DATABASE_URL=postgres://gahk:<pw>@postgres:5432/gahk
 SMTP_HOST=send.one.com  SMTP_USER=…  SMTP_PASSWORD=…  SMTP_PORT=587
-EMAIL_BACKEND=django.core.mail.backends.smtp.EmailBackend
+EMAIL_BACKEND=django.core.mail.backends.smtp.EmailBackend   # what core.mail's queue delivers through — see below
+MAIL_RATE_LIMIT=10                                # optional: bulk (alumneregninger, ølkælder) mails per 5 minutes; other mail is never held; one.com blocks at ~25
 DEFAULT_FROM_EMAIL=autosvar@gahk.dk               # ⚠ must be an alias of SMTP_USER — see below
 OELKAELDER_FROM_EMAIL=bierkeller@gahk.dk          # ⚠ second sender, same requirement
 WIFI_PASSWORD=…  GOOGLE_CALENDAR_USER=…  GOOGLE_CALENDAR_PASSWORD=…
@@ -103,13 +104,14 @@ From address that account is not itself or an alias of:
 inside the running container — this is the only way to confirm, since MX stays on one.com (§7) and
 the app relays through their smarthost, so existing SPF/DKIM for gahk.dk covers it with no new DNS:
 ```
-python manage.py sendtestemail you@example.com                       # exercises DEFAULT_FROM_EMAIL
-DEFAULT_FROM_EMAIL=$OELKAELDER_FROM_EMAIL python manage.py sendtestemail you@example.com
+python manage.py check_mail_server you@example.com                              # DEFAULT_FROM_EMAIL
+python manage.py check_mail_server you@example.com --from "$OELKAELDER_FROM_EMAIL"
 ```
-Exit 0 = delivered. A failure here is otherwise near-invisible in the UI: the mails are best-effort
-so the app keeps working, and only the server log records the rejection. The one exception is
-password reset — Django's built-in view does not suppress errors, so a bad `DEFAULT_FROM_EMAIL`
-turns "glemt kodeord" into a 500 for the resident.
+`check_mail_server` sends straight through the real backend, past the app's mail queue, and fails with
+the server's answer; no error = the server accepted it. (`sendtestemail` would only queue the mail:
+every mail goes through `core.mail`'s outbox.) In running use, a refused mail fails the
+`core.tasks.deliver_mail` job on the worker-jobs page and is listed under "Outgoing mails" in Django
+admin, where it can be sent again once the cause is fixed.
 
 ## 3. CI (GitHub Actions — `.github/workflows/ci.yml`) **[you: create the repo]**
 Fresh repo (do **not** import the legacy history — it contains plaintext secrets, scope §5). Jobs:
