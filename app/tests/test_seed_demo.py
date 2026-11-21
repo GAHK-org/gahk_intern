@@ -282,3 +282,55 @@ def test_seed_demo_gives_the_hjemmeside_change_log_weeks_of_edits(settings: Any)
     assert "Gendannede siden" in page and "Uden for editoren" in page
     assert "Ændrede menuen" in client.get(f"{log}?type=menu").content.decode()
     assert "Rettede nyheden" in client.get(f"{log}?person=system").content.decode()
+
+
+@pytest.mark.django_db
+def test_seed_demo_gives_the_films_their_history_weeks_ago() -> None:
+    """The films are made in the demo's history, so each has its own history page from its upload on,
+    dated weeks ago rather than at seeding, and the trail tells the same story: upload, the worker's
+    encode, pictures and details, publishing, and around them a series edit, an open proposal, the
+    bin and back, and an upload the worker refused and its uploader deleted."""
+    from datetime import timedelta
+
+    from django.test import Client
+    from django.urls import reverse
+    from django.utils import timezone
+
+    from gahkflix.models import ChangeRequest, Video, VideoEvent
+
+    call_command("seed_demo", "--fresh", "--force", "--residents", "12", verbosity=0)
+    now = timezone.now()
+
+    assert Video.objects.published().count() == 4
+    revy = Video.objects.get(title="Revy")
+    kinds = list(revy.events.order_by("created_at", "pk").values_list("kind", flat=True))
+    assert kinds[:2] == [VideoEvent.Kind.UPLOADED, VideoEvent.Kind.PROCESSED]
+    assert VideoEvent.Kind.PUBLISHED in kinds
+    assert revy.created_at < now - timedelta(days=40)
+    assert not revy.events.filter(created_at__gt=now - timedelta(days=40)).exists(), "dated with the film"
+    assert ChangeRequest.objects.filter(video=revy, state=ChangeRequest.State.OPEN).exists()
+    assert not Video.objects.get(title="Julefrokost").is_binned, "binned and brought back"
+    assert not Video.objects.filter(title="oelsmagning").exists(), "the refused draft was deleted"
+
+    events = AuditEvent.objects.filter(action__startswith="gahkflix.")
+    assert {
+        "gahkflix.series.created",
+        "gahkflix.series.edited",
+        "gahkflix.video.uploaded",
+        "gahkflix.video.processed",
+        "gahkflix.video.failed",
+        "gahkflix.video.edited",
+        "gahkflix.video.published",
+        "gahkflix.video.binned",
+        "gahkflix.video.restored",
+        "gahkflix.video.deleted",
+        "gahkflix.change.proposed",
+    } <= set(events.values_list("action", flat=True))
+    assert events.filter(source="worker", actor=None).exists()
+    published = events.get(action="gahkflix.video.published", entities__name="Revy")
+    assert abs(published.at - revy.published_at) < timedelta(seconds=1), "the trail and the film agree"
+
+    client = Client()
+    client.force_login(Resident.objects.get(email="admin@gahk.dk"))
+    page = client.get(reverse("gahkflix:history", args=[revy.pk])).content.decode()
+    assert "før GAHKFlix begyndte at gemme historik" not in page
