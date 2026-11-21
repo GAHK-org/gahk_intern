@@ -140,18 +140,18 @@ class _Seeder:
     def move(self, file: File, destination: Folder, by: Resident, when: datetime) -> None:
         viewer = self.viewer(by, when)
         with _at(when):
-            operations.move(viewer, operations.select(file.folder, [file.pk], []), destination, by)
+            operations.move(viewer, operations.select(file.folder, [file.uuid], []), destination, by)
 
     def copy(self, file: File, destination: Folder, by: Resident, when: datetime) -> None:
         viewer = self.viewer(by, when)
         with _at(when):
-            operations.copy(viewer, operations.select(file.folder, [file.pk], []), destination, by)
+            operations.copy(viewer, operations.select(file.folder, [file.uuid], []), destination, by)
 
     def delete(self, item: File | Folder, by: Resident, when: datetime) -> None:
         viewer = self.viewer(by, when)
         source = item.folder if isinstance(item, File) else item.parent
         assert source is not None  # noqa: S101  # nosec B101 - the demo deletes no root
-        files, folders = ([item.pk], []) if isinstance(item, File) else ([], [item.pk])
+        files, folders = ([item.uuid], []) if isinstance(item, File) else ([], [item.uuid])
         with _at(when):
             operations.delete(viewer, operations.select(source, files, folders), by)
 
