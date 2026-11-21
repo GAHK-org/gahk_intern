@@ -13,6 +13,7 @@ from typing import Any
 
 import pytest
 import requests
+from django.conf import settings
 from django.core import mail
 from django.core.files.base import ContentFile
 from django.test import Client
@@ -460,6 +461,9 @@ def test_applications_are_stored_once_and_acknowledged(
     assert [ack["applications"] for ack in gahk_web.acks] == [[tour["id"], sublet["id"]]] * 2
     assert len(mail.outbox) == 2  # one auto-reply per applicant, not per pull
     assert mail.outbox[0].to == ["ada@example.com"]
+    # From Indstillingen, whom the applicant knows of, and a reply reaches them.
+    assert mail.outbox[0].from_email == f"GAHK Indstillingen <{settings.MAIL_SENDER}>"
+    assert mail.outbox[0].reply_to == [settings.INDSTILLING_EMAIL]
 
 
 @pytest.mark.django_db

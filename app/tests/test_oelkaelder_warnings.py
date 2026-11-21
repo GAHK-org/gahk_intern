@@ -4,6 +4,7 @@ including adjustments (F-003)."""
 from collections.abc import Callable
 
 import pytest
+from django.conf import settings
 from django.core import mail
 from django.test.utils import override_settings
 
@@ -39,6 +40,8 @@ def test_purchase_crossing_threshold_sends_one_warning(
         record_purchase([s.id], [{"product": p.id, "mode": "fixed", "qty": 1}])
     assert len(mail.outbox) == 1
     assert "-7,00" in mail.outbox[0].body  # SALDOSALDOSALDO token replaced with the new balance
+    assert mail.outbox[0].from_email == f"GAHK Ølkælderen <{settings.MAIL_SENDER}>"
+    assert mail.outbox[0].reply_to == [settings.OELKAELDER_EMAIL]
 
 
 @LOCMEM

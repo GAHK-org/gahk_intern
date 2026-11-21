@@ -60,10 +60,11 @@ DATABASE_URL=postgres://gahk:<pw>@postgres:5432/gahk
 SMTP_HOST=send.one.com  SMTP_USER=…  SMTP_PASSWORD=…  SMTP_PORT=587
 EMAIL_BACKEND=django.core.mail.backends.smtp.EmailBackend   # what core.mail's queue delivers through — see below
 MAIL_RATE_LIMIT=10                                # optional: bulk (alumneregninger, ølkælder) mails per 5 minutes; other mail is never held; one.com blocks at ~25
-DEFAULT_FROM_EMAIL=autosvar@gahk.dk               # ⚠ must be an alias of SMTP_USER — see below
-OELKAELDER_FROM_EMAIL=bierkeller@gahk.dk          # ⚠ second sender, same requirement
+MAIL_SENDER=besked@gahk.dk                        # optional (default); ⚠ must be SMTP_USER itself — see below
+DEFAULT_REPLY_TO=noreply@gahk.dk                  # optional (default): replies to mail of no group
 WIFI_PASSWORD=…  GOOGLE_CALENDAR_USER=…  GOOGLE_CALENDAR_PASSWORD=…
-INDSTILLING_EMAIL=indstillingen@gahk.dk           # recipient only, not a sender
+INDSTILLING_EMAIL=indstillingen@gahk.dk           # optional (defaults): the groups' addresses, which replies go to
+OELKAELDER_EMAIL=bierkeller@gahk.dk  REGNSKAB_EMAIL=regnskab@gahk.dk
 POSTGRES_PASSWORD=<pw>                            # for the compose postgres service
 OELKAELDER_KIOSK_IPS=<the till's server-observed source IP>   # confirm from access logs, NOT ipconfig
 VAPID_PUBLIC_KEY=…  VAPID_PRIVATE_KEY=…           # Web Push for Den Hurtige — see below
@@ -72,7 +73,6 @@ S3_BUCKET=…  S3_LOCATION=fsn1  S3_ACCESS_KEY=…  S3_SECRET_KEY=…   # media 
 AWS_REQUEST_CHECKSUM_CALCULATION=when_required    # ⚠ required with the above — see §4c
 AWS_RESPONSE_CHECKSUM_VALIDATION=when_required
 ECONOMIC_APP_SECRET_TOKEN=…  ECONOMIC_AGREEMENT_GRANT_TOKEN=…   # e-conomic API, alumneregning — unset = every call 401s (no "demo" fallback outside DEBUG)
-ALUMNEREGNING_FROM_EMAIL=regnskab@gahk.dk         # ⚠ must be an alias of SMTP_USER — see above
 ```
 Store real values in Coolify's secret manager / a vault — not in git.
 
@@ -96,16 +96,18 @@ installed, since a new id splits installed apps; its start_url, `/den-hurtige/`,
 logged-in residents on a phone get a banner pointing to it until they install or close it
 (spec/features/gahk-intern-app.md).
 
-**Email — verify the senders, don't assume.** one.com authenticates as `SMTP_USER` and rejects any
-From address that account is not itself or an alias of:
-`550 5.7.1 [M9] User [it@gahk.dk] not authorized to send on behalf of <autosvar@gahk.dk>`. Both
-`DEFAULT_FROM_EMAIL` and `OELKAELDER_FROM_EMAIL` must therefore be added as aliases on the
-`SMTP_USER` mailbox in the one.com control panel (or pointed at `SMTP_USER` itself). Test each from
-inside the running container — this is the only way to confirm, since MX stays on one.com (§7) and
-the app relays through their smarthost, so existing SPF/DKIM for gahk.dk covers it with no new DNS:
+**Email — one sending mailbox, then verify.** Give the app a one.com mailbox of its own,
+`MAIL_SENDER` (besked@gahk.dk), used for nothing but sending: `SMTP_USER`/`SMTP_PASSWORD` are its
+login, so the app never holds the password of a mailbox that matters. one.com rejects any From
+address the account is not itself or an alias of (`550 5.7.1 [M9] User [<account>] not authorized to
+send on behalf of <sender>`), and every mail goes out from `MAIL_SENDER`, so it must be the account.
+Each group's mails carry the group's name in front of that address and a Reply-To with the group's
+own address, so the group addresses need no alias. Give besked@ an auto-reply in one.com ("Denne
+adresse bliver ikke læst …") for whoever writes to it directly. Test from inside the running
+container — this is the only way to confirm, since MX stays on one.com (§7) and the app relays
+through their smarthost, so existing SPF/DKIM for gahk.dk covers it with no new DNS:
 ```
-python manage.py check_mail_server you@example.com                              # DEFAULT_FROM_EMAIL
-python manage.py check_mail_server you@example.com --from "$OELKAELDER_FROM_EMAIL"
+python manage.py check_mail_server you@example.com
 ```
 `check_mail_server` sends straight through the real backend, past the app's mail queue, and fails with
 the server's answer; no error = the server accepted it. (`sendtestemail` would only queue the mail:

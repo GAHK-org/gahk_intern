@@ -27,10 +27,12 @@ from datetime import datetime, timedelta
 from typing import Any
 
 from django.conf import settings
-from django.core.mail import send_mail
+from django.core.mail import EmailMessage
 from django.db import IntegrityError, transaction
 from django.utils import timezone
 from django.utils.dateparse import parse_datetime
+
+from core import mail as outbox
 
 from .forms import FremlejeForm, RundvisningForm
 from .models import Application
@@ -70,16 +72,17 @@ CLOCK_SKEW = timedelta(hours=1)
 def send_auto_reply(app: Application) -> None:
     """Send the applicant a "we got it" auto-reply. Best-effort; a mail failure must not lose the
     stored application. The committee is no longer emailed per application (F-011) — they review
-    the list view. Not sent with fail_silently: SMTP errors — e.g. one.com refusing a
-    DEFAULT_FROM_EMAIL the SMTP account is not an alias of — must reach the log instead of vanishing.
+    the list view. From Indstillingen, and a reply reaches them. Not sent with fail_silently: an
+    error must reach the log instead of vanishing.
     """
     try:
-        send_mail(
+        EmailMessage(
             "GAHK – vi har modtaget din henvendelse",
             f"Kære {app.full_name}\n\nTak for din henvendelse. Vi vender tilbage.\n\nMvh. Indstillingen",
-            settings.DEFAULT_FROM_EMAIL,
+            outbox.sender("GAHK Indstillingen"),
             [app.email],
-        )
+            reply_to=[settings.INDSTILLING_EMAIL],
+        ).send()
     except Exception:
         logger.exception("Failed sending the auto-reply for application %s", app.pk)
 
