@@ -186,7 +186,9 @@ def _debt_warnings(now: datetime, rng: random.Random) -> None:
 
     def failed_and_purged(mail: OutgoingMail) -> None:
         # Failed long ago: its lifetime is over, so the daily purge has emptied it — no "Send igen".
-        _at(mail, now - timedelta(days=12))
+        # In the month before this one, so the admin summary's MAILS section (core.admin_summary),
+        # which covers last month, has a "not sent" line too.
+        _at(mail, _first_of_month(now) - timedelta(days=10))
         _failed(
             mail,
             mail.created_at + timedelta(seconds=3),
@@ -223,13 +225,17 @@ def _admin_summary(now: datetime) -> None:
     """Sent on the 1st at 09:05 (CELERY_BEAT_SCHEDULE) to everyone with Django-admin access."""
     from .tasks import send_admin_monthly_summary
 
-    local = timezone.localtime(now)
-    at = local.replace(day=1, hour=9, minute=5, second=0, microsecond=0)
-    if at > local:  # seeded on the 1st before then: last month's
-        at = (at - timedelta(days=1)).replace(day=1)
+    at = _first_of_month(now) + timedelta(hours=9, minutes=5)
+    if at > now:  # seeded on the 1st before then: last month's
+        at = _first_of_month(at - timedelta(days=1)) + timedelta(hours=9, minutes=5)
     for mail in _queued(send_admin_monthly_summary):
         _at(mail, at)
         _sent(mail, at + timedelta(seconds=2))
+
+
+def _first_of_month(now: datetime) -> datetime:
+    """Local midnight on the 1st of `now`'s month."""
+    return timezone.localtime(now).replace(day=1, hour=0, minute=0, second=0, microsecond=0)
 
 
 def _reset(email: str) -> None:
