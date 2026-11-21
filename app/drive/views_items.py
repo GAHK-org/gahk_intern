@@ -3,6 +3,7 @@ restoring old versions, and a folder's history. The rules are in operations.py; 
 gather the selection and say what happened."""
 
 from typing import Any
+from uuid import UUID
 
 from django.contrib import messages
 from django.core.exceptions import PermissionDenied, ValidationError
@@ -16,26 +17,26 @@ from residents.permissions import current_resident
 from . import access, operations
 from .access import Level, Viewer
 from .models import Event, File, Folder
-from .views import _folder, _render, _sorted_children, live_file
+from .views import _folder, _render, _sorted_children, as_uuid, live_file
 
 MOVE, COPY = "move", "copy"
 
 
-def _ids(request: HttpRequest, key: str) -> list[int]:
+def _uuids(request: HttpRequest, key: str) -> list[UUID]:
     data = request.POST if request.method == "POST" else request.GET
-    return [int(value) for value in data.getlist(key) if value.isdigit()]
+    return [uuid for value in data.getlist(key) if (uuid := as_uuid(value))]
 
 
 def _selection(request: HttpRequest, source: Folder) -> operations.Selection:
-    return operations.select(source, _ids(request, "file"), _ids(request, "folder"))
+    return operations.select(source, _uuids(request, "file"), _uuids(request, "folder"))
 
 
 def _query(op: str, selection: operations.Selection) -> str:
     """The picker's query string: what is being moved or copied."""
     return "&".join(
         [f"op={op}"]
-        + [f"file={file.pk}" for file in selection.files]
-        + [f"folder={folder.pk}" for folder in selection.folders]
+        + [f"file={file.uuid}" for file in selection.files]
+        + [f"folder={folder.uuid}" for folder in selection.folders]
     )
 
 
@@ -45,24 +46,24 @@ def _fail(request: HttpRequest, exc: ValidationError) -> None:
 
 @access.access_required
 @require_POST
-def rename_file(request: HttpRequest, pk: int) -> HttpResponse:
-    file, viewer = live_file(request, pk)
+def rename_file(request: HttpRequest, uuid: UUID) -> HttpResponse:
+    file, viewer = live_file(request, uuid)
     try:
         operations.rename_file(viewer, file, request.POST.get("name", ""), current_resident(request))
     except ValidationError as exc:
         _fail(request, exc)
-    return redirect("drive:file", file.pk)
+    return redirect("drive:file", file.uuid)
 
 
 @access.access_required
 @require_POST
-def rename_folder(request: HttpRequest, pk: int) -> HttpResponse:
-    folder, viewer, _ = _folder(request, pk)
+def rename_folder(request: HttpRequest, uuid: UUID) -> HttpResponse:
+    folder, viewer, _ = _folder(request, uuid)
     try:
         operations.rename_folder(viewer, folder, request.POST.get("name", ""), current_resident(request))
     except ValidationError as exc:
         _fail(request, exc)
-    return redirect("drive:folder", folder.pk)
+    return redirect("drive:folder", folder.uuid)
 
 
 def _check(viewer: Viewer, op: str, selection: operations.Selection, destination: Folder) -> str:
@@ -80,20 +81,23 @@ def _check(viewer: Viewer, op: str, selection: operations.Selection, destination
 
 
 @access.access_required
-def move(request: HttpRequest, pk: int) -> HttpResponse:
+def move(request: HttpRequest, uuid: UUID) -> HttpResponse:
     """GET: pick where the ticked items go, folder by folder. POST: move or copy them there."""
-    source, viewer, _ = _folder(request, pk)
+    source, viewer, _ = _folder(request, uuid)
     data = request.POST if request.method == "POST" else request.GET
     op = COPY if data.get("op") == COPY else MOVE
     selection = _selection(request, source)
     if not selection:
         messages.error(request, "Vælg noget først.")
-        return redirect("drive:folder", source.pk)
+        return redirect("drive:folder", source.uuid)
 
     if request.method == "POST":
-        destination, _, _ = _folder(request, int(data.get("to", "0") or 0))
+        to = as_uuid(data.get("to"))
+        if to is None:
+            raise Http404("no folder to go to")
+        destination, _, _ = _folder(request, to)
         if op == MOVE and operations.changes_access(selection, destination) and not data.get("confirm"):
-            return redirect(f"{request.path}?{_query(op, selection)}&at={destination.pk}")
+            return redirect(f"{request.path}?{_query(op, selection)}&at={destination.uuid}")
         resident = current_resident(request)
         try:
             if op == MOVE:
@@ -106,18 +110,18 @@ def move(request: HttpRequest, pk: int) -> HttpResponse:
                 )
         except PermissionDenied:
             messages.error(request, "Du har ikke lov til det.")
-            return redirect("drive:folder", source.pk)
+            return redirect("drive:folder", source.uuid)
         except ValidationError as exc:
             _fail(request, exc)
-            return redirect("drive:folder", source.pk)
-        return redirect("drive:folder", destination.pk)
+            return redirect("drive:folder", source.uuid)
+        return redirect("drive:folder", destination.uuid)
 
     # Browsing starts in the source folder; `at=` (empty) is Drive's top level.
-    at_pk = data.get("at")
-    if at_pk is None:
+    at_value = data.get("at")
+    if at_value is None:
         at: Folder | None = source
-    elif at_pk.isdigit():
-        at = _folder(request, int(at_pk))[0]
+    elif at_uuid := as_uuid(at_value):
+        at = _folder(request, at_uuid)[0]
     else:
         at = None
     moving = {folder.pk for folder in selection.folders}
@@ -145,8 +149,8 @@ def move(request: HttpRequest, pk: int) -> HttpResponse:
 
 @access.access_required
 @require_POST
-def delete(request: HttpRequest, pk: int) -> HttpResponse:
-    source, viewer, _ = _folder(request, pk)
+def delete(request: HttpRequest, uuid: UUID) -> HttpResponse:
+    source, viewer, _ = _folder(request, uuid)
     selection = _selection(request, source)
     try:
         operations.delete(viewer, selection, current_resident(request))
@@ -160,12 +164,12 @@ def delete(request: HttpRequest, pk: int) -> HttpResponse:
             request,
             f"{count} lagt i papirkurven." if count != 1 else f"{selection.names[0]} er lagt i papirkurven.",
         )
-    return redirect("drive:folder", source.pk)
+    return redirect("drive:folder", source.uuid)
 
 
 @access.access_required
-def bin_page(request: HttpRequest, pk: int) -> HttpResponse:
-    folder, viewer, _ = _folder(request, pk)
+def bin_page(request: HttpRequest, uuid: UUID) -> HttpResponse:
+    folder, viewer, _ = _folder(request, uuid)
     return _render(
         request,
         "drive/bin.html",
@@ -179,33 +183,33 @@ def bin_page(request: HttpRequest, pk: int) -> HttpResponse:
 
 @access.access_required
 @require_POST
-def restore(request: HttpRequest, pk: int) -> HttpResponse:
-    file = get_object_or_404(File.objects.select_related("folder"), pk=pk, deleted_at__isnull=False)
+def restore(request: HttpRequest, uuid: UUID) -> HttpResponse:
+    file = get_object_or_404(File.objects.select_related("folder"), uuid=uuid, deleted_at__isnull=False)
     viewer = Viewer.for_request(request)
     if viewer.level(file.folder) == Level.NONE:
         raise Http404("no such file")
     restored = operations.restore(viewer, file, current_resident(request))
     messages.success(request, f"{restored.name} er gendannet.")
-    return redirect("drive:folder", restored.folder_id)
+    return redirect("drive:folder", restored.folder.uuid)
 
 
 @access.access_required
 @require_POST
-def restore_version(request: HttpRequest, pk: int, number: int) -> HttpResponse:
-    file, viewer = live_file(request, pk)
+def restore_version(request: HttpRequest, uuid: UUID, number: int) -> HttpResponse:
+    file, viewer = live_file(request, uuid)
     try:
         version = operations.restore_version(viewer, file, number, current_resident(request))
     except ValidationError as exc:
         _fail(request, exc)
     else:
         messages.success(request, f"Version {number} er gendannet som version {version.number}.")
-    return redirect("drive:file", file.pk)
+    return redirect("drive:file", file.uuid)
 
 
 @access.access_required
-def folder_history(request: HttpRequest, pk: int) -> HttpResponse:
+def folder_history(request: HttpRequest, uuid: UUID) -> HttpResponse:
     """The folder's own lines, and those of the files and folders in it now."""
-    folder, _, _ = _folder(request, pk)
+    folder, _, _ = _folder(request, uuid)
     events = Event.objects.filter(
         Q(folder=folder) | Q(folder__parent=folder) | Q(file__folder=folder)
     ).select_related("actor")[:300]

@@ -79,16 +79,16 @@ def tell_creators(files: Iterable[File], *, actor: Resident, change: Change) -> 
 def deleted(folder: Folder) -> Change:
     return Change(
         "slettede",
-        reverse("drive:bin", args=[folder.pk]),
+        reverse("drive:bin", args=[folder.uuid]),
         f"Kan gendannes fra papirkurven i {BIN_DAYS} dage.",
     )
 
 
 def renamed(file: File, old: str) -> Change:
-    return Change("omdøbte", reverse("drive:file", args=[file.pk]), renamed_from=old, renamed_to=file.name)
+    return Change("omdøbte", reverse("drive:file", args=[file.uuid]), renamed_from=old, renamed_to=file.name)
 
 
 def moved(destination: Folder) -> Change:
     return Change(
-        "flyttede", reverse("drive:folder", args=[destination.pk]), f"Nu i {destination.display_path()}."
+        "flyttede", reverse("drive:folder", args=[destination.uuid]), f"Nu i {destination.display_path()}."
     )

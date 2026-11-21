@@ -3,7 +3,7 @@
   <a href="{% url 'drive:home' %}">Drive</a>
   {% for crumb in ancestors %}
     <span aria-hidden="true">/</span>
-    <a href="{% url 'drive:folder' crumb.pk %}">{{ crumb.name }}</a>
+    <a href="{% url 'drive:folder' crumb.uuid %}">{{ crumb.name }}</a>
   {% endfor %}
   {% if current %}
     <span aria-hidden="true">/</span>

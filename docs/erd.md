@@ -934,6 +934,7 @@ erDiagram
 
     drive_Folder {
         int id PK
+        string uuid
         int parent_id FK
         string name
         string name_key
@@ -950,6 +951,7 @@ erDiagram
 
     drive_File {
         int id PK
+        string uuid
         int folder_id FK
         string name
         string name_key
@@ -1492,6 +1494,7 @@ erDiagram
 erDiagram
     drive_Folder {
         int id PK
+        string uuid
         int parent_id FK
         string name
         string name_key
@@ -1508,6 +1511,7 @@ erDiagram
 
     drive_File {
         int id PK
+        string uuid
         int folder_id FK
         string name
         string name_key
