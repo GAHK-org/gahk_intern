@@ -7,7 +7,7 @@
 <input type="hidden" name="sort" value="{{ sort }}">
 <input type="hidden" name="dir" value="{{ dir }}">
 <table cellpadding="6" class="text-sm zebra" style="width:100%; border-collapse:collapse">
-  <thead><tr style="text-align:left; border-bottom:1px solid #e6e8ec; white-space:nowrap">
+  <thead><tr style="text-align:left; border-bottom:1px solid var(--border-strong); white-space:nowrap">
     {% for h in headers %}
       <th style="{% if h.sortable %}padding:0{% else %}padding-right:1.5rem{% endif %}">
         {% if h.sortable %}
