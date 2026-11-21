@@ -154,6 +154,8 @@ intern site's sidebar and top bar; its own header links back to the intern site.
 - Every thumbnail and banner a video has had is kept as long as the video is. The edit page offers
   the latest earlier ones to bring back, and the history all of them; after 30 days that is a
   proposal, like any change.
+- Everything also goes into intern's audit trail (audit-trail.md): series, proposals and votes as
+  well, and a video deleted for good keeps its lines there. The video's own history goes with it.
 
 ## Deleting and the bin
 
@@ -170,6 +172,14 @@ intern site's sidebar and top bar; its own header links back to the intern site.
   was saved, or what a crashed encode left — is deleted once it is two days old. If that would be more than half
   of everything stored, nothing is deleted and the error is logged: the database does not match the
   storage.
+
+## Development seed data
+
+- A demo database has a series with two episodes and two films, really encoded, each uploaded,
+  encoded, given pictures and details and published at its own time weeks back, so every film's
+  history starts at its upload. Around them: the series edited, an open proposal on a film past its
+  30 days, the newest film binned and brought back, and an upload the worker refused and its
+  uploader deleted. The audit trail tells the same story.
 
 ## Decisions
 
