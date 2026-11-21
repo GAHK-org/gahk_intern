@@ -2,13 +2,21 @@
 
 A video is a DRAFT until its uploader publishes it, which needs a finished encode, a thumbnail and a
 banner. A draft is the uploader's own business: only they and the administrators see it, and the
-time-limited rules below do not apply to it. Once published:
+time-limited rules below do not apply to it. A resident has at most MAX_DRAFTS of them at a time.
+
+A published video may be a PREMIERE (Video.premiere_at): until that moment it is UPCOMING, listed with
+its title, its series and season, the moment and its thumbnail (blurred as the uploader chose), but its
+page and files are still only its uploader's and the administrators'. Everybody is told when it comes
+out: at publishing, or at its premiere (Video.announced_at). Once published:
 
   * for 7 days after the upload, the uploader (or an administrator) may bin it or upload a new
     version of the file; after that only an administrator may ASK to bin it, and two other
     administrators must agree (ChangeRequest.Kind.DELETE);
   * for 30 days after the upload, the uploader and the administrators edit its details directly;
     after that a change is a proposal one other administrator must accept (ChangeRequest.Kind.EDIT).
+
+A premiere after the upload counts as the upload here: until its minute it is open as a draft is, and
+the windows run from it (Video.window_start).
 
 "Administrators" here, as everywhere in GAHKFlix, means the administrator role and Fotogruppen
 (gahkflix.access.is_administrator).
@@ -35,10 +43,11 @@ from django.utils.formats import date_format
 
 from photo_album.models import TAG_MAX_LENGTH, validate_tag_name
 
-from .dating import DatePrecision, DateSource, PartialDate
+from .dating import DatePrecision, DateSource, PartialDate, premiere_label
 from .storage import get_video_storage
 
-# The windows in the spec, all counted from the upload (Video.created_at).
+# The windows in the spec, all counted from the upload (Video.created_at) — or from a premiere after
+# it, which nobody has seen before (Video.window_start).
 REVISION_WINDOW = timedelta(days=7)
 DIRECT_DELETE_WINDOW = timedelta(days=7)
 EDIT_WINDOW = timedelta(days=30)
@@ -50,6 +59,13 @@ REQUEST_TTL = timedelta(days=30)
 DRAFT_TTL_DAYS = 90
 # Drafts older than this are in the weekly reminders; nobody is nagged about one they just uploaded.
 DRAFT_REMINDER_AFTER = timedelta(days=7)
+# How many unpublished drafts one resident may have at a time; uploads still being processed count.
+MAX_DRAFTS = 10
+# How long after a video comes out its uploader may still take it back: make it a draft again, or
+# give it a premiere later. Counted from when it came out: its premiere, else its publishing.
+TAKE_BACK_WINDOW = timedelta(hours=24)
+# How far ahead a premiere may be set: a typo should not hide a film for decades.
+PREMIERE_MAX_AHEAD = timedelta(days=366)
 # Approvals needed, from administrators other than the one who asked.
 DELETE_APPROVALS = 2
 EDIT_APPROVALS = 1
@@ -183,10 +199,29 @@ class Series(models.Model):
         return self.created_at + EDIT_WINDOW
 
 
+class PremiereBlur(models.TextChoices):
+    """How blurred an upcoming premiere's thumbnail is shown (encoding.premiere_jpeg)."""
+
+    NONE = "none", "Ikke sløret"
+    LIGHT = "light", "Lidt sløret"
+    MEDIUM = "medium", "Middel sløret"
+    HEAVY = "heavy", "Meget sløret"
+
+
 class VideoQuerySet(models.QuerySet["Video"]):
     def published(self) -> "VideoQuerySet":
-        """What every resident with access sees: published and not in the bin."""
+        """Published and not in the bin: out, or an upcoming premiere."""
         return self.filter(published_at__isnull=False, deleted_at__isnull=True)
+
+    def released(self, now: datetime | None = None) -> "VideoQuerySet":
+        """What every resident with access may open: published, and past its premiere if it has one."""
+        return self.published().filter(
+            Q(premiere_at__isnull=True) | Q(premiere_at__lte=now or timezone.now())
+        )
+
+    def upcoming(self, now: datetime | None = None) -> "VideoQuerySet":
+        """Published premieres still to come."""
+        return self.published().filter(premiere_at__gt=now or timezone.now())
 
     def drafts(self) -> "VideoQuerySet":
         return self.filter(published_at__isnull=True, deleted_at__isnull=True)
@@ -202,17 +237,33 @@ class Video(models.Model):
     uploaded_by = models.ForeignKey(
         settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name="gahkflix_uploads"
     )
-    # The upload. Every time window in the policy (module docstring) runs from here.
+    # The upload. Every time window in the policy (module docstring) runs from here, or from a later
+    # premiere (window_start).
     created_at = models.DateTimeField(auto_now_add=True)
     published_at = models.DateTimeField(null=True, blank=True)
     # The film's own date, as much of it as is known: a day, a month or a year (dating.py), stored
-    # as its first day. Guessed when the file is processed, unless it was set by hand.
+    # as its first day. Filled in by the uploader, at least the year; the file's guess
+    # (VideoFile.date_guess) is only offered. Videos from before that may have a guessed one.
     released_on = models.DateField(null=True, blank=True, verbose_name="Udgivelsesdato")
     release_precision = models.CharField(
         max_length=5, choices=DatePrecision.choices, default=DatePrecision.DAY
     )
-    # Where it came from; "" when there is none.
+    # Where it came from: "manual", or for an older video the guess it was; "" when there is none.
     release_source = models.CharField(max_length=8, choices=DateSource.choices, blank=True)
+    # A premiere: the minute it comes out, which may be in the future. Its day is `released_on`.
+    premiere_at = models.DateTimeField(null=True, blank=True, verbose_name="Premiere")
+    # How its thumbnail is shown until then.
+    premiere_blur = models.CharField(
+        max_length=6,
+        choices=PremiereBlur.choices,
+        default=PremiereBlur.NONE,
+        verbose_name="Miniature før premieren",
+    )
+    # When everybody was told it is out: when it was published, or at its premiere (services.announce).
+    announced_at = models.DateTimeField(null=True, blank=True)
+    # When it was last made a draft again (services.unpublish). Its time as a draft — the deletion date,
+    # the reminders — runs from here rather than from the upload.
+    draft_since = models.DateTimeField(null=True, blank=True)
     series = models.ForeignKey(
         Series, null=True, blank=True, on_delete=models.PROTECT, related_name="videos", verbose_name="Serie"
     )
@@ -267,16 +318,67 @@ class Video(models.Model):
         return self.deleted_at is not None
 
     @property
+    def is_upcoming(self) -> bool:
+        """Published, but its premiere is still to come."""
+        return self.is_published and self.premiere_to_come
+
+    @property
+    def premiere_to_come(self) -> bool:
+        """It has a premiere, and it is still ahead — published yet or not."""
+        return self.premiere_at is not None and self.premiere_at > timezone.now()
+
+    @property
+    def is_released(self) -> bool:
+        return self.is_published and not self.is_upcoming
+
+    @property
+    def out_at(self) -> datetime | None:
+        """When it came out: its premiere, or its publishing if that was later. None before."""
+        if not self.is_released or self.published_at is None:
+            return None
+        return max(self.published_at, self.premiere_at or self.published_at)
+
+    @property
+    def take_back_until(self) -> datetime | None:
+        """Until when it may be made a draft again, or given a premiere later; None while nobody has
+        seen it (a draft, or an upcoming premiere, which may be taken back at any time)."""
+        out_at = self.out_at
+        return out_at + TAKE_BACK_WINDOW if out_at else None
+
+    @property
+    def can_be_taken_back(self) -> bool:
+        """An upcoming premiere, or a video out for less than TAKE_BACK_WINDOW."""
+        until = self.take_back_until
+        return self.is_upcoming or (until is not None and timezone.now() < until)
+
+    @property
+    def premiere_label(self) -> str:
+        """ "24. december 2026 kl. 20.00"."""
+        return premiere_label(self.premiere_at)
+
+    @property
+    def window_start(self) -> datetime:
+        """Where the time windows run from: the upload, or a premiere after it. Nobody sees a premiere
+        before its minute, so until then it is open as a draft is, and its windows run from then."""
+        if self.premiere_at is not None and self.premiere_at > self.created_at:
+            return self.premiere_at
+        return self.created_at
+
+    @property
+    def windows_from_premiere(self) -> bool:
+        return self.window_start != self.created_at
+
+    @property
     def revision_window_ends(self) -> datetime:
-        return self.created_at + REVISION_WINDOW
+        return self.window_start + REVISION_WINDOW
 
     @property
     def direct_delete_window_ends(self) -> datetime:
-        return self.created_at + DIRECT_DELETE_WINDOW
+        return self.window_start + DIRECT_DELETE_WINDOW
 
     @property
     def edit_window_ends(self) -> datetime:
-        return self.created_at + EDIT_WINDOW
+        return self.window_start + EDIT_WINDOW
 
     @property
     def purge_at(self) -> datetime | None:
@@ -285,7 +387,7 @@ class Video(models.Model):
     @property
     def draft_deleted_on(self) -> date:
         """The night a draft that is still unpublished is deleted (services.purge)."""
-        return timezone.localdate(self.created_at) + timedelta(days=DRAFT_TTL_DAYS)
+        return timezone.localdate(self.draft_since or self.created_at) + timedelta(days=DRAFT_TTL_DAYS)
 
     @property
     def release(self) -> PartialDate | None:
@@ -376,6 +478,11 @@ class VideoFile(models.Model):
     height = models.PositiveIntegerField(null=True, blank=True)
     # When the camera says it was recorded (container metadata).
     recorded_at = models.DateTimeField(null=True, blank=True)
+    # The film's release date as guessed from this file when it was processed (dating.guess), as
+    # ISO 8601 cut to its precision ("2015", "2015-03", "2015-03-12"), and where it came from. Only
+    # offered on the edit page ("Brug videoens dato"): the release date is always filled in by hand.
+    date_guess = models.CharField(max_length=10, blank=True)
+    date_guess_source = models.CharField(max_length=8, choices=DateSource.choices, blank=True)
     full_hd = models.FileField(upload_to=full_hd_path, storage=get_video_storage, max_length=500, blank=True)
     hd = models.FileField(upload_to=hd_path, storage=get_video_storage, max_length=500, blank=True)
     # Their sizes in bytes, for the download menu.
@@ -391,6 +498,10 @@ class VideoFile(models.Model):
     @property
     def is_pending(self) -> bool:
         return self.state in (FileState.QUEUED, FileState.PROCESSING)
+
+    @property
+    def guessed_date(self) -> PartialDate | None:
+        return PartialDate.parse(self.date_guess)
 
     @property
     def qualities(self) -> list[str]:
@@ -617,6 +728,8 @@ class VideoEvent(models.Model):
         FAILED = "failed", "Kunne ikke behandles"
         EDITED = "edited", "Ændret"
         PUBLISHED = "published", "Udgivet"
+        PREMIERED = "premiered", "Havde premiere"
+        UNPUBLISHED = "unpublished", "Gjort til kladde igen"
         BINNED = "binned", "Lagt i papirkurven"
         RESTORED = "restored", "Hentet tilbage fra papirkurven"
 
