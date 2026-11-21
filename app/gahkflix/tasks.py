@@ -16,14 +16,17 @@ from celery.exceptions import SoftTimeLimitExceeded
 from django.db.models import F, Q
 from django.utils import timezone
 
+from core.job_progress import stopped_reason
+
 from . import services
 from .models import FileState, Video, VideoFile
 
 logger = logging.getLogger(__name__)
 
 # A two-hour film at Full HD and HD on a small box takes a while. What tells a slow encode from a
-# dead one is its heartbeat (services.HEARTBEAT_TIMEOUT), so this is only the ceiling.
-PROCESS_TIME_LIMIT = 8 * 60 * 60
+# dead one is its heartbeat (services.HEARTBEAT_TIMEOUT), and one that runs but gets nowhere is
+# stopped by the watchdog (core.job_progress), so this is only the ceiling: the photo album's.
+PROCESS_TIME_LIMIT = 12 * 60 * 60
 PROCESS_SOFT_TIME_LIMIT = PROCESS_TIME_LIMIT - 300
 
 
@@ -85,6 +88,9 @@ def process_video_file(self: Task, file_id: int) -> bool:
     except services.NotProcessed:
         raise  # already FAILED, and the uploader told
     except SoftTimeLimitExceeded as exc:
+        if why := stopped_reason():  # the watchdog: it stopped getting anywhere
+            _give_up(video_file, "Behandlingen gik i stå.")
+            raise services.NotProcessed(f"{video_file.name_and_size}: {why} Gave up.") from exc
         _give_up(video_file, "Behandlingen tog for lang tid.")
         raise services.NotProcessed(f"{video_file.name_and_size} ran past its time limit; gave up.") from exc
     except Exception:
