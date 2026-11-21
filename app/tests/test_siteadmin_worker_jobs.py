@@ -721,3 +721,26 @@ def test_a_finished_job_page_does_not_refresh(client: Client, make_resident: Cal
     detail = client.get(reverse("siteadmin:worker_job_detail", args=["done"])).content.decode()
 
     assert "every 10s" not in detail and "progressbar" not in detail
+
+
+@pytest.mark.usefixtures("celery_tables")
+def test_a_redelivered_job_still_running_is_not_closed_as_lost() -> None:
+    """GOPR6565.MP4: the first run's worker died, the message came back under the same id, and
+    the record still said it had started hours ago — so close_lost_jobs closed the running encode.
+    13 hours: past an encode's 12-hour limit plus the grace, so the first run's start would be lost."""
+    from celery.app.task import Context
+
+    from core import job_progress, worker_logs
+    from core.tasks import close_lost_jobs
+
+    first_start = timezone.now() - timedelta(hours=13)
+    _record("encode", first_start, state="FAILURE", finished_at=first_start + timedelta(hours=4))
+    _started_row("encode", DERIVATIVES)  # Celery's row for the second run
+    task = type("FakeTask", (), {"name": DERIVATIVES, "request": Context(is_eager=True)})()
+
+    worker_logs._start(task_id="encode", task=task)
+    worker_logs._current.set(None)  # as _finish would; the job is still running here
+    job_progress.finish("encode")
+
+    assert close_lost_jobs.run() == 0
+    assert _status("encode")[0] == "STARTED"

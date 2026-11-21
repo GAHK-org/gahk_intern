@@ -154,10 +154,21 @@ def _start(task_id: str | None = None, task: Any = None, **_: Any) -> None:  # n
                 "keyword_arguments": getattr(request, "kwargsrepr", None) or "",
             },
         )
-        # A retry runs under the same task id: the row keeps the first attempt's times.
+        # A retry, or a message redelivered after its worker was lost, runs under the same task id.
+        # The row then takes THIS run's start and drops the last run's end: what measures a running
+        # job — the page's "running for", core.tasks.close_lost_jobs — must measure this run. Kept
+        # from the first, it closed a redelivered encode as lost an hour into it ("started" 8½ hours
+        # before), and the job vanished from the page while ffmpeg went on. Its progress starts over
+        # too. The lines are kept: the earlier run's log is what says why it ran again.
         if not created:
-            log.state = "STARTED"
-            log.save(update_fields=["state"])
+            WorkerJobLog.objects.filter(pk=log.pk).update(
+                state="STARTED",
+                started_at=capture.started_at,
+                finished_at=None,
+                progress=None,
+                progress_step="",
+                progressed_at=None,
+            )
         earlier = [] if created else list(log.lines)
     except Exception:
         logging.getLogger(__name__).warning("Could not record the start of task %s", task_id, exc_info=True)
