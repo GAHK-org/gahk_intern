@@ -6,7 +6,8 @@ something to show on a fresh checkout, in the states worth seeing:
   * unseen at every importance, Kritisk included (the coloured edge and the level word);
   * a grouped row naming two people, and one counting several ("3 personer reagerede");
   * seen ones, which the page lists, and the dropdown and badge do not;
-  * one marked done, for the page's "Færdige" tab;
+  * a seen Kritisk one, which stays in the dropdown until it is marked done;
+  * two marked done, one of them Kritisk, for the page's "Færdige" tab (most recently done first);
   * one long expired, shown nowhere, so `purge_expired_notifications` has something to purge.
 
 Rows are written directly rather than through services.notify: that would apply preferences and
@@ -40,6 +41,8 @@ class _Row:
     age: timedelta
     seen: bool = False
     done: bool = False
+    # How long after the notification it was marked done.
+    done_after: timedelta = timedelta(minutes=20)
     expired: bool = False
     group_key: str = ""
     actors: tuple[Resident, ...] = ()
@@ -93,6 +96,16 @@ def seed(residents: list[Resident], now: datetime, rng: random.Random) -> int:
                 reverse("dashboard"),
                 timedelta(minutes=25),
             ),
+            # Read but not done: the one kind of read notification the dropdown keeps.
+            _Row(
+                categories.SYSTEM,
+                Importance.KRITISK,
+                "Elevatoren er ude af drift",
+                "Montøren kommer mandag. Brug trappen indtil da.",
+                reverse("dashboard"),
+                timedelta(hours=20),
+                seen=True,
+            ),
             _Row(
                 categories.EVENTS_CHANGES,
                 Importance.HOEJ,
@@ -140,6 +153,19 @@ def seed(residents: list[Resident], now: datetime, rng: random.Random) -> int:
                 seen=True,
                 done=True,
             ),
+            # Kritisk and done: gone from the dropdown too, and listed in Færdige before the row
+            # above, though it is older, because it was done more recently.
+            _Row(
+                categories.SYSTEM,
+                Importance.KRITISK,
+                "Varmen var lukket tirsdag",
+                "Fjernvarmen er tilbage. Luft ud i radiatorerne, hvis de ikke bliver varme.",
+                reverse("dashboard"),
+                timedelta(days=6),
+                seen=True,
+                done=True,
+                done_after=timedelta(days=5),
+            ),
             _Row(
                 categories.REPAIRS,
                 Importance.NORMAL,
@@ -168,7 +194,7 @@ def seed(residents: list[Resident], now: datetime, rng: random.Random) -> int:
                     # Long expired: past purge_expired's month too, so the purge finds it.
                     expires_at=now - timedelta(days=40) if spec.expired else now + timedelta(days=7),
                     seen_at=at + timedelta(minutes=10) if spec.seen else None,
-                    done_at=at + timedelta(minutes=20) if spec.done else None,
+                    done_at=at + spec.done_after if spec.done else None,
                 )
             )
     Notification.objects.bulk_create(rows)
