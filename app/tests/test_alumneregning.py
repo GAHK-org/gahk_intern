@@ -582,3 +582,174 @@ def test_render_preview_pdf_none_without_account_number(make_resident: Callable)
     resident = make_resident(email="alumne@gahk.dk")
 
     assert alumneregning.render_preview_pdf(resident, *AUGUST) is None
+
+
+def _two_alumner(monkeypatch: pytest.MonkeyPatch, make_resident: Callable) -> None:
+    for i, name in enumerate(["Anna", "Bo"], start=1):
+        _give_residency(
+            make_resident(email=f"{name.lower()}@gahk.dk", economic_account_number=i, first_name=name),
+            2026,
+            8,
+            room_index=i,
+        )
+    monkeypatch.setattr(economic, "get_account", lambda n: _account(0.0))
+    _mock_entries(monkeypatch)
+
+
+def test_the_statement_renders_characters_outside_latin_1() -> None:
+    from decimal import Decimal
+
+    from regnskab import statement_pdf
+
+    entry = economic.LedgerEntry(**{**_entry(1, "2026-08-01", 10.0).__dict__, "text": "Husleje aug – sep €"})
+    pdf = statement_pdf.render(
+        Resident(first_name="Łukasz", last_name="Kæmpe"), 4201, [entry], Decimal(10), *AUGUST
+    )
+
+    text = PdfReader(io.BytesIO(pdf)).pages[0].extract_text()
+    assert "?ukasz Kæmpe" in text
+    assert "Husleje aug ? sep ?" in text
+
+
+@pytest.mark.django_db
+def test_an_unexpected_error_for_one_alumne_does_not_stop_the_send(
+    monkeypatch: pytest.MonkeyPatch, make_resident: Callable
+) -> None:
+    from regnskab import statement_pdf
+
+    for i, name in enumerate(["Broken", "Ok"], start=1):
+        _give_residency(
+            make_resident(email=f"{name.lower()}@gahk.dk", economic_account_number=i, first_name=name),
+            2026,
+            8,
+            room_index=i,
+        )
+    monkeypatch.setattr(economic, "get_account", lambda n: _account(0.0))
+    _mock_entries(monkeypatch)
+    real_render = statement_pdf.render
+
+    def render(resident: Resident, *args: object) -> bytes:
+        if resident.first_name == "Broken":
+            raise RuntimeError("unforeseen")
+        return real_render(resident, *args)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(statement_pdf, "render", render)
+
+    results = {r.resident.first_name: r for r in alumneregning.send_alumneregninger(*AUGUST)}
+
+    assert results["Broken"].outcome == "failed"
+    assert results["Ok"].outcome == "sent"
+
+
+@pytest.mark.django_db
+def test_each_statement_is_queued_with_its_row_and_sent_once(
+    monkeypatch: pytest.MonkeyPatch, make_resident: Callable, mail_stays_queued: None
+) -> None:
+    """Through the outbox (core.mail): the row and the mail are written together, so a second run —
+    the button pressed while the mails are still queued — finds everyone sent theirs and queues nothing."""
+    from core.models import OutgoingMail
+
+    _two_alumner(monkeypatch, make_resident)
+
+    alumneregning.send_alumneregninger(*AUGUST)
+    again = alumneregning.send_alumneregninger(*AUGUST)
+
+    assert again == []
+    assert OutgoingMail.objects.count() == 2
+    assert mail.outbox == []  # not sent by the run: deliver_mail does that
+    sends = AlumneregningSend.objects.select_related("mail")
+    assert {(s.resident.email, s.mail.recipients) for s in sends} == {  # type: ignore[union-attr]
+        ("anna@gahk.dk", "anna@gahk.dk"),
+        ("bo@gahk.dk", "bo@gahk.dk"),
+    }
+    [attachment] = OutgoingMail.objects.get(recipients="bo@gahk.dk").payload["attachments"]
+    assert attachment["mimetype"] == "application/pdf"
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("status", ["failed", "expired"])
+def test_an_alumne_whose_mail_did_not_arrive_is_sent_it_again_by_the_next_run(
+    monkeypatch: pytest.MonkeyPatch, make_resident: Callable, mail_stays_queued: None, status: str
+) -> None:
+    from core.models import OutgoingMail
+
+    _two_alumner(monkeypatch, make_resident)
+    alumneregning.send_alumneregninger(*AUGUST)
+    failed = OutgoingMail.objects.get(recipients="anna@gahk.dk")
+    OutgoingMail.objects.filter(pk=failed.pk).update(status=status)
+
+    [result] = alumneregning.send_alumneregninger(*AUGUST)
+
+    assert result.resident.email == "anna@gahk.dk"
+    anna = AlumneregningSend.objects.get(resident__email="anna@gahk.dk")
+    assert anna.mail is not None and anna.mail.status == OutgoingMail.Status.QUEUED
+    failed.refresh_from_db()
+    assert failed.payload == {}  # replaced: it cannot also be sent again by hand
+
+
+@pytest.mark.django_db
+def test_an_alumne_whose_mail_was_cut_off_is_not_sent_it_again_by_itself(
+    monkeypatch: pytest.MonkeyPatch, make_resident: Callable, mail_stays_queued: None
+) -> None:
+    """It may well have arrived (core.mail.LOST_ERROR); regnskab decides (mark_not_received)."""
+    from core.models import OutgoingMail
+
+    _two_alumner(monkeypatch, make_resident)
+    alumneregning.send_alumneregninger(*AUGUST)
+    OutgoingMail.objects.filter(recipients="anna@gahk.dk").update(status=OutgoingMail.Status.UNKNOWN)
+
+    assert alumneregning.send_alumneregninger(*AUGUST) == []
+
+    anna = AlumneregningSend.objects.get(resident__email="anna@gahk.dk")
+    assert alumneregning.mark_not_received(anna, by="Regnskabsgruppen")
+    [result] = alumneregning.send_alumneregninger(*AUGUST)
+    assert result.resident.email == "anna@gahk.dk"
+
+
+@pytest.mark.django_db
+def test_the_job_fails_when_someones_statement_could_not_be_made(
+    monkeypatch: pytest.MonkeyPatch, make_resident: Callable
+) -> None:
+    """#397: it used to finish as done with failures only in the log."""
+    from regnskab import tasks
+
+    _two_alumner(monkeypatch, make_resident)
+    monkeypatch.setattr(
+        alumneregning, "account_name_matches", lambda resident, name: resident.first_name != "Anna"
+    )
+
+    with pytest.raises(tasks.AlumneregningerFailed, match="1 af 2"):
+        tasks.send_alumneregninger_task("2026-08-01", "2026-08-31")
+    assert len(mail.outbox) == 1  # Bo was still sent his
+
+
+@pytest.mark.django_db
+def test_the_job_tries_again_after_economics_rate_limit(
+    monkeypatch: pytest.MonkeyPatch, make_resident: Callable
+) -> None:
+    from regnskab import tasks
+
+    _two_alumner(monkeypatch, make_resident)
+    calls: list[int] = []
+
+    def get_account(number: int) -> economic.EconomicAccount:
+        calls.append(number)
+        if len(calls) == 1:
+            raise economic.EconomicRateLimitError("429")
+        return _account(0.0)
+
+    monkeypatch.setattr(economic, "get_account", get_account)
+    retried: list[int] = []
+    monkeypatch.setattr(
+        tasks.send_alumneregninger_task,
+        "retry",
+        lambda **kw: retried.append(kw["countdown"]) or RuntimeError(),
+    )
+
+    with pytest.raises(RuntimeError):
+        tasks.send_alumneregninger_task("2026-08-01", "2026-08-31")
+    assert retried == [tasks.ECONOMIC_RETRY_COUNTDOWN]
+
+    assert tasks.send_alumneregninger_task("2026-08-01", "2026-08-31") == 1  # the retry: only the one left
+    assert {s.outcome for s in AlumneregningSend.objects.all()} == {"sent"}
+    assert len(mail.outbox) == 2
