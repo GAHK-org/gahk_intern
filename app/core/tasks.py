@@ -7,6 +7,7 @@ from typing import Any
 
 from celery import shared_task
 from django.conf import settings
+from django.core.cache import cache
 from django.core.mail import send_mail
 from django.db import connection
 from django.db.models import F, Subquery, Window
@@ -17,6 +18,7 @@ from config.celery import app as celery_app
 from residents.admin_access import approvers
 
 from . import admin_summary
+from . import mail as outbox
 
 # How long a delivered broker message is kept before being swept.
 #
@@ -77,6 +79,53 @@ def task_time_limit(task_name: str) -> datetime.timedelta:
     global one."""
     task = _task_registry().get(task_name)
     return datetime.timedelta(seconds=getattr(task, "time_limit", None) or settings.CELERY_TASK_TIME_LIMIT)
+
+
+class MailNotDelivered(Exception):
+    """Raised by deliver_mail so a run that failed or gave up on a mail, or found the mail server down
+    for a while, shows as failed."""
+
+
+# Set while a deliver_mail is scheduled to pick up where the rate limit stopped one, so the many runs
+# a batch of mails queues don't each schedule another.
+_RESUME_SCHEDULED = "core.tasks.deliver_mail.resume_scheduled"
+
+
+def _mails(mails: list[Any]) -> str:
+    return ", ".join(f"{mail.recipients} ({mail.error})" for mail in mails)
+
+
+@shared_task
+def deliver_mail() -> int:
+    """Send the queued mail that is due (core.mail.deliver), and schedule the next run when the rate
+    limit or a wait stops it short. Queued by each mail as it is stored, and every 5 minutes by Beat
+    in case one of those was lost. Fails when a mail failed or expired, or when the server has been
+    down long enough to hold mail up (core.mail.SERVER_DOWN_REPORT_AFTER) — not for every run in
+    between. Returns how many went out."""
+    result = outbox.deliver()
+    if result.resume_in is not None and result.resume_in > datetime.timedelta(0):
+        seconds = result.resume_in.total_seconds()
+        if cache.add(_RESUME_SCHEDULED, True, timeout=int(seconds) + 1):
+            deliver_mail.apply_async(countdown=seconds)
+    server_down = bool(result.server_error) and outbox.held_up_by_server(timezone.now())
+    if result.failed or result.expired or server_down:
+        raise MailNotDelivered(
+            f"{result.sent} sendt. "
+            + (f"{len(result.failed)} fejlede: {_mails(result.failed)}. " if result.failed else "")
+            + (f"{len(result.expired)} udløb: {_mails(result.expired)}. " if result.expired else "")
+            + (
+                f"Mailserveren har ikke svaret i over en halv time: {result.server_error}"
+                if server_down
+                else ""
+            )
+        )
+    return result.sent
+
+
+@shared_task
+def purge_outgoing_mail() -> tuple[int, int]:
+    """core.mail.purge: empty failed mails past their lifetime, delete old ones. Daily."""
+    return outbox.purge()
 
 
 @shared_task
