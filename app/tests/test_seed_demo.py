@@ -1,10 +1,14 @@
 """Smoke test for the seed_demo dev fixture command: it should run, be idempotent, and produce
 data that lights up the app's real queries (active period, roles, derived ølkælder balances)."""
 
+from datetime import date
+
 import pytest
 from django.core.management import call_command
 
 from den_hurtige.models import QuickPost
+from drive.access import Viewer
+from drive.models import Folder
 from oelkaelder.models import Shopper
 from residents.models import Resident, active_period
 from residents.permissions import real_roles
@@ -134,3 +138,165 @@ def test_seed_demo_gives_the_logins_notifications_in_every_state() -> None:
 
     call_command("seed_demo", "--fresh", "--force", "--residents", "12", verbosity=0)  # still idempotent
     assert Notification.objects.filter(recipient__email="beboer@gahk.dk").count() == 7
+
+
+@pytest.mark.django_db
+def test_seed_demo_fills_drive_for_every_login() -> None:
+    """Drive starts empty, so a fresh checkout needs something in every state each part of Drive
+    has. One seed for all of them, as a seed run is slow, with the default number of residents:
+    some cases are a colleague's change to a login's file, so a group needs more than one member.
+    The first test above covers a second --fresh run over Drive's rows."""
+    call_command("seed_demo", "--fresh", "--force", verbosity=0)
+    seeded = _DriveSeed()
+
+    _check_drive_structure(seeded)
+    _check_drive_files(seeded)
+    _check_drive_locks(seeded)
+
+
+class _DriveSeed:
+    def __init__(self) -> None:
+        from django.utils import timezone
+
+        from drive.periods import period_containing
+
+        self.today = timezone.localdate()
+        self.current = period_containing(self.today)
+        self.by_email = {r.email: r for r in Resident.objects.all()}
+
+    def viewer(self, email: str, *, oversees: bool = False) -> Viewer:
+        return Viewer.build(self.by_email[email].pk, oversees=oversees, today=self.today)
+
+    def group(self, email: str) -> Folder:
+        """The login's group folder this month."""
+        residency = self.by_email[email].residencies.get(year=self.today.year, month=self.today.month)
+        return Folder.objects.get(kind=Folder.Kind.GROUP, workgroup=residency.workgroup)
+
+    def period(self, email: str, start: date) -> Folder:
+        return self.group(email).children.get(period_start=start)
+
+
+def _check_drive_structure(seeded: _DriveSeed) -> None:
+    """Folders some logins may open, some only see the size of, and some not see at all."""
+    from drive import services
+    from drive.access import Level
+    from drive.models import File
+
+    today, current = seeded.today, seeded.current
+    now_folder = seeded.period("regnskab@gahk.dk", current.start)
+    older = seeded.period("regnskab@gahk.dk", current.previous().previous().start)
+    assert File.objects.filter(folder__path__startswith=now_folder.path).count() >= 4
+    assert seeded.viewer("regnskab@gahk.dk").level(now_folder) == Level.WRITE
+    assert seeded.viewer("regnskab@gahk.dk").level(older) == Level.READ
+    # The overseers read earlier periods, and see only the name and size of a current one of a group
+    # they are not in themselves.
+    formand = seeded.viewer("formand@gahk.dk", oversees=True)
+    assert formand.level(older) == Level.READ
+    others = [
+        seeded.period(email, current.start)
+        for email in ("regnskab@gahk.dk", "ak@gahk.dk", "oel@gahk.dk")
+        if seeded.group(email) != seeded.group("formand@gahk.dk")
+    ]
+    assert others
+    assert all(formand.level(folder) == Level.META for folder in others)
+    # A plain resident sees only the groups they have been in, and their note is in this month's.
+    beboer = seeded.viewer("beboer@gahk.dk")
+    groups = list(Folder.objects.filter(kind=Folder.Kind.GROUP))
+    visible = [group for group in groups if beboer.level(group) > Level.NONE]
+    assert 0 < len(visible) < len(groups)
+    own = seeded.group("beboer@gahk.dk")
+    assert own in visible
+    assert File.objects.filter(
+        folder__path__startswith=own.path, created_by=seeded.by_email["beboer@gahk.dk"]
+    ).exists()
+
+    # Fælles: this year and last year to write in, the year before to read only.
+    years = {f.period_start.year: f for f in Folder.objects.filter(kind=Folder.Kind.YEAR)}
+    assert beboer.level(years[today.year]) == Level.WRITE
+    assert beboer.level(years[today.year - 1]) == Level.WRITE
+    assert beboer.level(years[today.year - 2]) == Level.READ
+    assert all(File.objects.filter(folder=years[y]).exists() for y in (today.year - 1, today.year - 2))
+
+    # Real bytes of many kinds, so each downloads and opens.
+    names = list(File.objects.values_list("name", flat=True))
+    assert {n.rsplit(".", 1)[-1] for n in names} >= {"pdf", "xlsx", "docx", "csv", "md", "png", "jpg", "txt"}
+    for file in File.objects.all():
+        version = file.latest_version()
+        with services.storage().open(version.key, "rb") as stored:
+            assert len(stored.read()) == file.size > 0
+
+
+def _check_drive_files(seeded: _DriveSeed) -> None:
+    """The bin, versions and history: each needs something done to a file after it was uploaded."""
+    from datetime import timedelta
+
+    from django.utils import timezone
+
+    from drive import services
+    from drive.models import BIN_DAYS, Event, File
+    from notifications.models import Notification
+
+    regnskab = seeded.by_email["regnskab@gahk.dk"]
+    # In the bin: one deleted by a colleague (its creator is told), one about to go for good, and a
+    # deleted folder kept for the binned file in it.
+    binned = File.objects.filter(deleted_at__isnull=False)
+    receipt = binned.get(name="Kvittering 3.jpg")
+    assert receipt.deleted_by != regnskab
+    assert Notification.objects.filter(recipient=regnskab, url__endswith="/bin").exists()
+    assert binned.filter(deleted_at__lt=timezone.now() - timedelta(days=BIN_DAYS - 5)).exists()
+    assert binned.filter(folder__deleted_at__isnull=False).exists()
+    # Versions: a colleague's version after regnskab@ downloaded the file warns on replacing it, and
+    # an old version restored on top.
+    budget = File.objects.get(name=f"Budget {seeded.current.name}.xlsx")
+    try:
+        services.check_stale(budget, regnskab.pk)
+        raise AssertionError("replacing the budget should warn that a colleague changed it")
+    except services.Stale:
+        pass
+    assert File.objects.get(name="Kontoplan.xlsx").versions.filter(restored_from=1).exists()
+    # History: every kind of line, and ak@ told that somebody renamed their file.
+    lines = set(Event.objects.values_list("action", flat=True))
+    assert lines >= {
+        "created",
+        "version",
+        "version_restored",
+        "renamed",
+        "moved",
+        "copied",
+        "deleted",
+        "restored",
+    }
+    assert Notification.objects.filter(recipient__email="ak@gahk.dk", title__contains="omdøbte").exists()
+    assert Folder.objects.filter(deleted_at__isnull=False).count() == 1
+
+
+def _check_drive_locks(seeded: _DriveSeed) -> None:
+    """Locks and the requests page: pending, approved and rejected unlocks and purges."""
+    from django.db.models import Q
+    from django.utils import timezone
+
+    from drive.models import ApprovalRequest, Event, File, Folder
+
+    requests = ApprovalRequest.objects.all()
+    for kind in ApprovalRequest.Kind.values:
+        for state in ApprovalRequest.State.values:
+            assert requests.filter(kind=kind, state=state).exists(), (kind, state)
+    # Pending ones are for admin@ and formand@ to decide: neither of them asked.
+    pending = requests.filter(state=ApprovalRequest.State.PENDING)
+    assert not pending.filter(requested_by__email__in=["admin@gahk.dk", "formand@gahk.dk"]).exists()
+    # Locked by the nightly task and by hand, a locked folder, and a file unlocked for now.
+    assert File.objects.filter(locked_at__isnull=False, locked_by__isnull=True).exists()
+    assert File.objects.filter(locked_at__isnull=False, locked_by__isnull=False).exists()
+    assert Folder.objects.filter(kind=Folder.Kind.FOLDER, locked_at__isnull=False).exists()
+    assert File.objects.filter(unlocked_until__gt=timezone.now()).exists()
+    lines = set(Event.objects.values_list("action", flat=True))
+    assert lines >= {
+        "locked",
+        "unlock_requested",
+        "unlock_decided",
+        "purge_requested",
+        "purge_decided",
+        "purged",
+    }
+    # The space's activity page has lines with their place.
+    assert not Event.objects.filter(Q(space="") | Q(space__isnull=True)).exists()
