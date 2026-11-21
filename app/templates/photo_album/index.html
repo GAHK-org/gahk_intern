@@ -8,7 +8,9 @@
 			{% if folder %}<a class="btn-link" href="{% url 'photo_album:timeline' %}">Tidslinje</a>{% endif %}
 			<a class="btn-link" href="{% url 'photo_album:downloads' %}">Mine downloads</a>
 			{% if can_view_all_bins %}<a class="btn-link" href="{% url 'photo_album:bin' %}">Papirkurv</a>{% endif %}
-			{% if can_create %}<a class="btn" href="{% url 'photo_album:create_album' %}">Opret album</a><a class="btn btn-secondary" href="{% url 'photo_album:import_zip' %}">Importer</a>{% endif %}
+			{% if approvals_waiting %}<a class="btn btn-secondary" href="{% url 'photo_album:approvals' %}">Godkend <span class="chip chip-brass">{{ approvals_waiting }}</span></a>{% endif %}
+			{% if can_create %}<a class="btn" href="{% url 'photo_album:create_album' %}">Opret album</a>{% endif %}
+			{% if can_import %}<a class="btn btn-secondary" href="{% url 'photo_album:import_zip' %}">Importer</a>{% endif %}
 		</div>
 	</header>
 	{% if folder %}<p><a class="album-back" href="{% url 'photo_album:index' %}">Alle mapper</a></p>

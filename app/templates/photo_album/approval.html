@@ -1,0 +1,83 @@
+{% extends "base.html" %}
+{% block title %}Godkend {{ pending.album.name }} | Fotoalbum{% endblock %}
+{% block content %}
+{% comment %}One request (photo_album.approvals): everything is approved but what is ticked to be rejected. A
+tap on a picture ticks it; the corner button opens it in the viewer, which can tick it too. Only the
+items listed in "shown" are decided: one uploaded while the page was open waits for the next look.{% endcomment %}
+<section class="album-detail approval">
+	<header class="album-heading">
+		<div>
+			<nav class="album-breadcrumbs" aria-label="Albumsti"><a class="album-back" href="{% url 'photo_album:index' %}">Fotoalbum</a><a class="album-back" href="{% url 'photo_album:approvals' %}">Godkend</a></nav>
+			<h1>{{ pending.uploader.full_name|default:"Tidligere beboer" }} <span class="muted">til</span> {{ pending.album.name }}</h1>
+			<p class="album-subtitle">{% if pending.album.pending %}Et nyt album i {{ pending.album.folder }}{% else %}{{ pending.album.folder }}{% endif %}{% if pending.media %} · {% if pending.photos %}{{ pending.photos }} billede{{ pending.photos|pluralize:"r" }}{% endif %}{% if pending.photos and pending.videos %} og {% endif %}{% if pending.videos %}{{ pending.videos }} video{{ pending.videos|pluralize:"er" }}{% endif %}, uploadet {{ pending.first_at|date:"j. F" }}{% if pending.last_at|date:"Ymd" != pending.first_at|date:"Ymd" %}–{{ pending.last_at|date:"j. F" }}{% endif %}{% endif %} · slettes {{ pending.expires_at|date:"j. F" }}, hvis det ikke er godkendt</p>
+		</div>
+	</header>
+	<form method="post" class="approval-form" data-approval-form>
+		{% csrf_token %}
+		{% for item in pending.media %}<input type="hidden" name="shown" value="{{ item.pk }}">{% endfor %}
+		{% for album in pending.new_albums %}<input type="hidden" name="album" value="{{ album.pk }}">{% endfor %}
+		{% for form in album_forms %}{% with pk=form.album.pk %}
+		<fieldset class="card mb-4 approval-album" data-approval-album data-albums-url="{% url 'photo_album:approval_albums' %}" data-album-id="{{ pk }}">
+			<legend>{% if form.is_root %}Nyt album{% else %}Nyt underalbum{% endif %}: {{ form.album.display|join:" › " }}</legend>
+			<p class="muted">{{ pending.uploader.full_name|default:"En tidligere beboer" }} har oprettet {% if form.is_root %}albummet <strong>{{ form.album.name }}</strong> i {{ form.album.folder }}{% else %}underalbummet <strong>{{ form.album.name }}</strong> i {{ form.album.parent.name }}{% endif %}{% if form.inside %} med {% for inner in form.inside %}{% if not forloop.first %}{% if forloop.last %} og {% else %}, {% endif %}{% endif %}<strong>{{ inner.name }}</strong>{% endfor %}{% endif %}. Godkend det under et navn{% if form.is_root %} og i en mappe{% endif %}, eller læg det i et album, der findes i forvejen.</p>
+			{% if form.failed_merge %}<p class="approval-warning" role="status">Fletningen ind i <strong>{{ form.failed_merge.target.name }}</strong> mislykkedes: {{ form.failed_merge.error }} Intet i det er godkendt endnu.</p>{% endif %}
+			{% if form.clash %}<p class="approval-clash" role="status">Der findes allerede et album, der hedder <strong>{{ form.clash.name }}</strong>, {% if form.is_root %}i {{ form.album.folder }}{% else %}i {{ form.album.parent.name }}{% endif %}. Flet det nye ind i det, eller giv det et andet navn.</p>{% endif %}
+			{% if form.is_root %}{% include "photo_album/_approval_folder.html" %}{% endif %}
+			<label class="approval-album-choice"><input type="radio" name="album_action_{{ pk }}" value="keep"{% if form.action != "merge" %} checked{% endif %} data-approval-album-action> Godkend som nyt {% if form.is_root %}album{% else %}underalbum{% endif %}</label>
+			<div class="approval-album-option" data-approval-album-option="keep">
+				<label for="approval-name-{{ pk }}">Navn</label>
+				<input id="approval-name-{{ pk }}" type="text" name="name_{{ pk }}" value="{{ form.name }}" maxlength="140" required>
+			</div>
+			<label class="approval-album-choice"><input type="radio" name="album_action_{{ pk }}" value="merge"{% if form.action == "merge" %} checked{% endif %} data-approval-album-action> Læg det i et album, der findes</label>
+			<div class="approval-album-option" data-approval-album-option="merge">
+				{% if not form.is_root %}{% include "photo_album/_approval_folder.html" %}{% endif %}
+				<label for="approval-merge-target-{{ pk }}">Album i mappen</label>
+				<select id="approval-merge-target-{{ pk }}" name="merge_target_{{ pk }}" data-approval-merge-target>
+					<option value="">{% if form.merge_options %}Vælg album{% else %}Mappen har ingen albummer{% endif %}</option>
+					{% for candidate in form.merge_options %}<option value="{{ candidate.album.pk }}"{% if candidate.locked %} disabled{% endif %}{% if form.merge_target == candidate.album.pk|stringformat:"d" %} selected{% endif %}>{{ candidate.path|join:" › " }}{% if candidate.locked %} (låst){% endif %}</option>{% endfor %}
+				</select>
+				<p class="muted">{{ form.album.name }} flettes ind i det valgte og forsvinder{% if form.inside %}, og dets underalbummer flettes ind i dem af samme navn eller flyttes med{% endif %}. Det, der godkendes, bliver synligt, når fletningen er færdig; filer, albummet har i forvejen, beholdes én gang.</p>
+			</div>
+		</fieldset>
+		{% endwith %}{% endfor %}
+		{% if pending.media %}
+		<div class="approval-tools">
+			<p>Tryk på det, der skal <strong>afvises</strong>. Resten godkendes.</p>
+			<button class="btn-link" type="button" data-approval-pick="all">Afvis alle</button>
+			<button class="btn-link" type="button" data-approval-pick="none">Fortryd alle</button>
+		</div>
+		<div class="approval-gallery" data-album-gallery data-album-no-views>
+			{% for group in groups %}
+			{% if several_albums %}<h2 class="approval-group">{{ group.label }}</h2>{% endif %}
+			<div class="album-media-grid approval-grid">
+				{% for item in group.items %}
+				<article class="album-media-item approval-item{% if item.pk in rejected %} is-rejected{% endif %}" data-media-id="{{ item.pk }}">
+					<label class="approval-pick">
+						<input type="checkbox" name="reject" value="{{ item.pk }}" data-approval-reject{% if item.pk in rejected %} checked{% endif %}>
+						{% if item.has_derivatives %}<img src="{{ item.thumbnail.url }}" alt="{{ item.title }}" loading="lazy">{% else %}<span class="album-media-placeholder approval-placeholder" data-kind="{{ item.derivative_state }}"><span class="album-media-placeholder-title">{{ item.display_name }}</span><small>{% if item.derivative_state == 'failed' %}Kunne ikke behandles{% else %}Behandles …{% endif %}</small></span>{% endif %}
+						{% if item.content_type|slice:':6' == 'video/' %}<span class="album-video-mark">Video</span>{% endif %}
+						<span class="approval-mark" aria-hidden="true">Afvises</span>
+						<span class="sr-only">Afvis {{ item.display_name }}</span>
+					</label>
+					{% if item.has_derivatives %}<button type="button" class="approval-open" data-detail-url="{% url 'photo_album:media_detail' item.pk %}" aria-label="Vis {{ item.display_name }} i stor størrelse" title="Vis i stor størrelse"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14 4h6v6M10 20H4v-6M20 4l-7 7M4 20l7-7"/></svg></button>{% else %}<a class="approval-open" href="{% url 'photo_album:download_original' item.pk %}" aria-label="Hent originalen af {{ item.display_name }}" title="Hent originalen"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4v11M7 10l5 5 5-5M5 20h14"/></svg></a>{% endif %}
+					<p class="approval-name" title="{{ item.display_name }}">{{ item.display_name }}</p>
+				</article>
+				{% endfor %}
+			</div>
+			{% endfor %}
+		</div>
+		{% else %}
+		<p class="album-empty">Der er ikke uploadet noget til albummet endnu.</p>
+		{% endif %}
+		<div class="approval-bar">
+			<label class="approval-note"><span>Besked til {{ pending.uploader.first_name|default:"uploaderen" }} <span class="muted">(valgfri)</span></span><textarea name="note" rows="2" maxlength="300" placeholder="Fx hvorfor noget blev afvist">{{ note }}</textarea></label>
+			<div class="approval-buttons">
+				<span class="approval-summary" data-approval-summary aria-live="polite"></span>
+				<button class="btn" type="submit" name="action" value="approve" data-approval-submit>Godkend</button>
+				<button class="btn-link-danger" type="submit" name="action" value="reject" formnovalidate onclick="return confirm('Alt bliver afvist og lagt i papirkurven, hvor det kan gendannes i 30 dage. Afvis alt?');">Afvis alt</button>
+			</div>
+		</div>
+	</form>
+</section>
+{% include "photo_album/_viewer.html" with eyebrow="Venter på godkendelse" %}
+{% endblock %}

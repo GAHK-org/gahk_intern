@@ -46,21 +46,26 @@ from .media_samples import image_upload, jpeg_bytes, mp4_bytes, png_bytes, video
 
 
 @pytest.mark.django_db
-def test_only_photo_group_or_administrator_can_create_album(
+def test_an_album_from_outside_fotogruppen_awaits_approval(
     client: Client, make_resident: Callable[..., Resident]
 ) -> None:
+    """Anyone may make an album; only Fotogruppen's and the administrators' are made at once
+    (photo_album.approvals, tested in test_photo_album_approvals)."""
     resident = make_resident()
     client.force_login(resident)
     assert (
         client.post(reverse("photo_album:create_album"), {"folder": "2026", "name": "Fest"}).status_code
-        == 403
+        == 302
     )
+    asked = Album.objects.get(name="Fest")
+    assert asked.pending and asked.created_by == resident
 
     administrator = make_resident(email="admin@gahk.dk", roles=(Role.ADMINISTRATOR,))
     client.force_login(administrator)
-    response = client.post(reverse("photo_album:create_album"), {"folder": "2026", "name": "Fest"})
+    response = client.post(reverse("photo_album:create_album"), {"folder": "2026", "name": "Fest 2"})
     assert response.status_code == 302
-    assert Album.objects.get().name == "Fest"
+    made = Album.objects.get(name="Fest 2")
+    assert not made.pending and made.created_by == administrator
 
 
 @pytest.mark.django_db

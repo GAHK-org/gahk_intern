@@ -220,15 +220,17 @@ def test_sibling_names_must_differ_regardless_of_case(
 
 
 @pytest.mark.django_db
-def test_plain_residents_cannot_create_sub_albums(
+def test_plain_residents_sub_albums_await_approval(
     client: Client, make_resident: Callable[..., Resident]
 ) -> None:
+    """photo_album.approvals, tested in test_photo_album_approvals."""
     root = Album.objects.create(folder="2024", name="Sommerfest")
     client.force_login(make_resident())
 
     response = client.post(reverse("photo_album:create_sub_album", args=[root.pk]), {"name": "Fredag"})
 
-    assert response.status_code == 403
+    assert response.status_code == 302
+    assert Album.objects.get(name="Fredag").pending
 
 
 @pytest.mark.django_db

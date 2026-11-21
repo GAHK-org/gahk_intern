@@ -1,0 +1,8 @@
+{% comment %}The folder of a new album on the approval page: a root album's own, or, for a sub-album, where to
+look for the album to merge it into. The choice fills the input; a year not offered is typed in.{% endcomment %}
+<div class="approval-album-folder" data-album-folder-selector data-current-value="{{ form.folder }}">
+	<label for="folder-choice-{{ pk }}">Mappe</label>
+	<select id="folder-choice-{{ pk }}" data-album-folder-choice>{% for option in folder_options %}<option value="{{ option }}">{{ option }}</option>{% endfor %}<option value="__new__">Et andet år …</option></select>
+	<label class="sr-only" for="approval-folder-{{ pk }}">Årstal</label>
+	<input id="approval-folder-{{ pk }}" name="folder_{{ pk }}" type="text" maxlength="20" required value="{{ form.folder }}" data-album-folder-input>
+</div>

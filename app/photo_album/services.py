@@ -303,15 +303,44 @@ def upload_media(
 # --- Albums -------------------------------------------------------------------------------------
 
 
-def create_album(*, name: str, folder: str = "", parent: Album | None = None) -> Album:
-    """Create a root album in `folder`, or a sub-album under `parent`. Raises ValidationError."""
+def create_album(
+    *,
+    name: str,
+    folder: str = "",
+    parent: Album | None = None,
+    created_by: Resident | None = None,
+    pending: bool = False,
+) -> Album:
+    """Create a root album in `folder`, or a sub-album under `parent`. Raises ValidationError.
+
+    `pending` for an album a resident outside Fotogruppen asks for (photo_album.approvals), as is
+    every album made in one. Its name may be another's awaiting approval, which holds none; but not
+    an approved sibling's, which is the album to upload to, nor one its maker has asked for already.
+    """
+    pending = pending or (parent is not None and parent.pending)
     album = Album(
-        name=normalize_name(name.strip()), folder=parent.folder if parent else folder, parent=parent
+        name=normalize_name(name.strip()),
+        folder=parent.folder if parent else folder,
+        parent=parent,
+        created_by=created_by,
+        pending=pending,
     )
     if parent is not None:
         album.depth = parent.depth + 1
     album.full_clean(exclude=["path"])
     album.validate_constraints()
+    if pending:
+        siblings = (
+            Album.objects.filter(parent=parent)
+            if parent is not None
+            else Album.objects.filter(parent__isnull=True, folder=album.folder)
+        ).filter(name__iexact=album.name)
+        if siblings.filter(pending=False).exists():
+            raise ValidationError(
+                {"name": "Der findes allerede et album med det navn. Upload til det i stedet."}
+            )
+        if siblings.filter(created_by=created_by).exists():
+            raise ValidationError({"name": "Du har allerede bedt om et album med det navn."})
     try:
         with transaction.atomic():
             album.save()
@@ -565,7 +594,7 @@ def _existing_album(root: Album, folders: tuple[str, ...]) -> Album:
     """The deepest album that already exists along `folders` below `root` (`root` itself if none)."""
     album = root
     for name in folders:
-        child = album.children.filter(name__iexact=name).first()
+        child = album.children.filter(name__iexact=name, pending=False).first()
         if child is None:
             break
         album = child
@@ -670,8 +699,10 @@ def _plan_import(
         validate_album_name(plan.root_name)
     except ValidationError as exc:
         plan.errors.append(f'Albumnavnet "{plan.root_name}": {" ".join(exc.messages)}')
+    # An album awaiting approval holds no name (models.Album): the import neither adds to it nor
+    # makes way for it.
     existing_root = Album.objects.filter(
-        folder=folder, parent__isnull=True, name__iexact=plan.root_name
+        folder=folder, parent__isnull=True, name__iexact=plan.root_name, pending=False
     ).first()
     if existing_root is not None and merge:
         plan.existing_root = existing_root
@@ -898,7 +929,9 @@ def _store_import(
                         parent = albums[key[:-1]]
                         name = item.folders[depth - 1]
                         album = (
-                            parent.children.filter(name__iexact=name).first() if plan.existing_root else None
+                            parent.children.filter(name__iexact=name, pending=False).first()
+                            if plan.existing_root
+                            else None
                         )
                         if album is None:
                             album = Album(folder=folder, name=name, parent=parent)
@@ -1937,7 +1970,7 @@ def apply_sidecars(*, archive: File, folder: str, root_name: str) -> SidecarDate
     Raises ValidationError when there is no such album or the ZIP cannot be read.
     """
     root = Album.objects.filter(
-        folder=folder, parent__isnull=True, name__iexact=normalize_name(root_name)
+        folder=folder, parent__isnull=True, name__iexact=normalize_name(root_name), pending=False
     ).first()
     if root is None:
         raise ValidationError(f'Der findes intet album med navnet "{root_name}" i {folder}.')
@@ -1947,7 +1980,9 @@ def apply_sidecars(*, archive: File, folder: str, root_name: str) -> SidecarDate
     def album_at(folders: tuple[str, ...]) -> Album | None:
         if folders not in albums:
             parent = album_at(folders[:-1])
-            albums[folders] = parent.children.filter(name__iexact=folders[-1]).first() if parent else None
+            albums[folders] = (
+                parent.children.filter(name__iexact=folders[-1], pending=False).first() if parent else None
+            )
         return albums[folders]
 
     try:
