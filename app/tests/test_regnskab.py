@@ -188,7 +188,7 @@ def test_send_alumneregninger_queues_the_task_and_the_status_page_shows_the_resu
 def test_send_alumneregninger_auth_error_does_not_crash_the_request(
     monkeypatch: pytest.MonkeyPatch, make_resident: Callable
 ) -> None:
-    """An invalid/revoked e-conomic connection is handled inside the task (tasks.py), not the view —
+    """An invalid/revoked e-conomic connection fails the task (tasks.py), not the view —
     there is no HTTP response left for a background job to show an error on. The POST itself always
     just queues and redirects; the status page simply shows nobody processed yet."""
     alumne = make_resident(email="alumne@gahk.dk", economic_account_number=1101)
@@ -204,6 +204,12 @@ def test_send_alumneregninger_auth_error_does_not_crash_the_request(
         raise economic.EconomicAuthError("token revoked")
 
     monkeypatch.setattr(economic, "get_account", get_account)
+    # The job does fail (#397) — but on the worker, not in the request, as with a real broker.
+    monkeypatch.setattr(
+        tasks.send_alumneregninger_task,
+        "delay",
+        lambda *args: tasks.send_alumneregninger_task.apply(args=args, throw=False),
+    )
     c = Client()
     c.force_login(acc)
 
@@ -462,3 +468,93 @@ def test_alumneregninger_go_ahead_with_a_warning_when_someone_lacks_a_kontonr(
         html = c.get(response.url).content.decode()
 
     assert "1 i perioden har intet e-conomic kontonr. og får ingen alumneregning: nonumber" in html
+
+
+@pytest.mark.django_db
+def test_the_status_page_follows_each_mail_through_the_queue(make_resident: Callable) -> None:
+    from datetime import date, timedelta
+
+    from django.utils import timezone
+
+    from core.models import OutgoingMail
+    from regnskab.models import AlumneregningSend
+
+    period = {"date_from": date(2026, 8, 1), "date_to": date(2026, 8, 31)}
+    for i, (status, error) in enumerate(
+        [
+            (OutgoingMail.Status.QUEUED, ""),
+            (OutgoingMail.Status.FAILED, "550 no such user"),
+            (OutgoingMail.Status.UNKNOWN, "Afbrudt"),
+        ],
+        start=1,
+    ):
+        alumne = _alumne_in_august(f"alumne{i}@gahk.dk", 1100 + i, i)
+        mail = OutgoingMail.objects.create(
+            subject="Alumneregning",
+            recipients=alumne.email,
+            status=status,
+            error=error,
+            expires_at=timezone.now() + timedelta(days=3),
+        )
+        AlumneregningSend.objects.create(
+            resident=alumne, outcome="sent", detail="saldo 0,00 kr.", mail=mail, **period
+        )
+    acc = make_resident(email="acc@gahk.dk", roles=("regnskab",))
+    c = Client()
+    c.force_login(acc)
+
+    html = c.get(reverse("regnskab:alumneregninger_status"), {"fra": "2026-08-01", "til": "2026-08-31"})
+
+    text = html.content.decode()
+    assert "1 mail venter på at blive sendt" in text
+    assert "I mailkøen" in text
+    assert "Mailen kunne ikke sendes: 550 no such user" in text
+    assert "det er uvist, om mailen kom frem" in text
+    unknown = AlumneregningSend.objects.get(resident__email="alumne3@gahk.dk")
+    assert reverse("regnskab:alumneregning_not_received", args=[unknown.pk]) in text
+
+
+@pytest.mark.django_db
+def test_a_statement_that_did_not_arrive_is_sent_again(
+    make_resident: Callable, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A mail cut off mid-send is not resent by itself; regnskab's "Kom ikke frem" sends that one again."""
+    from datetime import date, timedelta
+
+    from django.core import mail
+    from django.utils import timezone
+
+    from core.models import OutgoingMail
+    from regnskab import alumneregning, economic
+    from regnskab.models import AlumneregningSend
+
+    monkeypatch.setattr(alumneregning, "account_name_matches", lambda resident, name: True)
+    monkeypatch.setattr(economic, "get_account", lambda n: economic.EconomicAccount(n, "Alumne", 0.0))
+    monkeypatch.setattr(economic, "get_posted_entries_in_range", lambda n, f, t: [])
+    monkeypatch.setattr(economic, "get_draft_entries_for_account", lambda n: [])
+    alumne = _alumne_in_august("alumne@gahk.dk", 1101, 1)
+    cut_off = OutgoingMail.objects.create(
+        subject="Alumneregning",
+        recipients=alumne.email,
+        status=OutgoingMail.Status.UNKNOWN,
+        payload={"subject": "old"},
+        expires_at=timezone.now() + timedelta(days=3),
+    )
+    send = AlumneregningSend.objects.create(
+        resident=alumne, outcome="sent", date_from=date(2026, 8, 1), date_to=date(2026, 8, 31), mail=cut_off
+    )
+    acc = make_resident(email="acc@gahk.dk", roles=("regnskab",))
+    c = Client()
+    c.force_login(acc)
+
+    assert alumneregning.send_alumneregninger(date(2026, 8, 1), date(2026, 8, 31)) == []  # not by itself
+
+    response = c.post(reverse("regnskab:alumneregning_not_received", args=[send.pk]))
+
+    assert response.status_code == 302
+    assert [m.to for m in mail.outbox] == [["alumne@gahk.dk"]]
+    cut_off.refresh_from_db()
+    assert (cut_off.status, cut_off.payload) == (OutgoingMail.Status.FAILED, {})  # replaced, not resendable
+    assert "Kom ikke frem" in cut_off.error
+    send.refresh_from_db()
+    assert send.mail is not None and send.mail.status == OutgoingMail.Status.SENT
