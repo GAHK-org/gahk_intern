@@ -34,6 +34,9 @@ Previews (`_seed_previews`): a file of every kind the preview knows, from an ani
 iPhone's HEIC to a video, a sound, an Excel CSV and one too long to show whole, plus a scan too
 broken to preview. The viewer copies and thumbnails are built at the end, as a worker would.
 
+Search and sorting (`_seed_search`): a folder of a dozen receipts by two people, and minutes of the
+same name in several periods and groups.
+
 Last, locks (`_seed_locks`), as they stop changes: what the nightly task locked, regnskab@'s
 closed accounts and `Årsafslutning` folder locked by hand, and the requests page for admin@ and
 formand@ with an unlock and a purge in each state - pending, approved (the logo is unlocked for now
@@ -83,6 +86,7 @@ from .models import (
     SharedMember,
     Space,
     StandingFolder,
+    ZipDownload,
 )
 from .periods import Period, period_containing
 from .structure import COMMON_TIMELESS, _standing, ensure_structure, folder_name
@@ -395,6 +399,7 @@ def seed(residents: list[Resident], now: datetime, _rng: random.Random) -> int:
     _seed_sharing(s)
     _seed_standing(s)
     _seed_previews(s)
+    _seed_search(s)
     # Last: a lock stops the changes above.
     _seed_locks(s)
     # The viewer copies and thumbnails the "thumbnails" queue makes, made here so the lists show them
@@ -890,6 +895,48 @@ def _seed_previews(s: _Seeder) -> None:
         )
 
 
+def _seed_search(s: _Seeder) -> None:
+    """Enough for search and sorting to mean something: a dozen receipts by two people, of different
+    sizes and days, numbered into two digits as receipts are; and minutes of the same name in other
+    periods and groups, so search's period and space filters have something to narrow."""
+    current = period_containing(s.today)
+    starts = current.start
+    regnskab = s.login("regnskab@gahk.dk")
+    if (group := _group_of(regnskab, s.today)) is not None:
+        colleague = _colleague(group, regnskab, s.today)
+        now_folder = _group_folder(group, Folder.Kind.PERIOD, current)
+        receipts = Folder.objects.get(parent__parent=now_folder, name="Indkøb")
+        for number in range(4, 13):
+            by = regnskab if number % 3 else colleague
+            size = (600 + number * 97 % 700, 800 + number * 53 % 900)
+            colour = ["#dd6b43", "#d8a32f", "#315b8d", "#517544", "#8a4e70"][number % 5]
+            when = s.ago(number * 7 % 19 + 1, not_before=starts)
+            s.upload(
+                receipts, f"Kvittering {number}.jpg", _jpg(f"Kvittering {number}", colour, size), by, when
+            )
+    for email, name in (("ak@gahk.dk", "AK-møde referat.docx"), ("oel@gahk.dk", "Mødereferat.docx")):
+        login = s.login(email)
+        if (group := _group_of(login, s.today)) is None:
+            continue
+        previous = _group_folder(group, Folder.Kind.PERIOD, current.previous())
+        s.upload(
+            previous,
+            name,
+            _docx(name.removesuffix(".docx"), _AK_MEETING[:1]),
+            login,
+            _noon(current.start - timedelta(days=40)),
+        )
+    if (group := _group_of(s.login("oel@gahk.dk"), s.today)) is not None:
+        oel = s.login("oel@gahk.dk")
+        s.upload(
+            _group_folder(group, Folder.Kind.PERIOD, current),
+            "Mødereferat.docx",
+            _docx("Mødereferat", _AK_MEETING[1:]),
+            oel,
+            s.ago(4, not_before=starts),
+        )
+
+
 def _seed_locks(s: _Seeder) -> None:
     """Locks, and requests in every state: the requests page (admin@, formand@) has two pending, two
     approved and two rejected, and whoever asked for a decided one has been told the outcome."""
@@ -976,6 +1023,9 @@ def wipe() -> None:
             if key:
                 store.delete(key)
     ImagePreview.objects.all().delete()
+    for archive in ZipDownload.objects.exclude(archive_key=""):
+        store.delete(archive.archive_key)
+    ZipDownload.objects.all().delete()
     # History and requests outlive their items (SET_NULL), so they go by themselves.
     Event.objects.all().delete()
     ApprovalRequest.objects.all().delete()
