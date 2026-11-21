@@ -135,13 +135,20 @@ def test_seed_demo_gives_the_logins_notifications_in_every_state() -> None:
 
     assert services.unseen_count(beboer.pk) == 4
     assert mine.visible().filter(importance=Importance.KRITISK).exists()
-    assert mine.visible().filter(seen_at__isnull=False).count() == 2
+    assert mine.visible().filter(seen_at__isnull=False).count() == 4
+    assert mine.visible().done().count() == 2
+    # Kritisk: one read but not done, which the dropdown keeps; one done, which it drops.
+    kritisk = mine.visible().filter(importance=Importance.KRITISK)
+    assert kritisk.in_dropdown().filter(seen_at__isnull=False).exists()
+    assert kritisk.done().exists() and not kritisk.done().in_dropdown().exists()
+    done = list(mine.visible().done().order_by("-done_at"))
+    assert done[0].created_at < done[1].created_at, "Færdige sorts by when it was done, not by age"
     assert any(len(n.actors) == 2 for n in mine)  # "Mette og Jonas svarede"
     assert services.purge_expired() == 5  # one long-expired row per documented login
     assert beboer.notification_preferences.filter(push=False).exists()
 
     call_command("seed_demo", "--fresh", "--force", "--residents", "12", verbosity=0)  # still idempotent
-    assert Notification.objects.filter(recipient__email="beboer@gahk.dk").count() == 7
+    assert Notification.objects.filter(recipient__email="beboer@gahk.dk").count() == 9
 
 
 @pytest.mark.django_db

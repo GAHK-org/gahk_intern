@@ -4,8 +4,8 @@ The signal carries no pk of its own — there is nothing to name. Whatever chang
 same two things: re-reads its badge, and re-reads its panel if it is open (notifications/_bell.html).
 
 Sent when a resident's in-app inbox changes in either direction: a row arrived or was folded into
-(services.notify, notify_grouped), or rows were marked seen (services.mark_seen) — so reading a
-notification on the phone clears the badge on the laptop.
+(services.notify, notify_grouped), or rows were marked seen or done (services.mark_seen, mark_done,
+mark_not_done) — so reading a notification on the phone clears the badge on the laptop.
 
 Only what the web process writes is heard. Celery's reminders (events, mærkedage) are written by a
 worker, which the in-memory channel layer cannot reach from; those appear on the next page load, as

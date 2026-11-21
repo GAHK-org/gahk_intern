@@ -807,6 +807,7 @@ erDiagram
         datetime updated_at
         datetime expires_at
         datetime seen_at
+        datetime done_at
     }
 
     notifications_NotificationPreference {
@@ -1802,6 +1803,7 @@ erDiagram
         datetime updated_at
         datetime expires_at
         datetime seen_at
+        datetime done_at
     }
 
     notifications_NotificationPreference {
