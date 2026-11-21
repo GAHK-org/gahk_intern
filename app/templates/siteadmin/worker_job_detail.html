@@ -16,6 +16,7 @@
       <div class="muted">{{ job.task }}{% if job.task_context %} · {{ job.task_context }}{% endif %}</div>
     </div>
     <div class="head-actions">
+      {% if job.task == "core.tasks.deliver_mail" %}<a class="btn btn-secondary" href="{% url 'siteadmin:mails' %}?status=not_sent#mails">Mails, der ikke er sendt</a>{% endif %}
       <a class="btn btn-secondary" href="{% url 'siteadmin:worker_jobs' %}?type={{ job.task|urlencode }}&amp;children=1#historik">Alle {{ job.name }}</a>
     </div>
   </div>

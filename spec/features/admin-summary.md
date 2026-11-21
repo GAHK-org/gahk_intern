@@ -17,6 +17,11 @@ holds access now.
 - The failed jobs by type, most first, with a link to the failures on the worker-jobs page.
 - Sub-jobs (one per picture in a photo import) count like any other job.
 
+## Mail (the month that just ended)
+
+- How many of the month's mails were sent, and how many were not: failed, expired, or cut off while
+  being sent, each counted on its own line when there were any, with a link to them on the mail page.
+
 ## Access (as the mail goes out)
 
 - Superusers.

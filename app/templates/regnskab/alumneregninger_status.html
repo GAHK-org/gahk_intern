@@ -38,6 +38,7 @@
                   <button type="submit" class="btn btn-secondary">Kom ikke frem — send igen</button>
                 </form>
               {% elif mail.status == 'queued' and mail.error %}Prøves igen: {{ mail.error }}{% endif %}
+              {% if mail and can_see_mails %}<a href="{% url 'siteadmin:mail_detail' mail.pk %}">Se mailen</a>{% endif %}
             </td>
           </tr>
           {% endwith %}

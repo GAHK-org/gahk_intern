@@ -20,8 +20,8 @@ from django.utils.http import url_has_allowed_host_and_scheme
 
 from ak.models import AkEntry
 from core.models import OutgoingMail
-from residents.models import Residency, Resident, prev_period
-from residents.permissions import current_resident, role_required
+from residents.models import Residency, Resident, Role, prev_period
+from residents.permissions import current_resident, effective_roles, role_required
 from residents.views import DA_MONTHS, _parse_period, _period_options
 
 from . import alumneregning, economic, tasks
@@ -294,6 +294,8 @@ def alumneregninger_status_view(request: HttpRequest) -> HttpResponse:
             "failed": sum(1 for _resident, send in rows if send is not None and send.outcome == "failed")
             + sum(1 for mail in mails if mail.status in (Status.FAILED, Status.EXPIRED)),
             "rate_limit": settings.MAIL_RATE_LIMIT,
+            # The mail page is the administrators'; regnskab without that role would get a 403.
+            "can_see_mails": Role.ADMINISTRATOR in effective_roles(request),
         },
     )
 
