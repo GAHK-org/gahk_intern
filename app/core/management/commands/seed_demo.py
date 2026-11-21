@@ -17,6 +17,8 @@ Deterministic logins (all password `demo1234`):
     ak@gahk.dk         AK role
     oel@gahk.dk        Ølkælder role
     beboer@gahk.dk     plain resident (no roles)
+    koekken@gahk.dk    the kitchen account (not a resident: Den Hurtige's Køkkenet channel, its own
+                       opslag, Reparationer and its notifications; spec/features/account-kinds.md)
 """
 
 import argparse
@@ -44,6 +46,7 @@ from cms.models import ContentChange, NewsItem, Page, PageVersion, PylonEvent
 from cms.models import Event as CmsEvent
 from core.models import Cleaning, Room, Workgroup
 from den_hurtige.demo import seed as seed_den_hurtige
+from den_hurtige.demo import seed_kitchen as seed_den_hurtige_kitchen
 from den_hurtige.models import QuickComment, QuickPost, QuickReaction
 from events.demo import seed as seed_events
 from events.models import CalendarFeedToken, Event, EventInvite, Rsvp
@@ -53,6 +56,7 @@ from gahkflix.models import Series as GahkflixSeries
 from gahkflix.models import Tag as GahkflixTag
 from gahkflix.models import Video as GahkflixVideo
 from notifications.demo import seed as seed_notifications
+from notifications.demo import seed_kitchen as seed_notifications_kitchen
 from notifications.models import Notification, NotificationPreference, NotificationSettings
 from oelkaelder.models import (
     Deposit,
@@ -64,10 +68,14 @@ from oelkaelder.models import (
 )
 from opslagstavle.demo import seed as seed_opslagstavle
 from opslagstavle.demo import seed_embeds as seed_opslagstavle_embeds
+from opslagstavle.demo import seed_kitchen as seed_opslagstavle_kitchen
 from opslagstavle.models import Notice, NoticeComment, NoticeReaction
 from photo_album.demo import seed as seed_photo_album
 from photo_album.models import Album, Media
 from regnskab.models import AlumneregningSend, EconomicLedgerEntry
+from reparationer.demo import seed as seed_reparationer
+from reparationer.demo import seed_kitchen as seed_reparationer_kitchen
+from reparationer.models import RepairComment, RepairImage, RepairTask
 from residents.models import (
     WORKGROUP_ROLE,
     Residency,
@@ -88,6 +96,7 @@ from stats.models import DailyVisitCount, PageViewDay
 from .seed_rooms import build_rooms
 
 DEMO_PASSWORD = "demo1234"  # noqa: S105 — public demo credential, not a secret
+KITCHEN_EMAIL = "koekken@gahk.dk"
 SEED = 1908  # the year GAHK was founded — any fixed value works, we just want reproducibility
 
 # Non-privileged chore groups (no site role) mixed in with the privileged ones from WORKGROUP_ROLE.
@@ -164,6 +173,11 @@ WIPE_ORDER: list[type[models.Model]] = [
     Notification,
     NotificationPreference,
     NotificationSettings,
+    # Before Resident, though a deleted Resident would cascade to them anyway: RepairImage's files go
+    # with its post_delete signal either way, and listing them keeps the wipe readable.
+    RepairImage,
+    RepairComment,
+    RepairTask,
     # Before Resident: uploaders, series creators and requesters are all PROTECTed.
     GahkflixRequest,
     GahkflixVideo,
@@ -243,8 +257,16 @@ class Command(BaseCommand):
             # After both: these posts embed an album and a film seeded just above.
             seed_opslagstavle_embeds(residents, self.now)
             seed_den_hurtige(residents, self.now, self.rng)
+            seed_reparationer(residents, self.now, self.rng)
+            # The kitchen account is kept out of `residents` (it is not one); it gets only what the
+            # pages open to it show. Seeded without the shared rng, so the rest keeps its draws.
+            kitchen = self._seed_kitchen_account()
+            seed_den_hurtige_kitchen(kitchen, residents, self.now)
+            seed_opslagstavle_kitchen(kitchen, residents, self.now)
+            seed_reparationer_kitchen(kitchen, residents, self.now)
             # Last: its rows link to the events, opslag and Den Hurtige posts seeded above.
             seed_notifications(residents, self.now, self.rng)
+            seed_notifications_kitchen(kitchen, residents, self.now)
 
         self._report(residents)
 
@@ -331,6 +353,16 @@ class Command(BaseCommand):
                 r.sponsor = residents[self.rng.randint(0, i - 1)]
                 r.save(update_fields=["sponsor"])
         return residents
+
+    def _seed_kitchen_account(self) -> Resident:
+        """The kitchen staff's shared login, shaped like the real one: `is_kitchen` (ticked in Django
+        admin), named "Køkkenet", and no surname, birthday, study or residency, since it is not a
+        resident. Left out of `residents`, so it never lands on the alumneliste, in AK, the ølkælder or
+        anyone's lineage."""
+        kitchen = Resident(email=KITCHEN_EMAIL, first_name="Køkkenet", last_name="", is_kitchen=True)
+        kitchen.set_password(DEMO_PASSWORD)
+        kitchen.save()
+        return kitchen
 
     def _make_resident(self, email: str, first: str, last: str, **extra) -> Resident:  # noqa: ANN003
         r = Resident(
@@ -782,6 +814,7 @@ class Command(BaseCommand):
             ("oel@gahk.dk", "Ølkælder role"),
             ("regnskab@gahk.dk", "Regnskab role — /regnskab/, alumneregninger"),
             ("beboer@gahk.dk", "plain resident"),
+            (KITCHEN_EMAIL, "kitchen account — Køkkenet channel, own opslag, Reparationer"),
         ]:
             self.stdout.write(f"  {email:22} {desc}")
         self.stdout.write(
