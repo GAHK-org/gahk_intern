@@ -7,12 +7,26 @@ from django.db import connection
 from django.db.models import QuerySet
 from django.utils import timezone
 
+from core.job_progress import current, stage
+
 logger = logging.getLogger(__name__)
 
 # How often a running job writes down how far it has got. Well inside models.JOB_STALLED_AFTER, so
 # a job still working is always seen to be, and rare enough that a big import is not one UPDATE per
 # megabyte.
 PROGRESS_WRITE_INTERVAL = timedelta(seconds=30)
+
+
+# Each step's share of the whole job, and its name on the worker-jobs page, for that page and its
+# watchdog (core.job_progress). An import reads the ZIP (downloading it from the bucket), then checks
+# every file in it onto disk, then stores them; a download zips; a merge compares the files.
+STEPS = {
+    "reading": stage(0.0, 0.05, "Læser ZIP-filen"),
+    "checking": stage(0.05, 0.5, "Tjekker filerne"),
+    "storing": stage(0.5, 1.0, "Gemmer filerne"),
+    "zipping": stage(0.0, 1.0, "Pakker ZIP-filen"),
+    "Sammenligner filer": stage(0.0, 1.0, "Sammenligner filer"),
+}
 
 
 class JobProgress:
@@ -30,8 +44,12 @@ class JobProgress:
     def __init__(self, rows: QuerySet) -> None:
         self._rows = rows
         self._written_at = time.monotonic()
+        # Taken here, in the job's thread: a download's ZIP is read by boto3 in a thread of its own.
+        self._job = current()
 
     def __call__(self, step: str, done: int, total: int) -> None:
+        if part := STEPS.get(step):
+            part(done / total if total else 0.0, self._job)
         now = time.monotonic()
         if now - self._written_at < PROGRESS_WRITE_INTERVAL.total_seconds():
             return
