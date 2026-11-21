@@ -390,19 +390,21 @@ def _new_file(
 # --- New documents, and editable copies ------------------------------------------------------------------
 
 
-def new_document(viewer: Viewer, folder: Folder, kind: str, resident: Resident) -> File:
+def new_document(viewer: Viewer, folder: Folder, kind: str, resident: Resident, name: str = "") -> File:
+    """A blank docx, xlsx or pptx, named `name` or after its kind, numbered if the name is taken."""
     if kind not in NEW:
         raise ValidationError("Den slags dokument findes ikke.")
     if not viewer.can_upload_to(folder):
         raise PermissionDenied
-    name, extension = NEW[kind]
+    default, extension = NEW[kind]
+    name = services.new_file_name(name, default, extension)
     content = (BLANK_DIR / f"blank.{extension}").read_bytes()
     key = services.new_key()
     services.store_local(key, ContentFile(content, name=f"blank.{extension}"))
     return services.add_upload(
         viewer,
         folder,
-        name=f"{name}.{extension}",
+        name=name,
         key=key,
         size=len(content),
         content_type=CONTENT_TYPES[extension],

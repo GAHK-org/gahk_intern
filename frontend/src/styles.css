@@ -2102,6 +2102,21 @@
   .drive-pick li[hidden] { display:none; }
   /* Live editing while it is off or not answering (office.state): there, but plainly not to be pressed. */
   .drive-actions .btn:disabled { opacity:.5; cursor:not-allowed; }
+  .drive-new-file { width:min(440px, calc(100vw - 32px)); }
+  .drive-new-file h2 { margin:0 0 12px; font-size:18px; }
+  .drive-new-file input[type=text] { margin-bottom:14px; }
+  .drive-new-file-kinds { display:grid; grid-template-columns:repeat(auto-fill, minmax(180px, 1fr)); gap:8px; margin-bottom:12px; }
+  .drive-new-file-kind { display:flex; align-items:center; gap:8px; padding:10px 12px; border:1px solid var(--border);
+    border-radius:8px; background:var(--surface-2); color:var(--ink); font:inherit; font-size:14px; text-align:left; }
+  .drive-new-file-kind:hover:not(:disabled) { border-color:var(--green-100); background:var(--green-050); }
+  .drive-new-file-kind:disabled { opacity:.5; cursor:not-allowed; }
+  .drive-new-file-kind .ni { width:18px; height:18px; flex:none; color:var(--brass); stroke:currentColor; fill:none; }
+  .drive-new-file-ext { margin-left:auto; color:var(--muted); font-size:12px; }
+  .drive-new-file .drive-office-state { margin:0 0 12px; }
+  .drive-text-form { display:grid; gap:12px; }
+  .drive-text { width:100%; min-height:60vh; padding:12px 14px; border:1px solid var(--border-strong); border-radius:8px;
+    background:var(--surface); font-family:ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size:14px; line-height:1.5; resize:vertical; }
+  .drive-text-hint { margin:0; font-size:12px; color:var(--muted); }
   .drive-office-state { margin:-8px 0 16px; font-size:13px; color:var(--muted); }
   .drive-inline-form { display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin:0; }
   .drive-inline-form select, .drive-inline-form input[type=text] { width:auto; margin:0; max-width:100%; }

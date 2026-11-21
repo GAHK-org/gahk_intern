@@ -17,8 +17,7 @@ from django.views.decorators.http import require_POST
 from residents.permissions import current_resident
 
 from . import access, office, services
-from .access import Level
-from .views import _folder, _render, crumbs, live_file
+from .views import _render, crumbs, live_file
 
 
 def _on() -> None:
@@ -58,22 +57,6 @@ def editor(request: HttpRequest, uuid: UUID) -> HttpResponse:
             "edit_on_phone": edit and phone,
         },
     )
-
-
-@access.access_required
-@require_POST
-def new_document(request: HttpRequest, uuid: UUID) -> HttpResponse:
-    _on()
-    folder, viewer, _ = _folder(request, uuid, at_least=Level.WRITE)
-    try:
-        file = office.new_document(viewer, folder, request.POST.get("kind", ""), current_resident(request))
-    except PermissionDenied:
-        messages.error(request, "Du kan ikke lægge noget i den mappe.")
-        return redirect("drive:folder", folder.uuid)
-    except ValidationError as exc:
-        messages.error(request, " ".join(exc.messages))
-        return redirect("drive:folder", folder.uuid)
-    return redirect("drive:office", file.uuid)
 
 
 @access.access_required

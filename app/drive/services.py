@@ -153,6 +153,12 @@ def remember_download(file: File, resident_id: int, number: int) -> None:
     LastDownload.objects.update_or_create(file=file, resident_id=resident_id, defaults={"number": number})
 
 
+def new_file_name(name: str, default: str, extension: str) -> str:
+    """A new file's name: the one typed, or the default, ending in the kind's extension."""
+    name = name.strip() or default
+    return name if name.lower().endswith(f".{extension}") else f"{name}.{extension}"
+
+
 def free_name(folder: Folder, name: str, *, keep_suffix: bool = True) -> str:
     """`Budget.xlsx` -> `Budget (2).xlsx`, or the first number not taken. A folder's name has no
     suffix: `Fest 1.5` -> `Fest 1.5 (2)`."""

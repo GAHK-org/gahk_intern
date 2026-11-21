@@ -159,6 +159,7 @@ def test_seed_demo_fills_drive_for_every_login() -> None:
     _check_drive_search(seeded)
     _check_drive_office(seeded)
     _check_drive_readme(seeded)
+    _check_drive_text(seeded)
 
 
 class _DriveSeed:
@@ -440,6 +441,26 @@ def _check_drive_readme(seeded: _DriveSeed) -> None:
         shown = preview.readme(file.latest_version())
         assert shown is not None and shown.html
         assert "<span" not in shown.html
+
+
+def _check_drive_text(seeded: _DriveSeed) -> None:
+    """Files made with `Ny fil` and written in the editor, a Windows file edited with its line endings
+    kept, and a text too long for the editor."""
+    from drive import services, text
+    from drive.models import File
+
+    def stored(file: File) -> bytes:
+        with services.storage().open(file.latest_version().key, "rb") as source:
+            return source.read()
+
+    note, table = File.objects.get(name="Huskeliste.md"), File.objects.get(name="Kassebeholdning.csv")
+    for made in (note, table):
+        assert made.versions.get(number=1).size == 0
+        assert made.latest_version().number == 2
+    assert stored(table).startswith(b"\xef\xbb\xbf")
+    keys = File.objects.get(name="Nøgleliste.txt")
+    assert keys.versions.count() == 2 and b"\r\n" in stored(keys)
+    assert not text.editable(File.objects.get(name="Varmeanlæg fuld log.log"))
 
 
 @pytest.mark.django_db

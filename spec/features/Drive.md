@@ -156,9 +156,10 @@ Drive
 - A folder with a README.md (in any case) shows it rendered above the list, which still has it to open, edit or download.
 - Until live editing is switched on, office files are downloaded. It is built switched off, to run on the same server once that is upgraded.
 - Everyone who opens the same version edits it together. The edited document becomes a new version when the last of them closes it. If the file was locked or binned while it was open, the work is saved as a new file beside it rather than lost.
-- `Nyt dokument`, `Nyt regneark` and `Ny præsentation` make a blank file, numbered if the name is taken, and open it.
+- `Ny fil`, in any folder you can write to, makes an empty text file (txt), markdown note (md) or CSV table, or a blank document, spreadsheet or presentation, named as typed or after its kind, numbered if the name is taken, and opens it. Text files open in the text editor, office files for live editing.
+- The text editor edits a text, markdown or CSV file of up to 1 MB as plain text; saving makes the next version. If someone else saved after you opened it, your save is refused and your text stays in the editor. Leaving with unsaved text asks first. A CSV is saved with the mark that tells Excel it is UTF-8, and a file keeps its Windows line endings.
 - On a phone, a resident who may edit gets the computer layout of the editor, and the page says it suits small changes best; one who only reads gets the phone layout. The free editions' phone layout only reads.
-- docx, xlsx and pptx can be edited live together in the browser, showing who else is in the document. Any folder you can write to has `Nyt dokument`, `Nyt regneark` and `Ny præsentation`.
+- docx, xlsx and pptx can be edited live together in the browser, showing who else is in the document.
 - Where you cannot write, or the file is locked, the editor opens in view mode.
 - Older formats (doc, xls, ppt, odt …) open for viewing. `Rediger en kopi` makes a docx, xlsx or pptx copy next to the original.
 - Live editing is switched on and off by a server setting. When off, or not responding, office files download and nothing opens for live editing; everything else works. The editing buttons stay, greyed out, with a line saying that live editing is switched off or not answering just now, so residents know it exists.

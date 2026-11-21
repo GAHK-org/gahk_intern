@@ -42,6 +42,9 @@ session with its three editors, and an OpenDocument file to view and copy.
 
 READMEs (`_seed_readmes`) above three lists, in three cases of the name, one with HTML of its own.
 
+`Ny fil` and the text editor (`_seed_text`): a note and a CSV made and written there, a Windows text
+file edited with its line endings kept, and a log too long for the editor.
+
 Last, locks (`_seed_locks`), as they stop changes: what the nightly task locked, regnskab@'s
 closed accounts and `Årsafslutning` folder locked by hand, and the requests page for admin@ and
 formand@ with an unlock and a purge in each state - pending, approved (the logo is unlocked for now
@@ -78,7 +81,7 @@ from notifications.models import Notification
 from residents.models import Residency, Resident, Role
 from residents.permissions import has_active_role
 
-from . import locks, office, operations, preview, services, shared, sharing, standing
+from . import locks, office, operations, preview, services, shared, sharing, standing, text
 from .access import Viewer
 from .models import (
     ApprovalRequest,
@@ -407,6 +410,7 @@ def seed(residents: list[Resident], now: datetime, _rng: random.Random) -> int:
     _seed_search(s)
     _seed_office(s)
     _seed_readmes(s)
+    _seed_text(s)
     # Last: a lock stops the changes above.
     _seed_locks(s)
     # The viewer copies and thumbnails the "thumbnails" queue makes, made here so the lists show them
@@ -997,6 +1001,42 @@ def _seed_readmes(s: _Seeder) -> None:
         s.upload(theme, "readme.md", _THEME_README.encode(), beboer, s.ago(40))
 
 
+def _seed_text(s: _Seeder) -> None:
+    """`Ny fil` and the text editor: a note and a CSV table made with `Ny fil` and written in the
+    editor (an empty version 1, the text as version 2; the CSV saved with Excel's UTF-8 mark), a
+    Windows text file edited with its CRLF line endings kept, and a log over the editor's 1 MB, which
+    only previews and downloads."""
+    current = period_containing(s.today)
+    starts = current.start
+    beboer, regnskab, ak = s.login("beboer@gahk.dk"), s.login("regnskab@gahk.dk"), s.login("ak@gahk.dk")
+
+    def write(folder: Folder, kind: str, name: str, content: str, by: Resident, when: datetime) -> File:
+        viewer = s.viewer(by, when)
+        with _at(when):
+            made = text.new_file(viewer, folder, kind, name, by)
+        later = when + timedelta(minutes=12)
+        edit(made, content, by, later)
+        return made
+
+    def edit(file: File, content: str, by: Resident, when: datetime) -> None:
+        viewer = s.viewer(by, when)
+        with _at(when):
+            text.save(viewer, file, content, base=file.latest_version().number, resident=by)
+
+    if (group := _group_of(beboer, s.today)) is not None:
+        now_folder = _group_folder(group, Folder.Kind.PERIOD, current)
+        write(now_folder, "markdown", "Huskeliste", _CHECKLIST, beboer, s.ago(2, not_before=starts))
+    if (group := _group_of(regnskab, s.today)) is not None:
+        now_folder = _group_folder(group, Folder.Kind.PERIOD, current)
+        write(now_folder, "csv", "Kassebeholdning", _CASH, regnskab, s.ago(3, not_before=starts))
+    if (group := _group_of(ak, s.today)) is not None:
+        timeless = _group_folder(group, Folder.Kind.TIMELESS)
+        keys = s.upload(timeless, "Nøgleliste.txt", _KEYS.replace("\n", "\r\n").encode(), ak, s.ago(120))
+        edit(keys, _KEYS + "Værksted: 2 nøgler (Astrid)\n", ak, s.ago(6))
+        now_folder = _group_folder(group, Folder.Kind.PERIOD, current)
+        s.upload(now_folder, "Varmeanlæg fuld log.log", _long_log(), ak, s.ago(13, not_before=starts))
+
+
 def _seed_locks(s: _Seeder) -> None:
     """Locks, and requests in every state: the requests page (admin@, formand@) has two pending, two
     approved and two rejected, and whoever asked for a decided one has been told the outcome."""
@@ -1159,6 +1199,12 @@ def _media() -> tuple[bytes, bytes]:
                 stderr=subprocess.DEVNULL,
             )
         return clip.read_bytes(), sound.read_bytes()
+
+
+def _long_log() -> bytes:
+    """A little over the editor's 1 MB."""
+    line = "2026-11-02 06:00:01 INFO  kedel startet, fremløb 55 °C, retur 41 °C, tryk 1,5 bar\n"
+    return (line * (text.EDIT_BYTES // len(line.encode()) + 400)).encode()
 
 
 def _excel_csv(rows: list[list[str]]) -> bytes:
@@ -1474,6 +1520,16 @@ Planen ligger i **Plan.docx**, musikken i Playliste.txt.
 
 <span style="color:red">Husk at melde festen på opslagstavlen!</span>
 """
+_CHECKLIST = """# Huskeliste
+
+- [ ] Bestil nøgler til de nye
+- [ ] Tjek brandslukkerne på gangen
+- [x] Skift pæren i trappeopgangen
+"""
+_CASH = (
+    "Dato,Beskrivelse,Beløb\n2026-11-01,Primo,2500\n2026-11-08,Indkøb,-412.50\n2026-11-15,Indbetaling,600\n"
+)
+_KEYS = "Nøgleliste\n\nFællesrum: 4 nøgler\nCykelkælder: 6 nøgler\nTagterrasse: 2 nøgler\n"
 _PARTY_PROGRAMME = ["Kl. 14: Gårdspil", "Kl. 18: Grill i gården", "Kl. 22: Band i fællesrummet"]
 _GENERAL_MEETING = [
     "Dagsorden: valg af dirigent, beretning, regnskab, indkomne forslag, eventuelt.",

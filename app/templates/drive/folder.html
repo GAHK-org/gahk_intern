@@ -91,14 +91,8 @@
       {% if can_write %}
         {% include "drive/_upload.html" with label="Læg filer op" multiple=True %}
       {% endif %}
-      {% if office_new %}
-        {% comment %} A blank docx, xlsx or pptx, opened for live editing (drive/office.py). {% endcomment %}
-        <form method="post" action="{% url 'drive:office_new' folder.uuid %}" class="drive-inline-form"{% if instead %} data-drive-instead="{{ instead.officeUrl }}"{% endif %}>
-          {% csrf_token %}
-          {% for kind, item in office_new.items %}
-            <button type="submit" name="kind" value="{{ kind }}" class="btn btn-secondary"{% if office_state != "on" %} disabled aria-describedby="drive-office-state"{% endif %}>{{ item.0 }}</button>
-          {% endfor %}
-        </form>
+      {% if new_files %}
+        <button type="button" class="btn btn-secondary" data-drive-new-file-open>Ny fil</button>
       {% endif %}
       {% if can_create_folder %}
         <form method="post" action="{% url 'drive:create_folder' folder.uuid %}" class="drive-newfolder"{% if instead %} data-drive-instead="{{ instead.createUrl }}"{% endif %}>
@@ -111,8 +105,34 @@
     </div>
   {% endif %}
 
-  {% if office_new and office_state != "on" %}
-    <p id="drive-office-state" class="drive-office-state">{% include "drive/_office_state.html" with state=office_state %}</p>
+  {% if new_files %}
+    {% comment %}
+      `Ny fil` (drive/text.py): a text, markdown or CSV file opens in the text editor, an office file
+      for live editing - greyed out, with a word on why, while that is off or not answering.
+    {% endcomment %}
+    <dialog class="drive-dialog drive-new-file" data-drive-new-file aria-labelledby="drive-new-file-title">
+      <form method="post" action="{% url 'drive:new_file' folder.uuid %}"{% if instead %} data-drive-instead="{{ instead.newFileUrl }}"{% endif %}>
+        {% csrf_token %}
+        <h2 id="drive-new-file-title">Ny fil</h2>
+        <label for="drive-new-file-name">Navn</label>
+        <input id="drive-new-file-name" type="text" name="name" maxlength="200" placeholder="Uden navn" autocomplete="off">
+        <div class="drive-new-file-kinds" role="group" aria-label="Filtype">
+          {% for item in new_files %}
+            <button type="submit" name="kind" value="{{ item.kind }}" class="drive-new-file-kind"{% if item.office and office_state != "on" %} disabled aria-describedby="drive-office-state"{% endif %}>
+              <svg class="ni" aria-hidden="true"><use href="#i-{{ item.icon }}"></use></svg>
+              <span>{{ item.label }}</span>
+              <span class="drive-new-file-ext">.{{ item.extension }}</span>
+            </button>
+          {% endfor %}
+        </div>
+        {% if office_state != "on" %}
+          <p id="drive-office-state" class="drive-office-state">{% include "drive/_office_state.html" with state=office_state %}</p>
+        {% endif %}
+        <div class="drive-dialog-buttons">
+          <button type="button" class="btn-link" data-drive-new-file-close>Annuller</button>
+        </div>
+      </form>
+    </dialog>
   {% endif %}
 
   {% if folder and folder.kind == "folder" %}
