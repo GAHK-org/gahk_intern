@@ -1,0 +1,5 @@
+<form class="drive-search mb-4" method="get" action="{% url 'drive:search' %}" role="search">
+  <label class="sr-only" for="drive-search">Søg i Drive</label>
+  <input id="drive-search" type="search" name="q" value="{{ q|default:'' }}" placeholder="Søg efter navne i Drive…" minlength="2" required>
+  <button type="submit" class="btn btn-secondary">Søg</button>
+</form>

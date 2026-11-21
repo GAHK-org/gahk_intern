@@ -1,11 +1,24 @@
 from django.urls import path
 
-from . import views, views_items, views_locks, views_preview, views_shared, views_sharing, views_standing
+from . import (
+    views,
+    views_items,
+    views_locks,
+    views_preview,
+    views_search,
+    views_shared,
+    views_sharing,
+    views_standing,
+)
 
 app_name = "drive"
 
 urlpatterns = [
     path("", views.home, name="home"),
+    path("search/", views_search.search_page, name="search"),
+    path("folder/<uuid:uuid>/zip", views_search.request_zip, name="request_zip"),
+    path("zip/<uuid:token>/", views_search.zip_page, name="zip"),
+    path("zip/<uuid:token>/download", views_search.fetch_zip, name="fetch_zip"),
     path("folder/<uuid:uuid>/", views.folder, name="folder"),
     path("folder/<uuid:uuid>/new-folder", views.create_folder, name="create_folder"),
     path("folder/<uuid:uuid>/rename", views_items.rename_folder, name="rename_folder"),
