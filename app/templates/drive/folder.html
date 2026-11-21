@@ -14,27 +14,27 @@
     {% include "drive/_crumbs.html" with ancestors=ancestors current=folder.name %}
 
     <div class="drive-links mb-4">
-      {% if is_space %}<a href="{% url 'drive:activity' folder.pk %}">Aktivitet</a>{% endif %}
-      <a href="{% url 'drive:folder_history' folder.pk %}">Historik</a>
-      {% if in_bin %}<a href="{% url 'drive:bin' folder.pk %}">Papirkurv ({{ in_bin }})</a>{% endif %}
+      {% if is_space %}<a href="{% url 'drive:activity' folder.uuid %}">Aktivitet</a>{% endif %}
+      <a href="{% url 'drive:folder_history' folder.uuid %}">Historik</a>
+      {% if in_bin %}<a href="{% url 'drive:bin' folder.uuid %}">Papirkurv ({{ in_bin }})</a>{% endif %}
       {% if can_change_folder %}
         <details class="drive-inline">
           <summary>Omdøb</summary>
-          <form method="post" action="{% url 'drive:rename_folder' folder.pk %}" class="drive-newfolder">
+          <form method="post" action="{% url 'drive:rename_folder' folder.uuid %}" class="drive-newfolder">
             {% csrf_token %}
             <label class="sr-only" for="drive-rename-folder">Nyt navn</label>
             <input id="drive-rename-folder" type="text" name="name" maxlength="200" value="{{ folder.name }}" required>
             <button type="submit" class="btn btn-secondary">Gem navn</button>
           </form>
         </details>
-        <form method="post" action="{% url 'drive:delete' folder.parent_id %}" data-drive-confirm="Læg mappen „{{ folder.name }}“ i papirkurven? Den skal være tom.">
+        <form method="post" action="{% url 'drive:delete' folder.parent.uuid %}" data-drive-confirm="Læg mappen „{{ folder.name }}“ i papirkurven? Den skal være tom.">
           {% csrf_token %}
-          <input type="hidden" name="folder" value="{{ folder.pk }}">
+          <input type="hidden" name="folder" value="{{ folder.uuid }}">
           <button type="submit" class="btn-link-danger">Slet mappe</button>
         </form>
       {% endif %}
       {% if can_lock_folder %}
-        <form method="post" action="{% url 'drive:lock_folder' folder.pk %}" data-drive-confirm="Lås „{{ folder.name }}“? Så kan intet i den ændres, før en admin eller Inspektionen låser den op.">
+        <form method="post" action="{% url 'drive:lock_folder' folder.uuid %}" data-drive-confirm="Lås „{{ folder.name }}“? Så kan intet i den ændres, før en admin eller Inspektionen låser den op.">
           {% csrf_token %}
           <button type="submit" class="btn-link">Lås mappe</button>
         </form>
@@ -47,7 +47,7 @@
           Arkiveret {{ shared.archived_at|date:"j. M Y" }}: alle beboere kan læse den.
         {% else %}
           {{ shared_members }} medlemmer · udløber {{ shared.expires_on|date:"j. M Y" }} og {{ shared.get_on_expiry_display }} da ·
-          <a href="{% url 'drive:shared' shared.pk %}">Medlemmer og udløb</a>
+          <a href="{% url 'drive:shared' shared.uuid %}">Medlemmer og udløb</a>
         {% endif %}
       </p>
     {% endif %}
@@ -60,11 +60,11 @@
         {% if lock_holder.pk == folder.pk %}
           <p><strong>Mappen er låst</strong> ({% if folder.locked_by %}af {{ folder.locked_by.full_name }}{% else %}efter et år uden ændringer{% endif %}, {{ folder.locked_at|date:"j. M Y" }}). Intet kan lægges i den, og den kan ikke omdøbes, flyttes eller slettes.</p>
           {% if can_request_folder_unlock %}
-            {% url 'drive:unlock_folder' folder.pk as unlock_url %}
+            {% url 'drive:unlock_folder' folder.uuid as unlock_url %}
             {% include "drive/_unlock_form.html" with action=unlock_url %}
           {% endif %}
         {% else %}
-          <p><strong>Låst</strong> sammen med <a href="{% url 'drive:folder' lock_holder.pk %}">{{ lock_holder.name }}</a>, som den ligger i.</p>
+          <p><strong>Låst</strong> sammen med <a href="{% url 'drive:folder' lock_holder.uuid %}">{{ lock_holder.name }}</a>, som den ligger i.</p>
         {% endif %}
       </div>
     {% endif %}
@@ -81,7 +81,7 @@
         {% include "drive/_upload.html" with label="Læg filer op" multiple=True %}
       {% endif %}
       {% if can_create_folder %}
-        <form method="post" action="{% url 'drive:create_folder' folder.pk %}" class="drive-newfolder">
+        <form method="post" action="{% url 'drive:create_folder' folder.uuid %}" class="drive-newfolder">
           {% csrf_token %}
           <label class="sr-only" for="drive-new-folder">Navn på ny mappe</label>
           <input id="drive-new-folder" type="text" name="name" maxlength="200" placeholder="Navn på ny mappe…" required>
@@ -92,7 +92,7 @@
   {% endif %}
 
   {% if folder and folder.kind == "folder" %}
-    {% url 'drive:share_folder' folder.pk as share_action %}
+    {% url 'drive:share_folder' folder.uuid as share_action %}
     {% include "drive/_share_panel.html" with share_action=share_action %}
   {% endif %}
 
@@ -120,7 +120,7 @@
         {% comment %} What other groups shared with this group from this period (drive/sharing.py). {% endcomment %}
         <li>
           {% if can_select %}<span class="drive-tick" aria-hidden="true"></span>{% endif %}
-          <a href="{% url 'drive:shared_with_group' folder.pk %}">
+          <a href="{% url 'drive:shared_with_group' folder.uuid %}">
             <svg class="ni" aria-hidden="true"><use href="#i-share"></use></svg>
             <span class="drive-name">Delt med {{ folder.workgroup.name }}</span>
           </a>
@@ -130,13 +130,13 @@
         <li{% if row.is_current %} class="drive-current"{% endif %}>
           {% if can_select %}
             {% if row.can_open and not row.folder.is_system %}
-              <input type="checkbox" class="drive-tick" data-drive-tick="folder" value="{{ row.folder.pk }}" aria-label="Vælg {{ row.folder.name }}">
+              <input type="checkbox" class="drive-tick" data-drive-tick="folder" value="{{ row.folder.uuid }}" aria-label="Vælg {{ row.folder.name }}">
             {% else %}
               <span class="drive-tick" aria-hidden="true"></span>
             {% endif %}
           {% endif %}
           {% if row.can_open %}
-            <a href="{% url 'drive:folder' row.folder.pk %}">
+            <a href="{% url 'drive:folder' row.folder.uuid %}">
               <svg class="ni" aria-hidden="true"><use href="#i-{% if row.folder.kind == 'shared' %}users{% else %}folder{% endif %}"></use></svg>
               <span class="drive-name">{{ row.name }}</span>
               {% if row.is_shared %}<svg class="ni drive-locked" role="img" aria-label="Delt"><use href="#i-share"></use></svg>{% endif %}
@@ -166,9 +166,9 @@
       {% for file in files %}
         <li>
           {% if can_select %}
-            <input type="checkbox" class="drive-tick" data-drive-tick="file" value="{{ file.pk }}" aria-label="Vælg {{ file.name }}">
+            <input type="checkbox" class="drive-tick" data-drive-tick="file" value="{{ file.uuid }}" aria-label="Vælg {{ file.name }}">
           {% endif %}
-          <a href="{% url 'drive:file' file.pk %}">
+          <a href="{% url 'drive:file' file.uuid %}">
             <svg class="ni" aria-hidden="true"><use href="#i-file"></use></svg>
             <span class="drive-name">{{ file.name }}</span>
             {% if file.is_shared %}<svg class="ni drive-locked" role="img" aria-label="Delt"><use href="#i-share"></use></svg>{% endif %}
@@ -181,7 +181,7 @@
             Through the download view, never a presigned URL in the page: that URL would work for
             whoever has it, after the reader has left the group too.
           {% endcomment %}
-          <a class="drive-download" href="{% url 'drive:download' file.pk %}" aria-label="Hent {{ file.name }}">Hent</a>
+          <a class="drive-download" href="{% url 'drive:download' file.uuid %}" aria-label="Hent {{ file.name }}">Hent</a>
         </li>
       {% endfor %}
     </ul>

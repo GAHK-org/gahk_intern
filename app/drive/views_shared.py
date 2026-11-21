@@ -1,6 +1,7 @@
 """Creating a Delt mappe, and its page of members and expiry. The rules are in shared.py."""
 
 from datetime import date
+from uuid import UUID
 
 from django.contrib import messages
 from django.core.exceptions import PermissionDenied, ValidationError
@@ -44,7 +45,7 @@ def create(request: HttpRequest) -> HttpResponse:
         except ValidationError as exc:
             messages.error(request, " ".join(exc.messages))
         else:
-            return redirect("drive:folder", folder.pk)
+            return redirect("drive:folder", folder.uuid)
     chosen = set(_ids(request))
     return _render(
         request,
@@ -61,9 +62,9 @@ def create(request: HttpRequest) -> HttpResponse:
     )
 
 
-def _shared(request: HttpRequest, pk: int) -> tuple[SharedFolder, Viewer]:
+def _shared(request: HttpRequest, uuid: UUID) -> tuple[SharedFolder, Viewer]:
     """A Delt mappe its members may see; to anyone else it does not exist."""
-    item = get_object_or_404(SharedFolder, pk=pk)
+    item = get_object_or_404(SharedFolder, uuid=uuid)
     viewer = Viewer.for_request(request)
     top = item.top()
     if top.deleted_at is not None or viewer.level(top) < Level.READ:
@@ -72,8 +73,8 @@ def _shared(request: HttpRequest, pk: int) -> tuple[SharedFolder, Viewer]:
 
 
 @access.access_required
-def page(request: HttpRequest, pk: int) -> HttpResponse:
-    item, viewer = _shared(request, pk)
+def page(request: HttpRequest, uuid: UUID) -> HttpResponse:
+    item, viewer = _shared(request, uuid)
     me = current_resident(request)
     members = list(
         item.members.select_related("resident").order_by("resident__first_name", "resident__last_name")
@@ -99,8 +100,8 @@ def page(request: HttpRequest, pk: int) -> HttpResponse:
     )
 
 
-def _act(request: HttpRequest, pk: int, action) -> HttpResponse:  # noqa: ANN001
-    item, viewer = _shared(request, pk)
+def _act(request: HttpRequest, uuid: UUID, action) -> HttpResponse:  # noqa: ANN001
+    item, viewer = _shared(request, uuid)
     try:
         done = action(viewer, item, current_resident(request))
     except PermissionDenied:
@@ -110,7 +111,7 @@ def _act(request: HttpRequest, pk: int, action) -> HttpResponse:  # noqa: ANN001
     else:
         if done:
             messages.success(request, done)
-    return redirect("drive:shared", item.pk)
+    return redirect("drive:shared", item.uuid)
 
 
 def _resident(request: HttpRequest) -> int:
@@ -120,10 +121,10 @@ def _resident(request: HttpRequest) -> int:
 
 @access.access_required
 @require_POST
-def add_member(request: HttpRequest, pk: int) -> HttpResponse:
+def add_member(request: HttpRequest, uuid: UUID) -> HttpResponse:
     return _act(
         request,
-        pk,
+        uuid,
         lambda viewer, item, me: (
             shared.add_member(viewer, item, _resident(request), request.POST.get("role", ""), me)
             or "Medlemmet er tilføjet."
@@ -133,10 +134,10 @@ def add_member(request: HttpRequest, pk: int) -> HttpResponse:
 
 @access.access_required
 @require_POST
-def set_role(request: HttpRequest, pk: int) -> HttpResponse:
+def set_role(request: HttpRequest, uuid: UUID) -> HttpResponse:
     return _act(
         request,
-        pk,
+        uuid,
         lambda viewer, item, me: (
             shared.set_role(viewer, item, _resident(request), request.POST.get("role", ""), me)
             or "Rollen er ændret."
@@ -146,10 +147,10 @@ def set_role(request: HttpRequest, pk: int) -> HttpResponse:
 
 @access.access_required
 @require_POST
-def remove_member(request: HttpRequest, pk: int) -> HttpResponse:
+def remove_member(request: HttpRequest, uuid: UUID) -> HttpResponse:
     resident = _resident(request)
     me = current_resident(request)
-    item, viewer = _shared(request, pk)
+    item, viewer = _shared(request, uuid)
     try:
         shared.remove_member(viewer, item, resident, me)
     except PermissionDenied:
@@ -161,15 +162,15 @@ def remove_member(request: HttpRequest, pk: int) -> HttpResponse:
             messages.success(request, "Du har forladt mappen.")
             return redirect("drive:home")
         messages.success(request, "Medlemmet er fjernet.")
-    return redirect("drive:shared", item.pk)
+    return redirect("drive:shared", item.uuid)
 
 
 @access.access_required
 @require_POST
-def set_expiry(request: HttpRequest, pk: int) -> HttpResponse:
+def set_expiry(request: HttpRequest, uuid: UUID) -> HttpResponse:
     return _act(
         request,
-        pk,
+        uuid,
         lambda viewer, item, me: (
             shared.set_expiry(
                 viewer, item, _date(request.POST.get("expires_on", "")), request.POST.get("on_expiry", ""), me
@@ -181,24 +182,24 @@ def set_expiry(request: HttpRequest, pk: int) -> HttpResponse:
 
 @access.access_required
 @require_POST
-def rename(request: HttpRequest, pk: int) -> HttpResponse:
+def rename(request: HttpRequest, uuid: UUID) -> HttpResponse:
     return _act(
         request,
-        pk,
+        uuid,
         lambda viewer, item, me: shared.rename(viewer, item, request.POST.get("name", ""), me) or "",
     )
 
 
 @access.access_required
 @require_POST
-def delete(request: HttpRequest, pk: int) -> HttpResponse:
-    item, viewer = _shared(request, pk)
+def delete(request: HttpRequest, uuid: UUID) -> HttpResponse:
+    item, viewer = _shared(request, uuid)
     try:
         shared.delete(viewer, item, current_resident(request))
     except PermissionDenied:
         messages.error(request, "Det kan kun mappens moderatorer.")
     except ValidationError as exc:
         messages.error(request, " ".join(exc.messages))
-        return redirect("drive:shared", item.pk)
+        return redirect("drive:shared", item.uuid)
     messages.success(request, "Den delte mappe er lagt i papirkurven.")
     return redirect("drive:home")

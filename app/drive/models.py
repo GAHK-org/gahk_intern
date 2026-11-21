@@ -14,10 +14,15 @@ Deleting a file or folder puts it in the bin: `deleted_at` is set and the row st
 so it can be restored with its versions and history. Names are unique only among what is not in
 the bin. A deleted folder is kept for the binned files in it, so restoring one brings its folder
 back.
+
+Folders and files are named in URLs and forms by a random `uuid`, never by their primary key, so
+nobody can count them or watch the numbers climb. The keys stay integers inside: `path` stays short
+and the joins small.
 """
 
 import unicodedata
 from datetime import date, datetime
+from uuid import uuid4
 
 from django.core.exceptions import ValidationError
 from django.db import models
@@ -123,6 +128,7 @@ class Folder(Lockable):
         }
     )
 
+    uuid = models.UUIDField(default=uuid4, unique=True, editable=False)  # in URLs, not the key
     parent = models.ForeignKey(
         "self", null=True, blank=True, on_delete=models.PROTECT, related_name="children"
     )
@@ -200,6 +206,7 @@ class Folder(Lockable):
 
 
 class File(Lockable):
+    uuid = models.UUIDField(default=uuid4, unique=True, editable=False)  # in URLs, not the key
     folder = models.ForeignKey(Folder, on_delete=models.PROTECT, related_name="files")
     name = models.CharField(max_length=NAME_MAX_LENGTH)
     name_key = models.CharField(max_length=NAME_MAX_LENGTH, editable=False)
@@ -418,6 +425,7 @@ class ApprovalRequest(models.Model):
         APPROVED = "approved", "Godkendt"
         REJECTED = "rejected", "Afvist"
 
+    uuid = models.UUIDField(default=uuid4, unique=True, editable=False)  # in URLs, not the key
     kind = models.CharField(max_length=10, choices=Kind.choices)
     state = models.CharField(max_length=10, choices=State.choices, default=State.PENDING, db_index=True)
     # One of the two. Null once what it was about is gone; `name` and `where` stay.
@@ -462,6 +470,7 @@ class SharedFolder(models.Model):
         DELETE = "delete", "slettes"
         ARCHIVE = "archive", "arkiveres"
 
+    uuid = models.UUIDField(default=uuid4, unique=True, editable=False)  # in URLs, not the key
     expires_on = models.DateField()
     on_expiry = models.CharField(max_length=10, choices=OnExpiry.choices)
     created_by = models.ForeignKey(
@@ -522,6 +531,7 @@ class Share(models.Model):
     group the recipient's own matching folder decides who in the group sees it (drive/access.py).
     Shares do not expire; they end when the item leaves the group's space."""
 
+    uuid = models.UUIDField(default=uuid4, unique=True, editable=False)  # in URLs, not the key
     file = models.ForeignKey(File, null=True, blank=True, on_delete=models.CASCADE, related_name="shares")
     folder = models.ForeignKey(Folder, null=True, blank=True, on_delete=models.CASCADE, related_name="shares")
     resident = models.ForeignKey(

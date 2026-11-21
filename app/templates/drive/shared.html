@@ -26,17 +26,17 @@
           <span class="muted">{{ member.get_role_display }}</span>
         </span>
         {% if moderates and not shared.archived_at %}
-          <form method="post" action="{% url 'drive:shared_role' shared.pk %}" class="drive-inline-form">
+          <form method="post" action="{% url 'drive:shared_role' shared.uuid %}" class="drive-inline-form">
             {% csrf_token %}
             <input type="hidden" name="resident" value="{{ member.resident_id }}">
-            <label class="sr-only" for="role-{{ member.pk }}">Rolle</label>
-            <select id="role-{{ member.pk }}" name="role">
+            <label class="sr-only" for="role-{{ forloop.counter }}">Rolle</label>
+            <select id="role-{{ forloop.counter }}" name="role">
               {% for value, label in roles %}<option value="{{ value }}"{% if value == member.role %} selected{% endif %}>{{ label }}</option>{% endfor %}
             </select>
             <button type="submit" class="btn-link">Skift</button>
           </form>
           {% if member.resident_id != me %}
-            <form method="post" action="{% url 'drive:shared_remove' shared.pk %}" data-drive-confirm="Fjern {{ member.resident.full_name }} fra mappen?">
+            <form method="post" action="{% url 'drive:shared_remove' shared.uuid %}" data-drive-confirm="Fjern {{ member.resident.full_name }} fra mappen?">
               {% csrf_token %}
               <input type="hidden" name="resident" value="{{ member.resident_id }}">
               <button type="submit" class="btn-link-danger">Fjern</button>
@@ -49,7 +49,7 @@
 
   {% if moderates and not shared.archived_at %}
     <h2 class="drive-h2">Tilføj medlem</h2>
-    <form method="post" action="{% url 'drive:shared_add' shared.pk %}" class="drive-inline-form mb-6">
+    <form method="post" action="{% url 'drive:shared_add' shared.uuid %}" class="drive-inline-form mb-6">
       {% csrf_token %}
       <label class="sr-only" for="add-resident">Beboer</label>
       <select id="add-resident" name="resident" required>
@@ -64,7 +64,7 @@
     </form>
 
     <h2 class="drive-h2">Udløb</h2>
-    <form method="post" action="{% url 'drive:shared_expiry' shared.pk %}" class="drive-form mb-6">
+    <form method="post" action="{% url 'drive:shared_expiry' shared.uuid %}" class="drive-form mb-6">
       {% csrf_token %}
       <label>Udløber <input type="date" name="expires_on" value="{{ shared.expires_on|date:'Y-m-d' }}" max="{{ latest }}" required></label>
       {% if can_archive %}
@@ -76,21 +76,21 @@
     </form>
 
     <h2 class="drive-h2">Navn</h2>
-    <form method="post" action="{% url 'drive:shared_rename' shared.pk %}" class="drive-inline-form mb-6">
+    <form method="post" action="{% url 'drive:shared_rename' shared.uuid %}" class="drive-inline-form mb-6">
       {% csrf_token %}
       <label class="sr-only" for="shared-name">Navn</label>
       <input id="shared-name" type="text" name="name" maxlength="200" value="{{ folder.name }}" required>
       <button type="submit" class="btn btn-secondary">Gem navn</button>
     </form>
 
-    <form method="post" action="{% url 'drive:shared_delete' shared.pk %}" class="mb-4" data-drive-confirm="Læg den delte mappe i papirkurven? Den skal være tom.">
+    <form method="post" action="{% url 'drive:shared_delete' shared.uuid %}" class="mb-4" data-drive-confirm="Læg den delte mappe i papirkurven? Den skal være tom.">
       {% csrf_token %}
       <button type="submit" class="btn-link-danger">Slet den delte mappe</button>
     </form>
   {% endif %}
 
   {% if is_member and not shared.archived_at %}
-    <form method="post" action="{% url 'drive:shared_remove' shared.pk %}" data-drive-confirm="Forlad mappen? Du kan kun komme tilbage, hvis en moderator inviterer dig igen.">
+    <form method="post" action="{% url 'drive:shared_remove' shared.uuid %}" data-drive-confirm="Forlad mappen? Du kan kun komme tilbage, hvis en moderator inviterer dig igen.">
       {% csrf_token %}
       <input type="hidden" name="resident" value="{{ me }}">
       <button type="submit" class="btn-link-danger">Forlad mappen</button>
