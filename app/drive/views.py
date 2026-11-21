@@ -24,7 +24,7 @@ from photo_album import direct_upload
 from photo_album.forms import DirectUploadSignForm
 from residents.permissions import current_resident
 
-from . import access, locks, operations, preview, services, shared, sharing
+from . import access, locks, office, operations, preview, services, shared, sharing
 from .access import Level, Viewer
 from .models import MAX_UNLOCK_DAYS, ApprovalRequest, File, FileVersion, Folder, SharedMember, Space
 from .periods import period_containing
@@ -208,6 +208,12 @@ def folder(request: HttpRequest, uuid: UUID) -> HttpResponse:
             "can_change_files": can_change_files,
             "in_bin": operations.bin_count(viewer, current),
             "upload_config": {**_upload_config(current), "instead": instead},
+            # Shown to whoever may put files here, and switched off with a word on why while live
+            # editing is off or not answering.
+            "office_new": office.NEW if level >= Level.WRITE and viewer.can_upload_to(current) else {},
+            "office_state": office.state()
+            if level >= Level.WRITE and viewer.can_upload_to(current)
+            else None,
             "instead": instead,
             "standing_item": current.standing if current.kind == Folder.Kind.STANDING else None,
             "space_root": current.kind in (Folder.Kind.COMMON_ROOT, Folder.Kind.GROUP),
@@ -246,6 +252,7 @@ def _instead(viewer: Viewer, folder: Folder) -> dict[str, object] | None:
         "beginUrl": reverse("drive:upload_begin", args=[current.uuid]),
         "directUrl": reverse("drive:upload_direct", args=[current.uuid]),
         "createUrl": reverse("drive:create_folder", args=[current.uuid]),
+        "officeUrl": reverse("drive:office_new", args=[current.uuid]),
     }
 
 
@@ -365,6 +372,20 @@ def _preview_context(viewer: Viewer, file: File, latest: FileVersion) -> dict[st
     return shown
 
 
+def _office_context(viewer: Viewer, file: File) -> dict[str, object] | None:
+    """What live editing offers for a file it opens - and, while it is off or not answering, that it
+    would, so the page can say why it does not."""
+    if office.document_type(file.name) is None:
+        return None
+    return {
+        "state": office.state(),
+        "edit": office.editable(file.name) and viewer.can_version(file),
+        # An older format: a docx, xlsx or pptx copy beside it, for whoever may put one there.
+        "convert": not office.editable(file.name) and viewer.can_upload_to(file.folder),
+        "in_use": file.in_live_edit(),
+    }
+
+
 def crumbs(viewer: Viewer, folder: Folder, *, including: bool = True) -> list[Folder]:
     """The path to `folder`, each marked with whether the viewer may open it: a share lets somebody
     in partway down, and the folders above are then names, not links."""
@@ -410,6 +431,7 @@ def file_page(request: HttpRequest, uuid: UUID) -> HttpResponse:
             "upload_config": _version_config(file) if viewer.can_version(file) else None,
             "can_version": viewer.can_version(file),
             "can_copy": viewer.level(file.folder) >= Level.READ,
+            "office": _office_context(viewer, file),
             "move_query": f"file={file.uuid}",
             **_share_context(viewer, file=file),
         },

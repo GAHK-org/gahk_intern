@@ -9,7 +9,7 @@ is the uploader's to choose. The kind decides the icon in the list and what the 
   * a PDF, a video, a sound: the browser's own viewer or player, on the stored bytes, served inline
     under a type chosen here;
   * text: the first TEXT_BYTES, a CSV as a table and markdown rendered;
-  * anything else - office files until OnlyOffice comes - is only downloaded.
+  * anything else - office files when live editing is off - is only downloaded.
 """
 
 import csv

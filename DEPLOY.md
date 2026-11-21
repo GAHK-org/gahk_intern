@@ -58,6 +58,11 @@ GAHK_WEB_KEY=<64 random chars>                     # = [sync] key in gahk.dk's c
 # EDITOR_HINT_COOKIE_DOMAIN=.gahk.dk                # default; the "gahk_editor" hint cookie for gahk.dk's "Rediger siden"
 DATABASE_URL=postgres://gahk:<pw>@postgres:5432/gahk
 SMTP_HOST=send.one.com  SMTP_USER=…  SMTP_PASSWORD=…  SMTP_PORT=587
+# Drive's live editing in Euro-Office (§4h) - OFF until the server is upgraded; leave these unset until then.
+# ONLYOFFICE_URL=https://office.intern.gahk.dk     # where browsers load the editor
+# ONLYOFFICE_INTERNAL_URL=http://office            # where the app reaches it, inside the stack
+# ONLYOFFICE_APP_URL=http://web:8000               # where it reaches the app (its host is then allowed)
+# ONLYOFFICE_JWT_SECRET=<64 random chars>          # = JWT_SECRET of the office service
 EMAIL_BACKEND=django.core.mail.backends.smtp.EmailBackend   # what core.mail's queue delivers through — see below
 MAIL_RATE_LIMIT=10                                # optional: bulk (alumneregninger, ølkælder) mails per 5 minutes; other mail is never held; one.com blocks at ~25
 DEFAULT_FROM_EMAIL=autosvar@gahk.dk               # ⚠ must be an alias of SMTP_USER — see below
@@ -756,6 +761,66 @@ log names the job, and `journalctl -k | grep -i oom` the process and its memory.
 **More services need more memory.** Roundcube and a Dovecot proxy fit as things are. OnlyOffice's
 Document Server needs about 2 GB on its own and does not: move to an 8 GB server first, with
 Hetzner's "CPU and RAM only" rescale, which keeps the disk so it can be scaled back.
+
+### 4h. Euro-Office (Drive's live editing) - switched off
+
+Drive opens docx, xlsx and pptx for editing together in a Document Server, and the older formats
+for viewing (drive/office.py). The server is Euro-Office, the European fork of OnlyOffice: it speaks
+OnlyOffice's API, so OnlyOffice's own server (`onlyoffice/documentserver`) can take its place
+unchanged, and the settings are named after that API. It is built, but **off**: the Document Server
+needs 1-1.5 GB of memory (measured), which this box does not have (§4g). Until it runs, office files
+are downloaded and nothing offers to open them; the rest of Drive does not depend on it.
+
+It is to run on this server once the server is upgraded to 8 GB. Then:
+
+1. **Add the service** to `docker-compose.prod.yml` (not before: Coolify starts whatever is in it):
+
+   ```yaml
+   office:
+     image: ghcr.io/euro-office/documentserver:v9.3.8
+     restart: unless-stopped
+     environment:
+       JWT_ENABLED: "true"
+       JWT_SECRET: ${ONLYOFFICE_JWT_SECRET}
+       # It fetches documents from, and posts them back to, http://web:8000 inside the stack, which
+       # it otherwise refuses as a private address.
+       ALLOW_PRIVATE_IP_ADDRESS: "true"
+     mem_limit: 3g
+     memswap_limit: 3g
+     volumes:
+       - office-data:/var/lib/euro-office
+       - office-db:/var/lib/postgresql
+       - office-logs:/var/log/euro-office
+   ```
+
+   with `office-data:`, `office-db:` and `office-logs:` under `volumes:`. In Coolify, give the
+   service the domain `https://office.intern.gahk.dk` (port 80), and add the DNS record for it (§7).
+   `v9.3.8` is the version Drive was tested with (2026-11-19); try a newer one on a scratch stack
+   before moving to it.
+2. **Set the app's environment** (§2): `ONLYOFFICE_URL`, `ONLYOFFICE_INTERNAL_URL=http://office`,
+   `ONLYOFFICE_APP_URL=http://web:8000` (its host is then allowed, config/settings.py) and
+   `ONLYOFFICE_JWT_SECRET` (the same secret the service gets). Redeploy.
+3. **Check**: `curl https://office.intern.gahk.dk/healthcheck` says `true`; a docx in Drive has
+   `Rediger`, and a folder you can write to has `Nyt dokument`. Try editing on a real phone too.
+
+What it can reach: the Document Server never gets a resident's login. It fetches a document by a
+signed link to that one version, good for a day (`/drive/office/fetch/…`), and posts the result to
+a link signed for that file (`/drive/office/callback/…`), whose body it signs with the shared
+secret. The app fetches the edited document back only from the Document Server's own address.
+
+**Phones.** The free editions' phone editor only reads (Euro-Office silently, OnlyOffice with a note
+about a commercial licence). So a phone that may edit gets the computer layout of the editor,
+cramped but editing; a phone that only reads gets the phone editor. Collabora Online, the other free
+option, has a proper phone editor, but speaks a different API (WOPI) and would need its own
+integration.
+
+**Back to OnlyOffice**, should Euro-Office falter: change the image to `onlyoffice/documentserver`
+and the volume paths to `/var/www/onlyoffice/Data` and `/var/log/onlyoffice`. Use 9.4 or later:
+earlier versions allow 20 open connections at once. 9.4's phone editor fails in Danish, even to read
+(tested 2026-11-19), which the computer layout for editors does not touch but readers on a phone do.
+
+To switch live editing off again, unset `ONLYOFFICE_URL`. A Document Server that stops answering
+switches it off by itself, within a minute, until it is back.
 
 ## 5. Data migration to prod
 ```

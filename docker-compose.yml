@@ -9,6 +9,9 @@
 #                 cache. Profile "reset", so a plain `up` never starts it.
 #   - mariadb   : staging copy of the legacy dump (gahk_dk.sql auto-loaded on first init), ETL only.
 #   - pgloader  : one-shot MySQL->Postgres bulk lift (run via `docker compose run --rm pgloader ...`)
+#   - office    : optional — Euro-Office, the Document Server for Drive's live editing (~1-1.5 GB of
+#                 memory). Profile "office": `task office:up` / `task office:down`. The app's DEBUG
+#                 settings point at it, and switch live editing off while it is not running.
 #   - web       : optional — the Django app itself, hot-reloading. Opt in with the "docker" profile:
 #                 `task dev` / `docker compose --profile docker up -d web`. Running `task dev:local`
 #                 instead (directly on the host, against the same postgres/s3) remains fully
@@ -140,6 +143,10 @@ services:
       # As in production (docker-compose.prod.yml): thumbnails and HD images are served from a
       # local copy rather than redirected to the bucket. Only `web` serves them, so only it has one.
       PHOTO_ALBUM_CACHE_DIR: /app/cache
+      # Drive's live editing, when the `office` service runs: reached, and reaching back, inside
+      # the compose network (config/settings.py lets `web` in as a host).
+      ONLYOFFICE_INTERNAL_URL: http://office
+      ONLYOFFICE_APP_URL: http://web:8000
     volumes:
       - "./app:/src/app"
       - photo-album-cache:/app/cache
@@ -192,6 +199,21 @@ services:
     depends_on:
       postgres: {condition: service_healthy}
     command: ["celery", "-A", "config", "beat", "--loglevel=INFO"]
+
+  # Drive's live editing (drive/office.py, DEPLOY.md §4h). JWT_SECRET is config/settings.py's
+  # OFFICE_DEV_SECRET, its DEBUG default. It fetches documents from, and posts them back to, the
+  # app on this machine or in `web`, which it otherwise refuses as private addresses.
+  office:
+    image: ghcr.io/euro-office/documentserver:v9.3.8
+    profiles: ["office"]
+    environment:
+      JWT_ENABLED: "true"
+      JWT_SECRET: gahk-dev-office-secret-for-local-dev-only-0123456789
+      ALLOW_PRIVATE_IP_ADDRESS: "true"
+    ports:
+      - "127.0.0.1:8090:80"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
 
 volumes:
   pgdata:
