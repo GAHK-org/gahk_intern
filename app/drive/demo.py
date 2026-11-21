@@ -19,6 +19,11 @@ regnskab@'s budget after regnskab@ downloaded it (so replacing it warns), an old
 copy, a move, a rename that tells ak@, and the bin - a receipt a colleague deleted (regnskab@ is
 told), a file three days from going for good, and beboer@'s deleted folder kept for the file in it.
 
+Last, locks (`_seed_locks`), as they stop changes: what the nightly task locked, regnskab@'s
+closed accounts and `Årsafslutning` folder locked by hand, and the requests page for admin@ and
+formand@ with an unlock and a purge in each state - pending, approved (the logo is unlocked for now
+and changed meanwhile), and rejected.
+
 The system only makes the current period and year (drive.structure: no back-filling), so the
 earlier periods and years here are made by hand, as they would have been made in their time.
 
@@ -45,9 +50,9 @@ from core.models import Workgroup
 from residents.models import Residency, Resident, Role
 from residents.permissions import has_active_role
 
-from . import operations, services
+from . import locks, operations, services
 from .access import Viewer
-from .models import Event, File, FileVersion, Folder, Space
+from .models import ApprovalRequest, Event, File, FileVersion, Folder, Space
 from .periods import Period, period_containing
 from .structure import COMMON_TIMELESS, ensure_structure, folder_name
 
@@ -75,19 +80,15 @@ class _Seeder:
         self.now = now
         self.today = timezone.localdate(now)
         self.by_email = {r.email: r for r in residents}
-        self._viewers: dict[tuple[int, date], Viewer] = {}
 
     def login(self, email: str) -> Resident:
         return self.by_email[email]
 
     def viewer(self, resident: Resident, when: datetime) -> Viewer:
         """What the resident could do on the day: an earlier period was the current one then."""
-        day = timezone.localdate(when)
-        key = (resident.pk, day)
-        if key not in self._viewers:
-            oversees = has_active_role(resident, Role.INSPEKTION)
-            self._viewers[key] = Viewer.build(resident.pk, oversees=oversees, today=day)
-        return self._viewers[key]
+        oversees = has_active_role(resident, Role.INSPEKTION)
+        # Built afresh each time: a Viewer keeps the locks it has looked up.
+        return Viewer.build(resident.pk, oversees=oversees, today=timezone.localdate(when))
 
     def ago(self, days: int, *, not_before: date | None = None) -> datetime:
         """`days` before now, in working hours, but not before the folder's period began (early in a
@@ -169,6 +170,37 @@ class _Seeder:
         with _at(when):
             services.remember_download(file, by.pk, file.latest_version().number)
 
+    # --- locks and requests ------------------------------------------------------------------------
+
+    def lock(self, item: File | Folder, by: Resident, when: datetime) -> None:
+        viewer = self.viewer(by, when)
+        with _at(when):
+            if isinstance(item, File):
+                locks.lock_file(viewer, item, by)
+            else:
+                locks.lock_folder(viewer, item, by)
+
+    def ask_unlock(
+        self, item: File | Folder, days: int, reason: str, by: Resident, when: datetime
+    ) -> ApprovalRequest:
+        viewer = self.viewer(by, when)
+        with _at(when):
+            return locks.request_unlock(viewer, item, days, reason, by)
+
+    def ask_purge(
+        self, file: File, number: int | None, reason: str, by: Resident, when: datetime
+    ) -> ApprovalRequest:
+        viewer = self.viewer(by, when)
+        with _at(when):
+            return locks.request_purge(viewer, file, number, reason, by)
+
+    def decide(
+        self, request: ApprovalRequest, *, approve: bool, reason: str, by: Resident, when: datetime
+    ) -> None:
+        viewer = self.viewer(by, when)
+        with _at(when):
+            locks.decide(viewer, request, approve=approve, reason=reason, actor=by)
+
 
 def _noon(day: date) -> datetime:
     return timezone.make_aware(datetime.combine(day, time(12)))
@@ -246,6 +278,8 @@ def seed(residents: list[Resident], now: datetime, _rng: random.Random) -> int:
     _seed_common(s)
     _seed_groups(s)
     _seed_changes(s)
+    # Last: a lock stops the changes above.
+    _seed_locks(s)
     return File.objects.count()
 
 
@@ -446,13 +480,90 @@ def _seed_changes(s: _Seeder) -> None:
     s.delete(party, beboer, s.ago(5, not_before=year_start))
 
 
+def _seed_locks(s: _Seeder) -> None:
+    """Locks, and requests in every state: the requests page (admin@, formand@) has two pending, two
+    approved and two rejected, and whoever asked for a decided one has been told the outcome."""
+    current = period_containing(s.today)
+    previous = current.previous()
+    formand = s.login("formand@gahk.dk")
+    # The nightly lock, a week ago: what had no new version for a year (the year before last's
+    # report, last year's minutes, Ølkælderen's logo).
+    with _at(s.ago(7)):
+        locks.auto_lock(s.ago(7))
+
+    regnskab = s.login("regnskab@gahk.dk")
+    if (group := _group_of(regnskab, s.today)) is not None:
+        prev_folder = _group_folder(group, Folder.Kind.PERIOD, previous)
+        closed = previous.next().start - timedelta(days=3)
+        # The accounts locked by hand when the period closed, and a pending request to unlock them.
+        report = _in(prev_folder, f"Regnskab {previous.name}.pdf")
+        s.lock(report, regnskab, _noon(closed))
+        s.ask_unlock(report, 7, "Revisor har fundet en fejl i afskrivningerne.", regnskab, s.ago(1))
+        # A locked folder: nothing can be added to it, and its files can't be renamed or deleted.
+        closing = s.folder(prev_folder, "Årsafslutning", regnskab, _noon(closed - timedelta(days=10)))
+        s.upload(closing, "Balance.xlsx", _xlsx(_BALANCE), regnskab, _noon(closed - timedelta(days=10)))
+        s.upload(
+            closing,
+            "Revisorpåtegning.pdf",
+            _pdf("Revisorpåtegning", _AUDIT),
+            regnskab,
+            _noon(closed - timedelta(days=5)),
+        )
+        s.lock(closing, regnskab, _noon(closed))
+        # Asked to purge a colleague's old version, and refused.
+        timeless = _group_folder(group, Folder.Kind.TIMELESS)
+        accounts = _in(timeless, "Kontoplan.xlsx")
+        request = s.ask_purge(accounts, 2, "Version 2 var en fejl.", regnskab, s.ago(6))
+        s.decide(
+            request,
+            approve=False,
+            reason="Version 2 viser, hvad der blev ændret og hvorfor; den bevares.",
+            by=formand,
+            when=s.ago(5),
+        )
+
+    oel = s.login("oel@gahk.dk")
+    if (group := _group_of(oel, s.today)) is not None:
+        # The auto-locked logo, unlocked for two weeks on request, and changed while it is.
+        logo = _in(_group_folder(group, Folder.Kind.TIMELESS), "Logo.png")
+        request = s.ask_unlock(logo, 14, "Nyt logo til julefrokosten.", oel, s.ago(4))
+        s.decide(request, approve=True, reason="", by=formand, when=s.ago(3))
+        s.upload(logo.folder, logo.name, _png("Ølkælderen (ny)", "#b0702a", (600, 600)), oel, s.ago(2))
+        # A binned file asked to go for good before its 30 days, waiting for a decision.
+        old = File.objects.get(
+            folder=_group_folder(group, Folder.Kind.PERIOD, current), name="Gammel prisliste.csv"
+        )
+        s.ask_purge(old, None, "Forkerte priser; den må ikke kunne gendannes.", oel, s.ago(2))
+
+    ak = s.login("ak@gahk.dk")
+    if (group := _group_of(ak, s.today)) is not None:
+        # An old version purged on request: the history keeps "Version 1 ... slettet permanent af
+        # Astrid Krydsen, godkendt af Frederik Formand".
+        minutes = _in(_group_folder(group, Folder.Kind.PERIOD, current), "AK-møde referat.docx")
+        s.upload(minutes.folder, minutes.name, _docx("AK-møde", _AK_MEETING[1:]), ak, s.ago(8))
+        request = s.ask_purge(minutes, 1, "Version 1 havde et medlems CPR-nummer med.", ak, s.ago(7))
+        s.decide(request, approve=True, reason="", by=formand, when=s.ago(6))
+    # Last year's minutes are still writable, so ak@ may ask to unlock them - and is refused.
+    general = File.objects.get(name=f"Generalforsamling {s.today.year - 1}.pdf")
+    request = s.ask_unlock(general, 3, "Vil rette en stavefejl.", ak, s.ago(4))
+    s.decide(
+        request,
+        approve=False,
+        reason="Referatet er godkendt på generalforsamlingen og skal ikke ændres.",
+        by=formand,
+        when=s.ago(3),
+    )
+
+
 def wipe() -> None:
     """Every Drive row, and the bytes they point at. Folders go from the leaves up: a parent is
     PROTECTed by its children."""
     store = services.storage()
     for key in set(FileVersion.objects.values_list("key", flat=True)):
         store.delete(key)
-    Event.objects.all().delete()  # history outlives its items (SET_NULL), so it goes by itself
+    # History and requests outlive their items (SET_NULL), so they go by themselves.
+    Event.objects.all().delete()
+    ApprovalRequest.objects.all().delete()
     File.objects.all().delete()
     while Folder.objects.exists():
         Folder.objects.filter(children__isnull=True).delete()
@@ -638,6 +749,12 @@ _BUDGET_REVISED: list[list[object]] = [
     ["Rengøringsartikler", 8000, 3650],
     ["I alt", "=SUM(B2:B4)", "=SUM(C2:C4)"],
 ]
+_BALANCE: list[list[object]] = [
+    ["Post", "Primo (kr.)", "Ultimo (kr.)"],
+    ["Bank", 182000, 176450],
+    ["Tilgodehavender", 4200, 3100],
+    ["Skyldige omkostninger", -12000, -9800],
+]
 _SUPPLIERS: list[list[object]] = [
     ["Leverandør", "Kontakt", "Leveringsdag"],
     ["Bryggeriet", "ordre@bryggeriet.example", "Tirsdag"],
@@ -662,6 +779,7 @@ _LAUNDRY = [
     "Tøm filteret i tørretumbleren efter brug.",
 ]
 _EXPENSE_FORM = ["Navn:", "Værelse:", "Beløb:", "Formål:", "Vedlæg kvitteringen."]
+_AUDIT = ["Regnskabet for perioden er revideret uden bemærkninger.", "Revisor"]
 _PARTY_PROGRAMME = ["Kl. 14: Gårdspil", "Kl. 18: Grill i gården", "Kl. 22: Band i fællesrummet"]
 _GENERAL_MEETING = [
     "Dagsorden: valg af dirigent, beretning, regnskab, indkomne forslag, eventuelt.",
