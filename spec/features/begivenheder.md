@@ -99,6 +99,9 @@ so they are never read as an id.
 "<int:pk>/aflys"         cancel         POST
 "<int:pk>/svar"          answer         POST      htmx -> returns the RSVP partial only
 "<int:pk>/ics"           event_ics      GET       single-event download
+"<int:pk>/kommentar"     create_comment POST      a comment, or a reply with `parent`
+"kommentar/<pk>/slet"    delete_comment POST      the comment's author or a host
+"kommentar/<pk>/reaktion" toggle_comment_reaction POST  htmx -> returns the reaction row only
 ```
 
 One route lives **outside** the intranet's URLconf, in `config/urls.py`:
@@ -123,7 +126,13 @@ EventInvite   (event, resident, invited_by?, invited_at)      unique (event, res
 Rsvp          (event, resident, answer, answered_at, promoted_at?, created_at)
                                                               unique (event, resident)
 CalendarFeedToken   OneToOne(resident), token, created_at, rotated_at?, last_used_at?
+EventComment  (event, author, parent?, body, image, created_at)
+EventCommentReaction  (comment, author, emoji, created_at)  unique (comment, author)
 ```
+
+Comments thread exactly as on opslagstavlen (see its "Comment threads"): one level of replies and a
+reaction row per comment. **The event itself takes no reactions**: a 👍 beside the answer panel
+would raise "does that count as tilmeldt?". A reaction on a comment answers the comment.
 
 Shape choices, in short — each is argued at length where it lives:
 
@@ -318,6 +327,9 @@ Web Push through `core.push`, topic `events`, consent per device.
 | Deadline approaching (24 h) | people who can answer and have not, once per event |
 | Aflyst | everyone who said ja |
 | Significant edit | everyone who said ja |
+| Comment | the hosts (`events.comments`) |
+| Reply to a comment | that comment's author, plus the hosts (`events.comments`) |
+| Reaction to a comment | that comment's author, new reactions only (`events.likes`, Lav) |
 
 "Significant" is the same set of fields that bumps `SEQUENCE` — time, title, place, status. A typo
 fix in the description notifies nobody.

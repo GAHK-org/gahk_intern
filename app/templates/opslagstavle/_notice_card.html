@@ -228,7 +228,7 @@
   {% if notice.first_embed and not full %}{{ notice.first_embed }}{% endif %}
 
   <div class="notice-foot">
-    {% include "opslagstavle/_reactions.html" with reactions=notice.reaction_rows %}
+    {% include "opslagstavle/_reactions.html" with item=notice reactions=notice.reaction_rows %}
     {% if not full %}
       <a class="muted notice-comments-link" href="{% url 'opslagstavle:detail' notice.pk %}">
         {% with n=notice.comments.count %}

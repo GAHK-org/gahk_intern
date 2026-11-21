@@ -28,6 +28,7 @@ from django.db.models import F
 from django.db.models.base import ModelBase
 from django.db.models.signals import post_delete
 from django.dispatch import receiver
+from django.urls import reverse
 from django.utils import timezone
 
 from core.files import delete_attached_files
@@ -224,6 +225,18 @@ class Notice(AuthoredByResident):
     def is_pinned(self) -> bool:
         return self.pinned_at is not None
 
+    # The reaction row (_reactions.html) serves posts and comments alike, and these two are all it
+    # needs to tell them apart: which endpoint a tap posts to, and an id suffix that cannot collide
+    # when a post and a comment with the same pk are on one page (NoticeComment's carry "kommentar-").
+    # Mirrors den_hurtige's QuickPost/QuickComment.
+    @property
+    def reaction_key(self) -> str:
+        return str(self.pk)
+
+    @property
+    def reaction_url(self) -> str:
+        return reverse("opslagstavle:toggle_reaction", args=[self.pk])
+
 
 class NoticeComment(AuthoredByResident):
     """A reply to a notice. **Plain text, deliberately not Markdown — with one attached photo.**
@@ -240,9 +253,24 @@ class NoticeComment(AuthoredByResident):
     Den Hurtige's replies have always worked that way. What must not happen is a row with neither,
     which the view enforces rather than the field: whether a photo counts depends on whether it
     survived validation, and only the view knows that (see views.create_comment).
+
+    **Replies are one level deep.** `parent` is a top-level comment or nothing; answering a reply
+    joins the same thread (the view re-points it, and the reply box starts with an @-mention of the
+    person answered). A tree of arbitrary depth narrows into a column of indents on a phone and makes
+    "where did my answer go" a real question; one level keeps every thread readable top to bottom.
+    CASCADE: deleting a comment takes its thread with it, since replies read as nonsense without
+    the thing they answer.
     """
 
     notice = models.ForeignKey(Notice, on_delete=models.CASCADE, related_name="comments")
+    parent = models.ForeignKey(
+        "self",
+        null=True,
+        blank=True,
+        on_delete=models.CASCADE,
+        related_name="replies",
+        verbose_name="Svar på",
+    )
     author = models.ForeignKey(
         settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="notice_comments"
     )
@@ -268,6 +296,15 @@ class NoticeComment(AuthoredByResident):
     def __str__(self) -> str:
         return f"Kommentar af {self.author} på #{self.notice_id}"
 
+    # See Notice.reaction_key.
+    @property
+    def reaction_key(self) -> str:
+        return f"kommentar-{self.pk}"
+
+    @property
+    def reaction_url(self) -> str:
+        return reverse("opslagstavle:toggle_comment_reaction", args=[self.pk])
+
 
 class NoticeReaction(models.Model):
     """One emoji one resident put on one notice. Semantics and grammar are shared with Den Hurtige
@@ -290,6 +327,36 @@ class NoticeReaction(models.Model):
             # (its migration 0004) to collapse pre-existing duplicates when this constraint was
             # added late. Starting with it means that can never be needed here.
             models.UniqueConstraint(fields=["notice", "author"], name="uniq_notice_reaction_per_author")
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.emoji} af {self.author}"
+
+
+class NoticeCommentReaction(models.Model):
+    """One emoji one resident put on one COMMENT: NoticeReaction, one level down.
+
+    A table of its own rather than a second, nullable foreign key on NoticeReaction, for the reason
+    core.reactions gives for not going generic: each owner keeps a real foreign key and its own
+    unique constraint, so a cascade removes exactly its own rows and "one person, one emoji" holds
+    per comment in the database. Same shape as den_hurtige.QuickCommentReaction.
+    """
+
+    comment = models.ForeignKey(NoticeComment, on_delete=models.CASCADE, related_name="reactions")
+    author = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="notice_comment_reactions"
+    )
+    emoji = models.CharField(max_length=32)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["created_at"]
+        verbose_name = "Reaktion på kommentar"
+        verbose_name_plural = "Reaktioner på kommentarer"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["comment", "author"], name="uniq_notice_comment_reaction_per_author"
+            )
         ]
 
     def __str__(self) -> str:

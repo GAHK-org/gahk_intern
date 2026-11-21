@@ -31,6 +31,7 @@ from opslagstavle.models import (
     Category,
     Notice,
     NoticeComment,
+    NoticeCommentReaction,
     NoticeImage,
     NoticeReaction,
 )
@@ -1420,7 +1421,9 @@ def test_a_comment_notifies_only_the_post_author(
     assert row.category == categories.POSTS_REPLIES
     assert row.group_key == f"posts.replies:{notice.pk}"
     assert row.title == "Ann Anden svarede"
-    assert row.url == f"{BOARD}{notice.pk}"
+    # Scrolled to the comment: in a long thread the notification lands on the answer.
+    comment = NoticeComment.objects.get()
+    assert row.url == f"{BOARD}{notice.pk}#kommentar-{comment.pk}"
 
 
 def test_replies_to_one_post_fold_into_one_notification(
@@ -2319,3 +2322,206 @@ def test_a_live_card_on_a_searched_board_keeps_its_snippet(client: Client, beboe
 
     assert 'class="notice-match"' in with_query
     assert 'class="notice-match"' not in without
+
+
+# --- replies and reactions on comments ------------------------------------------------------------
+#
+# One level of replies (core.comment_threads): a reply is a comment with a `parent`, posted to the
+# same view, and a reply to a reply joins its thread rather than nesting deeper.
+
+
+def test_a_reply_is_filed_under_the_comment_it_answers(
+    client: Client, beboer: Resident, other: Resident
+) -> None:
+    notice = make_notice(beboer)
+    top = NoticeComment.objects.create(notice=notice, author=beboer, body="Hvem har nøglen?")
+    client.force_login(other)
+
+    response = client.post(f"{BOARD}{notice.pk}/kommentar", {"body": "Det har jeg", "parent": top.pk})
+
+    reply = NoticeComment.objects.get(body="Det har jeg")
+    assert reply.parent_id == top.pk
+    assert response["Location"] == f"{BOARD}{notice.pk}#kommentar-{reply.pk}"
+
+
+def test_a_reply_to_a_reply_joins_the_same_thread(client: Client, beboer: Resident, other: Resident) -> None:
+    """One level deep: answering a reply files the answer under the top-level comment."""
+    notice = make_notice(beboer)
+    top = NoticeComment.objects.create(notice=notice, author=beboer, body="Hvem har nøglen?")
+    reply = NoticeComment.objects.create(notice=notice, author=other, body="Det har jeg", parent=top)
+    client.force_login(beboer)
+
+    client.post(f"{BOARD}{notice.pk}/kommentar", {"body": "Tak!", "parent": reply.pk})
+
+    assert NoticeComment.objects.get(body="Tak!").parent_id == top.pk
+
+
+def test_a_parent_from_another_post_is_not_a_reply(client: Client, beboer: Resident, other: Resident) -> None:
+    """The parent is looked up among THIS post's comments. One that is not there (another post's, or
+    deleted while the answer was being written) keeps the text as a top-level comment and says so."""
+    notice = make_notice(beboer)
+    elsewhere = NoticeComment.objects.create(notice=make_notice(beboer), author=beboer, body="Andetsteds")
+    client.force_login(other)
+
+    response = client.post(
+        f"{BOARD}{notice.pk}/kommentar", {"body": "Svar", "parent": elsewhere.pk}, follow=True
+    )
+
+    comment = NoticeComment.objects.get(body="Svar")
+    assert comment.notice_id == notice.pk
+    assert comment.parent_id is None
+    assert "dit svar står som en ny kommentar" in response.content.decode()
+
+
+def test_replies_are_drawn_under_their_comment(client: Client, beboer: Resident, other: Resident) -> None:
+    notice = make_notice(beboer)
+    first = NoticeComment.objects.create(notice=notice, author=beboer, body="Første kommentar")
+    second = NoticeComment.objects.create(notice=notice, author=other, body="Anden kommentar")
+    reply = NoticeComment.objects.create(notice=notice, author=other, body="Svar på første", parent=first)
+    client.force_login(other)
+
+    page = client.get(f"{BOARD}{notice.pk}").content.decode()
+
+    assert page.index("Første kommentar") < page.index("Svar på første") < page.index("Anden kommentar")
+    assert f'class="reply is-reply" id="kommentar-{reply.pk}"' in page
+    assert f'id="kommentar-{second.pk}"' in page
+    assert "3 kommentarer" in page  # replies count
+    # Every thread has its own reply box, filed under the top-level comment.
+    assert f'id="svar-{first.pk}"' in page
+    assert f'name="parent" value="{first.pk}"' in page
+    # "Svar" on a reply by somebody else starts the answer with an @-mention of them.
+    assert f'data-reply-mention="@[{other.full_name}]({other.pk}) "' not in page  # it is yours
+    client.force_login(beboer)
+    page = client.get(f"{BOARD}{notice.pk}").content.decode()
+    assert f'data-reply-mention="@[{other.full_name}]({other.pk}) "' in page
+
+
+def test_deleting_a_comment_takes_its_replies(client: Client, beboer: Resident, other: Resident) -> None:
+    notice = make_notice(beboer)
+    top = NoticeComment.objects.create(notice=notice, author=beboer, body="Spørgsmål")
+    NoticeComment.objects.create(notice=notice, author=other, body="Svar", parent=top)
+    client.force_login(beboer)
+
+    client.post(f"{BOARD}kommentar/{top.pk}/slet")
+
+    assert not NoticeComment.objects.exists()
+
+
+def test_a_reply_tells_the_comment_author_and_the_post_author(
+    client: Client, beboer: Resident, other: Resident, make_resident: Callable[..., Resident], pushes: list
+) -> None:
+    asker = make_resident(email="spoerger@gahk.dk", first_name="Sif", last_name="Spørger")
+    for who in (beboer, other, asker):
+        subscribe(who, f"https://push.example/{who.pk}")
+    notice = make_notice(beboer)
+    top = NoticeComment.objects.create(notice=notice, author=asker, body="Hvornår?")
+    client.force_login(other)
+
+    client.post(f"{BOARD}{notice.pk}/kommentar", {"body": "Kl. 18", "parent": top.pk})
+
+    reply = NoticeComment.objects.get(body="Kl. 18")
+    to_asker = Notification.objects.get(recipient=asker)
+    assert to_asker.category == categories.POSTS_REPLIES
+    assert to_asker.group_key == f"posts.replies:comment:{top.pk}"
+    assert to_asker.title == "Ann Anden svarede på din kommentar"
+    assert to_asker.url == f"{BOARD}{notice.pk}#kommentar-{reply.pk}"
+    to_author = Notification.objects.get(recipient=beboer)
+    assert to_author.group_key == f"posts.replies:{notice.pk}"
+    assert not Notification.objects.filter(recipient=other).exists()
+
+
+def test_a_reply_to_your_own_comment_on_your_own_post_is_one_notification(
+    client: Client, beboer: Resident, other: Resident, pushes: list
+) -> None:
+    """The post's author asked in the thread; the answer tells them once, as the more specific one."""
+    subscribe(beboer, "https://push.example/author")
+    notice = make_notice(beboer)
+    top = NoticeComment.objects.create(notice=notice, author=beboer, body="Nogen?")
+    client.force_login(other)
+
+    client.post(f"{BOARD}{notice.pk}/kommentar", {"body": "Mig", "parent": top.pk})
+
+    row = Notification.objects.get()
+    assert row.title == "Ann Anden svarede på din kommentar"
+
+
+def test_a_comment_reaction_toggles_and_returns_its_row(
+    client: Client, beboer: Resident, other: Resident
+) -> None:
+    notice = make_notice(beboer)
+    comment = NoticeComment.objects.create(notice=notice, author=beboer, body="Enig?")
+    client.force_login(other)
+
+    response = client.post(f"{BOARD}kommentar/{comment.pk}/reaktion", {"emoji": "👍"})
+
+    reaction = NoticeCommentReaction.objects.get()
+    assert (reaction.comment_id, reaction.author_id, reaction.emoji) == (comment.pk, other.pk, "👍")
+    html = response.content.decode()
+    assert f'id="reactions-kommentar-{comment.pk}"' in html
+    assert f'hx-post="/opslagstavle/kommentar/{comment.pk}/reaktion"' in html
+    assert not NoticeReaction.objects.exists(), "a comment's reaction is not the post's"
+
+    client.post(f"{BOARD}kommentar/{comment.pk}/reaktion", {"emoji": "👍"})
+    assert not NoticeCommentReaction.objects.exists()
+
+
+def test_a_comment_reaction_tells_the_comment_author_only(
+    client: Client, beboer: Resident, other: Resident, make_resident: Callable[..., Resident], pushes: list
+) -> None:
+    commenter = make_resident(email="kommentator@gahk.dk", first_name="Kim", last_name="Kommentator")
+    for who in (beboer, commenter):
+        subscribe(who, f"https://push.example/{who.pk}")
+    notice = make_notice(beboer)
+    comment = NoticeComment.objects.create(notice=notice, author=commenter, body="Jeg tager kage med")
+    client.force_login(other)
+
+    client.post(f"{BOARD}kommentar/{comment.pk}/reaktion", {"emoji": "🎉"})
+    client.post(f"{BOARD}kommentar/{comment.pk}/reaktion", {"emoji": "👍"})  # changed: no news
+
+    row = Notification.objects.get()
+    assert row.recipient_id == commenter.pk
+    assert row.category == categories.POSTS_LIKES
+    assert row.group_key == f"posts.likes:comment:{comment.pk}"
+    assert row.title == "Ann Anden reagerede på din kommentar"
+    assert row.body == "🎉 Jeg tager kage med"
+    assert row.url == f"{BOARD}{notice.pk}#kommentar-{comment.pk}"
+
+
+def test_the_comment_reactions_are_drawn_on_the_detail_page(
+    client: Client, beboer: Resident, other: Resident
+) -> None:
+    notice = make_notice(beboer)
+    comment = NoticeComment.objects.create(notice=notice, author=beboer, body="Hej")
+    NoticeCommentReaction.objects.create(comment=comment, author=other, emoji="❤️")
+    client.force_login(beboer)
+
+    page = client.get(f"{BOARD}{notice.pk}").content.decode()
+
+    assert f'id="reactions-kommentar-{comment.pk}"' in page
+    assert 'aria-label="❤️ 1"' in page
+    assert f'id="reactions-{notice.pk}"' in page  # the post's own row is still there
+
+
+def test_the_thread_costs_no_extra_query_per_comment_reply_or_reaction(
+    client: Client, beboer: Resident, other: Resident
+) -> None:
+    """Comments and reactions are read in two queries and grouped in Python (core.comment_threads)."""
+    from django.db import connection
+    from django.test.utils import CaptureQueriesContext
+
+    notice = make_notice(beboer)
+    first = NoticeComment.objects.create(notice=notice, author=beboer, body="En")
+    NoticeCommentReaction.objects.create(comment=first, author=other, emoji="👍")
+    client.force_login(beboer)
+    with CaptureQueriesContext(connection) as before:
+        client.get(f"{BOARD}{notice.pk}")
+
+    for i in range(4):
+        who = Resident.objects.create(email=f"t{i}@gahk.dk")
+        top = NoticeComment.objects.create(notice=notice, author=who, body=f"Top {i}")
+        reply = NoticeComment.objects.create(notice=notice, author=other, body=f"Svar {i}", parent=top)
+        NoticeCommentReaction.objects.create(comment=reply, author=who, emoji="🎉")
+    with CaptureQueriesContext(connection) as after:
+        client.get(f"{BOARD}{notice.pk}")
+
+    assert len(after.captured_queries) == len(before.captured_queries)

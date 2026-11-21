@@ -24,15 +24,26 @@ from django.utils import timezone
 from django.views.decorators.http import require_GET, require_POST
 
 from core.clock import current_date, current_datetime
+from core.comment_threads import comments_with_reactions, reply_parent, threads
 from core.danish import MONTHS, WEEKDAYS_SHORT
+from core.emoji import EMOJI_SHORTLIST
+from core.reactions import CREATED, apply_toggle, reaction_rows
 from core.uploads import attached_image
 from residents import birthdays as birthdays_mod
 from residents.models import Resident
 from residents.permissions import current_resident
 
 from . import access, icalendar, live, maerkedage, services
-from .forms import EventCommentForm, EventForm
-from .models import Answer, CalendarFeedToken, Event, EventComment, Rsvp
+from .forms import EventCommentForm, EventForm, ReactionForm
+from .models import (
+    MAX_COMMENT_CHARS,
+    Answer,
+    CalendarFeedToken,
+    Event,
+    EventComment,
+    EventCommentReaction,
+    Rsvp,
+)
 
 PAGE_SIZE = 20
 
@@ -266,15 +277,18 @@ def _detail_context(request: HttpRequest, pk: int) -> dict[str, object]:
             # that will 403 them is worse than not mentioning it. Imported lazily so the two apps
             # stay acyclic at import time (opslagstavle.forms reaches the other way).
             "notices": _related_notices(request, event),
-            "comments": _comments(request, event),
             "comment_form": EventCommentForm(),
+            "quick_emoji": EMOJI_SHORTLIST,
+            "max_comment_chars": MAX_COMMENT_CHARS,
+            **_comments(request, event),
         }
     )
     return context
 
 
-def _comments(request: HttpRequest, event: Event) -> list:
-    """The thread, each row carrying its own `can_delete`.
+def _comments(request: HttpRequest, event: Event) -> dict[str, object]:
+    """The thread as top-level comments with their replies (core.comment_threads), each row carrying
+    its own `can_delete` and reaction row, plus the total count for the heading.
 
     Resolved here rather than in the template because a Django template cannot call
     access.can_delete_comment with arguments — the same reason opslagstavlen and reparationer both
@@ -286,17 +300,19 @@ def _comments(request: HttpRequest, event: Event) -> list:
     """
     resident = current_resident(request)
     host = access.is_host(event, resident)
-    comments = list(event.comments.select_related("author"))
+    comments = list(comments_with_reactions(event.comments.all(), EventCommentReaction))
     for comment in comments:
-        comment.can_delete = access.can_delete_comment(comment, resident, host=host)  # type: ignore[attr-defined]
-    return comments
+        comment.can_delete = access.can_delete_comment(comment, resident, host=host)
+    return {"comments": threads(comments, resident.pk), "comment_count": len(comments)}
 
 
-def _comment_anchor(event_pk: int) -> str:
+def _comment_anchor(event_pk: int, comment_pk: int | None = None) -> str:
     """Back to the thread, not to the top of the page. The event page is long — image, facts,
     description, the answer panel, the posts announcing it — so a bare redirect after commenting
-    lands the reader above the fold and hides the thing they just wrote."""
-    return f"{reverse('events:detail', args=[event_pk])}#kommentarer"
+    lands the reader above the fold and hides the thing they just wrote. After a new comment, to
+    that comment: a reply sits mid-thread, not at the end of it."""
+    anchor = f"kommentar-{comment_pk}" if comment_pk else "kommentarer"
+    return f"{reverse('events:detail', args=[event_pk])}#{anchor}"
 
 
 def _related_notices(request: HttpRequest, event: Event) -> list:
@@ -369,12 +385,13 @@ def create_comment(request: HttpRequest, pk: int) -> HttpResponseRedirect:
 
     comment.event = event
     comment.author = current_resident(request)
+    comment.parent = reply_parent(request, event.comments.all())
     if image is not None:
         comment.image = image
     comment.save()
     services.notify_new_comment(comment)
     live.event_changed(event.pk)
-    return redirect(_comment_anchor(event.pk))
+    return redirect(_comment_anchor(event.pk, comment.pk))
 
 
 @require_POST
@@ -390,6 +407,38 @@ def delete_comment(request: HttpRequest, pk: int) -> HttpResponseRedirect:
     live.event_changed(event_pk)
     messages.success(request, "Kommentaren er slettet.")
     return redirect(_comment_anchor(event_pk))
+
+
+@require_POST
+@access.access_required
+def toggle_comment_reaction(request: HttpRequest, pk: int) -> HttpResponse:
+    """Set, change or clear this person's one emoji on a comment, returning just the reaction row.
+
+    Reached through _visible_comment, so a comment on an event this reader cannot see is a 404. A
+    NEW reaction tells the comment's author (services.notify_comment_reaction); changing or clearing
+    one tells nobody. Renders opslagstavlen's row: it is the same widget.
+    """
+    comment = _visible_comment(request, pk)
+    resident = current_resident(request)
+    form = ReactionForm(request.POST)
+    if form.is_valid():
+        emoji = form.cleaned_data["emoji"]
+        if (
+            apply_toggle(EventCommentReaction.objects, author=resident, emoji=emoji, comment=comment)
+            == CREATED
+        ):
+            services.notify_comment_reaction(comment, resident, emoji)
+        live.event_changed(comment.event_id)
+    # Re-read after the write: see opslagstavle.views.toggle_reaction.
+    return render(
+        request,
+        "opslagstavle/_reactions.html",
+        {
+            "item": comment,
+            "reactions": reaction_rows(comment.reactions.select_related("author"), resident.pk),
+            "quick_emoji": EMOJI_SHORTLIST,
+        },
+    )
 
 
 @access.access_required

@@ -1,0 +1,51 @@
+{% load text_extras %}
+{% comment %}
+  One comment, top-level or a reply: `comment` is it, `thread` the top-level comment it belongs to
+  (itself for a top-level one). Drawn by _detail_live.html once per comment. The reply id
+  "kommentar-<pk>" is what a notification and the redirect after commenting scroll to.
+{% endcomment %}
+<div class="reply{% if comment.pk != thread.pk %} is-reply{% endif %}" id="kommentar-{{ comment.pk }}">
+  {% comment %}
+    The byline is its own flex ROW, and it has to be. `.msg-del` is a <form> — a block element
+    — and it is positioned with `margin-left:auto`, which only means anything inside a flex
+    container. Loose in the .reply it took a full line of its own between the name and the
+    comment, and since the ✕ is invisible until hover, what a reader saw was a blank gap.
+  {% endcomment %}
+  <div class="reply-head">
+    <a class="reply-name author-link" href="{% url 'resident_profile' comment.author_id %}">{{ comment.author.full_name }}</a>
+    {% if comment.author_embedsgruppe %}
+      <span class="chip chip-embedsgruppe">{{ comment.author_embedsgruppe }}</span>
+    {% endif %}
+    <span class="msg-meta">{{ comment.created_at|date:"j. M Y, H:i" }}</span>
+    {% if comment.can_delete %}
+      <form method="post" action="{% url 'opslagstavle:delete_comment' comment.pk %}" class="msg-del"
+            onsubmit="return confirm('Slet «{{ comment.body|truncatechars:60|escapejs }}»{% with n=comment.thread_replies|length %}{% if n %} og {{ n }} svar{% endif %}{% endwith %} permanent?')">
+        {% csrf_token %}
+        <button type="submit" title="Slet kommentar" aria-label="Slet kommentar">&times;</button>
+      </form>
+    {% endif %}
+  </div>
+  {% comment %}
+    Plain text, autoescaped, with white-space:pre-wrap from .msg-text — comments are
+    deliberately not Markdown (see NoticeComment). |links makes a pasted link clickable
+    and short without opening the door to arbitrary markup.
+
+    It replaced |urlize, and the reason is one line above this one: the POST uses the
+    Markdown scanner and the comment used Django's, so the same address could be live in
+    the post and dead in the reply quoting it. Both are core.links now.
+  {% endcomment %}
+  <div class="msg-text">{{ comment.body|links }}</div>
+  {% if comment.image %}
+    {% comment %}
+      A link to the full picture around a capped thumbnail, exactly as a Den Hurtige message
+      renders its photo — same `.msg-image` rule, so the two look alike and no CSS was added.
+      loading="lazy" because a long thread is the case this exists for.
+    {% endcomment %}
+    {# data-viewer: a bare <img> is what a long press can save. See den_hurtige/_message.html. #}
+    <a href="{{ comment.image.url }}" target="_blank" rel="noopener" class="msg-image"
+       data-viewer data-name="{{ comment.image.name|basename }}">
+      <img src="{{ comment.image.url }}" alt="" loading="lazy">
+    </a>
+  {% endif %}
+  {% include "opslagstavle/_comment_actions.html" %}
+</div>

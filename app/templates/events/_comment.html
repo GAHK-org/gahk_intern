@@ -1,0 +1,46 @@
+{% load text_extras %}
+{% comment %}
+  One comment, top-level or a reply: `comment` is it, `thread` the top-level comment it belongs to
+  (itself for a top-level one). Drawn by _detail_live.html once per comment. The id
+  "kommentar-<pk>" is what a notification and the redirect after commenting scroll to.
+{% endcomment %}
+<div class="reply{% if comment.pk != thread.pk %} is-reply{% endif %}" id="kommentar-{{ comment.pk }}">
+  {% comment %}
+    The byline is its own flex ROW because .msg-del is a <form> positioned with
+    `margin-left:auto`, which means nothing outside a flex container — loose in the .reply it
+    took a blank line of its own between the name and the text. Same note as opslagstavlen's.
+
+    NO embedsgruppe pill here, unlike the board's comments: this model keeps no snapshot of
+    it, because the snapshot exists to stop a rotating group from relabelling a multi-year
+    archive and an event is gone a week after it is held. See EventComment in models.py.
+  {% endcomment %}
+  <div class="reply-head">
+    <span class="reply-name">{{ comment.author.full_name }}</span>
+    <span class="msg-meta">{{ comment.created_at|date:"j. b Y, H:i" }}</span>
+    {% if comment.can_delete %}
+      <form method="post" action="{% url 'events:delete_comment' comment.pk %}" class="msg-del"
+            onsubmit="return confirm('Slet «{{ comment.body|truncatechars:60|escapejs }}»{% with n=comment.thread_replies|length %}{% if n %} og {{ n }} svar{% endif %}{% endwith %} permanent?')">
+        {% csrf_token %}
+        <button type="submit" title="Slet kommentar" aria-label="Slet kommentar">&times;</button>
+      </form>
+    {% endif %}
+  </div>
+  {% comment %}
+    Plain text, autoescaped, `white-space:pre-wrap` from .msg-text — comments are deliberately
+    not Markdown (see EventComment). |links makes a pasted link clickable and short without
+    opening the door to arbitrary markup, and uses the same URL scanner the description
+    above does — see opslagstavle/detail.html for why |urlize could not stay.
+  {% endcomment %}
+  <div class="msg-text">{{ comment.body|links }}</div>
+  {% if comment.image %}
+    {% comment %}
+      A link to the full picture around a capped thumbnail, exactly as a Den Hurtige message
+      renders its photo — same `.msg-image` rule, so the two look alike and no CSS was added.
+      loading="lazy" because a long thread is the case this exists for.
+    {% endcomment %}
+    <a href="{{ comment.image.url }}" target="_blank" rel="noopener" class="msg-image">
+      <img src="{{ comment.image.url }}" alt="" loading="lazy">
+    </a>
+  {% endif %}
+  {% include "opslagstavle/_comment_actions.html" %}
+</div>

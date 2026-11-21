@@ -36,6 +36,7 @@ from events.models import (
     CalendarFeedToken,
     Event,
     EventComment,
+    EventCommentReaction,
     EventInvite,
     Rsvp,
     Visibility,
@@ -172,6 +173,7 @@ GATED_GET_ROUTES = ("", "opret", "kalender", "kalender/abonnement", "1", "1/redi
         "1/kommentar",
         "1/ics",
         "kommentar/1/slet",
+        "kommentar/1/reaktion",
     ],
 )
 def test_every_route_is_closed_to_non_administrators(
@@ -221,6 +223,7 @@ def test_the_route_table_covers_every_url_pattern() -> None:
         "answer",
         "create_comment",
         "delete_comment",
+        "toggle_comment_reaction",
         "event_ics",
         "live_detail",  # test_the_live_region_is_closed_quietly — a 204 gate, not a 403
     }
@@ -944,7 +947,8 @@ def test_the_private_route_table_covers_every_pk_route() -> None:
     # reach it — the url needs a comment to exist before there is an id to ask about. Its leak test
     # is test_an_outsider_cannot_delete_a_comment_on_a_private_event, named here so this meta-test
     # keeps working as a checklist rather than being loosened to a subset comparison.
-    covered |= {"delete_comment"}
+    # toggle_comment_reaction likewise: test_an_outsider_cannot_react_to_a_comment_on_a_private_event.
+    covered |= {"delete_comment", "toggle_comment_reaction"}
 
     assert pk_routes == covered, f"pk routes with no leak test: {pk_routes - covered}"
 
@@ -980,7 +984,8 @@ def test_commenting_lands_back_on_the_thread(client: Client, beboer: Resident) -
 
     response = client.post(f"{EVENTS}{event.pk}/kommentar", {"body": "Jeg tager kage med"})
 
-    assert response["Location"] == f"{EVENTS}{event.pk}#kommentarer"
+    # At the comment itself: a reply sits mid-thread, so "the end of the thread" is not enough.
+    assert response["Location"] == f"{EVENTS}{event.pk}#kommentar-{EventComment.objects.get().pk}"
 
 
 def test_a_blank_comment_is_refused(client: Client, beboer: Resident) -> None:
@@ -1190,7 +1195,7 @@ def test_a_comment_notifies_the_hosts_and_nobody_else(
     assert told(categories.EVENTS_COMMENTS) == [(beboer.pk, title), (helper.pk, title)]
     row = Notification.objects.get(recipient=beboer)
     assert row.group_key == f"events.comments:{event.pk}"
-    assert row.url == f"{EVENTS}{event.pk}"
+    assert row.url == f"{EVENTS}{event.pk}#kommentar-{EventComment.objects.get().pk}"
     assert row.actors == [{"id": other.pk, "name": other.full_name}]
     # Grouped rows are pushed one recipient at a time, tagged so the next one replaces this banner.
     assert sorted(p[0] for p in pushes) == [[beboer.pk], [helper.pk]]
@@ -2671,3 +2676,138 @@ def test_no_board_link_for_somebody_who_cannot_open_the_board(
 
     assert response.context["notices"] == []
     assert "Omtalt på opslagstavlen" not in response.content.decode()
+
+
+# --- replies and reactions on comments ------------------------------------------------------------
+#
+# Same thread shape as opslagstavlen (core.comment_threads): one level of replies, and a reaction row
+# per comment. The event itself still takes no reactions — see EventComment's docstring.
+
+
+def test_a_reply_to_a_reply_joins_the_thread_of_the_comment(
+    client: Client, beboer: Resident, other: Resident
+) -> None:
+    event = make_event(beboer)
+    top = EventComment.objects.create(event=event, author=other, body="Kan man tage børn med?")
+    client.force_login(beboer)
+    response = client.post(f"{EVENTS}{event.pk}/kommentar", {"body": "Ja da", "parent": top.pk})
+    answer = EventComment.objects.get(body="Ja da")
+    assert answer.parent_id == top.pk
+    assert response["Location"] == f"{EVENTS}{event.pk}#kommentar-{answer.pk}"
+
+    client.force_login(other)
+    client.post(f"{EVENTS}{event.pk}/kommentar", {"body": "Super", "parent": answer.pk})
+
+    assert EventComment.objects.get(body="Super").parent_id == top.pk
+
+
+def test_replies_are_drawn_under_their_comment_on_the_event_page(
+    client: Client, beboer: Resident, other: Resident
+) -> None:
+    event = make_event(beboer)
+    first = EventComment.objects.create(event=event, author=other, body="Kommentar et")
+    EventComment.objects.create(event=event, author=other, body="Kommentar to")
+    reply = EventComment.objects.create(event=event, author=beboer, body="Svar på et", parent=first)
+    client.force_login(other)
+
+    page = client.get(f"{EVENTS}{event.pk}").content.decode()
+
+    assert page.index("Kommentar et") < page.index("Svar på et") < page.index("Kommentar to")
+    assert f'class="reply is-reply" id="kommentar-{reply.pk}"' in page
+    assert f'id="svar-{first.pk}"' in page
+    assert f'id="reactions-kommentar-{first.pk}"' in page
+    assert "3 kommentarer" in page
+
+
+def test_a_reply_tells_the_guest_it_answers_and_the_hosts(
+    client: Client, beboer: Resident, other: Resident, third: Resident, pushes: list
+) -> None:
+    """A guest's question is answered for the guest: the reply tells them, host or not."""
+    for who in (beboer, other, third):
+        subscribe(who, f"https://push.example/{who.pk}")
+    event = make_event(beboer)
+    top = EventComment.objects.create(event=event, author=other, body="Hvad skal man tage med?")
+    client.force_login(third)
+
+    client.post(f"{EVENTS}{event.pk}/kommentar", {"body": "Godt humør", "parent": top.pk})
+
+    reply = EventComment.objects.get(body="Godt humør")
+    to_guest = Notification.objects.get(recipient=other)
+    assert to_guest.category == categories.EVENTS_COMMENTS
+    assert to_guest.group_key == f"events.comments:comment:{top.pk}"
+    assert to_guest.title == f"{third.full_name} svarede på din kommentar"
+    assert to_guest.url == f"{EVENTS}{event.pk}#kommentar-{reply.pk}"
+    assert told(categories.EVENTS_COMMENTS) == [
+        (beboer.pk, f"{third.full_name} kommenterede"),
+        (other.pk, f"{third.full_name} svarede på din kommentar"),
+    ]
+
+
+def test_a_host_answering_a_guest_is_not_told_about_their_own_answer(
+    client: Client, beboer: Resident, other: Resident, pushes: list
+) -> None:
+    for who in (beboer, other):
+        subscribe(who, f"https://push.example/{who.pk}")
+    event = make_event(beboer)
+    top = EventComment.objects.create(event=event, author=other, body="Er der plads?")
+    client.force_login(beboer)
+
+    client.post(f"{EVENTS}{event.pk}/kommentar", {"body": "Ja", "parent": top.pk})
+
+    assert told(categories.EVENTS_COMMENTS) == [(other.pk, f"{beboer.full_name} svarede på din kommentar")]
+
+
+def test_a_comment_reaction_toggles_and_tells_the_comment_author(
+    client: Client, beboer: Resident, other: Resident, third: Resident, pushes: list
+) -> None:
+    for who in (beboer, other):
+        subscribe(who, f"https://push.example/{who.pk}")
+    event = make_event(beboer)
+    comment = EventComment.objects.create(event=event, author=other, body="Jeg tager kage med")
+    client.force_login(third)
+
+    response = client.post(f"{EVENTS}kommentar/{comment.pk}/reaktion", {"emoji": "🍰"})
+
+    assert response.status_code == 200
+    assert f'id="reactions-kommentar-{comment.pk}"' in response.content.decode()
+    assert EventCommentReaction.objects.get().emoji == "🍰"
+    assert not event.rsvps.exists(), "a reaction is not an answer"
+    row = Notification.objects.get()
+    assert row.recipient_id == other.pk
+    assert row.category == categories.EVENTS_LIKES
+    assert row.importance == categories.Importance.LAV
+    assert row.group_key == f"events.likes:comment:{comment.pk}"
+    assert row.title == f"{third.full_name} reagerede på din kommentar"
+
+    client.post(f"{EVENTS}kommentar/{comment.pk}/reaktion", {"emoji": "🍰"})
+    assert not EventCommentReaction.objects.exists()
+    assert Notification.objects.count() == 1, "clearing a reaction is not news"
+
+
+def test_an_outsider_cannot_react_to_a_comment_on_a_private_event(
+    client: Client, beboer: Resident, other: Resident
+) -> None:
+    """404, through views._visible_comment, for the reason the delete test gives. Named in
+    test_the_private_route_table_covers_every_pk_route."""
+    event = make_private(beboer, [])
+    comment = EventComment.objects.create(event=event, author=beboer, body="Hemmeligt")
+    client.force_login(other)
+
+    response = client.post(f"{EVENTS}kommentar/{comment.pk}/reaktion", {"emoji": "👍"})
+
+    assert response.status_code == 404
+    assert not EventCommentReaction.objects.exists()
+
+
+def test_a_reply_to_a_comment_on_another_event_is_not_a_reply(
+    client: Client, beboer: Resident, other: Resident
+) -> None:
+    """`parent` is looked up among this event's comments only — including, so, not a private one's."""
+    hidden = EventComment.objects.create(event=make_private(beboer, []), author=beboer, body="Hemmeligt")
+    event = make_event(beboer)
+    client.force_login(other)
+
+    client.post(f"{EVENTS}{event.pk}/kommentar", {"body": "Hej", "parent": hidden.pk})
+
+    comment = EventComment.objects.get(body="Hej")
+    assert (comment.event_id, comment.parent_id) == (event.pk, None)
