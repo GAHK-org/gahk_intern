@@ -137,6 +137,64 @@ def test_seed_demo_gives_the_logins_notifications_in_every_state() -> None:
 
 
 @pytest.mark.django_db
+def test_seed_demo_fills_drive_for_every_login() -> None:
+    """Drive starts empty, so a fresh checkout needs files in every space - and folders some logins
+    may open, some only see the size of, and some not see at all."""
+    from django.utils import timezone
+
+    from drive import services
+    from drive.access import Level, Viewer
+    from drive.models import File, Folder
+    from drive.periods import period_containing
+
+    call_command("seed_demo", "--fresh", "--force", "--residents", "12", verbosity=0)
+    call_command("seed_demo", "--fresh", "--force", "--residents", "12", verbosity=0)  # still idempotent
+
+    today = timezone.localdate()
+    current = period_containing(today)
+    by_email = {r.email: r for r in Resident.objects.all()}
+
+    def viewer(email: str, *, oversees: bool = False) -> Viewer:
+        return Viewer.build(by_email[email].pk, oversees=oversees, today=today)
+
+    regnskab_group = Folder.objects.get(kind=Folder.Kind.GROUP, name="Regnskabsgruppen")
+    periods = {f.period_start: f for f in regnskab_group.children.filter(kind=Folder.Kind.PERIOD)}
+    now_folder = periods[current.start]
+    older = periods[current.previous().previous().start]
+    assert File.objects.filter(folder__path__startswith=now_folder.path).count() >= 4
+    assert viewer("regnskab@gahk.dk").level(now_folder) == Level.WRITE
+    assert viewer("regnskab@gahk.dk").level(older) == Level.READ
+    assert viewer("formand@gahk.dk", oversees=True).level(now_folder) == Level.META
+    assert viewer("formand@gahk.dk", oversees=True).level(older) == Level.READ
+    # A plain resident sees only the groups they have been in, and their note is in this month's.
+    beboer = viewer("beboer@gahk.dk")
+    groups = list(Folder.objects.filter(kind=Folder.Kind.GROUP))
+    visible = [group for group in groups if beboer.level(group) > Level.NONE]
+    assert 0 < len(visible) < len(groups)
+    residency = by_email["beboer@gahk.dk"].residencies.get(year=today.year, month=today.month)
+    own = Folder.objects.get(kind=Folder.Kind.GROUP, workgroup=residency.workgroup)
+    assert own in visible
+    assert File.objects.filter(
+        folder__path__startswith=own.path, created_by=by_email["beboer@gahk.dk"]
+    ).exists()
+
+    # Fælles: this year and last year to write in, the year before to read only.
+    years = {f.period_start.year: f for f in Folder.objects.filter(kind=Folder.Kind.YEAR)}
+    assert beboer.level(years[today.year]) == Level.WRITE
+    assert beboer.level(years[today.year - 1]) == Level.WRITE
+    assert beboer.level(years[today.year - 2]) == Level.READ
+    assert all(File.objects.filter(folder=years[y]).exists() for y in (today.year - 1, today.year - 2))
+
+    # Real bytes of many kinds, so each downloads and opens.
+    names = list(File.objects.values_list("name", flat=True))
+    assert {n.rsplit(".", 1)[-1] for n in names} >= {"pdf", "xlsx", "docx", "csv", "md", "png", "jpg", "txt"}
+    for file in File.objects.all():
+        version = file.latest_version()
+        with services.storage().open(version.key, "rb") as stored:
+            assert len(stored.read()) == file.size > 0
+
+
+@pytest.mark.django_db
 def test_seed_demo_fills_the_outbox_with_every_kind_and_status(settings: object) -> None:
     """The mail page needs a mail in every state, and seeding must send none of them (core.demo)."""
     from datetime import timedelta

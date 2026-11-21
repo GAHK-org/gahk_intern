@@ -8,6 +8,7 @@ from django.urls import reverse
 
 from core.middleware import kitchen_home
 from den_hurtige.access import roles_allowed as den_hurtige_allowed
+from drive.access import roles_allowed as drive_allowed
 from events.access import roles_allowed as events_allowed
 from gahkflix.access import roles_allowed as gahkflix_allowed
 from opslagstavle.access import roles_allowed as opslagstavle_allowed
@@ -101,9 +102,16 @@ def _nav_intern(roles: Collection[str], user_pk: int) -> list[NavSection]:
     # bottom stops the sidebar mixing "leaves the site" with "does not" halfway down a list. Note
     # _active_nav_url skips anything with a scheme, so only the internal entries here can light up.
     #
+    # The two UNCONDITIONAL entries lead and the gated one follows, so the top of the section does
+    # not move depending on who is reading it.
     ressourcer: list[NavItem] = [
         (reverse("stamtree"), "Stamtræ", "tree"),
         (reverse("stats:index"), "Statistik", "chart"),
+    ]
+    # Conditional on the rollout gate, like Den Hurtige / Opslagstavlen / Begivenheder above.
+    if drive_allowed(roles):
+        ressourcer.append((reverse("drive:home"), "Drive", "folder"))
+    ressourcer += [
         (settings.WIKI_URL, "Wiki", "book"),
         (settings.FEEDBACK_URL, "Fejl & ønsker", "bug"),
     ]

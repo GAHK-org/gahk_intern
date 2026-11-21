@@ -25,6 +25,7 @@ urlpatterns = [
     path("reparationer/", include("reparationer.urls")),
     path("fotoalbum/", include("photo_album.urls")),
     path("gahkflix/", include("gahkflix.urls")),
+    path("drive/", include("drive.urls")),
     path("ak/", include("ak.urls")),
     path("oelkaelder/", include("oelkaelder.urls")),
     path("statistik/", include("stats.urls")),

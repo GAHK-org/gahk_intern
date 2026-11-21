@@ -68,6 +68,15 @@ RULES: list[dict[str, Any]] = [
         "Filter": {"Prefix": "photo-album-zips/"},
         "Expiration": {"ExpiredObjectDeleteMarker": True},
     },
+    # --- Drive -----------------------------------------------------------------------------------
+    # Nothing expires on a clock: a file's versions are kept as long as the file. This is what makes
+    # a deletion actually free the bytes, a month later, on a versioned bucket.
+    {
+        "ID": "expire-noncurrent-drive",
+        "Status": "Enabled",
+        "Filter": {"Prefix": "drive/"},
+        "NoncurrentVersionExpiration": {"NoncurrentDays": MEDIA_UNDO_DAYS},
+    },
     # --- Phase 1 media ---------------------------------------------------------------------------
     {
         "ID": "expire-noncurrent-versions",
