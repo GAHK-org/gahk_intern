@@ -200,6 +200,23 @@ def _complete(message: EmailMessage) -> None:
         message.extra_headers.setdefault(header, value)
 
 
+_without_delivery: contextvars.ContextVar[bool] = contextvars.ContextVar(
+    "core.mail.without_delivery", default=False
+)
+
+
+@contextlib.contextmanager
+def without_delivery() -> Iterator[None]:
+    """Mail queued inside this is stored, but no delivery is started for it: seed_demo's demo outbox
+    (core.demo), whose mails it then gives the state the deliverer would have. deliver_mail's periodic
+    run still sends whatever is left queued and due."""
+    token = _without_delivery.set(True)
+    try:
+        yield
+    finally:
+        _without_delivery.reset(token)
+
+
 def queue(message: EmailMessage) -> OutgoingMail:
     """Store the message for delivery, and set it as message.outgoing_mail — how a caller that
     tracks delivery (regnskab.alumneregning) finds its row. Delivery starts once the caller's
@@ -216,7 +233,8 @@ def queue(message: EmailMessage) -> OutgoingMail:
         expires_at=now + (sending.lifetime or KINDS[sending.kind].lifetime),
     )
     message.outgoing_mail = mail  # type: ignore[attr-defined]
-    _schedule_delivery(sending.kind)
+    if not _without_delivery.get():
+        _schedule_delivery(sending.kind)
     return mail
 
 
