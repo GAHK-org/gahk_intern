@@ -44,6 +44,14 @@ pace the account can take, and retried when it does not go through.
   For an Ukendt mail, regnskab asks the alumne and, if it did not arrive, sends it again with one
   button. Sending the period again re-sends every statement whose mail failed or expired.
 
+## Demo data
+
+- `task seed` fills the queue with a mail of every kind and status — a bulk ølkælder overview held by
+  the rate limit, resets sent, waiting again and expired, failures that can and cannot be sent again,
+  one being sent, one Ukendt — made by the code that sends each, then given the state delivery would
+  have left it in. Seeding sends nothing. Mails left in the queue are seeded only when mail is printed,
+  not sent; with real SMTP they would reach the demo residents' gahk.dk addresses.
+
 ## Retention
 
 - A sent mail's content is deleted once it is sent. A failed or Ukendt mail's content is deleted
