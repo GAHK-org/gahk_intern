@@ -66,7 +66,7 @@
               {% if drive %}
                 <div class="quick">
                   {% for row in drive %}
-                    <a href="{% url 'drive:folder' row.folder.pk %}">
+                    <a href="{% url 'drive:folder' row.folder.uuid %}">
                       <svg aria-hidden="true"><use href="#i-folder"></use></svg>
                       <span class="wg-link-text">{{ row.folder.name }}<span class="wg-link-note">{{ row.note }}</span></span>
                       {% if row.writable %}<span class="chip">Du kan redigere</span>{% else %}<span class="chip chip-quiet">Kun læse</span>{% endif %}

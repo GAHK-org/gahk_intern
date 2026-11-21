@@ -219,8 +219,8 @@ def test_drive_links_the_current_period_with_what_you_may_do(
 
     current = Folder.objects.get(workgroup=regnskab, kind=Folder.Kind.PERIOD, period_start=date(2026, 10, 1))
     timeless = Folder.objects.get(workgroup=regnskab, kind=Folder.Kind.TIMELESS)
-    assert reverse("drive:folder", args=[current.pk]) in page
-    assert reverse("drive:folder", args=[timeless.pk]) in page
+    assert reverse("drive:folder", args=[current.uuid]) in page
+    assert reverse("drive:folder", args=[timeless.uuid]) in page
     assert page.index("2026-27 Vinter") < page.index("Uden periode")
     assert "Du kan redigere" in page
 
