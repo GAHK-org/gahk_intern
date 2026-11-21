@@ -1,6 +1,8 @@
 """Search, and zips: asking for one, waiting for it, and fetching it. The rules are in search.py and
 zips.py."""
 
+from uuid import UUID
+
 from django.contrib import messages
 from django.core.exceptions import ValidationError
 from django.http import FileResponse, Http404, HttpRequest, HttpResponse, HttpResponseBase
@@ -42,9 +44,9 @@ def search_page(request: HttpRequest) -> HttpResponse:
 
 @access.access_required
 @require_POST
-def request_zip(request: HttpRequest, pk: int) -> HttpResponse:
+def request_zip(request: HttpRequest, uuid: UUID) -> HttpResponse:
     """The ticked items of a folder, or with nothing ticked the folder itself."""
-    folder, viewer, _ = _folder(request, pk)
+    folder, viewer, _ = _folder(request, uuid)
     selection = _selection(request, folder)
     name = folder.name
     if not selection:
@@ -55,7 +57,7 @@ def request_zip(request: HttpRequest, pk: int) -> HttpResponse:
         download = zips.request(viewer, selection, name=name, actor=current_resident(request))
     except ValidationError as exc:
         messages.error(request, " ".join(exc.messages))
-        return redirect("drive:folder", folder.pk)
+        return redirect("drive:folder", folder.uuid)
     return redirect("drive:zip", download.token)
 
 

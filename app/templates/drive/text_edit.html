@@ -25,7 +25,7 @@
     {% endif %}
     <div class="drive-actions">
       <button type="submit" class="btn">Gem{% if conflict %} alligevel{% endif %}</button>
-      <a class="btn btn-secondary" href="{% url 'drive:file' file.pk %}">Annuller</a>
+      <a class="btn btn-secondary" href="{% url 'drive:file' file.uuid %}">Annuller</a>
     </div>
   </form>
 {% endblock %}

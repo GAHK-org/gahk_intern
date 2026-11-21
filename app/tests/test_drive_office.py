@@ -103,7 +103,7 @@ def _docx(client: Client, folder: Folder, name: str = "Referat.docx") -> File:
 
 
 def _config(client: Client, file: File) -> dict[str, Any]:
-    page = client.get(reverse("drive:office", args=[file.pk]))
+    page = client.get(reverse("drive:office", args=[file.uuid]))
     assert page.status_code == 200
     raw = page.content.decode().split('<script id="drive-office-config" type="application/json">')[1]
     return json.loads(raw.split("</script>")[0])
@@ -129,15 +129,15 @@ def test_off_by_default_office_files_are_downloaded(people: dict[str, Resident],
     winter = _period_folder(group, WINTER)
     file = _docx(member, winter)
     assert (
-        reverse("drive:office", args=[file.pk])
-        not in member.get(reverse("drive:file", args=[file.pk])).content.decode()
+        reverse("drive:office", args=[file.uuid])
+        not in member.get(reverse("drive:file", args=[file.uuid])).content.decode()
     )
     # It is there, greyed out, with a word on why.
-    page = member.get(reverse("drive:file", args=[file.pk])).content.decode()
+    page = member.get(reverse("drive:file", args=[file.uuid])).content.decode()
     assert "Rediger i browseren</button>" in page and "er slået fra" in page
-    folder = member.get(reverse("drive:folder", args=[winter.pk])).content.decode()
+    folder = member.get(reverse("drive:folder", args=[winter.uuid])).content.decode()
     assert 'value="document" class="drive-new-file-kind" disabled' in folder and "er slået fra" in folder
-    assert member.get(reverse("drive:office", args=[file.pk])).status_code == 404
+    assert member.get(reverse("drive:office", args=[file.uuid])).status_code == 404
 
 
 def test_a_server_that_does_not_answer_switches_it_off(
@@ -146,10 +146,10 @@ def test_a_server_that_does_not_answer_switches_it_off(
     server.healthy = False
     member = _client(people["member"])
     file = _docx(member, _period_folder(group, WINTER))
-    page = member.get(reverse("drive:file", args=[file.pk])).content.decode()
-    assert reverse("drive:office", args=[file.pk]) not in page
+    page = member.get(reverse("drive:file", args=[file.uuid])).content.decode()
+    assert reverse("drive:office", args=[file.uuid]) not in page
     assert "svarer ikke lige nu" in page
-    assert member.get(reverse("drive:office", args=[file.pk])).status_code == 404
+    assert member.get(reverse("drive:office", args=[file.uuid])).status_code == 404
 
 
 # --- Opening ---------------------------------------------------------------------------------------
@@ -161,8 +161,8 @@ def test_a_member_edits_and_the_signed_configuration_names_only_the_resident(
     member = _client(people["member"])
     winter = _period_folder(group, WINTER)
     file = _docx(member, winter)
-    assert ">Rediger</a>" in member.get(reverse("drive:file", args=[file.pk])).content.decode()
-    folder = member.get(reverse("drive:folder", args=[winter.pk])).content.decode()
+    assert ">Rediger</a>" in member.get(reverse("drive:file", args=[file.uuid])).content.decode()
+    folder = member.get(reverse("drive:folder", args=[winter.uuid])).content.decode()
     assert 'value="spreadsheet" class="drive-new-file-kind">' in folder  # in `Ny fil`, not greyed out
 
     config = _config(member, file)
@@ -181,7 +181,7 @@ def test_a_member_edits_and_the_signed_configuration_names_only_the_resident(
     phone.force_login(people["member"])
     on_phone = _config(phone, file)
     assert (on_phone["type"], on_phone["editorConfig"]["mode"]) == ("desktop", "edit")
-    page = phone.get(reverse("drive:office", args=[file.pk])).content.decode()
+    page = phone.get(reverse("drive:office", args=[file.uuid])).content.decode()
     assert "computerudgaven af editoren" in page
 
     # Everyone on the same version shares the session's key.
@@ -207,7 +207,7 @@ def test_a_reader_and_a_locked_file_open_to_view(
         actor=people["member"],
     )
     friend = _client(people["friend"])
-    assert ">Åbn</a>" in friend.get(reverse("drive:file", args=[file.pk])).content.decode()
+    assert ">Åbn</a>" in friend.get(reverse("drive:file", args=[file.uuid])).content.decode()
     assert _config(friend, file)["editorConfig"]["mode"] == "view"
     # Reading on a phone: the phone editor.
     friend_phone = Client(headers={"User-Agent": "Mozilla/5.0 (iPhone) Mobile/15E148"})
@@ -259,7 +259,7 @@ def test_the_edited_document_becomes_a_version_listing_who_edited(
     version = file.latest_version()
     assert version.number == 2
     assert set(version.editors.all()) == {people["member"], people["colleague"]}
-    page = member.get(reverse("drive:file", args=[file.pk])).content.decode()
+    page = member.get(reverse("drive:file", args=[file.uuid])).content.decode()
     assert f"redigeret af {people['member'].full_name}, {people['colleague'].full_name}" in page
     assert _config(member, file)["document"]["key"] != key  # a new version, a new session
 
@@ -308,16 +308,16 @@ def test_new_documents_are_made_blank_and_opened(
 ) -> None:
     member = _client(people["member"])
     winter = _period_folder(group, WINTER)
-    first = member.post(reverse("drive:new_file", args=[winter.pk]), {"kind": "presentation"})
+    first = member.post(reverse("drive:new_file", args=[winter.uuid]), {"kind": "presentation"})
     made = File.objects.get(name="Ny præsentation.pptx")
-    assert first["Location"] == reverse("drive:office", args=[made.pk])
+    assert first["Location"] == reverse("drive:office", args=[made.uuid])
     assert made.size > 0
-    member.post(reverse("drive:new_file", args=[winter.pk]), {"kind": "presentation"})
+    member.post(reverse("drive:new_file", args=[winter.uuid]), {"kind": "presentation"})
     assert File.objects.filter(name="Ny præsentation (2).pptx").exists()
-    member.post(reverse("drive:new_file", args=[winter.pk]), {"kind": "spreadsheet", "name": "Budget 2027"})
+    member.post(reverse("drive:new_file", args=[winter.uuid]), {"kind": "spreadsheet", "name": "Budget 2027"})
     assert File.objects.filter(name="Budget 2027.xlsx").exists()
     friend = _client(people["friend"])
-    assert friend.post(reverse("drive:new_file", args=[winter.pk]), {"kind": "document"}).status_code == 404
+    assert friend.post(reverse("drive:new_file", args=[winter.uuid]), {"kind": "document"}).status_code == 404
 
 
 def test_an_older_format_opens_to_view_and_rediger_makes_a_copy(
@@ -325,14 +325,14 @@ def test_an_older_format_opens_to_view_and_rediger_makes_a_copy(
 ) -> None:
     member = _client(people["member"])
     file = _docx(member, _period_folder(group, WINTER), "Vedtægter.doc")
-    page = member.get(reverse("drive:file", args=[file.pk])).content.decode()
+    page = member.get(reverse("drive:file", args=[file.uuid])).content.decode()
     assert ">Åbn</a>" in page
     assert "Rediger en kopi" in page
     assert _config(member, file)["editorConfig"]["mode"] == "view"
 
-    response = member.post(reverse("drive:office_convert", args=[file.pk]))
+    response = member.post(reverse("drive:office_convert", args=[file.uuid]))
     copy = File.objects.get(name="Vedtægter.docx")
-    assert response["Location"] == reverse("drive:office", args=[copy.pk])
+    assert response["Location"] == reverse("drive:office", args=[copy.uuid])
     assert server.converted[0]["filetype"] == "doc"
     assert server.converted[0]["outputtype"] == "docx"
     assert copy.created_by == people["member"]

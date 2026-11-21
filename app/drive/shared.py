@@ -87,7 +87,7 @@ def _tell_invited(shared: SharedFolder, folder: Folder, residents: list[int], ac
         residents,
         category=categories.GENERAL,
         title=f"{actor.full_name} delte mappen {folder.name} med dig",
-        url=reverse("drive:folder", args=[folder.pk]),
+        url=reverse("drive:folder", args=[folder.uuid]),
         exclude=actor.pk,
     )
 
@@ -362,7 +362,7 @@ def run_expiry(today: date | None = None) -> tuple[int, int, int]:
             category=categories.GENERAL,
             title=f"Den delte mappe {top.name} udløber {shared.expires_on:%-d/%-m}",
             body=f"Så {shared.get_on_expiry_display()} den. Du kan flytte datoen under Medlemmer og udløb.",
-            url=reverse("drive:shared", args=[shared.pk]),
+            url=reverse("drive:shared", args=[shared.uuid]),
         )
         shared.warned_for = shared.expires_on
         shared.save(update_fields=["warned_for"])

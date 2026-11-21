@@ -37,7 +37,7 @@ from pathlib import Path, PurePosixPath
 from tempfile import SpooledTemporaryFile
 from typing import Any
 from urllib.parse import urlsplit
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 from django.conf import settings
 from django.core import signing
@@ -191,7 +191,9 @@ def _app_url(name: str, token: str) -> str:
 
 
 def fetch_url(version: FileVersion) -> str:
-    return _app_url("drive:office_fetch", signing.dumps({"v": version.pk}, salt=_FETCH_SALT))
+    """Signed, but readable: so it names the file by uuid and the version by its number."""
+    token = signing.dumps({"f": str(version.file.uuid), "n": version.number}, salt=_FETCH_SALT)
+    return _app_url("drive:office_fetch", token)
 
 
 def fetched_version(token: str) -> FileVersion | None:
@@ -199,23 +201,27 @@ def fetched_version(token: str) -> FileVersion | None:
         data = signing.loads(token, salt=_FETCH_SALT, max_age=timedelta(hours=FETCH_HOURS))
     except signing.BadSignature:
         return None
-    return FileVersion.objects.select_related("file").filter(pk=data.get("v")).first()
+    try:
+        file, number = UUID(str(data.get("f"))), int(data.get("n"))
+    except (TypeError, ValueError):
+        return None
+    return FileVersion.objects.select_related("file").filter(file__uuid=file, number=number).first()
 
 
 def callback_url(file: File) -> str:
-    return _app_url("drive:office_callback", signing.dumps({"f": file.pk}, salt=_CALLBACK_SALT))
+    return _app_url("drive:office_callback", signing.dumps({"f": str(file.uuid)}, salt=_CALLBACK_SALT))
 
 
-def called_back_file(token: str) -> int | None:
+def called_back_file(token: str) -> UUID | None:
     try:
-        return int(signing.loads(token, salt=_CALLBACK_SALT)["f"])
+        return UUID(str(signing.loads(token, salt=_CALLBACK_SALT)["f"]))
     except (signing.BadSignature, KeyError, TypeError, ValueError):
         return None
 
 
 def document_key(file: File, version: FileVersion) -> str:
     """The same for everyone who opens this version, so they edit it together; new with each version."""
-    return f"drive-{file.pk}-{version.number}-{version.key.rsplit('/', 1)[-1][:8]}"
+    return f"drive-{file.uuid}-{version.number}-{version.key.rsplit('/', 1)[-1][:8]}"
 
 
 def editor_config(
@@ -252,14 +258,14 @@ def editor_config(
 # --- Back from the Document Server --------------------------------------------------------------------
 
 
-def callback(file_id: int, data: dict[str, Any]) -> bool:
+def callback(file_uuid: UUID, data: dict[str, Any]) -> bool:
     """One of the Document Server's status posts about a file's editing session. False when it should
     be told the save failed (it then keeps the document and tries again)."""
-    file = File.objects.filter(pk=file_id).first()
+    file = File.objects.filter(uuid=file_uuid).first()
     key = str(data.get("key", ""))
-    if file is None or not key.startswith(f"drive-{file_id}-"):
+    if file is None or not key.startswith(f"drive-{file_uuid}-"):
         logger.warning(
-            "drive: the Document Server called back about %s for file %s, which is not it", key, file_id
+            "drive: the Document Server called back about %s for file %s, which is not it", key, file_uuid
         )
         return False
     status = int(data.get("status", 0))
@@ -420,7 +426,7 @@ def convert(viewer: Viewer, file: File, resident: Resident) -> File:
         "async": False,
         "filetype": _extension(file.name),
         "outputtype": target,
-        "key": f"drive-convert-{version.pk}-{uuid4().hex[:12]}",
+        "key": f"drive-convert-{file.uuid}-{version.number}-{uuid4().hex[:12]}",
         "title": file.name,
         "url": fetch_url(version),
     }

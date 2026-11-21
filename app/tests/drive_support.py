@@ -100,7 +100,7 @@ def _upload(
     client: Client, folder: Folder, filename: str, content: bytes, on_conflict: str = "", **fields: str
 ) -> dict:
     response = client.post(
-        reverse("drive:upload_direct", args=[folder.pk]),
+        reverse("drive:upload_direct", args=[folder.uuid]),
         {
             "file": SimpleUploadedFile(filename, content, content_type="text/plain"),
             "on_conflict": on_conflict,
