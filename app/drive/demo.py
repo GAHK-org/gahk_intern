@@ -26,6 +26,10 @@ Shares (`_seed_sharing`): `Delt med mig` for ak@ (read), oel@ (edit on a folder 
 used) and regnskab@ (edit on a file, a version added), and `Delt med <gruppe>` in beboer@'s group's
 current period and `Uden periode`.
 
+Standing folders (`_seed_standing`): `Fællesmøder` with meetings in this year and last, written only
+by Inspektionen and admins, and in groups one just defined and one stopped. Opening any `Uden
+periode` or `Uden årstal` a login can write in asks the current-period question.
+
 Last, locks (`_seed_locks`), as they stop changes: what the nightly task locked, regnskab@'s
 closed accounts and `Årsafslutning` folder locked by hand, and the requests page for admin@ and
 formand@ with an unlock and a purge in each state - pending, approved (the logo is unlocked for now
@@ -59,11 +63,21 @@ from notifications.models import Notification
 from residents.models import Residency, Resident, Role
 from residents.permissions import has_active_role
 
-from . import locks, operations, services, shared, sharing
+from . import locks, operations, services, shared, sharing, standing
 from .access import Viewer
-from .models import ApprovalRequest, Event, File, FileVersion, Folder, SharedFolder, SharedMember, Space
+from .models import (
+    ApprovalRequest,
+    Event,
+    File,
+    FileVersion,
+    Folder,
+    SharedFolder,
+    SharedMember,
+    Space,
+    StandingFolder,
+)
 from .periods import Period, period_containing
-from .structure import COMMON_TIMELESS, ensure_structure, folder_name
+from .structure import COMMON_TIMELESS, _standing, ensure_structure, folder_name
 
 LOGINS = (
     "admin@gahk.dk",
@@ -371,6 +385,7 @@ def seed(residents: list[Resident], now: datetime, _rng: random.Random) -> int:
     _seed_changes(s)
     _seed_shared(s)
     _seed_sharing(s)
+    _seed_standing(s)
     # Last: a lock stops the changes above.
     _seed_locks(s)
     # What the nightly purge (notifications.services.purge_expired) would have removed by now: the
@@ -718,6 +733,76 @@ def _seed_sharing(s: _Seeder) -> None:
     s.share(tools, ak, s.ago(100), group=target(ak_group))
 
 
+def _seed_standing(s: _Seeder) -> None:
+    """Standing folders. `Fællesmøder` in Fælles, written only by Inspektionen and admins, with a
+    meeting folder per date in this year's and last year's copy, so `Fællesmøder (alle år)` spans two
+    years and beboer@ can read but not add. In groups: one AK has just defined (it starts next
+    period) and one Regnskabsgruppen defined and stopped."""
+    formand = s.login("formand@gahk.dk")
+    this_year, last_year = s.today.year, s.today.year - 1
+    inspection = Workgroup.objects.filter(name="Inspektionen").first()
+    # Defined before last year began, so it applies from then: a definition today would apply from
+    # next year only (standing.next_start). Made as the row it would have been, and its copies as
+    # the system makes them - last year's by hand, as that year's folder is (`_year_folder`).
+    with _at(_noon(date(last_year - 1, 12, 10))):
+        meetings = StandingFolder.objects.create(
+            space=Space.COMMON,
+            name="Fællesmøder",
+            item_label="Fællesmøde",
+            limited=True,
+            starts_on=date(last_year, 1, 1),
+            created_by=formand,
+        )
+    if inspection is not None:
+        meetings.writer_groups.set([inspection])
+    _standing(_year_folder(last_year), [meetings])
+    ensure_structure(s.today)
+    latest = s.today - timedelta(days=18)
+    for day in [date(last_year, 3, 12), date(last_year, 10, 8), date(this_year, 3, 5), latest]:
+        if day > latest:
+            continue  # early in the year: the March meeting has not been held yet
+        # Made a week ahead with the agenda; the minutes follow two days after.
+        before, after = _noon(day - timedelta(days=7)), _noon(day + timedelta(days=2))
+        viewer = s.viewer(formand, before)
+        with _at(before):
+            meeting = standing.create_item(viewer, meetings, day, formand)
+        title = f"{day:%-d/%-m %Y}"
+        s.upload(meeting, "Dagsorden.pdf", _pdf(f"Dagsorden {title}", _MEETING_AGENDA), formand, before)
+        if after < s.now:
+            s.upload(meeting, "Referat.docx", _docx(f"Referat {title}", _MEETING_MINUTES), formand, after)
+
+    ak, regnskab = s.login("ak@gahk.dk"), s.login("regnskab@gahk.dk")
+    if (group := _group_of(ak, s.today)) is not None:
+        root = Folder.objects.get(kind=Folder.Kind.GROUP, workgroup=group)
+        viewer = s.viewer(ak, s.ago(3))
+        with _at(s.ago(3)):
+            standing.define(
+                viewer,
+                root,
+                name="Erfaringsrapporter",
+                item_label="",
+                limited=False,
+                writer_groups=[],
+                actor=ak,
+            )
+    if (group := _group_of(regnskab, s.today)) is not None:
+        root = Folder.objects.get(kind=Folder.Kind.GROUP, workgroup=group)
+        viewer = s.viewer(regnskab, s.ago(20))
+        with _at(s.ago(20)):
+            item = standing.define(
+                viewer,
+                root,
+                name="Kvartalsrapporter",
+                item_label="Kvartal",
+                limited=False,
+                writer_groups=[],
+                actor=regnskab,
+            )
+        viewer = s.viewer(regnskab, s.ago(10))
+        with _at(s.ago(10)):
+            standing.stop(viewer, item, root, regnskab)
+
+
 def _seed_locks(s: _Seeder) -> None:
     """Locks, and requests in every state: the requests page (admin@, formand@) has two pending, two
     approved and two rejected, and whoever asked for a decided one has been told the outcome."""
@@ -806,6 +891,7 @@ def wipe() -> None:
     while Folder.objects.exists():
         Folder.objects.filter(children__isnull=True).delete()
     SharedFolder.objects.all().delete()  # after its folders, which PROTECT it
+    StandingFolder.objects.all().delete()  # likewise
 
 
 # --- Contents ------------------------------------------------------------------------------------
@@ -1034,6 +1120,12 @@ _PLAYLIST = """Playliste til temafesten
 2. Girls Just Want to Have Fun
 3. Don't You (Forget About Me)
 """
+_MEETING_AGENDA = ["1. Godkendelse af dagsorden", "2. Nyt fra Inspektionen", "3. Fester", "4. Eventuelt"]
+_MEETING_MINUTES = [
+    "Til stede: 20 beboere.",
+    "Dagsordenen blev godkendt.",
+    "Næste fællesmøde holdes om en måned.",
+]
 _PARTY_PROGRAMME = ["Kl. 14: Gårdspil", "Kl. 18: Grill i gården", "Kl. 22: Band i fællesrummet"]
 _GENERAL_MEETING = [
     "Dagsorden: valg af dirigent, beretning, regnskab, indkomne forslag, eventuelt.",
