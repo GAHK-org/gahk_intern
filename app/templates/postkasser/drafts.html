@@ -1,0 +1,39 @@
+{% extends "base.html" %}
+{% block title %}Mine kladder - {{ mailbox.name }}{% endblock %}
+{% block content_width %}max-w-3xl{% endblock %}
+
+{% block content %}
+  <div class="page-head">
+    <div>
+      <p class="eyebrow">Grupper & konti · Postkasser · {{ mailbox.name }}</p>
+      <h1>Mine kladder</h1>
+      <p class="muted">Kun dig selv kan fortsætte eller slette dem; resten af gruppen kan læse en kladde på sagen. Kladder gemmes kun her, ikke i one.com, og slettes efter 30 dage uden ændringer.</p>
+    </div>
+    <div class="head-actions">
+      <a class="btn btn-secondary" href="{% url 'postkasser:board' mailbox.slug %}">‹ Til tavlen</a>
+    </div>
+  </div>
+
+  <div class="board-list">
+    {% for draft in drafts %}
+      <div class="card-flat card-pad flex gap-2 justify-between items-center">
+        <div>
+          <strong>{{ draft.subject|default:"(intet emne)" }}</strong>
+          <div class="muted text-sm">
+            {% if draft.reply_to_id or draft.thread_id %}Svar{% else %}Ny mail{% endif %}{% if draft.to %} til {{ draft.to }}{% endif %} · gemt {{ draft.updated_at|date:"j. M H:i" }}
+          </div>
+        </div>
+        <span class="flex gap-2">
+          <a class="btn btn-secondary" href="{{ draft.continue_url }}">Fortsæt</a>
+          <form method="post" action="{% url 'postkasser:delete_draft' mailbox.slug draft.pk %}" class="inline">
+            {% csrf_token %}
+            <input type="hidden" name="next" value="kladder">
+            <button type="submit" class="btn btn-secondary">Slet</button>
+          </form>
+        </span>
+      </div>
+    {% empty %}
+      <p class="muted">Du har ingen kladder i {{ mailbox.name }}.</p>
+    {% endfor %}
+  </div>
+{% endblock %}

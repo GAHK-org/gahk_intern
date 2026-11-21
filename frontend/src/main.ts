@@ -15,6 +15,7 @@ import "./opslagstavle"; // opslagstavlen Markdown toolbar + image upload (no-op
 import "./highlight"; // marks a board search's words in the cards (no-op without a search)
 import "./events"; // begivenheder guest-list picker (no-op elsewhere)
 import "./reparationer"; // reparationer kanban drag-and-drop (no-op elsewhere)
+import "./postkasser-draft"; // postkasser: autosave of a kladde on the compose/reply form (no-op elsewhere)
 import "./mention"; // @-mention picker on every [data-mentionable] field (no-op without one)
 import "./imageviewer"; // full-screen picture viewer: Arkiv, opslagstavlen, Den Hurtige
 import "./arkiv"; // Arkiv direct-to-bucket upload + selection (no-op elsewhere)

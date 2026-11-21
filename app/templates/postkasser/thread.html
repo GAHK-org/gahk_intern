@@ -1,0 +1,181 @@
+{% extends "base.html" %}
+{% block title %}{{ sag }} - {{ mailbox.name }}{% endblock %}
+{% block content_width %}max-w-4xl{% endblock %}
+
+{% block content %}
+  <div class="page-head">
+    <div>
+      <p class="eyebrow">Grupper & konti · Postkasser · {{ mailbox.name }}</p>
+      <h1>{{ sag.subject|default:"(intet emne)" }}</h1>
+    </div>
+    <div class="head-actions">
+      {% if reply_to %}
+        <a class="btn" href="{% url 'postkasser:reply' mailbox.slug reply_to.pk %}">Svar</a>
+        <a class="btn btn-secondary" href="{% url 'postkasser:reply' mailbox.slug reply_to.pk %}?alle=1">Svar alle</a>
+      {% endif %}
+      {% if mails %}
+        <form method="post" action="{% url 'postkasser:thread_unread' mailbox.slug sag.pk %}" class="inline">
+          {% csrf_token %}
+          <button type="submit" class="btn btn-secondary">Markér som ulæst</button>
+        </form>
+      {% endif %}
+      <a class="btn btn-secondary" href="{% url 'postkasser:board' mailbox.slug %}">‹ Til tavlen</a>
+    </div>
+  </div>
+
+  <div class="card-flat card-pad mb-4">
+    <p class="chip chip-quiet">{{ sag.column.name }}</p>
+    <p class="chip chip-quiet">Ansvarlig: {{ sag.assignee.full_name|default:"ingen" }}</p>
+    {% for tag in sag.tags.all %}{% include "postkasser/_tag.html" %}{% endfor %}
+
+    {% comment %}
+      Plain POST forms, so the sag can be moved and handed over without JavaScript (the board's drag
+      is only the quick way). The assignee list is exactly the people who can open this mailbox now.
+    {% endcomment %}
+    <div class="kanban-move mt-3">
+      {% for column in board_columns %}
+        {% if column.pk != sag.column_id %}
+          <form method="post" action="{% url 'postkasser:set_status' mailbox.slug sag.pk %}">
+            {% csrf_token %}
+            <input type="hidden" name="status" value="{{ column.pk }}">
+            <button type="submit">→ {{ column.name }}</button>
+          </form>
+        {% endif %}
+      {% endfor %}
+    </div>
+    <form method="post" action="{% url 'postkasser:set_assignee' mailbox.slug sag.pk %}" class="board-search mt-3">
+      {% csrf_token %}
+      <label for="assignee" class="text-sm">Ansvarlig</label>
+      <select name="assignee" id="assignee">
+        <option value="">Ingen</option>
+        {% for member in members %}
+          <option value="{{ member.pk }}"{% if member.pk == sag.assignee_id %} selected{% endif %}>{{ member.full_name }}</option>
+        {% endfor %}
+      </select>
+      <button type="submit" class="btn btn-secondary">Gem</button>
+    </form>
+  </div>
+
+  {% comment %}Categories belong to the sag; ticking and saving replaces the sag's set (views.set_tags).{% endcomment %}
+  <form method="post" action="{% url 'postkasser:set_tags' mailbox.slug sag.pk %}" class="board-search mb-4">
+    {% csrf_token %}
+    <fieldset class="flex flex-wrap gap-3 items-center">
+      <legend class="text-sm">Tags</legend>
+      {% for tag in tags %}
+        <label class="inline-flex items-center gap-1 mt-0 mb-0 font-normal">
+          <input type="checkbox" name="tags" value="{{ tag.pk }}"{% if tag.pk in sag_tag_ids %} checked{% endif %}>
+          {% include "postkasser/_tag.html" %}
+        </label>
+      {% empty %}
+        <span class="muted text-sm">Ingen tags endnu.</span>
+      {% endfor %}
+      <a href="{% url 'postkasser:tags' mailbox.slug %}" class="text-sm">Redigér tags</a>
+    </fieldset>
+    {% if tags %}<button type="submit" class="btn btn-secondary">Gem tags</button>{% endif %}
+  </form>
+
+  {% comment %}
+    Moves the MAIL itself to another folder at one.com (the status buttons above only move the card on
+    the board). Papirkurv/Spam take the sag off the board, hence the confirmation.
+  {% endcomment %}
+  {% if move_targets %}
+    <form method="post" action="{% url 'postkasser:move_thread' mailbox.slug sag.pk %}" class="board-search mb-4"
+          onsubmit="var o = this.mappe.selectedOptions[0]; return !o || !o.dataset.confirm || confirm(o.dataset.confirm);">
+      {% csrf_token %}
+      <label for="mappe" class="text-sm">Flyt til mappe</label>
+      <select name="mappe" id="mappe">
+        {% for folder in move_targets %}
+          <option value="{{ folder.pk }}"{% if folder.removes %} data-confirm="Sagen fjernes fra boardet, og mailene lægges i mappen «{{ folder.move_label }}» i one.com."{% endif %}>{{ folder.indent }}{{ folder.move_label }}</option>
+        {% endfor %}
+      </select>
+      <button type="submit" class="btn btn-secondary">Flyt</button>
+      <span class="muted text-sm">Nu i: {{ folder_names|join:", " }}</span>
+    </form>
+  {% endif %}
+
+  {% comment %}
+    Kladder on this sag: everyone who can open the mailbox sees that one exists and may read it (so two
+    people do not answer at once); only its author continues or deletes it. The text is autoescaped.
+  {% endcomment %}
+  {% if drafts %}
+    <h2>Kladder</h2>
+    <div class="board-list mb-4">
+      {% for draft in drafts %}
+        <div class="card-flat card-pad">
+          <div class="flex gap-2 justify-between items-center">
+            <span>Kladde af {{ draft.author.full_name }} · gemt {{ draft.updated_at|date:"j. M H:i" }}</span>
+            {% if draft.mine %}
+              <span class="flex gap-2">
+                <a class="btn btn-secondary" href="{{ draft.continue_url }}">Fortsæt</a>
+                <form method="post" action="{% url 'postkasser:delete_draft' mailbox.slug draft.pk %}" class="inline">
+                  {% csrf_token %}
+                  <button type="submit" class="btn btn-secondary">Slet</button>
+                </form>
+              </span>
+            {% endif %}
+          </div>
+          <details class="mt-2">
+            <summary class="text-sm">Læs kladden</summary>
+            {% if draft.to %}<p class="muted text-sm">Til: {{ draft.to }}</p>{% endif %}
+            <div>{{ draft.body|linebreaksbr }}</div>
+          </details>
+        </div>
+      {% endfor %}
+    </div>
+  {% endif %}
+
+  {% if history %}
+    <ul class="muted text-sm mb-4">
+      {% for event in history %}
+        <li>{{ event.get_action_display }}{% if event.detail %} {{ event.detail }}{% endif %} af {{ event.resident.full_name|default:"systemet" }} · {{ event.created_at|date:"j. M H:i" }}</li>
+      {% endfor %}
+    </ul>
+  {% endif %}
+
+  <h2>Mails</h2>
+  <div class="board-list mb-4">
+    {% for mail in mails %}
+      <a class="card-flat card-pad block" href="{% url 'postkasser:message' mailbox.slug mail.pk %}">
+        <div class="flex gap-2 justify-between">
+          <span{% if not mail.seen %} class="font-bold"{% endif %}>{{ mail.sender|default:"(ukendt afsender)" }}</span>
+          <span class="muted text-sm">{{ mail.date|date:"j. M Y H:i" }}</span>
+        </div>
+        <div class="muted text-sm">
+          {{ mail.folder.display_name }}
+          {% if not mail.seen %}<span class="chip">Ulæst</span>{% endif %}
+          {% if mail.answered %}<span class="chip chip-quiet">Besvaret</span>{% endif %}
+          {% if mail.has_attachments %}<span title="Har vedhæftninger">📎</span>{% endif %}
+        </div>
+      </a>
+    {% empty %}
+      <p class="muted">Mailen er sendt, men kopien i den sendte post er endnu ikke hentet.</p>
+    {% endfor %}
+  </div>
+
+  {% if fetch_error %}
+    <div class="errorlist mb-3">{{ fetch_error }}</div>
+  {% elif rendered %}
+    <h2>{{ newest.sender }} · {{ newest.date|date:"j. M Y H:i" }}</h2>
+    {% if rendered.has_remote_images and not show_images %}
+      <p class="muted text-sm mb-2">
+        Billeder fra internettet er skjult, så afsenderen ikke kan se at mailen er åbnet.
+        <a href="?billeder=1">Vis billeder</a>
+      </p>
+    {% endif %}
+    {% comment %}
+      `frame` is HTML written by a stranger. It goes into an attribute, where autoescape is what keeps
+      it inert: NEVER add |safe here. The sandbox has no allow-scripts and no allow-same-origin.
+    {% endcomment %}
+    <iframe sandbox="allow-popups allow-popups-to-escape-sandbox" srcdoc="{{ frame }}"
+            title="Mailens indhold" class="card-flat"
+            style="width:100%;min-height:60vh;border:1px solid #ddd;background:#fff"></iframe>
+    {% if rendered.attachments %}
+      <h2 class="mt-4">Vedhæftninger</h2>
+      <ul>
+        {% for att in rendered.attachments %}
+          <li><a href="{% url 'postkasser:attachment' mailbox.slug newest.pk att.index %}">{{ att.filename }}</a> <span class="muted text-sm">({{ att.size|filesizeformat }})</span></li>
+        {% endfor %}
+      </ul>
+    {% endif %}
+  {% endif %}
+{% endblock %}
