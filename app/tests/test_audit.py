@@ -159,6 +159,22 @@ def test_a_subject_made_inside_the_event_is_named_with_its_id() -> None:
 
 
 @pytest.mark.django_db
+def test_a_backdated_event_is_dated_when_the_demo_history_says() -> None:
+    """Only the demo database's made-up history (audit.demo) backdates; everything else is now."""
+    from datetime import timedelta
+
+    from django.utils import timezone
+
+    then = timezone.now() - timedelta(days=10)
+    with trail.backdated(then):
+        trail.record("test.thing", actor=None)
+    trail.record("test.thing", actor=None)
+    backdated, current = AuditEvent.objects.order_by("id")
+    assert backdated.at == then
+    assert current.at > then + timedelta(days=9)
+
+
+@pytest.mark.django_db
 def test_work_that_fails_leaves_no_trail(make_resident: Callable[..., Resident]) -> None:
     anna = make_resident(email="anna@gahk.dk", phone="111")
     with pytest.raises(RuntimeError), trail.event("test.fails", actor=None):

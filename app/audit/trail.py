@@ -313,7 +313,7 @@ class Event:
         actor = self.actor
         source = ctx.source if ctx else AuditEvent.Source.SYSTEM
         row = AuditEvent(
-            at=timezone.now(),
+            at=_backdated.get() or timezone.now(),
             action=self.action[:100],
             actor_id=getattr(actor, "pk", None),
             actor_name=_person_name(actor),
@@ -429,6 +429,20 @@ def unaudited() -> Iterator[None]:
 
 
 _suppressed: ContextVar[bool] = ContextVar("audit_suppressed", default=False)
+
+
+@contextlib.contextmanager
+def backdated(at: datetime.datetime) -> Iterator[None]:
+    """Events written inside are dated `at` rather than now: the made-up history of a demo database
+    (audit.demo). Never for anything a person or a job does — those happen when they are recorded."""
+    token = _backdated.set(at)
+    try:
+        yield
+    finally:
+        _backdated.reset(token)
+
+
+_backdated: ContextVar[datetime.datetime | None] = ContextVar("audit_backdated", default=None)
 
 
 # --- capture ---------------------------------------------------------------------------------------
