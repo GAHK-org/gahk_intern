@@ -1,52 +1,42 @@
+"""GAHKFlix, to read. Videos, series and requests are changed on GAHKFlix itself, which records each
+change in the video's history, asks for votes where the rules want them and cleans up the files; an
+edit or delete here would do none of that. Tags are the exception: renaming or removing one is not
+something GAHKFlix offers (the same as the photo album's)."""
+
 from django.contrib import admin
+
+from core.admin import ReadOnlyAdmin, ReadOnlyTabularInline
 
 from .models import CastMember, ChangeRequest, ChangeVote, Series, Tag, Video, VideoEvent, VideoFile
 
 
-class CastInline(admin.TabularInline):
+class CastInline(ReadOnlyTabularInline):
     model = CastMember
-    extra = 0
-    raw_id_fields = ("resident",)
 
 
-class FileInline(admin.TabularInline):
+class FileInline(ReadOnlyTabularInline):
     model = VideoFile
-    extra = 0
     fields = ("original_name", "state", "progress", "error", "size", "duration", "created_at")
-    readonly_fields = fields
-    can_delete = False
     fk_name = "video"
 
 
-class EventInline(admin.TabularInline):
-    """The history, to read: it is only ever written by what it records."""
-
+class EventInline(ReadOnlyTabularInline):
     model = VideoEvent
-    extra = 0
     fields = ("created_at", "kind", "actor", "request", "changes")
-    readonly_fields = fields
-    can_delete = False
-
-    def has_add_permission(self, request: object, obj: object = None) -> bool:
-        return False
 
 
 @admin.register(Video)
-class VideoAdmin(admin.ModelAdmin):
+class VideoAdmin(ReadOnlyAdmin):
     list_display = ("title", "uploaded_by", "series", "created_at", "published_at", "deleted_at")
     list_filter = ("published_at", "deleted_at")
     search_fields = ("title", "description")
-    raw_id_fields = ("uploaded_by", "deleted_by", "series", "file", "thumbnail_frame", "banner_frame")
-    readonly_fields = ("uuid",)
-    autocomplete_fields = ("tags",)
     inlines = (CastInline, FileInline, EventInline)
 
 
 @admin.register(Series)
-class SeriesAdmin(admin.ModelAdmin):
+class SeriesAdmin(ReadOnlyAdmin):
     list_display = ("title", "created_by", "created_at")
     search_fields = ("title",)
-    raw_id_fields = ("created_by",)
 
 
 @admin.register(Tag)
@@ -54,15 +44,12 @@ class TagAdmin(admin.ModelAdmin):
     search_fields = ("name",)
 
 
-class VoteInline(admin.TabularInline):
+class VoteInline(ReadOnlyTabularInline):
     model = ChangeVote
-    extra = 0
-    raw_id_fields = ("voter",)
 
 
 @admin.register(ChangeRequest)
-class ChangeRequestAdmin(admin.ModelAdmin):
+class ChangeRequestAdmin(ReadOnlyAdmin):
     list_display = ("kind", "video", "series", "requested_by", "state", "created_at")
     list_filter = ("kind", "state")
-    raw_id_fields = ("video", "series", "requested_by")
     inlines = (VoteInline,)

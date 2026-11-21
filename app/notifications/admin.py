@@ -1,13 +1,16 @@
+"""For looking things up. Notifications are written by notifications.services (sending one from here
+would skip the resident's settings and the push), and the settings are each resident's own, on their
+notification settings page."""
+
 from django.contrib import admin
+
+from core.admin import ReadOnlyAdmin
 
 from .models import Notification, NotificationPreference, NotificationSettings
 
 
 @admin.register(Notification)
-class NotificationAdmin(admin.ModelAdmin):
-    """For looking things up. Rows are written by notifications.services; sending one from here
-    would skip the resident's settings and the push, so adding is off."""
-
+class NotificationAdmin(ReadOnlyAdmin):
     list_display = (
         "title",
         "recipient",
@@ -20,22 +23,16 @@ class NotificationAdmin(admin.ModelAdmin):
     )
     list_filter = ("category", "importance", "in_app", "pushed")
     search_fields = ("title", "recipient__first_name", "recipient__last_name", "recipient__email")
-    raw_id_fields = ("recipient",)
     date_hierarchy = "created_at"
-
-    def has_add_permission(self, request: object) -> bool:
-        return False
 
 
 @admin.register(NotificationPreference)
-class NotificationPreferenceAdmin(admin.ModelAdmin):
+class NotificationPreferenceAdmin(ReadOnlyAdmin):
     list_display = ("resident", "category", "in_app", "push", "vibrate")
     list_filter = ("category",)
     search_fields = ("resident__first_name", "resident__last_name", "resident__email")
-    raw_id_fields = ("resident",)
 
 
 @admin.register(NotificationSettings)
-class NotificationSettingsAdmin(admin.ModelAdmin):
+class NotificationSettingsAdmin(ReadOnlyAdmin):
     list_display = ("resident", "vibrate", "vibrate_min_importance")
-    raw_id_fields = ("resident",)
