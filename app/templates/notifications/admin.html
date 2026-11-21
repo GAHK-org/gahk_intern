@@ -80,7 +80,7 @@
               <td>
                 <form method="post" action="{% url 'siteadmin:notification_device_cancel' device.pk %}"
                       onsubmit="return confirm('Annullér dette push-abonnement?')">
-                  {% csrf_token %}<button type="submit" class="btn-secondary">Annullér</button>
+                  {% csrf_token %}<button type="submit" class="btn btn-secondary">Annullér</button>
                 </form>
               </td>
             </tr>

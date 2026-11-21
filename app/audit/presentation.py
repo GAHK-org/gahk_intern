@@ -59,6 +59,9 @@ DETAIL_LABELS = {
     "period": "Måned",
     "account": "Konto",
     "account_name": "Navn i e-conomic",
+    "date_from": "Fra",
+    "date_to": "Til",
+    "count": "Antal",
 }
 
 
