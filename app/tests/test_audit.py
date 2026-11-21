@@ -184,6 +184,20 @@ def test_a_backdated_event_is_dated_when_the_demo_history_says() -> None:
 
 
 @pytest.mark.django_db
+def test_unaudited_work_leaves_no_trail_not_even_a_named_event(
+    make_resident: Callable[..., Resident],
+) -> None:
+    """An import or the demo seed may call a service that names its own event: still nothing."""
+    anna = make_resident(email="anna@gahk.dk", phone="111")
+    with trail.unaudited():
+        with trail.event("test.thing", actor=None, subject=anna):
+            anna.phone = "222"
+            anna.save()
+        trail.record("test.thing", actor=None)
+    assert not AuditEvent.objects.exists()
+
+
+@pytest.mark.django_db
 def test_work_that_fails_leaves_no_trail(make_resident: Callable[..., Resident]) -> None:
     anna = make_resident(email="anna@gahk.dk", phone="111")
     with pytest.raises(RuntimeError), trail.event("test.fails", actor=None):
