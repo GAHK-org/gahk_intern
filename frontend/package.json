@@ -8,20 +8,20 @@
     "watch": "vite build --watch"
   },
   "dependencies": {
-    "@tiptap/core": "3.32.0",
-    "@tiptap/extension-image": "3.32.0",
-    "@tiptap/extension-link": "3.32.0",
-    "@tiptap/pm": "3.32.0",
-    "@tiptap/starter-kit": "3.32.0",
-    "@uppy/aws-s3": "6.2.2",
-    "@uppy/core": "6.2.0",
-    "alpinejs": "^3.14.8",
-    "chart.js": "^4.5.1",
-    "htmx.org": "^2.0.4",
-    "idiomorph": "^0.7.4"
+    "@tiptap/core": "3.34.0",
+    "@tiptap/extension-image": "3.34.0",
+    "@tiptap/extension-link": "3.34.0",
+    "@tiptap/pm": "3.34.0",
+    "@tiptap/starter-kit": "3.34.0",
+    "@uppy/aws-s3": "6.3.1",
+    "@uppy/core": "6.3.2",
+    "alpinejs": "^3.17.5",
+    "chart.js": "^4.6.1",
+    "htmx.org": "^2.0.11",
+    "idiomorph": "^0.8.0"
   },
   "devDependencies": {
-    "@tailwindcss/vite": "^4.1.0",
+    "@tailwindcss/vite": "^4.3.5",
     "tailwindcss": "^4.1.0",
     "typescript": "^5.7.0",
     "vite": "^6.4.5"
