@@ -7,7 +7,7 @@ from django.db import migrations, models
 
 class Migration(migrations.Migration):
     dependencies = [
-        ("core", "0018_drop_arkiv_tables"),
+        ("core", "0020_drop_arkiv_tables"),
         ("drive", "0001_initial"),
         migrations.swappable_dependency(settings.AUTH_USER_MODEL),
     ]
