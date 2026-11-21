@@ -205,3 +205,22 @@ def test_seed_demo_leaves_no_mail_waiting_for_a_backend_that_really_sends(settin
 
     assert not OutgoingMail.objects.filter(status=OutgoingMail.Status.QUEUED).exists()
     assert OutgoingMail.objects.filter(status=OutgoingMail.Status.FAILED).exists()
+
+
+@pytest.mark.django_db
+def test_the_seeded_mails_carry_their_groups_sender_and_reply_to(settings: object) -> None:
+    """Made by the code that sends them, the demo's mails go through core.mail's sender logic: the
+    ones still holding their content show the group's name, its Reply-To and the automatic headers."""
+    from core import mail as outbox
+    from core.models import OutgoingMail
+
+    settings.MAIL_RATE_LIMIT = 3  # type: ignore[attr-defined]  # see the outbox test above
+    call_command("seed_demo", "--fresh", "--force", "--residents", "12", verbosity=0)
+    kept = OutgoingMail.objects.exclude(payload={})
+
+    overview = kept.filter(subject__startswith="Ølkælderoversigt", status=OutgoingMail.Status.QUEUED).first()
+    assert overview.payload["from_email"] == f"GAHK Ølkælderen <{settings.MAIL_SENDER}>"  # type: ignore[attr-defined]
+    assert overview.payload["reply_to"] == [settings.OELKAELDER_EMAIL]  # type: ignore[attr-defined]
+    reset = kept.get(kind=OutgoingMail.Kind.INTERACTIVE)
+    assert reset.payload["reply_to"] == [settings.DEFAULT_REPLY_TO]  # type: ignore[attr-defined]
+    assert all(m.payload["headers"] == outbox.AUTOMATIC_HEADERS for m in kept)
