@@ -48,6 +48,14 @@ RUN a2disconf short-url \
     && a2enconf gahk-wiki \
     && a2enmod rewrite
 
+# /healthz (liveness) and /health (both databases): health.php. Docker probes /healthz, so an
+# unhealthy wiki is one whose Apache or PHP stopped answering; Coolify reads the status from this
+# HEALTHCHECK, and without one it shows the wiki as "Running (unknown)". The uptime monitor watches
+# https://wiki.gahk.dk/health instead (DEPLOY.md §6). curl comes with the PHP base image.
+COPY health.php /var/www/html/gahk-health.php
+HEALTHCHECK --interval=30s --timeout=5s --retries=3 --start-period=30s \
+    CMD curl -fsS -o /dev/null http://127.0.0.1/healthz || exit 1
+
 # session.upload_progress is disabled as defence in depth against CVE-2026-109619 (it is PHP's own
 # suggested mitigation); MediaWiki never uses it.
 #
