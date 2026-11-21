@@ -11,12 +11,12 @@
   </p>
 
   <table cellpadding="6" style="width:100%; border-collapse:collapse">
-    <thead><tr style="text-align:left; border-bottom:1px solid #e6e8ec">
+    <thead><tr style="text-align:left; border-bottom:1px solid var(--border-strong)">
       {% for h in headers %}<th>{{ h }}</th>{% endfor %}
     </tr></thead>
     <tbody>
     {% for row in data %}
-      <tr style="border-bottom:1px solid #f0f1f4">{% for cell in row %}<td>{{ cell }}</td>{% endfor %}</tr>
+      <tr style="border-bottom:1px solid var(--border)">{% for cell in row %}<td>{{ cell }}</td>{% endfor %}</tr>
     {% empty %}<tr><td colspan="{{ headers|length }}" class="muted">Ingen data i perioden.</td></tr>{% endfor %}
     </tbody>
   </table>

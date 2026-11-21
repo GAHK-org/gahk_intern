@@ -24,7 +24,7 @@
   <form method="post" action="{% url 'vaerelsestjek:besvar' room.number %}" enctype="multipart/form-data">
     {% csrf_token %}
     <table class="w-full border-collapse">
-      <thead><tr class="border-b border-gray-200"><th class="p-2">Kriterie</th><th class="p-2">Score</th><th class="p-2">Kommentar</th><th class="p-2">Billede</th></tr></thead>
+      <thead><tr class="border-b border-line"><th class="p-2">Kriterie</th><th class="p-2">Score</th><th class="p-2">Kommentar</th><th class="p-2">Billede</th></tr></thead>
       <tbody>
       {% for crit, existing in rows %}
         {% comment %}
@@ -43,7 +43,7 @@
             <button type="button" class="btn" x-show="locked" @click="locked = false">Opdater</button>
           </td>
         </tr>
-        <tr class="border-b border-gray-100">
+        <tr class="border-b border-line">
           <td colspan="4" class="px-2 py-1" id="hint_{{ crit.code }}">
             {% if crit.description %}<p class="muted text-sm">{{ crit.description|linebreaksbr }}</p>{% endif %}
             <p class="muted text-sm">Skala: {{ crit.score_min }}–{{ crit.score_max }}</p>

@@ -12,7 +12,9 @@ ran and how it went, and what is scheduled next. Under Administration → Worker
 - **Tiles:** jobs in the queue (and how long the oldest has waited), jobs running now, jobs failed
   and jobs completed in the last 24 hours (with the average run time). Each tile links to its list.
 - **Kører nu:** every running job — what it works on, which worker, how long it waited, how long it
-  has run, and how much of its time limit that is.
+  has run, and how much of its time limit that is. A job that reports its progress (a video's
+  conversion, a GAHKFlix film, an album ZIP imported or built for download, an album merge) also
+  shows how far it has got and what it is doing.
 - A job still marked as running past its time limit is not running: its worker died under it. Such
   jobs are counted separately, in red, with a link to them, until the hourly cleanup marks them as
   failed (ten minutes past their limit at the earliest).
@@ -42,7 +44,24 @@ ran and how it went, and what is scheduled next. Under Administration → Worker
   job's share of its time limit.
 - Queue, worker, retries, arguments, parent and root job (linked), ETA, expiry, origin.
 - Its sub-jobs: how many in each status, then the first 200 — those still queued included.
-- Its result, its traceback, and what it logged.
+- Its result, its traceback, and what it logged. While it runs, the page refreshes itself every 10
+  seconds (while the tab is in view), showing its progress and what it has logged so far, at most
+  10 seconds old; it stops refreshing when the job ends. A job killed outright keeps what it logged
+  up to then. A job that succeeded shows 100 %; one that failed shows how far it got and what it was
+  doing.
+
+## Stuck jobs
+
+- A job that reports its progress must get at least 10 percentage points further every hour, or
+  finish within the hour when less than that is left, counted from its first report (an import's
+  download of its ZIP comes before that and is not held against it). One that does not is stopped,
+  as at its time limit, with the progress it made in the last hour in its log; a video's conversion
+  counts it as a failed try. Its page says so while it runs.
+- A job at 100 % that has not finished is left to its time limit: what it does after its last
+  report (an import's commit, a merge's moves) is not measured, and stopping it there would throw
+  away the whole job.
+- So such jobs may run for up to twelve hours: a video conversion, an album ZIP (imported, built
+  for download) or merge, and a GAHKFlix film. Jobs that report no progress keep their own limits.
 
 ## Times
 
@@ -63,5 +82,8 @@ ran and how it went, and what is scheduled next. Under Administration → Worker
   swept after a day, and Celery's own result row has none of them.
 - **Only the top refreshes itself.** The history stays as loaded, so it does not move under somebody
   reading it.
+- **A stuck job is told by its progress, not its age.** A 5 GB video can honestly take more than
+  four hours, so a fixed limit short enough to free the worker from a stuck job soon would also stop
+  the honest ones. The worker itself watches the pace, since nothing outside it can stop a job.
 - **Sub-jobs are hidden by default.** A photo import queues one job per picture; shown, they bury
   the jobs anybody started.
