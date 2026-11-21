@@ -134,7 +134,7 @@ def test_the_board_requires_login(client: Client) -> None:
     response = client.get(BOARD)
 
     assert response.status_code == 302
-    assert "/admin/login" in response["Location"]
+    assert "/login" in response["Location"]
 
 
 def test_every_resident_can_read_and_post(client: Client, beboer: Resident) -> None:

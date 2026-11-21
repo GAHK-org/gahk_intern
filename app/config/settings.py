@@ -97,7 +97,7 @@ MIDDLEWARE = [
     # The "gahk_editor" hint cookie for gahk.dk's "Rediger siden" (EDITOR_HINT_COOKIE_DOMAIN).
     # Needs the user; set or deleted only when its state changes, never on static files or media.
     "cms.middleware.EditorHintCookie",
-    "core.middleware.KitchenAccountGate",
+    "core.middleware.AccountKindGate",
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
     # No visit counter: gahk.dk counts its own visits, and cms.tasks.sync_gahk_web pulls the totals.

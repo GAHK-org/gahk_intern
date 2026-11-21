@@ -31,7 +31,7 @@ from django.views.decorators.http import require_POST
 from core.clock import current_datetime
 from core.uploads import EXTENSION_HELP, prepare_image_upload
 from residents.models import Role
-from residents.permissions import current_resident, request_has_role, role_required
+from residents.permissions import AccountKind, current_resident, open_to, request_has_role, role_required
 
 from . import live, services
 from .forms import COMMON_AREAS, RepairCommentForm, RepairTaskForm
@@ -140,6 +140,7 @@ def _search(tasks: "QuerySet[RepairTask]", query: str) -> "QuerySet[RepairTask]"
     )
 
 
+@open_to(AccountKind.KITCHEN)
 @login_required
 def board(request: HttpRequest) -> HttpResponse:
     query = (request.GET.get("q") or "").strip()
@@ -188,6 +189,7 @@ def board(request: HttpRequest) -> HttpResponse:
     return response
 
 
+@open_to(AccountKind.KITCHEN)
 @login_required
 def archive_list(request: HttpRequest) -> HttpResponse:
     """Archived tickets: no columns (every one is Færdig by construction — see
@@ -208,6 +210,7 @@ def archive_list(request: HttpRequest) -> HttpResponse:
     )
 
 
+@open_to(AccountKind.KITCHEN)
 @login_required
 def create(request: HttpRequest) -> HttpResponse:
     form = RepairTaskForm(request.POST or None)
@@ -328,6 +331,7 @@ def unarchive(request: HttpRequest, pk: int) -> HttpResponseRedirect:
     return redirect("reparationer:detail", pk=task.pk)
 
 
+@open_to(AccountKind.KITCHEN)
 @login_required
 def detail(request: HttpRequest, pk: int) -> HttpResponse:
     """One repair with its note thread — the stable page a "→ status" or comment link lands on.
@@ -365,6 +369,7 @@ def detail(request: HttpRequest, pk: int) -> HttpResponse:
     )
 
 
+@open_to(AccountKind.KITCHEN)
 @require_POST
 @login_required
 def create_comment(request: HttpRequest, pk: int) -> HttpResponseRedirect:
@@ -391,6 +396,7 @@ def create_comment(request: HttpRequest, pk: int) -> HttpResponseRedirect:
     return redirect("reparationer:detail", pk=task.pk)
 
 
+@open_to(AccountKind.KITCHEN)
 @require_POST
 @login_required
 def delete_comment(request: HttpRequest, pk: int) -> HttpResponseRedirect:

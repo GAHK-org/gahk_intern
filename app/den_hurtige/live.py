@@ -13,7 +13,7 @@ write, and the feed's slow backstop poll is what takes it off the screen.
 from django.http import HttpRequest
 
 from core import live
-from residents.permissions import effective_roles
+from residents.permissions import AccountKind, effective_roles
 
 from . import channels
 from .access import request_allowed
@@ -41,4 +41,4 @@ def message_changed(channel: str, pk: int, kind: live.Kind = "changed") -> None:
 
 
 def register() -> None:
-    live.register(FEATURE, may_listen)
+    live.register(FEATURE, may_listen, open_to=[AccountKind.KITCHEN])

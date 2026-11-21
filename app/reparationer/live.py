@@ -13,6 +13,7 @@ loses those cards on the next signal or page load, as it did before.
 from django.http import HttpRequest
 
 from core import live
+from residents.permissions import AccountKind
 
 FEATURE = "reparationer"
 TOPIC = FEATURE
@@ -28,4 +29,4 @@ def task_changed(pk: int, kind: live.Kind = "changed") -> None:
 
 
 def register() -> None:
-    live.register(FEATURE, may_listen)
+    live.register(FEATURE, may_listen, open_to=[AccountKind.KITCHEN])

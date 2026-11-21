@@ -80,7 +80,7 @@ def test_password_reset_is_case_insensitive(make_resident: Callable) -> None:
     email__iexact) — a capital first letter must still receive the reset link."""
     make_resident(email="reset@gahk.dk", password="hemmelig")  # usable password → eligible for reset
     mail.outbox = []
-    resp = Client().post("/admin/password-reset", {"email": "Reset@gahk.dk"})
+    resp = Client().post("/password-reset", {"email": "Reset@gahk.dk"})
     assert resp.status_code == 302  # redirects to the "done" page
     assert len(mail.outbox) == 1  # reset link sent despite the capital
     assert "reset@gahk.dk" in mail.outbox[0].to
@@ -96,7 +96,7 @@ def test_reset_reaches_a_resident_who_never_set_a_password() -> None:
     r.set_unusable_password()  # exactly what the alumneliste's add_new does
     r.save()
     mail.outbox = []
-    resp = Client().post("/admin/password-reset", {"email": "ny@gahk.dk"})
+    resp = Client().post("/password-reset", {"email": "ny@gahk.dk"})
     assert resp.status_code == 302
     assert len(mail.outbox) == 1
     assert mail.outbox[0].to == ["ny@gahk.dk"]
@@ -110,7 +110,7 @@ def test_reset_still_ignores_deactivated_residents() -> None:
     r.set_unusable_password()
     r.save()
     mail.outbox = []
-    assert Client().post("/admin/password-reset", {"email": "ude@gahk.dk"}).status_code == 302
+    assert Client().post("/password-reset", {"email": "ude@gahk.dk"}).status_code == 302
     assert mail.outbox == []  # no link for a deactivated account
 
 

@@ -92,7 +92,7 @@ def test_logout_clears_preview(make_resident: Callable) -> None:
     admin = make_resident(email="admin@gahk.dk", roles=[Role.ADMINISTRATOR])
     c = _client(admin)
     c.post("/admin/preview/set", {"mode": "role", "role": "ak"})
-    c.post("/admin/logout")
+    c.post("/logout")
     assert "preview_roles" not in c.session
     c.force_login(admin)
     assert c.get("/optagelse/listansoegninger").status_code == 200

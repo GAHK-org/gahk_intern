@@ -37,7 +37,7 @@ from channels.layers import get_channel_layer
 from django.db import transaction
 from django.http import HttpRequest
 
-from residents.permissions import is_kitchen
+from residents.permissions import AccountKind, account_kind
 
 logger = logging.getLogger(__name__)
 
@@ -47,10 +47,10 @@ logger = logging.getLogger(__name__)
 Authorizer = Callable[[HttpRequest, str], bool]
 
 _AUTHORIZERS: dict[str, Authorizer] = {}
-
-# The features the kitchen account may listen to, matching core.middleware.KITCHEN_ALLOWED_PREFIXES.
-# Not opslagstavle: its signals are about everyone's posts, and the kitchen sees only its own.
-KITCHEN_FEATURES = frozenset({"den-hurtige", "reparationer", "notifikationer"})
+# The kinds of account besides residents that may listen to a feature, as a view is `open_to` them
+# (residents.permissions.AccountKind). Not the kitchen on opslagstavle: its signals are about
+# everyone's posts, and the kitchen sees only its own.
+_OPEN_TO: dict[str, frozenset[AccountKind]] = {}
 
 # Channels refuses group names outside this alphabet and over 100 characters, and a topic is part
 # of a URL as well. Checked on both ends so a bad topic fails where it was written.
@@ -61,9 +61,11 @@ _MAX_TOPIC = 90  # leaves room for the group prefix under Channels' 100
 EVENT_TYPE = "live.event"
 
 
-def register(feature: str, authorize: Authorizer) -> None:
-    """Declare who may subscribe to `feature` and every `feature.<rest>` topic."""
+def register(feature: str, authorize: Authorizer, open_to: Iterable[AccountKind] = ()) -> None:
+    """Declare who may subscribe to `feature` and every `feature.<rest>` topic: residents and the
+    kinds in `open_to`, and of those only whom `authorize` lets in."""
     _AUTHORIZERS[feature] = authorize
+    _OPEN_TO[feature] = frozenset(open_to)
 
 
 def valid_topic(topic: str) -> bool:
@@ -79,7 +81,8 @@ def may_subscribe(request: HttpRequest, topic: str) -> bool:
     if not valid_topic(topic) or not request.user.is_authenticated:
         return False
     feature, _, rest = topic.partition(".")
-    if feature not in KITCHEN_FEATURES and is_kitchen(request):
+    kind = account_kind(request)
+    if kind != AccountKind.RESIDENT and kind not in _OPEN_TO.get(feature, ()):
         return False
     authorize = _AUTHORIZERS.get(feature)
     return authorize is not None and authorize(request, rest)
