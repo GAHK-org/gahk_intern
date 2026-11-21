@@ -27,9 +27,9 @@
               {% if item.stopped_at %} · stoppet {{ item.stopped_at|date:"j. M Y" }}{% endif %}
             </span>
           </span>
-          {% if item.folders.exists %}<a class="drive-download" href="{% url 'drive:standing' item.pk %}">{{ item.all_name }}</a>{% endif %}
+          {% if item.folders.exists %}<a class="drive-download" href="{% url 'drive:standing' item.uuid %}">{{ item.all_name }}</a>{% endif %}
           {% if can_define and not item.stopped_at %}
-            <form method="post" action="{% url 'drive:standing_stop' folder.pk item.pk %}" data-drive-confirm="Stop {{ item.name }}? Der oprettes ikke flere, men de eksisterende bliver.">
+            <form method="post" action="{% url 'drive:standing_stop' folder.uuid item.uuid %}" data-drive-confirm="Stop {{ item.name }}? Der oprettes ikke flere, men de eksisterende bliver.">
               {% csrf_token %}
               <button type="submit" class="btn-link-danger">Stop</button>
             </form>

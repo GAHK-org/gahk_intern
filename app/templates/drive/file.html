@@ -21,17 +21,17 @@
       {% if file_locked %}
         <p><strong>Filen er låst</strong> ({% if file.locked_by %}af {{ file.locked_by.full_name }}{% else %}et år efter den sidste version{% endif %}, {{ file.locked_at|date:"j. M Y" }}). Den kan hentes og kopieres, men ikke ændres, erstattes, omdøbes, flyttes eller slettes.</p>
         {% if can_request_unlock %}
-          {% url 'drive:unlock_file' file.pk as unlock_url %}
+          {% url 'drive:unlock_file' file.uuid as unlock_url %}
           {% include "drive/_unlock_form.html" with action=unlock_url %}
         {% endif %}
       {% else %}
-        <p><strong>Låst</strong> sammen med mappen <a href="{% url 'drive:folder' folder_lock.pk %}">{{ folder_lock.name }}</a>.</p>
+        <p><strong>Låst</strong> sammen med mappen <a href="{% url 'drive:folder' folder_lock.uuid %}">{{ folder_lock.name }}</a>.</p>
       {% endif %}
     </div>
   {% endif %}
 
   <div class="drive-actions mb-4">
-    <a class="btn" href="{% url 'drive:download' file.pk %}">Hent</a>
+    <a class="btn" href="{% url 'drive:download' file.uuid %}">Hent</a>
     {% if can_version %}
       {% include "drive/_upload.html" with label="Upload ny version" multiple=False %}
     {% endif %}
@@ -41,30 +41,30 @@
     {% if can_change %}
       <details class="drive-inline">
         <summary>Omdøb</summary>
-        <form method="post" action="{% url 'drive:rename_file' file.pk %}" class="drive-newfolder">
+        <form method="post" action="{% url 'drive:rename_file' file.uuid %}" class="drive-newfolder">
           {% csrf_token %}
           <label class="sr-only" for="drive-rename-file">Nyt navn</label>
           <input id="drive-rename-file" type="text" name="name" maxlength="200" value="{{ file.name }}" required>
           <button type="submit" class="btn btn-secondary">Gem navn</button>
         </form>
       </details>
-      <a href="{% url 'drive:move' file.folder_id %}?op=move&{{ move_query }}">Flyt</a>
+      <a href="{% url 'drive:move' file.folder.uuid %}?op=move&{{ move_query }}">Flyt</a>
     {% endif %}
-    {% if can_copy %}<a href="{% url 'drive:move' file.folder_id %}?op=copy&{{ move_query }}">Kopier</a>{% endif %}
+    {% if can_copy %}<a href="{% url 'drive:move' file.folder.uuid %}?op=copy&{{ move_query }}">Kopier</a>{% endif %}
     {% if can_change %}
-      <form method="post" action="{% url 'drive:delete' file.folder_id %}" data-drive-confirm="Læg „{{ file.name }}“ i papirkurven?">
+      <form method="post" action="{% url 'drive:delete' file.folder.uuid %}" data-drive-confirm="Læg „{{ file.name }}“ i papirkurven?">
         {% csrf_token %}
-        <input type="hidden" name="file" value="{{ file.pk }}">
+        <input type="hidden" name="file" value="{{ file.uuid }}">
         <button type="submit" class="btn-link-danger">Slet</button>
       </form>
-      <form method="post" action="{% url 'drive:lock_file' file.pk %}" data-drive-confirm="Lås „{{ file.name }}“? Så kan den ikke ændres, før en admin eller Inspektionen låser den op.">
+      <form method="post" action="{% url 'drive:lock_file' file.uuid %}" data-drive-confirm="Lås „{{ file.name }}“? Så kan den ikke ændres, før en admin eller Inspektionen låser den op.">
         {% csrf_token %}
         <button type="submit" class="btn-link">Lås</button>
       </form>
     {% endif %}
   </div>
 
-  {% url 'drive:share_file' file.pk as share_action %}
+  {% url 'drive:share_file' file.uuid as share_action %}
   {% include "drive/_share_panel.html" with share_action=share_action %}
 
   <h2 class="drive-h2">Versioner</h2>
@@ -76,16 +76,16 @@
           {% if forloop.first %}<span class="chip">Nyeste</span>{% endif %}
           <span class="muted">{{ version.created_at|date:"j. M Y H:i" }}{% if version.created_by %} · {{ version.created_by.full_name }}{% endif %} · {{ version.size|filesizeformat }}{% if version.restored_from %} · gendannet fra version {{ version.restored_from }}{% endif %}</span>
         </span>
-        <a class="drive-download" href="{% url 'drive:download_version' file.pk version.number %}">Hent</a>
+        <a class="drive-download" href="{% url 'drive:download_version' file.uuid version.number %}">Hent</a>
         {% if can_change and not forloop.first %}
-          <form method="post" action="{% url 'drive:restore_version' file.pk version.number %}" data-drive-confirm="Gør version {{ version.number }} til den nyeste? De andre versioner bliver.">
+          <form method="post" action="{% url 'drive:restore_version' file.uuid version.number %}" data-drive-confirm="Gør version {{ version.number }} til den nyeste? De andre versioner bliver.">
             {% csrf_token %}
             <button type="submit" class="btn-link">Gendan</button>
           </form>
           {% if version.number in purge_pending %}
             <span class="muted drive-pending">Venter på godkendelse</span>
           {% else %}
-            {% include "drive/_purge_form.html" with file_pk=file.pk number=version.number %}
+            {% include "drive/_purge_form.html" with file_uuid=file.uuid number=version.number %}
           {% endif %}
         {% endif %}
       </li>

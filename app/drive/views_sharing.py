@@ -1,6 +1,8 @@
 """Sharing a file or folder, stopping a share, `Delt med mig`, and `Delt med <gruppe>`. The rules are
 in sharing.py and access.py."""
 
+from uuid import UUID
+
 from django.contrib import messages
 from django.core.exceptions import PermissionDenied, ValidationError
 from django.http import Http404, HttpRequest, HttpResponse
@@ -46,24 +48,24 @@ def _share(request: HttpRequest, viewer: Viewer, **item: File | Folder) -> None:
 
 @access.access_required
 @require_POST
-def share_file(request: HttpRequest, pk: int) -> HttpResponse:
-    file, viewer = live_file(request, pk)
+def share_file(request: HttpRequest, uuid: UUID) -> HttpResponse:
+    file, viewer = live_file(request, uuid)
     _share(request, viewer, file=file)
-    return redirect("drive:file", file.pk)
+    return redirect("drive:file", file.uuid)
 
 
 @access.access_required
 @require_POST
-def share_folder(request: HttpRequest, pk: int) -> HttpResponse:
-    folder, viewer, _ = _folder(request, pk)
+def share_folder(request: HttpRequest, uuid: UUID) -> HttpResponse:
+    folder, viewer, _ = _folder(request, uuid)
     _share(request, viewer, folder=folder)
-    return redirect("drive:folder", folder.pk)
+    return redirect("drive:folder", folder.uuid)
 
 
 @access.access_required
 @require_POST
-def stop(request: HttpRequest, pk: int) -> HttpResponse:
-    row = get_object_or_404(Share.objects.select_related("file__folder", "folder"), pk=pk)
+def stop(request: HttpRequest, uuid: UUID) -> HttpResponse:
+    row = get_object_or_404(Share.objects.select_related("file__folder", "folder"), uuid=uuid)
     viewer = Viewer.for_request(request)
     item_folder = row.file.folder if row.file else row.folder
     if item_folder is None or viewer.level(item_folder) < Level.READ:
@@ -75,8 +77,8 @@ def stop(request: HttpRequest, pk: int) -> HttpResponse:
     else:
         messages.success(request, "Delingen er stoppet.")
     if row.file is not None:
-        return redirect("drive:file", row.file.pk)
-    return redirect("drive:folder", item_folder.pk)
+        return redirect("drive:file", row.file.uuid)
+    return redirect("drive:folder", item_folder.uuid)
 
 
 @access.access_required
@@ -90,8 +92,8 @@ def shared_with_me(request: HttpRequest) -> HttpResponse:
 
 
 @access.access_required
-def shared_with_group(request: HttpRequest, pk: int) -> HttpResponse:
-    folder, viewer, _ = _folder(request, pk)
+def shared_with_group(request: HttpRequest, uuid: UUID) -> HttpResponse:
+    folder, viewer, _ = _folder(request, uuid)
     items = sharing.shared_with_group(viewer, folder)
     if folder.kind not in (Folder.Kind.PERIOD, Folder.Kind.TIMELESS) or folder.workgroup is None:
         raise Http404("not a group's period")

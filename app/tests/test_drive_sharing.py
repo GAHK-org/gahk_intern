@@ -78,16 +78,16 @@ def test_a_file_shared_to_read_is_read_and_found_under_delt_med_mig(
     winter = _period_folder(group, WINTER)
     file = _file(people["owner"], winter)
     friend = _client(people["friend"])
-    assert friend.get(reverse("drive:file", args=[file.pk])).status_code == 404
+    assert friend.get(reverse("drive:file", args=[file.uuid])).status_code == 404
 
     _share(people["owner"], file=file, resident_id=people["friend"].pk)
-    page = friend.get(reverse("drive:file", args=[file.pk])).content.decode()
+    page = friend.get(reverse("drive:file", args=[file.uuid])).content.decode()
     assert "Budget.xlsx" in page
-    assert reverse("drive:folder", args=[winter.pk]) not in page  # the period is a name, not a way in
+    assert reverse("drive:folder", args=[winter.uuid]) not in page  # the period is a name, not a way in
     assert "Upload ny version" not in page
-    assert friend.get(reverse("drive:download", args=[file.pk])).status_code == 200
+    assert friend.get(reverse("drive:download", args=[file.uuid])).status_code == 200
     assert "Budget.xlsx" in friend.get(reverse("drive:shared_with_me")).content.decode()
-    assert friend.get(reverse("drive:folder", args=[winter.pk])).status_code == 404
+    assert friend.get(reverse("drive:folder", args=[winter.uuid])).status_code == 404
     assert Notification.objects.filter(
         recipient=people["friend"], title__contains="delte Budget.xlsx"
     ).exists()
@@ -103,13 +103,13 @@ def test_an_edit_share_on_a_file_adds_versions_but_does_not_rename_or_delete(
     from django.core.files.uploadedfile import SimpleUploadedFile
 
     response = friend.post(
-        reverse("drive:version_direct", args=[file.pk]),
+        reverse("drive:version_direct", args=[file.uuid]),
         {"file": SimpleUploadedFile("mit-budget.xlsx", b"two")},
     )
     assert response.status_code == 201
     assert file.versions.count() == 2
-    friend.post(reverse("drive:rename_file", args=[file.pk]), {"name": "Andet.xlsx"})
-    friend.post(reverse("drive:delete", args=[winter.pk]), {"file": file.pk})
+    friend.post(reverse("drive:rename_file", args=[file.uuid]), {"name": "Andet.xlsx"})
+    friend.post(reverse("drive:delete", args=[winter.uuid]), {"file": file.uuid})
     file.refresh_from_db()
     assert (file.name, file.deleted_at) == ("Budget.xlsx", None)
 
@@ -119,15 +119,15 @@ def test_an_edit_share_on_a_folder_lets_the_recipient_work_inside_it(
 ) -> None:
     owner = _client(people["owner"])
     winter = _period_folder(group, WINTER)
-    owner.post(reverse("drive:create_folder", args=[winter.pk]), {"name": "Festudvalg"})
+    owner.post(reverse("drive:create_folder", args=[winter.uuid]), {"name": "Festudvalg"})
     folder = Folder.objects.get(name="Festudvalg")
     _share(people["owner"], folder=folder, resident_id=people["friend"].pk, access="edit")
 
     friend = _client(people["friend"])
     assert _upload(friend, folder, "plan.txt", b"x")["status"] == 201
-    friend.post(reverse("drive:create_folder", args=[folder.pk]), {"name": "Musik"})
+    friend.post(reverse("drive:create_folder", args=[folder.uuid]), {"name": "Musik"})
     assert Folder.objects.filter(parent=folder, name="Musik").exists()
-    friend.post(reverse("drive:rename_folder", args=[folder.pk]), {"name": "Mit"})
+    friend.post(reverse("drive:rename_folder", args=[folder.uuid]), {"name": "Mit"})
     folder.refresh_from_db()
     assert folder.name == "Festudvalg"
     # An edit share is not a right to share further.
@@ -168,9 +168,9 @@ def test_a_group_share_appears_in_the_groups_matching_period_for_its_members_onl
 
     theirs = _period_folder(other, WINTER)
     kitchen = _client(people["kitchen"])
-    listing = kitchen.get(reverse("drive:folder", args=[theirs.pk])).content.decode()
+    listing = kitchen.get(reverse("drive:folder", args=[theirs.uuid])).content.decode()
     assert f"Delt med {other.name}" in listing
-    page = kitchen.get(reverse("drive:shared_with_group", args=[theirs.pk])).content.decode()
+    page = kitchen.get(reverse("drive:shared_with_group", args=[theirs.uuid])).content.decode()
     assert "Budget.xlsx" in page
     assert _viewer(people["kitchen"]).file_level(file) == Level.READ
 
@@ -192,7 +192,7 @@ def test_moving_a_shared_item_out_of_the_groups_space_ends_its_shares(
 ) -> None:
     owner = _client(people["owner"])
     winter = _period_folder(group, WINTER)
-    owner.post(reverse("drive:create_folder", args=[winter.pk]), {"name": "Ud"})
+    owner.post(reverse("drive:create_folder", args=[winter.uuid]), {"name": "Ud"})
     folder = Folder.objects.get(name="Ud")
     inner = _file(people["owner"], folder, "inde.txt")
     _share(people["owner"], folder=folder, resident_id=people["friend"].pk)
@@ -200,11 +200,11 @@ def test_moving_a_shared_item_out_of_the_groups_space_ends_its_shares(
     year = Folder.objects.get(kind=Folder.Kind.YEAR, period_start__year=2026)
 
     picker = owner.get(
-        reverse("drive:move", args=[winter.pk]), {"op": "move", "folder": folder.pk, "at": year.pk}
+        reverse("drive:move", args=[winter.uuid]), {"op": "move", "folder": folder.uuid, "at": year.uuid}
     )
     assert "holder op med at være delt (2 delinger)" in picker.content.decode()
     owner.post(
-        reverse("drive:move", args=[winter.pk]),
-        {"op": "move", "folder": folder.pk, "to": year.pk, "confirm": "1"},
+        reverse("drive:move", args=[winter.uuid]),
+        {"op": "move", "folder": folder.uuid, "to": year.uuid, "confirm": "1"},
     )
     assert not Share.objects.exists()

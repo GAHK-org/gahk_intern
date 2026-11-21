@@ -12,7 +12,7 @@
   {% include "drive/_crumbs.html" with ancestors=ancestors current="" %}
 
   {% if can_create_item %}
-    <form method="post" action="{% url 'drive:standing_item' item.pk %}" class="drive-inline-form mb-4">
+    <form method="post" action="{% url 'drive:standing_item' item.uuid %}" class="drive-inline-form mb-4">
       {% csrf_token %}
       <label class="sr-only" for="standing-day">Dato</label>
       <input id="standing-day" type="date" name="day" value="{{ today }}" required>
@@ -24,7 +24,7 @@
     <ul class="drive-list">
       {% for entry in entries %}
         <li>
-          <a href="{% if entry.folder %}{% url 'drive:folder' entry.folder.pk %}{% else %}{% url 'drive:file' entry.file.pk %}{% endif %}">
+          <a href="{% if entry.folder %}{% url 'drive:folder' entry.folder.uuid %}{% else %}{% url 'drive:file' entry.file.uuid %}{% endif %}">
             <svg class="ni" aria-hidden="true"><use href="#i-{% if entry.folder %}folder{% else %}file{% endif %}"></use></svg>
             <span class="drive-name">{{ entry.name }}</span>
           </a>
