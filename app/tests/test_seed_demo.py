@@ -461,3 +461,66 @@ def _check_drive_text(seeded: _DriveSeed) -> None:
     keys = File.objects.get(name="Nøgleliste.txt")
     assert keys.versions.count() == 2 and b"\r\n" in stored(keys)
     assert not text.editable(File.objects.get(name="Varmeanlæg fuld log.log"))
+
+
+@pytest.mark.django_db
+def test_seed_demo_fills_the_outbox_with_every_kind_and_status(settings: object) -> None:
+    """The mail page needs a mail in every state, and seeding must send none of them (core.demo)."""
+    from datetime import timedelta
+
+    from django.core import mail as django_mail
+    from django.utils import timezone
+
+    from core import mail as outbox
+    from core.models import OutgoingMail
+
+    Status, Kind = OutgoingMail.Status, OutgoingMail.Kind
+    # Low enough for the demo's dozen residents' ølkælder overview to fill the window (dev's is 10).
+    settings.MAIL_RATE_LIMIT = 3  # type: ignore[attr-defined]
+
+    call_command("seed_demo", "--fresh", "--force", "--residents", "12", verbosity=0)
+    now = timezone.now()
+    mails = OutgoingMail.objects.all()
+
+    # Nothing went out: conftest delivers any mail whose delivery is started, through locmem.
+    assert django_mail.outbox == []
+    assert {m.status for m in mails} == set(Status.values)
+    assert {m.kind for m in mails} == set(Kind.values)
+    residents = set(Resident.objects.values_list("email", flat=True))
+    assert all(m.recipients in residents for m in mails.exclude(subject__contains="henvendelse"))
+
+    # The bulk send under way: the window full, three overviews held back by it.
+    assert outbox.quota_wait(now) is not None
+    assert outbox._due(now, [Kind.BULK]).count() == 3
+    # Waiting again after a failed try: a full mailbox (bulk) and a greylisted reset (interactive).
+    retrying = mails.filter(status=Status.QUEUED).exclude(error="")
+    assert {m.kind for m in retrying} == {Kind.BULK, Kind.INTERACTIVE}
+    assert all(m.next_attempt_at > now and m.payload for m in retrying)
+
+    # Stored as the deliverer leaves them: content gone once sent or expired, kept while it may be resent.
+    assert not mails.filter(status__in=[Status.SENT, Status.EXPIRED]).exclude(payload={}).exists()
+    assert all(m.error.startswith(outbox.EXPIRED_ERROR) for m in mails.filter(status=Status.EXPIRED))
+    assert mails.get(status=Status.UNKNOWN).error == outbox.LOST_ERROR
+    failed = list(mails.filter(status=Status.FAILED))
+    assert any(outbox.can_send_again(m, now) for m in failed), "a failure to try Send igen on"
+    assert any(not m.payload for m in failed), "an old failure the purge has emptied"
+
+    # Spread over time, so each period filter shows a different set.
+    ages = [now - m.created_at for m in mails]
+    assert min(ages) < timedelta(minutes=5)
+    assert any(timedelta(days=1) < age < timedelta(days=7) for age in ages)
+    assert any(timedelta(days=7) < age < outbox.RETENTION for age in ages)
+
+
+@pytest.mark.django_db
+def test_seed_demo_leaves_no_mail_waiting_for_a_backend_that_really_sends(settings: object) -> None:
+    """A queued mail is sent by deliver_mail's next run: with SMTP configured, to the demo's gahk.dk addresses."""
+    from core.models import OutgoingMail
+
+    settings.MAIL_DELIVERY_BACKEND = "django.core.mail.backends.smtp.EmailBackend"  # type: ignore[attr-defined]
+    settings.MAIL_RATE_LIMIT = 3  # type: ignore[attr-defined]
+
+    call_command("seed_demo", "--fresh", "--force", "--residents", "12", verbosity=0)
+
+    assert not OutgoingMail.objects.filter(status=OutgoingMail.Status.QUEUED).exists()
+    assert OutgoingMail.objects.filter(status=OutgoingMail.Status.FAILED).exists()

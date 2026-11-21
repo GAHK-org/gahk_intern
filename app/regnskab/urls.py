@@ -24,6 +24,11 @@ urlpatterns = [
     path("alumneregninger/send", views.send_alumneregninger_view, name="send_alumneregninger"),
     path("alumneregninger/status", views.alumneregninger_status_view, name="alumneregninger_status"),
     path(
+        "alumneregninger/sends/<int:pk>/not-received",
+        views.alumneregning_not_received_view,
+        name="alumneregning_not_received",
+    ),
+    path(
         "alumneregninger/indstillinger",
         views.alumneregning_settings_view,
         name="alumneregning_settings",
