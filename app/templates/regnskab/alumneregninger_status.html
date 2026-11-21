@@ -20,15 +20,23 @@
           <tr style="border-bottom:1px solid var(--border)">
             <td>{{ resident.full_name }}</td>
             <td>{{ resident.email }}</td>
-            <td class="whitespace-nowrap {% if send.outcome == 'failed' or mail.status == 'failed' %}text-neg font-semibold{% endif %}">
+            <td class="whitespace-nowrap {% if send.outcome == 'failed' or mail.status == 'failed' or mail.status == 'expired' %}text-neg font-semibold{% elif mail.status == 'unknown' %}text-brass-ink font-semibold{% endif %}">
               {% if not send %}Venter…
-              {% elif send.outcome == 'failed' or mail.status == 'failed' %}Fejlede
+              {% elif send.outcome == 'failed' or mail.status == 'failed' or mail.status == 'expired' %}Fejlede
+              {% elif mail.status == 'unknown' %}Ukendt
               {% elif mail.status == 'queued' or mail.status == 'sending' %}I mailkøen
               {% else %}Sendt{% endif %}
             </td>
             <td>
               {{ send.detail }}
-              {% if mail.status == 'failed' %}Mailen kunne ikke sendes: {{ mail.error }}
+              {% if mail.status == 'failed' or mail.status == 'expired' %}Mailen kunne ikke sendes: {{ mail.error }}
+              {% elif mail.status == 'unknown' %}
+                Afsendelsen blev afbrudt, så det er uvist, om mailen kom frem. Spørg {{ resident.first_name }}; kom den
+                ikke, så send den igen.
+                <form method="post" action="{% url 'regnskab:alumneregning_not_received' send.pk %}" class="inline">
+                  {% csrf_token %}
+                  <button type="submit" class="btn btn-secondary">Kom ikke frem — send igen</button>
+                </form>
               {% elif mail.status == 'queued' and mail.error %}Prøves igen: {{ mail.error }}{% endif %}
             </td>
           </tr>

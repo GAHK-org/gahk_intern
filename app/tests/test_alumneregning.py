@@ -9,7 +9,6 @@ from datetime import date
 import pytest
 from django.core import mail
 from django.core.files.base import ContentFile
-from django.test import override_settings
 from fpdf import FPDF
 from pypdf import PdfReader
 
@@ -643,12 +642,11 @@ def test_an_unexpected_error_for_one_alumne_does_not_stop_the_send(
 
 
 @pytest.mark.django_db
-@override_settings(EMAIL_BACKEND="core.mail.OutboxBackend")
-def test_each_statement_is_queued_with_its_row_and_billed_once(
-    monkeypatch: pytest.MonkeyPatch, make_resident: Callable
+def test_each_statement_is_queued_with_its_row_and_sent_once(
+    monkeypatch: pytest.MonkeyPatch, make_resident: Callable, mail_stays_queued: None
 ) -> None:
     """Through the outbox (core.mail): the row and the mail are written together, so a second run —
-    the button pressed while the mails are still queued — finds everyone billed and queues nothing."""
+    the button pressed while the mails are still queued — finds everyone sent theirs and queues nothing."""
     from core.models import OutgoingMail
 
     _two_alumner(monkeypatch, make_resident)
@@ -669,25 +667,47 @@ def test_each_statement_is_queued_with_its_row_and_billed_once(
 
 
 @pytest.mark.django_db
-@override_settings(EMAIL_BACKEND="core.mail.OutboxBackend")
-def test_an_alumne_whose_mail_failed_is_billed_again_by_the_next_run(
-    monkeypatch: pytest.MonkeyPatch, make_resident: Callable
+@pytest.mark.parametrize("status", ["failed", "expired"])
+def test_an_alumne_whose_mail_did_not_arrive_is_sent_it_again_by_the_next_run(
+    monkeypatch: pytest.MonkeyPatch, make_resident: Callable, mail_stays_queued: None, status: str
 ) -> None:
     from core.models import OutgoingMail
 
     _two_alumner(monkeypatch, make_resident)
     alumneregning.send_alumneregninger(*AUGUST)
-    OutgoingMail.objects.filter(recipients="anna@gahk.dk").update(status=OutgoingMail.Status.FAILED)
+    failed = OutgoingMail.objects.get(recipients="anna@gahk.dk")
+    OutgoingMail.objects.filter(pk=failed.pk).update(status=status)
 
     [result] = alumneregning.send_alumneregninger(*AUGUST)
 
     assert result.resident.email == "anna@gahk.dk"
     anna = AlumneregningSend.objects.get(resident__email="anna@gahk.dk")
     assert anna.mail is not None and anna.mail.status == OutgoingMail.Status.QUEUED
+    failed.refresh_from_db()
+    assert failed.payload == {}  # replaced: it cannot also be sent again by hand
 
 
 @pytest.mark.django_db
-def test_the_job_fails_when_someone_could_not_be_billed(
+def test_an_alumne_whose_mail_was_cut_off_is_not_sent_it_again_by_itself(
+    monkeypatch: pytest.MonkeyPatch, make_resident: Callable, mail_stays_queued: None
+) -> None:
+    """It may well have arrived (core.mail.LOST_ERROR); regnskab decides (mark_not_received)."""
+    from core.models import OutgoingMail
+
+    _two_alumner(monkeypatch, make_resident)
+    alumneregning.send_alumneregninger(*AUGUST)
+    OutgoingMail.objects.filter(recipients="anna@gahk.dk").update(status=OutgoingMail.Status.UNKNOWN)
+
+    assert alumneregning.send_alumneregninger(*AUGUST) == []
+
+    anna = AlumneregningSend.objects.get(resident__email="anna@gahk.dk")
+    assert alumneregning.mark_not_received(anna, by="Regnskabsgruppen")
+    [result] = alumneregning.send_alumneregninger(*AUGUST)
+    assert result.resident.email == "anna@gahk.dk"
+
+
+@pytest.mark.django_db
+def test_the_job_fails_when_someones_statement_could_not_be_made(
     monkeypatch: pytest.MonkeyPatch, make_resident: Callable
 ) -> None:
     """#397: it used to finish as done with failures only in the log."""
@@ -700,7 +720,7 @@ def test_the_job_fails_when_someone_could_not_be_billed(
 
     with pytest.raises(tasks.AlumneregningerFailed, match="1 af 2"):
         tasks.send_alumneregninger_task("2026-08-01", "2026-08-31")
-    assert len(mail.outbox) == 1  # Bo was still billed
+    assert len(mail.outbox) == 1  # Bo was still sent his
 
 
 @pytest.mark.django_db
