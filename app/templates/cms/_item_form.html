@@ -1,9 +1,11 @@
 {% comment %}
   The news and event editor: a title, a date and a body. Takes: form, item, title_field, date_field,
-  body_field, list_url, delete_url, preview_kind, heading.
+  body_field, list_url, delete_url, preview_kind, heading, opened_version, editing.
 {% endcomment %}
+{% if editing %}{% include "cms/_editing.html" %}{% endif %}
 <form method="post" class="cms-editor-form" novalidate>
   {% csrf_token %}
+  <input type="hidden" name="opened_version" value="{{ opened_version }}">
   {% if form.non_field_errors %}<div class="card cms-form-errors">{{ form.non_field_errors }}</div>{% endif %}
   <div class="cms-editor-grid">
     <div class="card-flat card-pad cms-editor-main">

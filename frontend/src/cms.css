@@ -21,6 +21,7 @@
 .cms-note { display: flex; align-items: center; gap: 8px; font-size: 13.5px; margin: 10px 0; padding: 8px 12px;
   border-radius: var(--radius-sm); background: var(--green-050); color: var(--green-700); }
 .cms-note-warn { background: var(--warn-bg); color: var(--brass-ink); }
+.cms-editing a { color: inherit; text-decoration: underline; text-underline-offset: 2px; }
 .cms-error { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 12.5px; background: var(--neg-bg); color: var(--neg);
   border-radius: var(--radius-sm); padding: 8px 12px; margin: 6px 0 10px; max-height: 12em; overflow: auto; }
 .cms-subhead { font-size: 11px; font-weight: 700; letter-spacing: .12em; text-transform: uppercase; color: var(--faint);

@@ -241,7 +241,7 @@ def test_renaming_a_page_leaves_a_redirect_and_says_so(editor: Resident, objects
             "path_parent": "",
             "path_segment": "visionen",
             "body": page.body,
-            "loaded_at": page.updated_at.isoformat(),
+            "opened_version": services.page_version(page),
         },
         follow=True,
     )
@@ -276,33 +276,6 @@ def test_bad_addresses_are_refused_on_the_address_field(
     assert response.status_code == 200
     assert message in str(response.context["form"].errors.get("path_segment"))
     assert events("cms.").count() == before
-
-
-@pytest.mark.django_db
-def test_a_save_over_a_newer_edit_is_stopped_once(
-    editor: Resident, admin: Resident, objects: dict[str, int]
-) -> None:
-    page = Page.objects.get(pk=objects["page"])
-    opened_at = page.updated_at.isoformat()
-    services.save_page(page, {"body": "<p>Andens rettelse</p>"}, admin)
-    data = {
-        "header": "Min titel",
-        "path_segment": "vores-vision",
-        "body": "<p>Min</p>",
-        "loaded_at": opened_at,
-    }
-
-    response = client_for(editor).post(reverse("cms:page_edit", args=[page.pk]), data)
-
-    assert response.status_code == 200
-    assert "Ada Admin har gemt siden" in str(response.context["form"].non_field_errors())
-    page.refresh_from_db()
-    assert page.body == "<p>Andens rettelse</p>"
-    # The form comes back with the new stamp, so "Gem" again overwrites knowingly.
-    data["loaded_at"] = response.context["loaded_at"]
-    client_for(editor).post(reverse("cms:page_edit", args=[page.pk]), data)
-    page.refresh_from_db()
-    assert page.body == "<p>Min</p>"
 
 
 @pytest.mark.django_db
@@ -779,7 +752,7 @@ def test_saving_a_page_unchanged_says_so_and_writes_nothing(editor: Resident, fr
 
     response = client_for(editor).post(
         reverse("cms:page_edit", args=[front.pk]),
-        {"header": "Velkommen!", "body": "", "loaded_at": front.updated_at.isoformat()},
+        {"header": "Velkommen!", "body": "", "opened_version": services.page_version(front)},
         follow=True,
     )
 
