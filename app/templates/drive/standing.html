@@ -1,0 +1,38 @@
+{% extends "base.html" %}
+{% block title %}{{ item.all_name }} - Drive - GAHK Intern{% endblock %}
+{% block content_width %}max-w-5xl{% endblock %}
+
+{% block content %}
+  <div class="page-head">
+    <div>
+      <p class="eyebrow">Drive</p>
+      <h1>{{ item.all_name }}</h1>
+    </div>
+  </div>
+  {% include "drive/_crumbs.html" with ancestors=ancestors current="" %}
+
+  {% if can_create_item %}
+    <form method="post" action="{% url 'drive:standing_item' item.uuid %}" class="drive-inline-form mb-4">
+      {% csrf_token %}
+      <label class="sr-only" for="standing-day">Dato</label>
+      <input id="standing-day" type="date" name="day" value="{{ today }}" required>
+      <button type="submit" class="btn btn-secondary">Opret {{ item.item_label|lower }}</button>
+    </form>
+  {% endif %}
+
+  {% if entries %}
+    <ul class="drive-list">
+      {% for entry in entries %}
+        <li>
+          <a href="{% if entry.folder %}{% url 'drive:folder' entry.folder.uuid %}{% else %}{% url 'drive:file' entry.file.uuid %}{% endif %}">
+            <svg class="ni" aria-hidden="true"><use href="#i-{% if entry.folder %}folder{% else %}file{% endif %}"></use></svg>
+            <span class="drive-name">{{ entry.name }}</span>
+          </a>
+          <span class="muted drive-meta">{{ entry.when }}</span>
+        </li>
+      {% endfor %}
+    </ul>
+  {% else %}
+    <p class="muted">Intet endnu.</p>
+  {% endif %}
+{% endblock %}

@@ -93,6 +93,7 @@ Drive
 - A standing folder can have a naming rule: a button such as `Opret fællesmøde` asks for a date and creates `2026-11-03 Fællesmøde`.
 - In Fælles, a standing folder can limit writing to named groups. `Fællesmøder` is read by every resident and written only by Inspektionen and admins.
 - Admins and Inspektionen define standing folders in Fælles, and a group's current members define their group's own. A new standing folder applies from the next period or year.
+- A standing folder can be stopped: no new copies are made, and those made stay. A resident's folder already holding the name keeps it, and the standing folder is numbered.
 
 ## Files and folders
 

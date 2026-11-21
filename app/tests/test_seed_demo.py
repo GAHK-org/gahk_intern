@@ -154,6 +154,7 @@ def test_seed_demo_fills_drive_for_every_login() -> None:
     _check_drive_locks(seeded)
     _check_drive_shared(seeded)
     _check_drive_sharing(seeded)
+    _check_drive_standing(seeded)
 
 
 class _DriveSeed:
@@ -352,6 +353,26 @@ def _check_drive_sharing(seeded: _DriveSeed) -> None:
         name="Kvittering Ølkælderen.jpg", created_by=seeded.by_email["oel@gahk.dk"]
     ).exists()
     assert Event.objects.filter(action="unshared").exists()
+
+
+def _check_drive_standing(seeded: _DriveSeed) -> None:
+    """Fællesmøder across two years, written by admins and Inspektionen only, and a group's standing
+    folders defined for next period and stopped."""
+    from drive import standing
+    from drive.models import StandingFolder
+
+    meetings = StandingFolder.objects.get(name="Fællesmøder")
+    copies = standing.copies(meetings)
+    assert {copy.period_start.year for copy in copies} == {seeded.today.year, seeded.today.year - 1}
+    beboer = seeded.viewer("beboer@gahk.dk")
+    entries = standing.combined(beboer, meetings)
+    assert len({entry.copy.pk for entry in entries}) == 2
+    current = next(copy for copy in copies if copy.period_start.year == seeded.today.year)
+    assert not beboer.can_create_in(current)
+    assert seeded.viewer("formand@gahk.dk", oversees=True).can_create_in(current)
+    groups = StandingFolder.objects.filter(space="group")
+    assert groups.filter(stopped_at__isnull=False).exists()
+    assert groups.filter(stopped_at__isnull=True, starts_on__gt=seeded.today).exists()
 
 
 @pytest.mark.django_db

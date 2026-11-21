@@ -218,6 +218,7 @@ def move(viewer: Viewer, selection: Selection, destination: Folder, actor: Resid
             workgroup=destination.workgroup,
             period_start=destination.period_start,
             shared=destination.shared_id,
+            standing=destination.standing_id,
         )
         folder.parent = destination
         folder.shared_id = destination.shared_id
@@ -275,6 +276,7 @@ def _copy_folder(folder: Folder, destination: Folder, actor: Resident, now: date
         workgroup=destination.workgroup,
         period_start=destination.period_start,
         shared_id=destination.shared_id,
+        standing_id=destination.standing_id,
         created_by=actor,
     )
     copy.save()
