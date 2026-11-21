@@ -20,8 +20,9 @@ from django.utils.http import url_has_allowed_host_and_scheme
 
 from ak.models import AkEntry
 from audit import trail
+from core.models import OutgoingMail
 from residents.models import Residency, Resident, prev_period
-from residents.permissions import role_required
+from residents.permissions import current_resident, role_required
 from residents.views import DA_MONTHS, _parse_period, _period_options
 
 from . import alumneregning, economic, tasks
@@ -251,6 +252,10 @@ def send_alumneregninger_view(request: HttpRequest) -> HttpResponse:
     date_from, date_to = period
     _warn_missing_account_numbers(request, date_from, date_to)
 
+    trail.record(
+        "regnskab.alumneregninger.sent",
+        details={"date_from": date_from.isoformat(), "date_to": date_to.isoformat()},
+    )
     tasks.send_alumneregninger_task.delay(date_from.isoformat(), date_to.isoformat())
     messages.success(
         request,
@@ -269,7 +274,8 @@ def send_alumneregninger_view(request: HttpRequest) -> HttpResponse:
 
 @role_required("regnskab")
 def alumneregninger_status_view(request: HttpRequest) -> HttpResponse:
-    """Who has (and hasn't yet) been billed for a period — reload to see the background send progress."""
+    """Who has (and hasn't yet) been sent their statement for a period — reload to see the background
+    send progress."""
     period = _parse_billing_period(request.GET)
     if period is None:
         messages.error(request, "Angiv en gyldig periode — fra-dato skal være før (eller lig med) til-dato.")
@@ -277,15 +283,56 @@ def alumneregninger_status_view(request: HttpRequest) -> HttpResponse:
     date_from, date_to = period
 
     billable = list(alumneregning.residents_billable_for(date_from, date_to))
-    sends = {s.resident_id: s for s in AlumneregningSend.objects.filter(date_from=date_from, date_to=date_to)}
+    sends = {
+        s.resident_id: s
+        for s in AlumneregningSend.objects.filter(date_from=date_from, date_to=date_to).select_related("mail")
+    }
     rows = [(resident, sends.get(resident.pk)) for resident in billable]
-    done = sum(1 for _resident, send in rows if send is not None)
+    mails = [send.mail for _resident, send in rows if send is not None and send.mail is not None]
+    Status = OutgoingMail.Status
 
     return render(
         request,
         "regnskab/alumneregninger_status.html",
-        {"rows": rows, "date_from": date_from, "date_to": date_to, "done": done, "total": len(rows)},
+        {
+            "rows": rows,
+            "date_from": date_from,
+            "date_to": date_to,
+            "done": sum(1 for _resident, send in rows if send is not None),
+            "total": len(rows),
+            "queued": sum(1 for mail in mails if mail.status in (Status.QUEUED, Status.SENDING)),
+            "failed": sum(1 for _resident, send in rows if send is not None and send.outcome == "failed")
+            + sum(1 for mail in mails if mail.status in (Status.FAILED, Status.EXPIRED)),
+            "rate_limit": settings.MAIL_RATE_LIMIT,
+        },
     )
+
+
+@role_required("regnskab")
+def alumneregning_not_received_view(request: HttpRequest, pk: int) -> HttpResponse:
+    """A statement whose mail was cut off mid-send did not arrive, says regnskab: send it again. Marks
+    the mail as failed and runs the period's send, which redoes only that alumne (and anyone else left
+    failed) — alumneregning.mark_not_received."""
+    if request.method != "POST":
+        return HttpResponseNotAllowed(["POST"])
+    send = get_object_or_404(AlumneregningSend.objects.select_related("resident", "mail"), pk=pk)
+    date_from, date_to = send.date_from.isoformat(), send.date_to.isoformat()
+    status_url = f"{reverse('regnskab:alumneregninger_status')}?fra={date_from}&til={date_to}"
+    with trail.event(
+        "regnskab.alumneregning.not_received",
+        subject=send.resident,
+        details={"date_from": date_from, "date_to": date_to},
+    ) as event:
+        if send.mail is not None:
+            event.involve_kind("core.mail", send.mail.pk, f"{send.mail.subject} → {send.mail.recipients}")
+        if not alumneregning.mark_not_received(send, by=current_resident(request).full_name):
+            event.cancel()
+    if event.cancelled:
+        messages.info(request, f"Der er ikke noget at sende igen for {send.resident.full_name}.")
+        return redirect(status_url)
+    tasks.send_alumneregninger_task.delay(date_from, date_to)
+    messages.success(request, f"{send.resident.full_name}s alumneregning sendes igen.")
+    return redirect(status_url)
 
 
 @role_required("regnskab")

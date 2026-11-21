@@ -12,7 +12,7 @@
       <a href="{% url 'soegvaerelse:detail' app.id %}">Detaljer</a>
       <form method="post" action="{% url 'soegvaerelse:delete_application' app.id %}" class="inline"
             onsubmit="return confirm('Træk din ansøgning for {{ app.move_month|maaned }} tilbage?');">
-        {% csrf_token %}<button type="submit" class="bg-red-600! ml-2">Slet ansøgning</button>
+        {% csrf_token %}<button type="submit" class="btn btn-danger ml-2">Slet ansøgning</button>
       </form>
     </div>
   {% empty %}
