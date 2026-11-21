@@ -30,6 +30,13 @@ Standing folders (`_seed_standing`): `Fællesmøder` with meetings in this year 
 by Inspektionen and admins, and in groups one just defined and one stopped. Opening any `Uden
 periode` or `Uden årstal` a login can write in asks the current-period question.
 
+Previews (`_seed_previews`): a file of every kind the preview knows, from an animated GIF and an
+iPhone's HEIC to a video, a sound, an Excel CSV and one too long to show whole, plus a scan too
+broken to preview. The viewer copies and thumbnails are built at the end, as a worker would.
+
+Search and sorting (`_seed_search`): a folder of a dozen receipts by two people, and minutes of the
+same name in several periods and groups.
+
 Last, locks (`_seed_locks`), as they stop changes: what the nightly task locked, regnskab@'s
 closed accounts and `Årsafslutning` folder locked by hand, and the requests page for admin@ and
 formand@ with an unlock and a purge in each state - pending, approved (the logo is unlocked for now
@@ -46,12 +53,15 @@ renders and a spreadsheet opens in Excel.
 import csv
 import mimetypes
 import random
+import subprocess  # nosec B404 - ffmpeg for the demo's clip and sound
 import zipfile
 from collections.abc import Iterator
 from contextlib import contextmanager
 from datetime import UTC, date, datetime, time, timedelta
 from html import escape
 from io import BytesIO, StringIO
+from pathlib import Path
+from tempfile import TemporaryDirectory
 from unittest import mock
 
 from django.core.files.base import ContentFile
@@ -63,7 +73,7 @@ from notifications.models import Notification
 from residents.models import Residency, Resident, Role
 from residents.permissions import has_active_role
 
-from . import locks, operations, services, shared, sharing, standing
+from . import locks, operations, preview, services, shared, sharing, standing
 from .access import Viewer
 from .models import (
     ApprovalRequest,
@@ -71,10 +81,12 @@ from .models import (
     File,
     FileVersion,
     Folder,
+    ImagePreview,
     SharedFolder,
     SharedMember,
     Space,
     StandingFolder,
+    ZipDownload,
 )
 from .periods import Period, period_containing
 from .structure import COMMON_TIMELESS, _standing, ensure_structure, folder_name
@@ -386,8 +398,20 @@ def seed(residents: list[Resident], now: datetime, _rng: random.Random) -> int:
     _seed_shared(s)
     _seed_sharing(s)
     _seed_standing(s)
+    _seed_previews(s)
+    _seed_search(s)
     # Last: a lock stops the changes above.
     _seed_locks(s)
+    # The viewer copies and thumbnails the "thumbnails" queue makes, made here so the lists show them
+    # without a worker running. The queued builds find them done.
+    # A failed build is tried again (the nightly requeue) until it gives up, as the broken scan does.
+    for key in ImagePreview.objects.filter(state=ImagePreview.State.PENDING).values_list("key", flat=True):
+        for _ in range(preview.MAX_ATTEMPTS):
+            if (
+                preview.build(key)
+                or not ImagePreview.objects.filter(key=key, state=ImagePreview.State.PENDING).exists()
+            ):
+                break
     # What the nightly purge (notifications.services.purge_expired) would have removed by now: the
     # notifications of the steps longest ago, such as the invitation to a Delt mappe in September.
     Notification.objects.filter(
@@ -803,6 +827,116 @@ def _seed_standing(s: _Seeder) -> None:
             standing.stop(viewer, item, root, regnskab)
 
 
+def _seed_previews(s: _Seeder) -> None:
+    """A file of every kind the preview knows, where it would be: images (an animated GIF, a WebP, an
+    iPhone's HEIC, and a scan too broken to show, which falls back to its icon and a download), a
+    video and a sound, text, a log and JSON, an Excel CSV in Windows' encoding with semicolons, a CSV
+    longer than the 2,000 rows shown, a ZIP and a drawing nothing opens. With the PDFs, office files,
+    CSV and markdown above, every icon and every viewer has a file."""
+    current = period_containing(s.today)
+    starts = current.start
+    beboer, oel, ak = s.login("beboer@gahk.dk"), s.login("oel@gahk.dk"), s.login("ak@gahk.dk")
+    regnskab, formand = s.login("regnskab@gahk.dk"), s.login("formand@gahk.dk")
+    year_start = date(s.today.year, 1, 1)
+    clip, sound = _media()
+
+    party = Folder.objects.get(parent=_year_folder(s.today.year), name="Julefrokost", deleted_at__isnull=True)
+    s.upload(party, "Stemning.gif", _gif("Julefrokost"), beboer, s.ago(11, not_before=year_start))
+    s.upload(party, "Sidste år.mp4", clip, oel, s.ago(10, not_before=year_start))
+    s.upload(party, "Fællessang.mp3", sound, oel, s.ago(10, not_before=year_start))
+    guides = Folder.objects.get(name="Vejledninger", kind=Folder.Kind.FOLDER)
+    s.upload(
+        guides,
+        "Kort over kollegiet.webp",
+        _image("Kort over kollegiet", "#1f6c64", (1400, 900), "WEBP"),
+        formand,
+        s.ago(70),
+    )
+
+    if (group := _group_of(ak, s.today)) is not None:
+        now_folder = _group_folder(group, Folder.Kind.PERIOD, current)
+        s.upload(
+            now_folder, "Taget mod gården.heic", _heic("Taget mod gården"), ak, s.ago(16, not_before=starts)
+        )
+        s.upload(now_folder, "Varmeanlæg.log", _HEATING_LOG.encode(), ak, s.ago(13, not_before=starts))
+        s.upload(now_folder, "Termostater.json", _THERMOSTATS.encode(), ak, s.ago(13, not_before=starts))
+        s.upload(
+            now_folder, "Plantegning.dwg", b"AC1032" + bytes(range(256)) * 8, ak, s.ago(12, not_before=starts)
+        )
+
+    if (group := _group_of(oel, s.today)) is not None:
+        now_folder = _group_folder(group, Folder.Kind.PERIOD, current)
+        s.upload(now_folder, "Kasseopgørelse.csv", _excel_csv(_TILL), oel, s.ago(6, not_before=starts))
+        s.upload(
+            _group_folder(group, Folder.Kind.TIMELESS),
+            "Salgshistorik.csv",
+            _csv(_sales(s.today)),
+            oel,
+            s.ago(35),
+        )
+
+    if (group := _group_of(regnskab, s.today)) is not None:
+        now_folder = _group_folder(group, Folder.Kind.PERIOD, current)
+        receipts = Folder.objects.get(parent__parent=now_folder, name="Indkøb")
+        s.upload(
+            receipts,
+            "Ulæselig scanning.jpg",
+            b"\xff\xd8\xff\xe0" + b"not really a JPEG" * 40,
+            regnskab,
+            s.ago(1, not_before=starts),
+        )
+        previous = _group_folder(group, Folder.Kind.PERIOD, current.previous())
+        s.upload(
+            previous,
+            f"Bilag {current.previous().name}.zip",
+            _zip(_SCANS),
+            regnskab,
+            _noon(current.start - timedelta(days=5)),
+        )
+
+
+def _seed_search(s: _Seeder) -> None:
+    """Enough for search and sorting to mean something: a dozen receipts by two people, of different
+    sizes and days, numbered into two digits as receipts are; and minutes of the same name in other
+    periods and groups, so search's period and space filters have something to narrow."""
+    current = period_containing(s.today)
+    starts = current.start
+    regnskab = s.login("regnskab@gahk.dk")
+    if (group := _group_of(regnskab, s.today)) is not None:
+        colleague = _colleague(group, regnskab, s.today)
+        now_folder = _group_folder(group, Folder.Kind.PERIOD, current)
+        receipts = Folder.objects.get(parent__parent=now_folder, name="Indkøb")
+        for number in range(4, 13):
+            by = regnskab if number % 3 else colleague
+            size = (600 + number * 97 % 700, 800 + number * 53 % 900)
+            colour = ["#dd6b43", "#d8a32f", "#315b8d", "#517544", "#8a4e70"][number % 5]
+            when = s.ago(number * 7 % 19 + 1, not_before=starts)
+            s.upload(
+                receipts, f"Kvittering {number}.jpg", _jpg(f"Kvittering {number}", colour, size), by, when
+            )
+    for email, name in (("ak@gahk.dk", "AK-møde referat.docx"), ("oel@gahk.dk", "Mødereferat.docx")):
+        login = s.login(email)
+        if (group := _group_of(login, s.today)) is None:
+            continue
+        previous = _group_folder(group, Folder.Kind.PERIOD, current.previous())
+        s.upload(
+            previous,
+            name,
+            _docx(name.removesuffix(".docx"), _AK_MEETING[:1]),
+            login,
+            _noon(current.start - timedelta(days=40)),
+        )
+    if (group := _group_of(s.login("oel@gahk.dk"), s.today)) is not None:
+        oel = s.login("oel@gahk.dk")
+        s.upload(
+            _group_folder(group, Folder.Kind.PERIOD, current),
+            "Mødereferat.docx",
+            _docx("Mødereferat", _AK_MEETING[1:]),
+            oel,
+            s.ago(4, not_before=starts),
+        )
+
+
 def _seed_locks(s: _Seeder) -> None:
     """Locks, and requests in every state: the requests page (admin@, formand@) has two pending, two
     approved and two rejected, and whoever asked for a decided one has been told the outcome."""
@@ -884,6 +1018,14 @@ def wipe() -> None:
     store = services.storage()
     for key in set(FileVersion.objects.values_list("key", flat=True)):
         store.delete(key)
+    for row in ImagePreview.objects.all():
+        for key in (row.viewer_key, row.thumbnail_key):
+            if key:
+                store.delete(key)
+    ImagePreview.objects.all().delete()
+    for archive in ZipDownload.objects.exclude(archive_key=""):
+        store.delete(archive.archive_key)
+    ZipDownload.objects.all().delete()
     # History and requests outlive their items (SET_NULL), so they go by themselves.
     Event.objects.all().delete()
     ApprovalRequest.objects.all().delete()
@@ -914,6 +1056,76 @@ def _image(title: str, colour: str, size: tuple[int, int], kind: str) -> bytes:
     draw.text((56, 56), title, fill="white", font_size=min(size) // 10)
     output = BytesIO()
     image.save(output, format=kind)
+    return output.getvalue()
+
+
+def _gif(title: str) -> bytes:
+    """Animated: the viewer copy of a GIF stays a GIF."""
+    from PIL import Image, ImageDraw
+
+    frames = []
+    for colour in ("#dd6b43", "#d8a32f", "#517544", "#315b8d"):
+        frame = Image.new("RGB", (480, 320), colour)
+        ImageDraw.Draw(frame).text((40, 40), title, fill="white", font_size=40)
+        frames.append(frame)
+    output = BytesIO()
+    frames[0].save(output, format="GIF", save_all=True, append_images=frames[1:], duration=400, loop=0)
+    return output.getvalue()
+
+
+def _heic(title: str) -> bytes:
+    """What an iPhone sends; only Safari shows it, so the viewer copy is what everyone sees."""
+    import pillow_heif
+
+    pillow_heif.register_heif_opener()
+    return _image(title, "#8a4e70", (1600, 1200), "HEIF")
+
+
+def _media() -> tuple[bytes, bytes]:
+    """A three-second clip and sound of ffmpeg's test pattern and tone (as gahkflix.demo makes)."""
+    from imageio_ffmpeg import get_ffmpeg_exe
+
+    with TemporaryDirectory(prefix="drive-demo-") as directory:
+        clip, sound = Path(directory) / "clip.mp4", Path(directory) / "sound.mp3"
+        for args in (
+            ["-f", "lavfi", "-i", "testsrc=duration=3:size=640x360:rate=25", "-c:v", "libx264",
+             "-preset", "ultrafast", "-pix_fmt", "yuv420p", "-movflags", "+faststart", str(clip)],
+            ["-f", "lavfi", "-i", "sine=frequency=440:duration=3", "-c:a", "libmp3lame", str(sound)],
+        ):  # fmt: skip
+            subprocess.run(  # noqa: S603  # nosec B603 - our own arguments
+                [get_ffmpeg_exe(), "-v", "error", "-y", *args],
+                check=True,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+        return clip.read_bytes(), sound.read_bytes()
+
+
+def _excel_csv(rows: list[list[str]]) -> bytes:
+    """As a Danish Excel saves "CSV": semicolons, CRLF and Windows' Western encoding."""
+    output = StringIO()
+    csv.writer(output, delimiter=";", lineterminator="\r\n").writerows(rows)
+    return output.getvalue().encode("cp1252")
+
+
+def _sales(today: date) -> list[list[str]]:
+    """One row a day for seven years: more than the 2,000 rows the preview shows."""
+    rows = [["Dato", "Øl", "Sodavand", "Omsætning (kr.)"]]
+    for back in range(7 * 365, 0, -1):
+        day = today - timedelta(days=back)
+        beer, soda = 20 + back * 7 % 31, 4 + back * 3 % 9
+        rows.append([day.isoformat(), str(beer), str(soda), str(beer * 7 + soda * 5)])
+    return rows
+
+
+def _zip(names: list[str]) -> bytes:
+    output = BytesIO()
+    with zipfile.ZipFile(output, "w", zipfile.ZIP_DEFLATED) as archive:
+        for index, name in enumerate(names):
+            archive.writestr(
+                zipfile.ZipInfo(name, date_time=(2026, 1, 1, 0, 0, 0)),
+                _jpg(name, ["#dd6b43", "#d8a32f", "#315b8d"][index % 3], (800, 1100)),
+            )
     return output.getvalue()
 
 
@@ -1126,6 +1338,25 @@ _MEETING_MINUTES = [
     "Dagsordenen blev godkendt.",
     "Næste fællesmøde holdes om en måned.",
 ]
+_TILL = [
+    ["Dato", "Vare", "Antal", "Beløb"],
+    ["03-11-2026", "Grøn Tuborg", "48", "336,00"],
+    ["03-11-2026", "Fadøl", "22", "220,00"],
+    ["10-11-2026", "Sodavand", "15", "75,00"],
+    ["", "I alt", "", "631,00"],
+]
+_SCANS = ["Bilag 1.jpg", "Bilag 2.jpg", "Bilag 3.jpg"]
+_HEATING_LOG = """2026-11-02 06:00:01 INFO  kedel startet, fremløb 55 °C
+2026-11-02 06:15:12 WARN  tryk lavt: 0,9 bar
+2026-11-02 07:30:44 INFO  tryk efterfyldt: 1,5 bar
+2026-11-03 06:00:02 INFO  kedel startet, fremløb 55 °C
+"""
+_THERMOSTATS = """{
+  "fællesrum": {"dag": 21, "nat": 17},
+  "køkken": {"dag": 20, "nat": 17},
+  "gange": {"dag": 18, "nat": 16}
+}
+"""
 _PARTY_PROGRAMME = ["Kl. 14: Gårdspil", "Kl. 18: Grill i gården", "Kl. 22: Band i fællesrummet"]
 _GENERAL_MEETING = [
     "Dagsorden: valg af dirigent, beretning, regnskab, indkomne forslag, eventuelt.",
