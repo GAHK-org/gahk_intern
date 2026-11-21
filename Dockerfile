@@ -10,7 +10,7 @@ COPY app/templates/ ./app/templates/
 RUN cd frontend && npm run build          # → /build/app/static/dist/{app.css,app.js}
 
 # --- uv, as a stage of its own: Dependabot updates image tags on FROM lines, not in COPY --from ---
-FROM ghcr.io/astral-sh/uv:0.8 AS uv
+FROM ghcr.io/astral-sh/uv:0.13 AS uv
 
 # --- What the build stages and the final image share (Python 3.13 — Django 5.2's supported range) ---
 FROM python:3.13-slim AS base
