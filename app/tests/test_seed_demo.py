@@ -3,6 +3,7 @@ data that lights up the app's real queries (active period, roles, derived ølkæ
 
 import pytest
 from django.core.management import call_command
+from django.test import Client
 
 from den_hurtige.models import QuickPost
 from oelkaelder.models import Shopper
@@ -142,3 +143,82 @@ def test_seed_demo_gives_the_logins_notifications_in_every_state() -> None:
 
     call_command("seed_demo", "--fresh", "--force", "--residents", "12", verbosity=0)  # still idempotent
     assert Notification.objects.filter(recipient__email="beboer@gahk.dk").count() == 7
+
+
+@pytest.mark.django_db
+def test_seed_demo_gives_the_godkend_page_a_request_of_every_kind(client: Client) -> None:
+    """Fotogruppen's approval page is empty unless residents outside it upload, so the seed does it:
+    for formand@ to approve and beboer@ to see their own waiting album."""
+    from django.urls import reverse
+    from django.utils import timezone
+
+    from notifications.categories import PHOTO_ALBUM_APPROVALS, Importance
+    from notifications.models import Notification
+    from photo_album import approvals
+    from photo_album.models import Album, Media, MediaStatus
+
+    call_command("seed_demo", "--fresh", "--force", "--residents", "12", verbosity=0)
+    formand = Resident.objects.get(email="formand@gahk.dk")
+    beboer = Resident.objects.get(email="beboer@gahk.dk")
+    requests = approvals.pending_requests()
+    by_album: dict[str, list[approvals.Request]] = {}
+    for request in requests:
+        by_album.setdefault(request.album.name, []).append(request)
+    assert sorted(by_album) == ["Brætspilsaften", "Halloween", "Juleklip", "Sommerfest", "Studietur"]
+
+    # Two residents' uploads to one album: two requests, one with a new sub-album, one over two
+    # levels of sub-albums.
+    sommerfest = {request.uploader: request for request in by_album["Sommerfest"]}
+    assert len(sommerfest) == 2
+    bente, other = sommerfest[beboer], next(r for u, r in sommerfest.items() if u != beboer)
+    assert {item.album.name for item in bente.media} == {"Sommerfest", "Lørdag", "Natten"}
+    assert [album.name for album in other.tops] == ["Søndag"] and other.media
+    # A sub-album's uploads, the oldest request, close enough to the purge to make the reminder Høj.
+    assert requests[0].album.name == "Studietur"
+    assert {item.album.name for item in requests[0].media} == {"Prag"}
+    assert requests[0].expires_at - timezone.now() <= approvals.URGENT_BEFORE
+    # beboer@'s own new album, its sub-album inside, and an approved one of its name made since.
+    (halloween,) = by_album["Halloween"]
+    assert halloween.uploader == beboer
+    assert [album.name for album in halloween.new_albums] == ["Halloween", "Kostumer"]
+    assert Album.objects.filter(name="Halloween", parent=None, folder="2026", pending=False).exists()
+    # An album asked for with nothing in it yet, and one whose approval's merge failed.
+    (empty,) = by_album["Brætspilsaften"]
+    assert empty.new_album and not empty.media
+    (failed,) = by_album["Juleklip"]
+    assert failed.failed_merges and failed.media
+    # A rejection's leftovers: binned items, and a pending album holding only those, in no request.
+    rejected = Media.objects.filter(status=MediaStatus.REJECTED, deleted_at__isnull=False)
+    assert {item.album.name for item in rejected} == {"Tagterrassen", "Hyttetur"}
+    assert Album.objects.get(name="Tagterrassen").pending
+
+    # The page, for an administrator: the list, and the name clash on beboer@'s request.
+    client.force_login(formand)
+    page = client.get(reverse("photo_album:approvals"))
+    assert page.status_code == 200
+    assert beboer.full_name in page.content.decode()
+    clash = client.get(reverse("photo_album:approval", args=[halloween.album.pk, beboer.pk]))
+    assert "approval-clash" in clash.content.decode()
+    assert (
+        "mislykkedes"
+        in client.get(
+            reverse("photo_album:approval", args=[failed.album.pk, failed.uploader_pk])
+        ).content.decode()
+    )
+    approvals_rows = Notification.objects.filter(recipient=formand, category=PHOTO_ALBUM_APPROVALS)
+    assert approvals_rows.filter(importance=Importance.HOEJ).exists(), "the reminder, Høj"
+    assert approvals_rows.exclude(group_key="").get().actors
+
+    # A pending album is its maker's (and Fotogruppen's) alone.
+    client.force_login(beboer)
+    assert client.get(reverse("photo_album:detail", args=[halloween.album.pk])).status_code == 200
+    client.force_login(Resident.objects.get(email="ak@gahk.dk"))
+    assert client.get(reverse("photo_album:detail", args=[halloween.album.pk])).status_code == 404
+
+    # A re-seed adds nothing.
+    from photo_album import demo
+
+    notifications = Notification.objects.count()
+    assert demo.seed(list(Resident.objects.order_by("pk")), timezone.now(), None) == 0  # type: ignore[arg-type]
+    assert len(approvals.pending_requests()) == len(requests)
+    assert Notification.objects.count() == notifications
