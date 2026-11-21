@@ -404,6 +404,8 @@ def event(
     `only_if_changed` writes nothing when the block created, changed and deleted nothing (a form
     saved as it was)."""
     ctx = _context.get()
+    # Opened inside unaudited(): the block runs as usual, and nothing of it is written.
+    suppressed = _suppressed.get()
     recorded = Event(action, _request_actor(ctx) if actor is _UNSET else actor, dict(details or {}))
     # A subject made inside the block has no id yet: it is named when the block ends.
     unsaved_subject = subject is not None and subject.pk is None
@@ -419,6 +421,8 @@ def event(
             _open.reset(token)
         if unsaved_subject and subject is not None and subject.pk is not None:
             recorded.involve(subject, "subject")
+        if suppressed:
+            return
         if not recorded.cancelled and not (only_if_changed and not recorded.has_changes):
             recorded._write(ctx)
 
@@ -443,8 +447,9 @@ def current() -> Event | None:
 
 @contextlib.contextmanager
 def unaudited() -> Iterator[None]:
-    """Writes inside are not recorded at all: loading old data (ETL), seeding a demo database.
-    Never for anything a person does."""
+    """Nothing inside is recorded, neither captured writes nor named events (a service an import or
+    the demo seed calls opens its own): loading old data (ETL), seeding a demo database. Never for
+    anything a person does."""
     token = _suppressed.set(True)
     try:
         yield
