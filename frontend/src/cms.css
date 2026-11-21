@@ -107,26 +107,41 @@
 /* --- the body editor (cms-editor.ts) ---------------------------------------------------- */
 .cms-editor { border: 1px solid var(--border-strong); border-radius: var(--radius-sm); background: var(--surface); }
 .cms-editor:focus-within { border-color: var(--green); box-shadow: 0 0 0 1px var(--green); }
-.cms-toolbar { position: sticky; top: 60px; z-index: 5; display: flex; flex-wrap: wrap; align-items: center; gap: 3px;
+/* The formatting bar and the picture bar stay under the 60 px top bar while the text scrolls, so a
+   picture far down a page can be laid out without scrolling back up to its buttons. For that the
+   window must be what scrolls: .main's overflow:auto would make it the scroller (it never scrolls,
+   so nothing stuck), and .card-flat's overflow:hidden would do the same inside the card. Without
+   them, min-width:0 keeps the grid cells from growing to the bars' one-row width on a phone. */
+.cms-editor-bars { position: sticky; top: 60px; z-index: 5; transition: top .2s ease; }
+/* On a phone the top bar slides away while scrolling down (topbar.ts); the bars take its place. */
+.topbar-hidden .cms-editor-bars { top: 0; }
+.main:has(.cms-editor) { overflow: clip; min-width: 0; }
+.cms-editor-main { overflow: visible; min-width: 0; }
+.cms-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 3px;
   padding: 6px; border-bottom: 1px solid var(--border); background: var(--surface-2);
   border-radius: var(--radius-sm) var(--radius-sm) 0 0; }
-.cms-tool { font: inherit; font-size: 13px; font-weight: 600; line-height: 1; padding: 7px 9px; border-radius: 6px;
+.cms-tool { display: inline-flex; align-items: center; gap: 5px; font: inherit; font-size: 13px; font-weight: 600;
+  line-height: 1; padding: 7px 9px; border-radius: 6px;
   border: 1px solid transparent; background: none; color: var(--ink); cursor: pointer; }
 .cms-tool:hover:not(:disabled) { background: var(--green-050); border-color: var(--green-100); }
 .cms-tool[aria-pressed="true"] { background: var(--green-100); color: var(--green-700); }
 .cms-tool:disabled { opacity: .35; cursor: default; }
 .cms-tool svg { width: 16px; height: 16px; display: block; }
-.cms-image-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 3px; padding: 5px 6px; background: var(--warn-bg);
+.cms-image-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; padding: 5px 6px; background: var(--warn-bg);
   border-bottom: 1px solid var(--warn-line); font-size: 13px; }
 .cms-image-bar[hidden] { display: none; }
-.cms-image-bar-label { font-weight: 700; color: var(--brass-ink); margin: 0 6px 0 4px; }
+.cms-image-group { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 3px; }
+.cms-image-group + .cms-image-group { border-left: 1px solid var(--warn-line); padding-left: 6px; }
+.cms-image-bar-label { font-weight: 700; color: var(--brass-ink); margin: 0 4px; }
 .cms-tool-source { margin-left: auto; font-family: ui-monospace, Menlo, monospace; }
 .cms-tool-sep { width: 1px; align-self: stretch; margin: 2px 4px; background: var(--border-strong); }
 .cms-editor .cms-note { margin: 8px; }
 .cms-editor-content { min-height: 22rem; padding: 14px 18px; outline: none; overflow-wrap: break-word; }
 .cms-editor-content:focus-visible { outline: none; border-radius: 0; }
 .cms-editor-content > :first-child { margin-top: 0; }
-.cms-editor-content img { display: inline; margin: 0; }
+/* Pictures without a layout of their own (the old pages') sit in the line, as they did there. Not
+   the laid-out ones: this rule is outside Tailwind's layers, so it would beat .prose-gahk's. */
+.cms-editor-content img:not(.img-left, .img-center, .img-right) { display: inline; margin: 0; }
 .cms-editor-content img.ProseMirror-selectednode { outline: 3px solid var(--green); outline-offset: 2px; }
 .cms-editor-content p:empty::before, .cms-editor-content p.is-editor-empty:first-child::before { content: ""; }
 .cms-editor-content::after { content: ""; display: block; clear: both; }
@@ -164,9 +179,15 @@ dialog.cms-dialog::backdrop { background: rgba(15, 30, 22, .5); }
   background: var(--paper); padding: 10px 0 2px; border-top: 1px solid var(--border); }
 .cms-picker-alt { flex: 1 1 260px; margin: 0; font-size: 13px; }
 .cms-picker-alt input { margin-top: 4px; }
-.cms-placement { border: 0; padding: 0; margin: 0; display: flex; flex-wrap: wrap; gap: 4px 12px; font-size: 13px; }
-.cms-placement legend { font-weight: 600; padding: 0; margin-bottom: 4px; }
-.cms-placement label { display: inline-flex; align-items: center; gap: 4px; margin: 0; font-weight: 400; }
+/* The picker's placement and size: radio buttons drawn as buttons. */
+.cms-choices { border: 0; padding: 0; margin: 0; display: flex; flex-wrap: wrap; gap: 4px; font-size: 13px; }
+.cms-choices legend { font-weight: 600; padding: 0; margin-bottom: 4px; }
+.cms-choice { position: relative; display: inline-flex; align-items: center; gap: 6px; margin: 0; padding: 7px 10px;
+  border: 1px solid var(--border-strong); border-radius: 6px; font-weight: 500; cursor: pointer; }
+.cms-choice input { position: absolute; inset: 0; opacity: 0; margin: 0; cursor: pointer; }
+.cms-choice svg { width: 18px; height: 18px; flex: none; }
+.cms-choice:has(input:checked) { border-color: var(--green); background: var(--green-050); color: var(--green-700); }
+.cms-choice:has(input:focus-visible) { outline: 2px solid var(--green); outline-offset: 2px; }
 
 /* --- history, log, diffs ----------------------------------------------------------------------- */
 .cms-version-by { font-size: 13px; font-weight: 500; margin-left: 6px; }
@@ -241,9 +262,12 @@ body.cms-preview-local article::after { content: ""; display: block; clear: both
 
 @media (max-width: 960px) {
   .cms-editor-grid { grid-template-columns: minmax(0, 1fr); }
-  .cms-toolbar { top: 0; }
 }
 @media (max-width: 720px) {
+  /* One row each, scrolling sideways: wrapped, the two bars took a third of a phone's screen. */
+  .cms-toolbar, .cms-image-bar { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; }
+  .cms-image-group { flex-wrap: nowrap; flex: none; }
+  .cms-tool { flex: none; white-space: nowrap; }
   .cms-row { flex-direction: column; align-items: flex-start; }
   .cms-row-side { align-items: flex-start; text-align: left; }
   .cms-row-sub { padding-left: 28px; }

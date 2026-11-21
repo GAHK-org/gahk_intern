@@ -36,9 +36,16 @@ working when intern or the image storage is down; editing needs intern.
 - A page's address is picked as a section plus a last part, so it cannot be typed into a third level
   or onto an address gahk.dk uses itself, and taken addresses are refused.
 - Text is edited visually: headings, bold, italic, lists, quotes, links, pictures from the library
-  (or uploaded on the spot) placed in the text, left or right, with an alt text, undo and redo.
-  An "HTML" button shows the text as HTML. Pasted text keeps its structure but not its fonts and
-  colours. Pictures on the old pages keep their size and placement.
+  (or uploaded on the spot) with an alt text, undo and redo. An "HTML" button shows the text as
+  HTML. Pasted text keeps its structure but not its fonts and colours.
+- A picture has a placement and a size, picked with pictogram buttons when it is inserted and
+  changed from the picture bar whenever it is selected: left or right with the text beside it, or
+  in the middle on its own line; a third, half, three quarters or all of the text's width. Beside
+  the text a picture is at most half the width (picking more moves it to the middle). Sizes are
+  shares of the text's width, so on a phone gahk.dk shows pictures under each other, a small one at
+  half the width and the others at full width. A new picture is selected once inserted, and the
+  formatting and picture bars stay in view while the text scrolls.
+- Pictures on the old pages keep their own size and placement until a layout is picked for them.
 - Text the visual editor cannot show (a table, for example) opens as HTML with a note, so nothing is
   lost by opening it. Saving a page untouched changes nothing.
 - If someone else saved the page after it was opened, saving stops once and says so; saving again
@@ -134,6 +141,8 @@ working when intern or the image storage is down; editing needs intern.
 - **The editor cookie is a hint, not a permission.** gahk.dk's pages are static and cannot ask intern
   who is signed in, so they read a cookie; it grants nothing. It changes only when the editor
   status does, so ordinary pages stay free of cookie headers.
+- **A few picture layouts, not free sizes.** A width typed in pixels fits one screen; a share of
+  the text's width fits them all, and four sizes are enough to lay out a page.
 - **The preview never runs scripts on intern.** It is gahk.dk's HTML shown inside the intranet, so it
   is shown without JavaScript.
 - **Technical names are English; what people read is Danish.** The editor's pages keep Danish

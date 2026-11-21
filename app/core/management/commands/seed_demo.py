@@ -37,7 +37,8 @@ from ak.models import AkEntry, AkMonthlyCharge
 from ak.services import apply_monthly_charge
 from arkiv.demo import seed as seed_arkiv
 from arkiv.models import ArchiveFile, ArchiveFolder
-from cms.models import ContentChange, NewsItem, Page, PageVersion, PylonEvent
+from cms.demo import seed as seed_cms_pictures
+from cms.models import CmsImage, ContentChange, NewsItem, Page, PageVersion, PylonEvent
 
 # CmsEvent, never Event: the internal events app has one of the same name, and both are seeded
 # here. See events.models on the three-way collision.
@@ -153,6 +154,8 @@ WIPE_ORDER: list[type[models.Model]] = [
     PageVersion,
     Page,
     NewsItem,
+    # Its post_delete signal removes the file too, so the library does not pile up across re-seeds.
+    CmsImage,
     CmsEvent,
     PylonEvent,
     DailyVisitCount,
@@ -235,6 +238,8 @@ class Command(BaseCommand):
             self._seed_oelkaelder(residents)
             self._seed_admissions(residents)
             self._seed_cms()
+            # After the pages: puts its pictures into two of them.
+            seed_cms_pictures(residents, self.now, self.rng)
             self._seed_room_conditions(rooms, residents)
             self._seed_kvotient(residents, rooms)
             self._seed_stats()
