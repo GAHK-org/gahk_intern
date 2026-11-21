@@ -58,7 +58,7 @@ pace the account can take, and retried when it does not go through.
 
 ## Demo data
 
-- `task seed` fills the queue with a mail of every kind and status — a bulk ølkælder overview held by
+- `task seed` fills the queue, and so Administration → Mails, with a mail of every kind and status — a bulk ølkælder overview held by
   the rate limit, resets sent, waiting again and expired, failures that can and cannot be sent again,
   one being sent, one Ukendt — made by the code that sends each, then given the state delivery would
   have left it in. Seeding sends nothing. Mails left in the queue are seeded only when mail is printed,
