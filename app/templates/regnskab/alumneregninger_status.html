@@ -4,7 +4,9 @@
   <h1>Alumneregninger</h1>
   <p class="muted text-sm mb-3">Periode: {{ date_from }} – {{ date_to }}</p>
   <p class="muted text-sm mb-3">
-    Sendes i baggrunden — {{ done }} af {{ total }} behandlet. Genindlæs siden for at se status opdateret.
+    {{ done }} af {{ total }} behandlet{% if queued %}, {{ queued }} mail{{ queued|pluralize:"s" }} venter på at blive sendt
+    — mailserveren tager højst {{ rate_limit }} pr. 5 minutter, så de går ud lidt ad gangen{% endif %}.
+    Genindlæs siden for at se status opdateret.
   </p>
 
   <div class="overflow-x-auto mb-8">
@@ -14,16 +16,31 @@
       </tr></thead>
       <tbody>
         {% for resident, send in rows %}
+          {% with mail=send.mail %}
           <tr style="border-bottom:1px solid var(--border)">
             <td>{{ resident.full_name }}</td>
             <td>{{ resident.email }}</td>
-            <td class="whitespace-nowrap {% if send.outcome == 'failed' %}text-neg font-semibold{% endif %}">
+            <td class="whitespace-nowrap {% if send.outcome == 'failed' or mail.status == 'failed' or mail.status == 'expired' %}text-neg font-semibold{% elif mail.status == 'unknown' %}text-brass-ink font-semibold{% endif %}">
               {% if not send %}Venter…
-              {% elif send.outcome == 'sent' %}Sendt
-              {% else %}Fejlede{% endif %}
+              {% elif send.outcome == 'failed' or mail.status == 'failed' or mail.status == 'expired' %}Fejlede
+              {% elif mail.status == 'unknown' %}Ukendt
+              {% elif mail.status == 'queued' or mail.status == 'sending' %}I mailkøen
+              {% else %}Sendt{% endif %}
             </td>
-            <td>{{ send.detail }}</td>
+            <td>
+              {{ send.detail }}
+              {% if mail.status == 'failed' or mail.status == 'expired' %}Mailen kunne ikke sendes: {{ mail.error }}
+              {% elif mail.status == 'unknown' %}
+                Afsendelsen blev afbrudt, så det er uvist, om mailen kom frem. Spørg {{ resident.first_name }}; kom den
+                ikke, så send den igen.
+                <form method="post" action="{% url 'regnskab:alumneregning_not_received' send.pk %}" class="inline">
+                  {% csrf_token %}
+                  <button type="submit" class="btn btn-secondary">Kom ikke frem — send igen</button>
+                </form>
+              {% elif mail.status == 'queued' and mail.error %}Prøves igen: {{ mail.error }}{% endif %}
+            </td>
           </tr>
+          {% endwith %}
         {% empty %}
           <tr><td colspan="4" class="muted">Ingen alumner boede på kollegiet i perioden med et e-conomic kontonr. sat.</td></tr>
         {% endfor %}
@@ -31,5 +48,11 @@
     </table>
   </div>
 
+  {% if failed %}
+    <p class="muted text-sm mb-3">
+      Fejlede alumner prøves igen, hvis du sender perioden igen (Lav Alumneregninger, Bekræft og send); de allerede
+      sendte springes over.
+    </p>
+  {% endif %}
   <a href="{% url 'regnskab:overview' %}" class="btn">Tilbage til regnskab</a>
 {% endblock %}
