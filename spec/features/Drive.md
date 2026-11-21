@@ -33,6 +33,7 @@ Drive
 - You only see what you can open, except for the overview admins and Inspektionen get (below).
 - The current period or year is highlighted in the list.
 - Creating a folder or uploading directly at the top level of `Uden periode` or `Uden årstal` asks first, and offers to put it in the current period or year instead.
+- Links name folders and files by a random id, never by a number that counts up, so nobody can tell how many there are.
 
 ## Access
 

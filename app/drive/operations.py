@@ -19,6 +19,7 @@ only when no version points at them any more (`empty_bin`).
 
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
+from uuid import UUID
 
 from django.core.exceptions import PermissionDenied, ValidationError
 from django.db import IntegrityError, transaction
@@ -50,15 +51,17 @@ class Selection:
         return [folder.name for folder in self.folders] + [file.name for file in self.files]
 
 
-def select(source: Folder, file_ids: list[int], folder_ids: list[int]) -> Selection:
-    """The items of `source` among the ids; anything elsewhere or in the bin is left out."""
+def select(source: Folder, file_uuids: list[UUID], folder_uuids: list[UUID]) -> Selection:
+    """The items of `source` among the uuids; anything elsewhere or in the bin is left out."""
     return Selection(
         source,
         list(
-            File.objects.filter(folder=source, pk__in=file_ids, deleted_at__isnull=True).order_by("name_key")
+            File.objects.filter(folder=source, uuid__in=file_uuids, deleted_at__isnull=True).order_by(
+                "name_key"
+            )
         ),
         list(
-            Folder.objects.filter(parent=source, pk__in=folder_ids, deleted_at__isnull=True).order_by(
+            Folder.objects.filter(parent=source, uuid__in=folder_uuids, deleted_at__isnull=True).order_by(
                 "name_key"
             )
         ),

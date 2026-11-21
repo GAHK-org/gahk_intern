@@ -254,7 +254,7 @@ def test_a_group_folder_a_resident_was_never_in_is_a_404(
     other = Workgroup.objects.create(name="Haven-test")
     ensure_structure(TODAY)
     folder = Folder.objects.get(workgroup=other, kind=Folder.Kind.GROUP)
-    assert member.get(reverse("drive:folder", args=[folder.pk])).status_code == 404
+    assert member.get(reverse("drive:folder", args=[folder.uuid])).status_code == 404
 
 
 def test_an_overseer_sees_the_current_period_listed_but_cannot_open_it(
@@ -264,27 +264,33 @@ def test_an_overseer_sees_the_current_period_listed_but_cannot_open_it(
     client = Client()
     client.force_login(resident_in({(2026, 11): None}, roles=(Role.INSPEKTION,)))
     group_folder = Folder.objects.get(workgroup=group, kind=Folder.Kind.GROUP)
-    page = client.get(reverse("drive:folder", args=[group_folder.pk])).content.decode()
+    page = client.get(reverse("drive:folder", args=[group_folder.uuid])).content.decode()
     assert "2026-27 Vinter" in page
-    assert reverse("drive:folder", args=[_period_folder(group, WINTER).pk]) not in page
-    assert client.get(reverse("drive:folder", args=[_period_folder(group, WINTER).pk])).status_code == 403
+    assert reverse("drive:folder", args=[_period_folder(group, WINTER).uuid]) not in page
+    assert client.get(reverse("drive:folder", args=[_period_folder(group, WINTER).uuid])).status_code == 403
 
 
 def test_creating_a_folder_takes_its_parents_space_and_period(member: Client, group: Workgroup) -> None:
     winter = _period_folder(group, WINTER)
-    response = member.post(reverse("drive:create_folder", args=[winter.pk]), {"name": "Budget"})
+    response = member.post(reverse("drive:create_folder", args=[winter.uuid]), {"name": "Budget"})
     created = Folder.objects.get(parent=winter, name="Budget")
-    assert response["Location"] == reverse("drive:folder", args=[created.pk])
+    assert response["Location"] == reverse("drive:folder", args=[created.uuid])
     assert (created.space, created.workgroup, created.period_start) == (Space.GROUP, group, WINTER.start)
     assert created.path == f"{winter.path}{created.pk}/"
-    member.post(reverse("drive:create_folder", args=[winter.pk]), {"name": "BUDGET"})
+    # Links name it by its uuid; its counting key is nowhere on the page, nor a way in.
+    page = member.get(reverse("drive:folder", args=[winter.uuid])).content.decode()
+    assert f"/drive/folder/{created.uuid}/" in page
+    assert f"/drive/folder/{created.pk}/" not in page
+    assert member.get(f"/drive/folder/{created.pk}/").status_code == 404
+    member.post(reverse("drive:create_folder", args=[winter.uuid]), {"name": "BUDGET"})
     assert Folder.objects.filter(parent=winter, name_key="budget").count() == 1
 
 
 def test_no_folders_directly_in_a_group_folder(member: Client, group: Workgroup) -> None:
     group_folder = Folder.objects.get(workgroup=group, kind=Folder.Kind.GROUP)
     assert (
-        member.post(reverse("drive:create_folder", args=[group_folder.pk]), {"name": "x"}).status_code == 403
+        member.post(reverse("drive:create_folder", args=[group_folder.uuid]), {"name": "x"}).status_code
+        == 403
     )
 
 
@@ -294,7 +300,7 @@ def test_upload_and_download_round_trip_under_the_name(member: Client, group: Wo
     file = File.objects.get(folder=winter)
     assert (file.name, file.size, file.versions.count()) == ("Referat æøå.txt", 3, 1)
 
-    response = member.get(reverse("drive:download", args=[file.pk]))
+    response = member.get(reverse("drive:download", args=[file.uuid]))
     assert b"".join(response.streaming_content) == b"hej"  # type: ignore[attr-defined]
     assert "filename*=UTF-8''Referat%20%C3%A6%C3%B8%C3%A5.txt" in response["Content-Disposition"]
 
@@ -333,14 +339,14 @@ def test_a_download_rechecks_access(
     _upload(member, winter, "a.txt", b"x")
     outsider = Client()
     outsider.force_login(resident_in({(2026, 11): None}))
-    assert outsider.get(reverse("drive:download", args=[File.objects.get().pk])).status_code == 404
+    assert outsider.get(reverse("drive:download", args=[File.objects.get().uuid])).status_code == 404
 
 
 def test_a_listing_counts_the_whole_subtree(member: Client, group: Workgroup) -> None:
     winter = _period_folder(group, WINTER)
-    member.post(reverse("drive:create_folder", args=[winter.pk]), {"name": "Bilag"})
+    member.post(reverse("drive:create_folder", args=[winter.uuid]), {"name": "Bilag"})
     _upload(member, Folder.objects.get(name="Bilag"), "a.txt", b"12345")
     _upload(member, winter, "b.txt", b"1")
     group_folder = Folder.objects.get(workgroup=group, kind=Folder.Kind.GROUP)
-    page = member.get(reverse("drive:folder", args=[group_folder.pk])).content.decode()
+    page = member.get(reverse("drive:folder", args=[group_folder.uuid])).content.decode()
     assert "2 filer" in page
