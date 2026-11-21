@@ -1,0 +1,64 @@
+{% extends "base.html" %}
+{% block title %}Revisionsspor - Admin - GAHK{% endblock %}
+{% block content_width %}max-w-6xl{% endblock %}
+{% block content %}
+  <div class="page-head">
+    <div>
+      <div class="eyebrow"><a href="{% url 'siteadmin:home' %}">Administration</a></div>
+      <h1>Revisionsspor</h1>
+    </div>
+  </div>
+  <p class="muted mb-4">
+    Alt, der sker på intern: hvem gjorde hvad og hvornår, og hvad der stod før og efter. Sporet kan
+    ikke rettes eller slettes, heller ikke af en administrator.
+  </p>
+
+  <section class="card-flat">
+    {% if heading or actor_name %}
+      <div class="card-head">
+        <h2>
+          {% if heading %}Historik: {{ heading.kind }}{% if heading.name %} «{{ heading.name }}»{% endif %}{% endif %}
+          {% if heading and actor_name %} · {% endif %}
+          {% if actor_name %}Gjort af {{ actor_name }}{% endif %}
+        </h2>
+        <a class="jobs-reset" href="{% url 'siteadmin:audit' %}">Vis alt</a>
+      </div>
+    {% endif %}
+    <form method="get" class="jobs-filters">
+      {% if filters.kind %}<input type="hidden" name="kind" value="{{ filters.kind }}">{% endif %}
+      {% if filters.entity_id %}<input type="hidden" name="id" value="{{ filters.entity_id }}">{% endif %}
+      {% if filters.actor %}<input type="hidden" name="actor" value="{{ filters.actor }}">{% endif %}
+      <label>Søg
+        <input type="search" name="q" value="{{ filters.q }}" placeholder="Navn eller handling" class="audit-search">
+      </label>
+      <label>Område
+        <select name="area" onchange="this.form.requestSubmit()">
+          <option value="">Alle områder</option>
+          {% for key, label in areas %}<option value="{{ key }}"{% if filters.area == key %} selected{% endif %}>{{ label }}</option>{% endfor %}
+        </select>
+      </label>
+      <label>Kilde
+        <select name="source" onchange="this.form.requestSubmit()">
+          <option value="">Alle kilder</option>
+          {% for key, label in sources %}<option value="{{ key }}"{% if filters.source == key %} selected{% endif %}>{{ label }}</option>{% endfor %}
+        </select>
+      </label>
+      <label>Fra
+        <input type="date" name="since" value="{{ filters.since|date:'Y-m-d' }}" onchange="this.form.requestSubmit()">
+      </label>
+      <label>Til
+        <input type="date" name="until" value="{{ filters.until|date:'Y-m-d' }}" onchange="this.form.requestSubmit()">
+      </label>
+      <label class="jobs-check"><input type="checkbox" name="unclaimed" value="1"{% if filters.unclaimed %} checked{% endif %} onchange="this.form.requestSubmit()"> Kun uden handling</label>
+      <button type="submit" class="btn btn-secondary">Vis</button>
+      {% if filters.any %}<a class="jobs-reset" href="{% url 'siteadmin:audit' %}">Nulstil filtre</a>{% endif %}
+    </form>
+    {% include "audit/_events.html" %}
+    {% if older %}
+      <div class="jobs-pager">
+        <span class="muted text-sm">De nyeste først</span>
+        <a href="{% querystring before=older %}">Ældre →</a>
+      </div>
+    {% endif %}
+  </section>
+{% endblock %}

@@ -66,6 +66,7 @@ INSTALLED_APPS = [
     "django.contrib.staticfiles",
     "django_celery_beat",
     # GAHK domains
+    "audit",
     "core",
     "residents",
     "admissions",
@@ -94,6 +95,8 @@ MIDDLEWARE = [
     "django.middleware.common.CommonMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
     "django.contrib.auth.middleware.AuthenticationMiddleware",
+    # Each request is one source of audit events: its resident, its address (audit.trail).
+    "audit.middleware.AuditContext",
     # The "gahk_editor" hint cookie for gahk.dk's "Rediger siden" (EDITOR_HINT_COOKIE_DOMAIN).
     # Needs the user; set or deleted only when its state changes, never on static files or media.
     "cms.middleware.EditorHintCookie",
@@ -189,6 +192,12 @@ AUTH_PASSWORD_VALIDATORS = [
 
 # Password-reset links expire after 2 hours (F-014 decision, 2026-06).
 PASSWORD_RESET_TIMEOUT = 7200
+
+# The audit trail (audit.trail). A registered model written outside trail.event() is recorded as an
+# "unclaimed" event; from a request or a job that is a missing event(), logged as a warning — except
+# under these paths, where unclaimed is how writes are recorded: the Django admin has no events of its
+# own, so each of its saves becomes "<kind>.updated" with the admin's resident and every field.
+AUDIT_UNCLAIMED_PATHS = ("/django-admin/",)
 
 LANGUAGE_CODE = "da"
 TIME_ZONE = "Europe/Copenhagen"
