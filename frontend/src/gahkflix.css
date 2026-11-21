@@ -249,31 +249,113 @@ a.flix-chip:hover { border-color: #fff; }
 
 /* --- Player ------------------------------------------------------------------------------------ */
 body.flix-play, body.flix-player-open { overflow: hidden; background: #000; }
-.flix-player { position: fixed; inset: 0; z-index: 100; background: #000; }
+/* touch-action: a double tap jumps (gahkflix.ts, Player.tap) instead of zooming. */
+.flix-player { position: fixed; inset: 0; z-index: 100; background: #000; touch-action: manipulation; -webkit-user-select: none; user-select: none; -webkit-tap-highlight-color: transparent; --flix-bar: 96px; }
 .flix-player video { width: 100%; height: 100%; object-fit: contain; background: #000; display: block; }
 .flix-player-top { position: absolute; inset: 0 0 auto 0; display: flex; align-items: center; gap: 16px; padding: 18px 22px 40px; background: linear-gradient(180deg, rgba(0,0,0,.75), rgba(0,0,0,0)); transition: opacity .4s; pointer-events: none; }
 .flix-player-top > * { pointer-events: auto; }
-.flix-player-top h1 { font-size: clamp(15px, 1.6vw, 22px); font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.flix-player-top h1 { min-width: 0; font-size: clamp(15px, 1.6vw, 22px); font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .flix-player-top h1 small { color: var(--flix-muted); font-weight: 400; margin-left: 8px; }
 .flix-player-top h1 small:empty { display: none; }
-.flix-player.is-idle .flix-player-top, .flix-player.is-idle .flix-quality { opacity: 0; }
+.flix-player.is-idle .flix-player-top, .flix-player.is-idle .flix-controls { opacity: 0; pointer-events: none; }
+.flix-player.is-idle .flix-player-top > * { pointer-events: none; }
 .flix-player.is-idle { cursor: none; }
 .flix-back { display: grid; place-items: center; width: 44px; height: 44px; border-radius: 50%; color: #fff; text-decoration: none; font-size: 26px; flex: none; }
 .flix-back:hover { background: rgba(255,255,255,.15); }
-.flix-quality { position: absolute; top: 20px; right: 22px; display: flex; gap: 4px; padding: 3px; border-radius: 6px; background: rgba(0,0,0,.55); transition: opacity .4s; }
-.flix-quality button { border: 0; border-radius: 4px; padding: 6px 10px; background: transparent; color: #ccc; font: inherit; font-size: 13px; font-weight: 700; cursor: pointer; }
-.flix-quality button[aria-pressed="true"] { background: #fff; color: #000; }
-.flix-skip, .flix-next { position: absolute; right: 4vw; bottom: 12vh; border: 1px solid rgba(255,255,255,.7); border-radius: 4px; padding: 12px 22px; background: rgba(0,0,0,.6); color: #fff; font: inherit; font-size: 16px; font-weight: 700; cursor: pointer; text-decoration: none; }
+/* Skip, the next episode and the end card stand clear of the controls. */
+.flix-skip, .flix-next { position: absolute; right: 4vw; bottom: max(12vh, calc(var(--flix-bar) + 16px)); border: 1px solid rgba(255,255,255,.7); border-radius: 4px; padding: 12px 22px; background: rgba(0,0,0,.6); color: #fff; font: inherit; font-size: 16px; font-weight: 700; cursor: pointer; text-decoration: none; }
 .flix-skip:hover, .flix-next:hover { background: #fff; color: #000; }
 .flix-start { position: absolute; inset: 0; display: grid; place-items: center; border: 0; background: rgba(0,0,0,.4); cursor: pointer; }
 .flix-start span { display: grid; place-items: center; width: 96px; height: 96px; border-radius: 50%; background: rgba(255,255,255,.92); color: #000; font-size: 40px; padding-left: 8px; }
-.flix-autoplay { margin-left: auto; margin-right: 110px; display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 700; color: #ccc; cursor: pointer; flex: none; }
+
+/* The controls: a timeline over a row of buttons, on a shade rising from the bottom. */
+.flix-controls { position: absolute; inset: auto 0 0 0; padding: 40px 18px max(10px, env(safe-area-inset-bottom)); background: linear-gradient(0deg, rgba(0,0,0,.85), rgba(0,0,0,.5) 55%, rgba(0,0,0,0)); transition: opacity .4s; }
+.flix-controls[hidden] { display: none; }
+.flix-controls-row { display: flex; align-items: center; gap: 4px; }
+.flix-controls-gap { flex: 1; }
+.flix-control { position: relative; display: grid; place-items: center; width: 44px; height: 44px; flex: none; border: 0; border-radius: 50%; padding: 0; background: transparent; color: #fff; cursor: pointer; }
+.flix-control svg { width: 26px; height: 26px; }
+.flix-control:hover { background: rgba(255,255,255,.14); }
+.flix-control:focus-visible, .flix-timeline:focus-visible, .flix-popup-item:focus-visible { outline: 2px solid #fff; outline-offset: 1px; }
+.flix-control[hidden], .flix-popup-wrap[hidden], .flix-popup-group[hidden] { display: none; }
+.flix-player.is-paused .when-playing, .flix-player:not(.is-paused) .when-paused { display: none; }
+.flix-player.is-fullscreen .when-windowed, .flix-player:not(.is-fullscreen) .when-fullscreen { display: none; }
+[data-flix-mute]:not([data-level="loud"]) .when-loud, [data-flix-mute]:not([data-level="quiet"]) .when-quiet, [data-flix-mute]:not([data-level="muted"]) .when-muted { display: none; }
+/* Subtitles on: the button is underlined in red. */
+.flix-player.has-subtitles [data-flix-menu-button="captions"]::after { content: ""; position: absolute; left: 11px; right: 11px; bottom: 7px; height: 3px; border-radius: 2px; background: var(--flix-red); }
+.flix-time { padding: 0 8px; font-size: 14px; font-weight: 600; color: #eee; font-variant-numeric: tabular-nums; white-space: nowrap; }
+
+.flix-volume { display: flex; align-items: center; }
+.flix-volume input { --flix-fill: 100%; appearance: none; -webkit-appearance: none; width: 84px; height: 4px; margin: 0 8px 0 2px; border-radius: 2px; background: linear-gradient(90deg, #fff var(--flix-fill), rgba(255,255,255,.3) var(--flix-fill)); cursor: pointer; }
+.flix-volume input::-webkit-slider-thumb { -webkit-appearance: none; width: 13px; height: 13px; border-radius: 50%; background: #fff; border: 0; }
+.flix-volume input::-moz-range-thumb { width: 13px; height: 13px; border-radius: 50%; background: #fff; border: 0; }
+.flix-volume input:focus-visible { outline: 2px solid #fff; outline-offset: 4px; }
+/* A phone's volume is its buttons: no slider there, only mute. */
+@media (hover: none) { .flix-volume input { display: none; } }
+
+.flix-timeline { position: relative; height: 18px; margin: 0 4px 2px; display: flex; align-items: center; cursor: pointer; touch-action: none; }
+.flix-timeline-track { position: relative; width: 100%; height: 4px; border-radius: 2px; background: rgba(255,255,255,.25); transition: height .12s; }
+.flix-timeline:hover .flix-timeline-track, .flix-player.is-scrubbing .flix-timeline-track { height: 7px; }
+.flix-timeline-buffered, .flix-timeline-played { position: absolute; inset: 0 auto 0 0; border-radius: inherit; }
+.flix-timeline-buffered { background: rgba(255,255,255,.4); }
+.flix-timeline-played { background: var(--flix-red); }
+.flix-timeline-thumb { position: absolute; top: 50%; width: 15px; height: 15px; border-radius: 50%; background: var(--flix-red); transform: translate(-50%, -50%) scale(0); transition: transform .12s; }
+.flix-timeline:hover .flix-timeline-thumb, .flix-timeline:focus-visible .flix-timeline-thumb, .flix-player.is-scrubbing .flix-timeline-thumb { transform: translate(-50%, -50%) scale(1); }
+.flix-timeline-tip { position: absolute; bottom: 22px; transform: translateX(-50%); padding: 3px 7px; border-radius: 4px; background: rgba(20,20,20,.92); color: #fff; font-size: 13px; font-weight: 600; font-variant-numeric: tabular-nums; pointer-events: none; white-space: nowrap; }
+.flix-timeline-tip[hidden] { display: none; }
+
+/* The menus open upwards from their button. */
+.flix-popup-wrap { position: relative; }
+.flix-popup { position: absolute; right: 0; bottom: 52px; min-width: 190px; max-height: min(60vh, 420px); overflow-y: auto; padding: 6px; border-radius: 8px; background: rgba(24,24,24,.96); box-shadow: 0 10px 30px rgba(0,0,0,.6); }
+.flix-popup[hidden] { display: none; }
+.flix-popup-group + .flix-popup-group { margin-top: 6px; padding-top: 6px; border-top: 1px solid rgba(255,255,255,.12); }
+.flix-popup-title { margin: 4px 10px 4px; font-size: 12px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--flix-muted); }
+.flix-popup-item { display: flex; align-items: center; gap: 10px; width: 100%; border: 0; border-radius: 5px; padding: 8px 10px; background: transparent; color: #eee; font: inherit; font-size: 15px; text-align: left; cursor: pointer; white-space: nowrap; }
+.flix-popup-item::before { content: ""; width: 14px; flex: none; text-align: center; color: var(--flix-red); font-weight: 700; }
+.flix-popup-item[aria-checked="true"] { color: #fff; font-weight: 700; }
+.flix-popup-item[aria-checked="true"]::before { content: "✓"; }
+.flix-popup-item:hover { background: rgba(255,255,255,.1); }
+
+/* Subtitles: low on the picture, lifted over the controls while they show. */
+.flix-captions { position: absolute; left: 6%; right: 6%; bottom: 7vh; display: flex; flex-direction: column; align-items: center; gap: 4px; pointer-events: none; transition: bottom .25s; text-align: center; }
+.flix-player:not(.is-idle):has(.flix-controls:not([hidden])) .flix-captions { bottom: calc(var(--flix-bar) + 12px); }
+.flix-caption { padding: 2px 10px; border-radius: 3px; background: rgba(0,0,0,.72); color: #fff; font-size: clamp(16px, 2.4vw, 34px); line-height: 1.3; white-space: pre-line; text-shadow: 0 1px 2px #000; }
+
+/* A click on the picture: play or pause, big in the middle for a moment. */
+.flix-flash { position: absolute; left: 50%; top: 50%; width: 84px; height: 84px; margin: -42px 0 0 -42px; border-radius: 50%; background: rgba(0,0,0,.55); opacity: 0; pointer-events: none; }
+.flix-flash.is-on { animation: flix-flash .6s ease-out; }
+.flix-flash::before, .flix-flash::after { content: ""; position: absolute; background: #fff; }
+.flix-flash[data-kind="play"]::before { left: 32px; top: 24px; width: 30px; height: 36px; clip-path: polygon(0 0, 100% 50%, 0 100%); }
+.flix-flash[data-kind="pause"]::before, .flix-flash[data-kind="pause"]::after { top: 26px; width: 10px; height: 32px; border-radius: 2px; }
+.flix-flash[data-kind="pause"]::before { left: 28px; }
+.flix-flash[data-kind="pause"]::after { left: 46px; }
+.flix-flash[data-kind="play"]::after { display: none; }
+@keyframes flix-flash { from { opacity: 1; transform: scale(.8); } to { opacity: 0; transform: scale(1.3); } }
+/* A double tap on a side: which way it jumped. */
+.flix-jump { position: absolute; top: 50%; display: grid; place-items: center; width: 110px; height: 110px; margin-top: -55px; border-radius: 50%; background: rgba(255,255,255,.18); color: #fff; font-size: 16px; font-weight: 700; opacity: 0; pointer-events: none; }
+.flix-jump.is-back { left: 10%; }
+.flix-jump.is-ahead { right: 10%; }
+.flix-jump.is-on { animation: flix-flash .7s ease-out; }
+.flix-spinner { position: absolute; left: 50%; top: 50%; width: 52px; height: 52px; margin: -26px 0 0 -26px; border: 4px solid rgba(255,255,255,.25); border-top-color: #fff; border-radius: 50%; animation: flix-spin .8s linear infinite; pointer-events: none; }
+.flix-spinner[hidden] { display: none; }
+@keyframes flix-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .flix-flash.is-on, .flix-jump.is-on { animation-duration: .01s; } }
+@media (max-width: 600px) {
+  .flix-player { --flix-bar: 84px; }
+  .flix-controls { padding: 30px 8px max(6px, env(safe-area-inset-bottom)); }
+  .flix-control { width: 40px; height: 40px; }
+  .flix-control svg { width: 24px; height: 24px; }
+  .flix-time { font-size: 13px; padding: 0 4px; }
+  /* A double tap on either side does what the jump buttons do. */
+  [data-flix-seek] { display: none; }
+}
+.flix-autoplay { margin-left: auto; display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 700; color: #ccc; cursor: pointer; flex: none; }
 .flix-autoplay input { appearance: none; position: relative; width: 34px; height: 20px; margin: 0; border-radius: 10px; background: #555; cursor: pointer; transition: background .2s; }
 .flix-autoplay input::after { content: ""; position: absolute; top: 3px; left: 3px; width: 14px; height: 14px; border-radius: 50%; background: #fff; transition: transform .2s; }
 .flix-autoplay input:checked { background: #e50914; }
 .flix-autoplay input:checked::after { transform: translateX(14px); }
 .flix-autoplay input:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
-.flix-upnext { position: absolute; right: 4vw; bottom: 12vh; display: flex; gap: 18px; width: min(620px, calc(100% - 32px)); box-sizing: border-box; padding: 16px; border-radius: 8px; background: rgba(20,20,20,.92); box-shadow: 0 10px 40px rgba(0,0,0,.6); }
+.flix-upnext { position: absolute; right: 4vw; bottom: max(12vh, calc(var(--flix-bar) + 16px)); display: flex; gap: 18px; width: min(620px, calc(100% - 32px)); box-sizing: border-box; padding: 16px; border-radius: 8px; background: rgba(20,20,20,.92); box-shadow: 0 10px 40px rgba(0,0,0,.6); }
 .flix-upnext[hidden] { display: none; }
 .flix-upnext img { width: 42%; aspect-ratio: 16 / 9; object-fit: cover; border-radius: 4px; flex: none; background: #222; }
 .flix-upnext-text { min-width: 0; display: flex; flex-direction: column; gap: 4px; }
@@ -293,9 +375,8 @@ body.flix-play, body.flix-player-open { overflow: hidden; background: #000; }
 .flix-upnext.is-counting circle { animation: flix-countdown var(--flix-countdown, 8s) linear forwards; }
 @keyframes flix-countdown { to { stroke-dashoffset: 100; } }
 @media (max-width: 600px) {
-  .flix-upnext { right: 16px; left: 16px; bottom: 10vh; width: auto; flex-direction: column; gap: 10px; }
+  .flix-upnext { right: 16px; left: 16px; bottom: max(10vh, calc(var(--flix-bar) + 12px)); width: auto; flex-direction: column; gap: 10px; }
   .flix-upnext img { width: 100%; }
-  .flix-autoplay { margin-right: 90px; }
 }
 .flix-player-error { position: absolute; left: 50%; bottom: 18vh; transform: translateX(-50%); padding: 12px 18px; border-radius: 4px; background: rgba(40,0,0,.85); color: #fff; font-size: 15px; }
 
