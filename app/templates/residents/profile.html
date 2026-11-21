@@ -58,7 +58,7 @@
           <div style="margin-top:1rem">
             {% if residency %}
               <div class="kv"><span class="l">Værelse</span><span class="r">{{ residency.room.number|stringformat:"03d" }}</span></div>
-              {% if residency.workgroup %}<div class="kv"><span class="l">Embedsgruppe</span><span class="r">{{ residency.workgroup.name }}</span></div>{% endif %}
+              {% if residency.workgroup %}<div class="kv"><span class="l">Embedsgruppe</span><span class="r"><a href="{% url 'workgroups:detail' residency.workgroup.pk %}">{{ residency.workgroup.name }}</a></span></div>{% endif %}
               {% if residency.cleaning %}<div class="kv"><span class="l">Rengøring</span><span class="r">{{ residency.cleaning.name }}</span></div>{% endif %}
             {% endif %}
             {% if subject.sponsor %}

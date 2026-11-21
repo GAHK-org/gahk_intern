@@ -69,6 +69,8 @@ def _nav_intern(roles: Collection[str], user_pk: int) -> list[NavSection]:
     if "indstilling" in roles:
         vaerelser.append((reverse("soegvaerelse:admin"), "Værelsesudbud", "offer"))
     grupper: list[NavItem] = [
+        # Every resident, also one with no group this month: the page says so and lists the groups.
+        (reverse("workgroups:mine"), "Din embedsgruppe", "users"),
         (reverse("ak:index"), "AK-krydser", "check"),
         (reverse("oelkaelder:my"), "Ølkælder", "beer"),
     ]
