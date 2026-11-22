@@ -711,7 +711,8 @@ def test_unseen_come_first_then_most_important_then_newest(
 
     expected = ["gammel høj", "gammel", "ny lav", "set kritisk", "set ny"]
     assert [r.title for r in client.get(reverse("notifications:index")).context["rows"]] == expected
-    assert [r.title for r in client.get(reverse("notifications:dropdown")).context["rows"]] == expected
+    # The bell's panel shows only the unseen ones, in the same order.
+    assert [r.title for r in client.get(reverse("notifications:dropdown")).context["rows"]] == expected[:3]
 
 
 def test_index_by_category_groups_in_display_order(
@@ -857,6 +858,37 @@ def test_mark_all_seen_marks_only_own_visible_rows(
     assert services.unseen_count(a.pk) == 0
     others.refresh_from_db()
     assert others.seen_at is None
+
+
+def test_the_dropdown_leaves_out_seen_rows(client: Client, make_resident: Callable[..., Resident]) -> None:
+    a = make_resident(email="a@gahk.dk")
+    make_notification(a, title="ny")
+    make_notification(a, title="set", seen_at=timezone.now())
+    client.force_login(a)
+
+    response = client.get(reverse("notifications:dropdown"))
+
+    assert [r.title for r in response.context["rows"]] == ["ny"]
+    assert "Ryd" in response.content.decode()
+
+
+def test_clearing_from_the_bell_returns_an_empty_panel(
+    client: Client, make_resident: Callable[..., Resident]
+) -> None:
+    a = make_resident(email="a@gahk.dk")
+    make_notification(a, title="Vaskeriet er åbent")
+    client.force_login(a)
+
+    response = client.post(reverse("notifications:mark_all_seen"), headers={"HX-Request": "true"})
+
+    html = response.content.decode()
+    assert response.status_code == 200
+    assert services.unseen_count(a.pk) == 0
+    assert "Ingen nye notifikationer." in html and "Ryd" not in html
+    # The badge comes along out of band, emptied.
+    assert '<span id="js-notif-badge" hx-swap-oob="true"></span>' in html
+    # Still on the page, as seen.
+    assert "Vaskeriet er åbent" in client.get(reverse("notifications:index")).content.decode()
 
 
 def test_the_bell_badge_counts_unseen(client: Client, make_resident: Callable[..., Resident]) -> None:

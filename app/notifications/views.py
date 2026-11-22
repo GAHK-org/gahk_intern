@@ -24,7 +24,7 @@ from . import categories, services
 from .categories import IMPORTANCE_CHOICES, Importance
 from .models import Notification, NotificationPreference, NotificationSettings
 
-# How many the bell's dropdown shows. The page shows the rest.
+# How many unseen the bell's dropdown shows. The page shows the rest, seen ones included.
 DROPDOWN_SIZE = 10
 
 VIEWS = (("kronologisk", "Kronologisk"), ("kategori", "Efter kategori"))
@@ -68,9 +68,13 @@ def index(request: HttpRequest) -> HttpResponse:
 @login_required
 def dropdown(request: HttpRequest) -> HttpResponse:
     """The bell's panel, fetched by htmx the first time it opens — so a page render costs one COUNT
-    for the badge, not ten rows nobody looked at."""
+    for the badge, not ten rows nobody looked at. Only unseen rows: a seen one leaves the panel."""
+    return _render_dropdown(request)
+
+
+def _render_dropdown(request: HttpRequest) -> HttpResponse:
     resident = current_resident(request)
-    rows = Notification.objects.filter(recipient=resident).visible().ranked()[:DROPDOWN_SIZE]
+    rows = Notification.objects.filter(recipient=resident).visible().unseen().ranked()[:DROPDOWN_SIZE]
     return render(request, "notifications/_dropdown.html", {"rows": rows})
 
 
@@ -107,8 +111,11 @@ def open_batch(request: HttpRequest, batch: uuid.UUID) -> HttpResponseRedirect:
 
 @require_POST
 @login_required
-def mark_all_seen(request: HttpRequest) -> HttpResponseRedirect:
+def mark_all_seen(request: HttpRequest) -> HttpResponse:
+    """The page's "Markér alle som læst", or the bell's "Ryd" (htmx: the emptied panel back)."""
     services.mark_seen(Notification.objects.filter(recipient=current_resident(request)).visible())
+    if request.headers.get("HX-Request"):
+        return _render_dropdown(request)
     return redirect("notifications:index")
 
 
