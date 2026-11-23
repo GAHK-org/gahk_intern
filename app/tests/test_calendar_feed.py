@@ -1,4 +1,4 @@
-"""The resident's calendar subscription (/calendar/): the settings page, and the feed it hands out."""
+"""The resident's calendar subscription (/calendar/settings): the settings page, and the feed it hands out."""
 
 import datetime
 from collections.abc import Callable
@@ -16,7 +16,7 @@ from tests.test_events import _residency, make_event, make_private
 
 pytestmark = pytest.mark.django_db
 
-SETTINGS = "/calendar/"
+SETTINGS = "/calendar/settings"
 
 
 @pytest.fixture
@@ -38,7 +38,7 @@ def _subscription(resident: Resident, **choices: object) -> CalendarSubscription
 
 
 def _feed_url(resident: Resident) -> str:
-    return f"/calendar/{CalendarSubscription.for_resident(resident).token}.ics"
+    return f"/calendar/feed/{CalendarSubscription.for_resident(resident).token}.ics"
 
 
 def _unfolded(resident: Resident) -> str:
@@ -66,7 +66,7 @@ def test_the_feed_needs_no_session(beboer: Resident) -> None:
 
 def test_an_unknown_token_is_404_not_403() -> None:
     """403 would confirm a token once existed."""
-    assert Client().get("/calendar/ikke-et-rigtigt-token.ics").status_code == 404
+    assert Client().get("/calendar/feed/ikke-et-rigtigt-token.ics").status_code == 404
 
 
 def test_a_rotated_token_stops_working_and_the_new_one_works(beboer: Resident) -> None:
@@ -84,7 +84,7 @@ def test_the_old_address_redirects_permanently(beboer: Resident) -> None:
     response = Client().get(f"/kalender/{token}.ics")
 
     assert response.status_code == 301
-    assert response["Location"] == f"/calendar/{token}.ics"
+    assert response["Location"] == f"/calendar/feed/{token}.ics"
     assert Client().get(f"/kalender/{token}.ics", follow=True).status_code == 200
 
 
@@ -276,8 +276,8 @@ def test_the_page_shows_the_address_to_copy_and_to_subscribe_with(client: Client
 
     body = client.get(SETTINGS).content.decode()
 
-    assert f'value="http://testserver/calendar/{token}.ics"' in body
-    assert f'href="webcal://testserver/calendar/{token}.ics"' in body
+    assert f'value="http://testserver/calendar/feed/{token}.ics"' in body
+    assert f'href="webcal://testserver/calendar/feed/{token}.ics"' in body
     assert "data-copy=" in body
     for app in ("Google Kalender", "Outlook", "Apple Kalender"):
         assert app in body
@@ -343,7 +343,7 @@ def test_a_new_link_is_minted_on_post(client: Client, beboer: Resident) -> None:
     before = CalendarSubscription.for_resident(beboer).token
     client.force_login(beboer)
 
-    response = client.post("/calendar/new-link")
+    response = client.post("/calendar/settings/new-link")
 
     assert response.status_code == 302
     assert CalendarSubscription.objects.get(resident=beboer).token != before
@@ -371,4 +371,5 @@ def test_the_kitchen_account_may_not_open_the_settings_page(make_resident: Calla
     from core.middleware import kitchen_may_open
 
     assert not kitchen_may_open(SETTINGS)
-    assert kitchen_may_open("/calendar/abc.ics")
+    assert kitchen_may_open("/calendar/feed/abc.ics")
+    assert not kitchen_may_open("/calendar/")

@@ -180,7 +180,7 @@ def test_every_route_is_closed_to_non_administrators(
 
     Parametrised over every route so a new view cannot quietly be added outside the gate.
 
-    The calendar subscription (/calendar/, its own app) is not here: see test_calendar_feed.py.
+    The calendar subscription (/calendar/settings, its own app) is not here: see test_calendar_feed.py.
     """
     client.force_login(beboer)
     url = EVENTS + path

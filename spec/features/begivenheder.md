@@ -99,7 +99,7 @@ so they are never read as an id.
 "<int:pk>/ics"           event_ics      GET       single-event download
 ```
 
-The resident's calendar subscription (settings page and `.ics` feed) is its own feature at
+The resident's calendar subscription (settings page and `.ics` feed) is its own feature under
 `/calendar/`; see `calendar-subscription.md`.
 
 ## Data model

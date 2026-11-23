@@ -1,6 +1,6 @@
 """Demo calendar subscriptions, used by ``manage.py seed_demo``.
 
-A subscription is otherwise made the first time someone opens /calendar/, so a fresh checkout shows
+A subscription is otherwise made the first time someone opens /calendar/settings, so a fresh checkout shows
 only that never-fetched state. These give the documented logins the others:
 
   * beboer@: fetched an hour ago, the defaults (all events, birthdays): the usual case;
@@ -9,7 +9,7 @@ only that never-fetched state. These give the documented logins the others:
     that differ from the defaults, and a feed that leaves things out;
   * oel@: made but never fetched, i.e. added to no calendar app yet.
 
-admin@ and regnskab@ have none, so opening /calendar/ shows a subscription being made on first use.
+admin@ and regnskab@ have none, so opening /calendar/settings shows a subscription being made on first use.
 Some other residents get one too, with varied fetch counts, for the Django admin's list. No rng, so
 the random draws of everything seeded after this stay as they were.
 """
@@ -28,7 +28,7 @@ LOGINS: dict[str, tuple[timedelta | None, int, str, bool, timedelta | None]] = {
     "ak@gahk.dk": (timedelta(minutes=40), 133, EventChoice.ACCEPTED, False, timedelta(days=21)),
     "oel@gahk.dk": (None, 0, EventChoice.ALL, True, None),
 }
-# Left without one, whatever their pk: opening /calendar/ as them shows the first-visit state.
+# Left without one, whatever their pk: opening /calendar/settings as them shows the first-visit state.
 NONE_FOR = {"admin@gahk.dk", "regnskab@gahk.dk"}
 # Every third other resident has subscribed too.
 OTHERS_EVERY = 3

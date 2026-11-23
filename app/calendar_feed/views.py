@@ -97,6 +97,6 @@ def calendar_feed(request: HttpRequest, token: str) -> HttpResponse:
 
 
 def old_feed_address(request: HttpRequest, token: str) -> HttpResponseRedirect:
-    """/kalender/<token>.ics, the address before this moved under /calendar/. Calendar apps and
+    """/kalender/<token>.ics, the address before this moved under /calendar/feed/. Calendar apps and
     gahk.dk's pass-through follow a permanent redirect."""
     return HttpResponseRedirect(reverse("calendar_feed:feed", args=[token]), status=301)

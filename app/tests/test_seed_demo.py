@@ -214,7 +214,7 @@ def test_seed_demo_leaves_no_mail_waiting_for_a_backend_that_really_sends(settin
 
 @pytest.mark.django_db
 def test_seed_demo_gives_the_logins_calendar_subscriptions_in_each_state() -> None:
-    """/calendar/ shows when the address was last fetched and warns after a week; the settings change
+    """/calendar/settings shows when the address was last fetched and warns after a week; the settings change
     what the feed holds. A subscription is otherwise only made on the first visit, never fetched."""
     from django.test import Client
     from django.urls import reverse

@@ -2,7 +2,7 @@
 
 Each resident has a personal calendar address to subscribe to in Google Kalender, Outlook or Apple
 Kalender. It is the resident's calendar, not begivenheder's: today it carries events and birthdays,
-later kitchen and cleaning shifts. Settings page at `/calendar/` on intern.gahk.dk, linked from the
+later kitchen and cleaning shifts. Settings page at `/calendar/settings` on intern.gahk.dk, linked from the
 user menu, the month calendar and every event page.
 
 ## The settings page
@@ -21,7 +21,7 @@ user menu, the month calendar and every event page.
 
 ## The feed
 
-- `/calendar/<token>.ics`, no login: the token in the path is the credential. Unknown tokens 404.
+- `/calendar/feed/<token>.ics`, no login: the token in the path is the credential. Unknown tokens 404.
   Served inline, `no-store`, `noindex`, `no-referrer`.
 - Events come from begivenheder's visibility rules (never a private event you were not invited to),
   from 90 days back. Where you stand is in the title:
@@ -51,6 +51,9 @@ user menu, the month calendar and every event page.
   by the alumneliste; a secret there leaks through code that does not know it holds one.
 - **A prefix in the title** rather than a status or category: the title is the only thing every
   calendar app shows.
+- **The feed under `/calendar/feed/`, the page at `/calendar/settings`**: `/calendar/` stays free
+  for a calendar view of one's own, a page under `/calendar/` can never collide with a token, and
+  the kitchen account's allowlist names the feeds by prefix.
 - **Every fetch writes**: one UPDATE per request is nothing for a house of sixty, and the count is
   what tells whether subscriptions are in use.
 - **A week before the warning**: every calendar app fetches at least daily (Google is the slowest).
