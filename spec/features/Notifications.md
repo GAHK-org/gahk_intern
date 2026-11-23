@@ -139,7 +139,8 @@ they would get a 403 on opening. Acting on your own content never notifies you.
 
 A button with an unseen-count badge in the top bar opens a dropdown (loaded with htmx on click) with
 the **10** first active in-app notifications still to deal with — unseen first, then most important,
-then most recent — and a link to the page.
+then most recent. Its heading and a "Se alle" link both lead to the page; "Se alle" stays at the
+bottom of the panel while the list scrolls.
 
 - A read notification leaves the dropdown, unless it is Kritisk.
 - A done notification leaves the dropdown, Kritisk too.

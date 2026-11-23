@@ -2532,8 +2532,13 @@
   .notif-panel-head { display:flex; align-items:center; justify-content:space-between; gap:8px;
     padding:10px 14px; border-bottom:1px solid var(--border); font-weight:700; font-size:14px; }
   .notif-panel-head a { font-size:13px; font-weight:600; color:var(--muted); }
-  .notif-panel-foot { display:block; text-align:center; padding:10px; font-size:13px; font-weight:600;
-    border-top:1px solid var(--border); text-decoration:none; }
+  .notif-panel-head a.notif-panel-title { font-size:14px; font-weight:700; color:var(--ink); text-decoration:none; }
+  .notif-panel-head a.notif-panel-title:hover { text-decoration:underline; }
+  /* Sticky at the bottom of the scrolling panel, so the way to the page is always in view. Opaque, or
+     the rows scrolling under it would show through. */
+  .notif-panel-foot { position:sticky; bottom:0; z-index:1; display:block; text-align:center; padding:10px;
+    font-size:13px; font-weight:600; background:var(--surface); border-top:1px solid var(--border); text-decoration:none; }
+  .notif-panel-foot:hover { background:var(--surface-2); }
   .notif-empty { padding:14px; font-size:14px; }
 
   /* The avatar's account menu, beside the bell and styled like its panel. */
