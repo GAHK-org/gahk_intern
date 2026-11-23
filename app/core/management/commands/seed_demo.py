@@ -54,6 +54,7 @@ from den_hurtige.models import QuickComment, QuickPost, QuickReaction
 from events.demo import seed as seed_events
 from events.models import CalendarFeedToken, Event, EventInvite, Rsvp
 from gahkflix.demo import history as gahkflix_history
+from gahkflix.demo import seed as seed_gahkflix_premieres
 from gahkflix.models import ChangeRequest as GahkflixRequest
 from gahkflix.models import Series as GahkflixSeries
 from gahkflix.models import Tag as GahkflixTag
@@ -261,6 +262,8 @@ class Command(BaseCommand):
         return residents
 
     def _seed_after_history(self, residents: list[Resident]) -> None:
+        # The premieres and drafts join the history's series and films.
+        seed_gahkflix_premieres(residents, self.now)
         # After the albums and the history's films: these posts embed one of each.
         seed_opslagstavle_embeds(residents, self.now)
         seed_den_hurtige(residents, self.now, self.rng)
