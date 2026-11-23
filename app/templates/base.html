@@ -121,11 +121,11 @@
       <button class="hamburger" @click="sidebar = !sidebar" aria-label="Menu">☰</button>
       {% comment %}
         The site-wide search (search app): suggestions drop down as you type (htmx, with the arrow keys
-        handled by frontend/src/search.ts), Enter opens every result. Not for the kitchen account, which
-        may open only a few pages, nor before logging in. On a phone the field has no room, so the
-        magnifier in the right-hand group opens the results page instead.
+        handled by frontend/src/search.ts), Enter opens every result. Not before logging in. The kitchen
+        account has it too and finds only what it may open (search.views). On a phone the field has no
+        room, so the magnifier in the right-hand group opens the results page instead.
       {% endcomment %}
-      {% if user.is_authenticated and "koekken" not in effective_roles %}
+      {% if user.is_authenticated %}
         <form class="topsearch" method="get" action="{% url 'search:results' %}" role="search" data-site-search>
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
           <input type="search" name="q" placeholder="Søg på intranettet…" aria-label="Søg på intranettet"
@@ -137,7 +137,7 @@
         </form>
       {% endif %}
       <div class="topright">
-        {% if user.is_authenticated and "koekken" not in effective_roles %}
+        {% if user.is_authenticated %}
           <a href="{% url 'search:results' %}" class="btn-top topsearch-phone" aria-label="Søg">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
           </a>

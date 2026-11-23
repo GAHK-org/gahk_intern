@@ -21,6 +21,7 @@ KITCHEN_ALLOWED_PREFIXES = (
     "/opslagstavle/",
     "/reparationer/",
     "/notifikationer/",
+    "/search/",  # the top bar's search, which leaves out what this list does not let through
     # Auth: login, logout, password change/reset (residents.urls). NOT the rest of /admin/, which
     # is site-admin.
     "/admin/login",

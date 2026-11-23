@@ -36,7 +36,8 @@ with the same words.
   - Hjemmeside results are only for its editors (administrator, indstilling, inspektion, pr).
   - A feature closed to the reader leaves out its whole section.
 - The admin preview applies: viewing the site as a beboer searches as a beboer.
-- The kitchen account has no search field. Its few pages are in its menu.
+- The kitchen account searches too, but finds only what its gate lets it open: its menu's pages,
+  opslag, reparationer and notification settings. No alumner, events, albums or films.
 
 ## Keyboard
 

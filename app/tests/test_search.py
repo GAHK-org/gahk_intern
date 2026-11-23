@@ -82,12 +82,31 @@ def test_the_top_bar_searches_the_whole_intranet(beboer: Resident) -> None:
     assert 'hx-get="/search/suggestions"' in page
 
 
-def test_the_kitchen_account_has_no_search(make_resident: MakeResident) -> None:
+def test_the_kitchen_account_finds_only_what_it_may_open(
+    beboer: Resident, make_resident: MakeResident
+) -> None:
+    """The kitchen has the search too, but its middleware gate (core.middleware) keeps it to a few
+    pages, so the search leaves out every result behind that gate: a title is already the leak."""
     kitchen = make_resident(email="koekken@gahk.dk", is_kitchen=True)
-    client = client_for(kitchen)
-    assert "data-site-search" not in client.get("/opslagstavle/").content.decode()
-    assert client.get("/search/", {"q": "øl"}).status_code == 403
-    assert client.get("/search/suggestions", {"q": "øl"}).status_code == 403
+    assert "data-site-search" in client_for(kitchen).get("/opslagstavle/").content.decode()
+
+    live_here(make_resident(email="vask@gahk.dk", study="Vaskemaskineteknik"), 42)
+    Notice.objects.create(author=beboer, body="Vaskemaskinen i kælderen er fixet")
+    RepairTask.objects.create(reported_by=beboer, title="Vaskemaskine larmer", location="Kælderen")
+    Event.objects.create(
+        organiser=beboer, title="Vaskemaskinekursus", starts_at=timezone.now() + datetime.timedelta(days=2)
+    )
+    Album.objects.create(folder="2026", name="Vaskemaskinefesten")
+
+    assert section_keys(beboer, "vaskemaskine") == ["residents", "notices", "events", "albums", "repairs"]
+    assert section_keys(kitchen, "vaskemaskine") == ["notices", "repairs"]
+    assert "Vaskemaskinekursus" not in suggestions(kitchen, "vaskemaskine")
+
+    # Its own menu's pages and the account pages it may open, but no profile: it has none.
+    assert hit_titles(kitchen, "reparation", "pages") == ["Reparationer"]
+    assert hit_titles(kitchen, "notifikationer", "pages") == ["Notifikationsindstillinger"]
+    assert hit_titles(kitchen, "profil", "pages") == []
+    assert hit_titles(beboer, "profil", "pages") != []
 
 
 def test_logged_out_is_sent_to_log_in() -> None:
