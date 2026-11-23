@@ -20,6 +20,8 @@
                 {% elif event.kind == "failed" %}{{ file|default:"Filen" }} kunne ikke behandles: {{ event.changes.error }}
                 {% elif event.kind == "edited" %}<b>{{ who }}</b> ændrede videoen{% if event.request %} — et forslag, som en anden administrator godkendte{% if is_administrator %} (<a href="{% url 'gahkflix:request' event.request_id %}">se forslaget</a>){% endif %}{% endif %}.
                 {% elif event.kind == "published" %}<b>{{ who }}</b> udgav videoen.
+                {% elif event.kind == "premiered" %}Videoen havde premiere, og alle fik besked.
+                {% elif event.kind == "unpublished" %}<b>{{ who }}</b> gjorde videoen til en kladde igen.
                 {% elif event.kind == "binned" %}<b>{{ who }}</b> lagde videoen i papirkurven{% if event.request %}, da to andre administratorer havde godkendt det{% if is_administrator %} (<a href="{% url 'gahkflix:request' event.request_id %}">se anmodningen</a>){% endif %}{% endif %}.
                 {% elif event.kind == "restored" %}<b>{{ who }}</b> hentede videoen tilbage fra papirkurven.
                 {% endif %}

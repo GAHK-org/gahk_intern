@@ -1,4 +1,5 @@
 import json
+from datetime import datetime, time
 from typing import Any
 
 from django import forms
@@ -9,8 +10,8 @@ from core.danish import MONTHS
 from photo_album.models import validate_tag_name
 from residents.models import Resident
 
-from .dating import FIRST_YEAR, PartialDate
-from .models import Series, Video, normalize_name
+from .dating import FIRST_YEAR, DatePrecision, PartialDate, parse_premiere, premiere_value
+from .models import PREMIERE_MAX_AHEAD, PremiereBlur, Series, Video, normalize_name
 
 MAX_CREDITS = 100
 MAX_TAGS = 20
@@ -23,7 +24,11 @@ class VideoDetailsForm(forms.Form):
     """A video's details as one form. Cast and tags arrive as JSON from their editors (gahkflix.ts).
 
     The release date is three fields, of which only the year is needed: a month and a day nobody
-    knows are left out rather than made up (dating.py).
+    knows are left out rather than made up (dating.py). The year is needed to publish (`publishing`),
+    and once a video has a date it cannot be taken away; an older video without one may be edited
+    without it. It cannot be in the future — unless the video is a premiere (`premiere`), which comes
+    out at a whole moment: the day, month and year, and a time (`premiere_time`), which only a
+    premiere has.
     """
 
     title = forms.CharField(max_length=200, label="Titel")
@@ -54,6 +59,19 @@ class VideoDetailsForm(forms.Form):
         label="Dag",
         widget=forms.Select(attrs={"aria-label": "Dag"}),
     )
+    premiere = forms.BooleanField(required=False, label="Premiere")
+    premiere_time = forms.TimeField(
+        required=False,
+        label="Tidspunkt",
+        input_formats=["%H:%M", "%H.%M"],
+        widget=forms.TimeInput(format="%H:%M", attrs={"type": "time", "aria-label": "Tidspunkt"}),
+    )
+    premiere_blur = forms.ChoiceField(
+        choices=PremiereBlur.choices,
+        required=False,
+        initial=PremiereBlur.NONE,
+        label="Miniature før premieren",
+    )
     series = forms.ModelChoiceField(
         queryset=Series.objects.all(), required=False, label="Serie", empty_label="Ingen serie"
     )
@@ -74,20 +92,30 @@ class VideoDetailsForm(forms.Form):
     cast = forms.CharField(required=False, widget=forms.HiddenInput)
     tags = forms.CharField(required=False, widget=forms.HiddenInput)
 
-    def __init__(self, *args: Any, video: Video, **kwargs: Any) -> None:  # noqa: ANN401
+    def __init__(self, *args: Any, video: Video, publishing: bool = False, **kwargs: Any) -> None:  # noqa: ANN401
         self.video = video
+        self.publishing = publishing
         self.release: PartialDate | None = None
+        self.premiere_at: datetime | None = None
         super().__init__(*args, **kwargs)
 
     @staticmethod
-    def release_initial(value: str | None) -> dict[str, int | None]:
-        """The three date fields for a release date as services.snapshot has it ("2015-03")."""
+    def release_initial(value: str | None, premiere: str | None = None) -> dict[str, Any]:
+        """The date fields for a release date and a premiere as services.snapshot has them ("2015-03",
+        "2026-12-24T20:00+01:00")."""
         release = PartialDate.parse(value)
+        moment = parse_premiere(premiere)
         return {
             "released_year": release.year if release else None,
             "released_month": release.month if release else None,
             "released_day": release.day if release else None,
+            "premiere": moment is not None,
+            "premiere_time": timezone.localtime(moment).time() if moment else None,
         }
+
+    def clean_premiere_blur(self) -> str:
+        """Left out, it stays as it is."""
+        return self.cleaned_data["premiere_blur"] or self.video.premiere_blur
 
     def clean_title(self) -> str:
         title = normalize_name(self.cleaned_data["title"].strip())
@@ -136,25 +164,72 @@ class VideoDetailsForm(forms.Form):
             raise ValidationError(f"Højst {MAX_TAGS} tags.")
         return sorted(names.values(), key=str.lower)
 
-    def clean_released_year(self) -> int | None:
-        year: int | None = self.cleaned_data["released_year"]
-        if year is not None and year > timezone.localdate().year + 1:
-            raise ValidationError("Året ligger for langt ude i fremtiden.")
-        return year
+    def _clean_premiere(self, data: dict[str, Any]) -> None:
+        year, month, day = (data.get(f"released_{part}") for part in ("year", "month", "day"))
+        at: time | None = data.get("premiere_time")
+        if not (year and month and day):
+            self.add_error("premiere", "En premiere skal have dag, måned og år.")
+        if at is None:
+            if "premiere_time" not in self.errors:
+                self.add_error("premiere_time", "Vælg også klokkeslættet for premieren.")
+            return
+        if not (year and month and day):
+            return
+        try:
+            moment = timezone.make_aware(datetime.combine(PartialDate.of(year, month, day).start, at))
+        except ValueError:
+            self.add_error("released_day", f"Der er ingen {day}. {MONTHS[month]} i {year}.")
+            return
+        now = timezone.now()
+        if moment > now + PREMIERE_MAX_AHEAD:
+            self.add_error("premiere", "Premieren kan højst ligge et år ude i fremtiden.")
+        elif moment > now and self.video.is_released and not self.video.can_be_taken_back:
+            self.add_error(
+                "premiere",
+                "Videoen har været ude i mere end et døgn, så den kan ikke længere få premiere senere.",
+            )
+        elif self._moves_when_it_came_out(moment, now):
+            self.add_error(
+                "premiere",
+                "Videoen er allerede udgivet, så en premiere efter udgivelsen skal ligge i fremtiden. "
+                "Fjern fluebenet ved Premiere, hvis den skal ud nu.",
+            )
+        else:
+            self.premiere_at = moment
+            self.release = PartialDate(moment.date(), DatePrecision.DAY)
+
+    def _moves_when_it_came_out(self, moment: datetime, now: datetime) -> bool:
+        """A published video given a premiere already past, yet after its publishing: it would seem to
+        have come out then, which would open its time windows again and put it first under the newest
+        (models.Video.comes_out_at_premiere). Before the publishing, it only records when the film was
+        first shown; the moment it already has is kept."""
+        published = self.video.published_at
+        return published is not None and published < moment <= now and moment != self.video.premiere_at
 
     def _clean_release(self, data: dict[str, Any]) -> None:
+        if data.get("premiere"):
+            self._clean_premiere(data)
+            return
         year, month, day = (data.get(f"released_{part}") for part in ("year", "month", "day"))
         if day and not month:
             self.add_error("released_day", "Vælg også måneden, eller lad dagen stå tom.")
-        elif (month or day) and not year:
-            if "released_year" not in self.errors:
-                self.add_error("released_year", "Skriv også året.")
-        elif year:
+        elif not year:
+            if "released_year" not in self.errors and (self.publishing or self.video.released_on):
+                self.add_error("released_year", "Udfyld udgivelsesdatoen – mindst året.")
+        else:
             try:
                 self.release = PartialDate.of(year, month, day)
             except ValueError:
                 # Only a day its month does not have gets here: a day comes with a month (above).
                 self.add_error("released_day", f"Der er ingen {day}. {MONTHS[month or 0]} i {year}.")
+                return
+            if self.release.start > timezone.localdate():
+                self.release = None
+                self.add_error(
+                    "released_year",
+                    "Udgivelsesdatoen ligger i fremtiden. Sæt flueben ved Premiere, hvis videoen skal "
+                    "udkomme på et bestemt tidspunkt.",
+                )
 
     def clean(self) -> dict[str, Any]:
         data = super().clean() or {}
@@ -179,6 +254,8 @@ class VideoDetailsForm(forms.Form):
             "title": data["title"],
             "description": data["description"].strip(),
             "released_on": self.release.iso() if self.release else None,
+            "premiere_at": premiere_value(self.premiere_at),
+            "premiere_blur": data["premiere_blur"],
             "series": data["series"].pk if data["series"] else None,
             "season": data["season"],
             "episode": data["episode"],
