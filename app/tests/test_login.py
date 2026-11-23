@@ -9,7 +9,25 @@ from django.urls import reverse
 
 from residents.models import Resident
 
-LOGIN = "/admin/login"
+LOGIN = "/login"
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize(
+    ("name", "path"),
+    [
+        ("login", "/login"),
+        ("logout", "/logout"),
+        ("password_change", "/password-change"),
+        ("password_reset", "/password-reset"),
+        ("password_reset_complete", "/password-reset/complete"),
+    ],
+)
+def test_the_account_pages_are_at_the_root_not_under_admin(name: str, path: str) -> None:
+    """They are for everyone; /admin/ holds the site-admin tools. The old addresses are gone."""
+    assert reverse(name) == path
+    assert reverse("password_reset_confirm", args=["MQ", "x-y"]) == "/password-reset/MQ/x-y/"
+    assert Client().get("/admin" + path).status_code == 404
 
 
 @pytest.mark.django_db
@@ -71,7 +89,7 @@ def test_a_stale_login_form_goes_back_to_a_fresh_one(caplog: pytest.LogCaptureFi
 
     assert response.status_code == 302
     assert response["Location"] == f"{LOGIN}?next=%2Fden-hurtige%2F"
-    assert "CSRF refused POST /admin/login" in caplog.text
+    assert "CSRF refused POST /login" in caplog.text
     assert "Siden var udløbet" in c.get(response["Location"]).content.decode()
 
 

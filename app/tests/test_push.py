@@ -373,7 +373,7 @@ def test_subscribe_requires_login(client: Client, subscribe_url: str) -> None:
     response = _post(client, subscribe_url, _body())
 
     assert response.status_code == 302
-    assert "/admin/login" in response["Location"]
+    assert "/login" in response["Location"]
     assert not PushSubscription.objects.exists()
 
 

@@ -664,7 +664,7 @@ def test_the_pages_require_login(client: Client) -> None:
     for name in ("index", "dropdown", "preferences"):
         response = client.get(reverse(f"notifications:{name}"))
         assert response.status_code == 302, name
-        assert "/admin/login" in response["Location"]
+        assert "/login" in response["Location"]
 
 
 def test_index_lists_own_active_rows_most_important_first_then_newest(
@@ -1356,7 +1356,7 @@ def test_notifications_live_in_the_topbar_not_the_sidebar(make_resident: Callabl
     assert 'class="notif-bell"' in body
     menu = body[body.index('id="user-menu-panel"') :]
     assert reverse("notifications:preferences") in menu
-    assert 'action="/admin/logout"' in menu
+    assert 'action="/logout"' in menu
     assert "<noscript>" in body  # logging out never depends on the menu's JS
 
 

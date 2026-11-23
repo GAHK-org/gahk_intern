@@ -74,8 +74,8 @@ def test_the_rest_of_the_site_is_closed(kitchen: Resident, path: str) -> None:
         "/media/quick_posts/2026/09/kaffe.jpg",
         "/static/manifest.json",
         "/kalender/no-such-token.ics",
-        "/admin/password-change",
-        "/admin/password-reset",
+        "/password-change",
+        "/password-reset",
     ],
 )
 def test_what_its_pages_need_is_not_gated(kitchen: Resident, path: str) -> None:

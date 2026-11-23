@@ -21,12 +21,9 @@ KITCHEN_ALLOWED_PREFIXES = (
     "/opslagstavle/",
     "/reparationer/",
     "/notifikationer/",
-    # Auth: login, logout, password change/reset (residents.urls). NOT the rest of /admin/, which
-    # is site-admin.
-    "/admin/login",
-    "/admin/logout",
-    "/admin/password",
-    "/admin/reset/",
+    # Password change and reset, with the reset links (residents.urls).
+    "/password-change",
+    "/password-reset",
     "/admin/preview",  # so an admin previewing as the kitchen can end it
     # Plumbing every allowed page needs: assets, Den Hurtige's images, the service worker, live
     # updates, health probes and calendar feeds (token-authenticated, no session involved).
@@ -35,9 +32,10 @@ KITCHEN_ALLOWED_PREFIXES = (
     "/ws/",
     "/kalender/",
 )
-# /install is public anyway (how to install the app), and the kitchen tablet may itself carry the old
-# app from gahk.dk, whose notice links there: a 403 only for the kitchen account would make no sense.
-KITCHEN_ALLOWED_PATHS = ("/sw.js", "/healthz", "/health", "/install")
+# Logging in and out. /install is public anyway (how to install the app), and the kitchen tablet may
+# itself carry the old app from gahk.dk, whose notice links there: a 403 only for the kitchen account
+# would make no sense.
+KITCHEN_ALLOWED_PATHS = ("/sw.js", "/healthz", "/health", "/install", "/login", "/logout")
 
 
 def kitchen_home() -> str:
