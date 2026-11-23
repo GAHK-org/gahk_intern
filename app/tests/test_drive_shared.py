@@ -97,7 +97,7 @@ def test_creating_one_needs_three_members_and_tells_the_invited(people: dict[str
     ).exists()
 
 
-def test_only_members_see_it_and_overseers_see_only_its_number(people: dict[str, Resident]) -> None:
+def test_only_members_see_it_and_overseers_see_only_its_tag(people: dict[str, Resident]) -> None:
     folder = _make(people)
     root = Folder.objects.get(kind=Folder.Kind.SHARED_ROOT)
     url = reverse("drive:folder", args=[root.uuid])
@@ -110,7 +110,10 @@ def test_only_members_see_it_and_overseers_see_only_its_number(people: dict[str,
     inspector = _client(people["inspector"])
     page = inspector.get(url).content.decode()
     assert "Temafest" not in page
-    assert f"Delt mappe {folder.shared.number}" in page
+    assert f"Delt mappe {folder.shared.tag}" in page
+    # A random tag, not the counting key.
+    assert len(folder.shared.tag) == 6 and folder.shared.uuid.hex.startswith(folder.shared.tag)
+    assert f"#{folder.shared.pk:04d}" not in page
     assert "3 medlemmer" in page
     assert inspector.get(reverse("drive:folder", args=[folder.uuid])).status_code == 403
     assert inspector.get(reverse("drive:shared", args=[folder.shared.uuid])).status_code == 404

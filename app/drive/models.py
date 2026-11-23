@@ -486,7 +486,7 @@ class SharedFolder(models.Model):
 
     Its top folder (kind SHARED) and every folder below point here. At expiry it is deleted for good,
     or archived: moved to `Delte mapper/<year it was created>/`, readable by every resident under its
-    real name, and kept for good. Admins and Inspektionen see only its number, member count, file
+    real name, and kept for good. Admins and Inspektionen see only its tag, member count, file
     count and size."""
 
     class OnExpiry(models.TextChoices):
@@ -505,11 +505,14 @@ class SharedFolder(models.Model):
     archived_at = models.DateTimeField(null=True, blank=True)
 
     def __str__(self) -> str:
-        return f"Delt mappe {self.number}"
+        return f"Delt mappe {self.tag}"
 
     @property
-    def number(self) -> str:
-        return f"#{self.pk:04d}"
+    def tag(self) -> str:
+        """What overseers know it by: the start of its random uuid, so the label says nothing about
+        how many there are. Six hex digits, so two may in rare cases share a tag. Their member count
+        and size still tell them apart."""
+        return self.uuid.hex[:6]
 
     def top(self) -> "Folder":
         return Folder.objects.get(shared=self, kind=Folder.Kind.SHARED)
