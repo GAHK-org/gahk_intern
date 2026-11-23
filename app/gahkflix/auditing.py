@@ -27,14 +27,17 @@ trail.register(
     "gahkflix.video",
     name=lambda video: video.title,
     label="Video",
-    # Its fixed id, its upload time, and the reminder bookkeeping of drafts.
-    ignore={"uuid", "created_at", "draft_warned_at"},
+    # Its fixed id, its upload time, the reminder bookkeeping of drafts, and when everybody was told
+    # it is out and since when it is a draft again: the publish, premiere and unpublish events say so.
+    ignore={"uuid", "created_at", "draft_warned_at", "announced_at", "draft_since"},
     labels={
         "title": "Titel",
         "description": "Beskrivelse",
         "uploaded_by": "Uploadet af",
         "published_at": "Udgivet",
         "released_on": "Udgivelsesdato",
+        "premiere_at": "Premiere",
+        "premiere_blur": "Miniature før premieren",
         "release_precision": "Datoens præcision",
         "release_source": "Datoens kilde",
         "series": "Serie",
@@ -71,6 +74,8 @@ trail.register(
         "width",
         "height",
         "recorded_at",
+        "date_guess",
+        "date_guess_source",
         "full_hd",
         "hd",
         "full_hd_size",
@@ -143,6 +148,9 @@ trail.actions(
         "gahkflix.video.failed": "Kunne ikke behandle videoen",
         "gahkflix.video.edited": "Rettede videoen",
         "gahkflix.video.published": "Udgav videoen",
+        "gahkflix.video.unpublished": "Gjorde videoen til en kladde igen",
+        "gahkflix.video.premiered": "Videoen havde premiere",
+        "gahkflix.video.announced": "Videoen blev annonceret",
         "gahkflix.video.binned": "Lagde videoen i papirkurven",
         "gahkflix.video.restored": "Hentede videoen tilbage fra papirkurven",
         "gahkflix.video.deleted": "Slettede videoen for altid",

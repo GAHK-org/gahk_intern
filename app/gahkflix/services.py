@@ -1028,12 +1028,13 @@ def unpublish(video: Video, resident: Resident) -> None:
         raise ValidationError(
             "Videoen har været ude i mere end et døgn og kan ikke gøres til en kladde igen."
         )
-    video.published_at = None
-    video.announced_at = None
-    video.draft_since = _now()
-    video.draft_warned_at = None
-    video.save(update_fields=["published_at", "announced_at", "draft_since", "draft_warned_at"])
-    record_event(video, VideoEvent.Kind.UNPUBLISHED, resident)
+    with trail.event("gahkflix.video.unpublished", actor=resident, subject=video):
+        video.published_at = None
+        video.announced_at = None
+        video.draft_since = _now()
+        video.draft_warned_at = None
+        video.save(update_fields=["published_at", "announced_at", "draft_since", "draft_warned_at"])
+        record_event(video, VideoEvent.Kind.UNPUBLISHED, resident)
     transaction.on_commit(lambda: notify.withdraw_announcement(video))
 
 
@@ -1084,9 +1085,12 @@ def announce_released(now: datetime | None = None) -> int:
             )
             if video is None or (video.premiere_at is not None and video.premiere_at > now):
                 continue  # announced, binned or moved later meanwhile
-            if video.comes_out_at_premiere:
-                record_event(video, VideoEvent.Kind.PREMIERED, None)
-            _announce(video)
+            premiered = video.comes_out_at_premiere
+            action = "gahkflix.video.premiered" if premiered else "gahkflix.video.announced"
+            with trail.event(action, actor=None, subject=video):
+                if premiered:
+                    record_event(video, VideoEvent.Kind.PREMIERED, None)
+                _announce(video)
             count += 1
     return count
 

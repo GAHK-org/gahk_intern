@@ -1700,6 +1700,35 @@ def test_a_vote_is_one_event_named_for_its_outcome(
     assert approved.entities.filter(kind="gahkflix.change_vote", operation="created").exists()
 
 
+def test_a_premiere_set_announced_and_taken_back_is_in_the_trail(
+    admin: Resident, django_capture_on_commit_callbacks: Callable[..., Any]
+) -> None:
+    video = make_video(admin, title="Julerevyen", published=False)
+    client = client_for(admin)
+    with django_capture_on_commit_callbacks(execute=True):
+        client.post(reverse("gahkflix:publish", args=[video.pk]), details(video, premiere_at=evening(1)))
+    before, after = changes(events("gahkflix.video.edited").get())["premiere_at"]
+    assert before is None and after
+    assert events("gahkflix.video.published").get().actor_id == admin.pk
+
+    # A day on, its minute comes: the worker announces it, as nobody's action.
+    Video.objects.filter(pk=video.pk).update(
+        published_at=timezone.now() - timedelta(days=1), premiere_at=timezone.now() - timedelta(seconds=30)
+    )
+    with django_capture_on_commit_callbacks(execute=True):
+        assert tasks.announce_released() == 1
+    premiered = events("gahkflix.video.premiered").get()
+    assert premiered.actor_id is None
+    assert "announced_at" not in changes(premiered), "bookkeeping the event itself says"
+
+    with django_capture_on_commit_callbacks(execute=True):
+        client.post(reverse("gahkflix:unpublish", args=[video.pk]))
+    unpublished = events("gahkflix.video.unpublished").get()
+    assert unpublished.actor_id == admin.pk
+    assert changes(unpublished)["published_at"][1] is None
+    assert set(changes(unpublished)) == {"published_at"}
+
+
 def test_an_approved_proposal_is_in_the_history_as_the_proposers(
     admin: Resident, admin2: Resident, member: Resident
 ) -> None:
