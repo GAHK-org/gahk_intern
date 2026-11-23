@@ -320,7 +320,8 @@ body.flix-play, body.flix-player-open { overflow: hidden; background: #000; }
 .flix-unsaved { margin: 10px 0 4px; padding: 10px 12px; border-radius: 4px; background: #2b2410; border: 1px solid #5b4a10; color: #f1dc8f; font-size: 14px; }
 .flix-unsaved[hidden] { display: none; }
 .flix-unsaved button { margin-left: 4px; padding: 0; border: 0; background: none; color: #fff; font: inherit; font-weight: 700; text-decoration: underline; cursor: pointer; }
-.flix-dialog { width: min(480px, calc(100vw - 32px)); box-sizing: border-box; padding: 22px; border: 1px solid #333; border-radius: 8px; background: var(--flix-surface); color: var(--flix-ink); box-shadow: 0 20px 60px rgba(0,0,0,.6); }
+/* margin:auto: Tailwind's reset zeroes the browser's own centring of a modal <dialog>. */
+.flix-dialog { width: min(480px, calc(100vw - 32px)); box-sizing: border-box; margin: auto; padding: 22px; border: 1px solid #333; border-radius: 8px; background: var(--flix-surface); color: var(--flix-ink); box-shadow: 0 20px 60px rgba(0,0,0,.6); }
 .flix-dialog::backdrop { background: rgba(0,0,0,.7); }
 .flix-dialog h2 { font-size: 18px; font-weight: 700; margin-bottom: 4px; }
 .flix-dialog p { font-size: 14px; margin: 4px 0 0; }
