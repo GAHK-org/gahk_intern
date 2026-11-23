@@ -2370,6 +2370,56 @@ def test_text_subtitles_are_kept_as_webvtt_and_offered(
     assert not get_video_storage().exists(danish.track.name)
 
 
+def test_the_player_keeps_to_what_a_premiere_or_a_draft_may_show(
+    open_gate: None, admin: Resident, plain: Resident
+) -> None:
+    """Before its premiere, and as a draft, a video plays only for its uploader and the
+    administrators: its streams and subtitles too, no viewing is counted, and it is never the next
+    episode or a film the player goes on to."""
+    series = Series.objects.create(title="Gangen", created_by=admin)
+    first = make_video(admin, title="Afsnit 1", series=series, episode=1)
+    upcoming = make_video(admin, title="Afsnit 2", series=series, episode=2, premiere_at=evening(3))
+    draft = make_video(admin, title="Kladden", published=False)
+    for video in (upcoming, draft):
+        assert video.file is not None
+        track = VideoSubtitle(file=video.file, position=0, language="dan", is_default=True)
+        track.track.save(
+            "dan.vtt", ContentFile(b"WEBVTT\n\n00:01.000 --> 00:02.000\nHemmeligt\n"), save=False
+        )
+        track.save()
+
+    reader = client_for(plain)
+    for video in (upcoming, draft):
+        track = video.file.subtitles.get()  # type: ignore[union-attr]
+        for url in (
+            reverse("gahkflix:play", args=[video.pk]),
+            reverse("gahkflix:stream", args=[video.pk, "hd"]),
+            reverse("gahkflix:subtitles", args=[video.pk, track.pk]),
+        ):
+            assert reader.get(url).status_code in (403, 404), url
+        for url in (
+            reverse("gahkflix:record_view", args=[video.pk]),
+            reverse("gahkflix:position", args=[video.pk]),
+        ):
+            assert reader.post(url, {"position": 30}, content_type="application/json").status_code in (
+                403,
+                404,
+            )
+
+        # Its uploader may try it out, subtitles and all, but that is no viewing.
+        uploader = client_for(admin)
+        config = uploader.get(reverse("gahkflix:play", args=[video.pk]), {"format": "json"}).json()
+        assert config["viewing"] is None
+        assert "Hemmeligt" in uploader.get(config["subtitles"][0]["url"]).content.decode()
+        counted = uploader.post(config["viewUrl"], {"viewing": None}, content_type="application/json")
+        assert counted.json() == {"counted": False}
+    assert not ViewEvent.objects.exists()
+
+    # The player never goes on to it: not as the next episode, nor as a film.
+    config = client_for(plain).get(reverse("gahkflix:play", args=[first.pk]), {"format": "json"}).json()
+    assert config["next"] is None or config["next"]["title"] not in ("Afsnit 2", "Kladden")
+
+
 def test_the_jobs_page_names_what_a_gahkflix_job_works_on(admin: Resident) -> None:
     from residents.views_admin import Job, _add_task_context
 
