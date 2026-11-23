@@ -11,7 +11,7 @@ from django.contrib import admin
 from django.urls import include, path, re_path
 from django.views.generic import RedirectView, TemplateView
 
-from calendar_feed import views as calendar_feed_views
+from calendars import views as calendars_views
 from core.media import serve_media
 from photo_album.views import serve_media as serve_photo_album_media
 
@@ -23,19 +23,19 @@ urlpatterns = [
     path("hjemmeside/", include("cms.urls")),
     # The resident's calendar subscription: its settings page and the subscribable feed. The feed
     # carries no auth decorator — the token in the path is the credential (see
-    # calendar_feed.views.calendar_feed).
+    # calendars.views.calendar_feed).
     #
     # Mounted before the intranet on purpose: if somebody adds Django's LoginRequiredMiddleware or a
     # gate in front of the intranet, a feed underneath it dies SILENTLY. Calendar clients do not
     # report a failed refresh; they just stop updating, which is the worst failure this feature can
     # have.
-    path("calendar/", include("calendar_feed.urls")),
+    path("calendar/", include("calendars.urls")),
     # The addresses before the move, both permanent redirects: the feed (gahk.dk passes its old
     # /kalender/ feed URLs through to intern), and the settings page, once under begivenheder.
-    path("kalender/<str:token>.ics", calendar_feed_views.old_feed_address),
+    path("kalender/<str:token>.ics", calendars_views.old_feed_address),
     path(
         "begivenheder/kalender/abonnement",
-        RedirectView.as_view(pattern_name="calendar_feed:settings", permanent=True),
+        RedirectView.as_view(pattern_name="calendars:settings", permanent=True),
     ),
     # User-uploaded media. Routed through Django in EVERY environment, and the URL space is fixed
     # forever: MEDIA_URL is a prefix of content stored in the database (opslag Markdown bodies,

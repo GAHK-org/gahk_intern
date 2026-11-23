@@ -1,5 +1,5 @@
 """An event as a VEVENT: the single-event download, and the event entries of a resident's calendar
-subscription (calendar_feed.feed). The format itself — folding, escaping, CRLF, UTC — is
+subscription (calendars.feed). The format itself — folding, escaping, CRLF, UTC — is
 core.icalendar's.
 """
 

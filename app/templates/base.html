@@ -154,7 +154,7 @@
               {% endif %}
               <a role="menuitem" href="{% url 'notifications:preferences' %}">Notifikationsindstillinger</a>
               {% if "koekken" not in effective_roles %}{# nor a calendar of its own #}
-                <a role="menuitem" href="{% url 'calendar_feed:settings' %}">Kalenderabonnement</a>
+                <a role="menuitem" href="{% url 'calendars:settings' %}">Kalenderabonnement</a>
               {% endif %}
               <a role="menuitem" href="{% url 'password_change' %}">Skift kodeord</a>
               <form method="post" action="{% url 'logout' %}">

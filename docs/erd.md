@@ -588,7 +588,7 @@ erDiagram
         datetime created_at
     }
 
-    calendar_feed_CalendarSubscription {
+    calendars_CalendarSubscription {
         int id PK
         int resident_id FK
         string token
@@ -1080,7 +1080,7 @@ erDiagram
     events_Rsvp }o--|| residents_Resident : "resident"
     events_EventComment }o--|| events_Event : "event"
     events_EventComment }o--|| residents_Resident : "author"
-    calendar_feed_CalendarSubscription ||--|| residents_Resident : "resident"
+    calendars_CalendarSubscription ||--|| residents_Resident : "resident"
     reparationer_RepairTask }o--|| residents_Resident : "reported_by"
     reparationer_RepairComment }o--|| reparationer_RepairTask : "task"
     reparationer_RepairComment }o--|| residents_Resident : "author"
@@ -1258,11 +1258,11 @@ erDiagram
     arkiv_ArchiveFile }o--|o residents_Resident : "deleted_by"
 ```
 
-## calendar_feed
+## calendars
 
 ```mermaid
 erDiagram
-    calendar_feed_CalendarSubscription {
+    calendars_CalendarSubscription {
         int id PK
         int resident_id FK
         string token
@@ -1276,7 +1276,7 @@ erDiagram
 
     residents_Resident { }
 
-    calendar_feed_CalendarSubscription ||--|| residents_Resident : "resident"
+    calendars_CalendarSubscription ||--|| residents_Resident : "resident"
 ```
 
 ## cms

@@ -1,6 +1,6 @@
 """RFC 5545 output: the text format behind every .ics this site serves.
 
-The VEVENTs come from their own apps (events.icalendar for an event, calendar_feed.feed for a
+The VEVENTs come from their own apps (events.icalendar for an event, calendars.feed for a
 birthday); this module is the format they share.
 
 Hand-rolled, and that is the same call core.push made about django-webpush. We only ever EMIT, and

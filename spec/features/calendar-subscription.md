@@ -45,8 +45,11 @@ user menu, the month calendar and every event page.
 
 ## Decisions
 
-- **Its own app (`calendar_feed`)**, not part of begivenheder: the calendar gathers several features,
+- **Its own app (`calendars`)**, not part of begivenheder: the calendar gathers several features,
   each of which renders its own entries. The model moved from begivenheder with every token intact.
+  The app is where calendars are put together, not just this feed: a calendar view at `/calendar/`
+  and a shared house calendar (everyone's shifts, all events) belong here too, with the subscription
+  as one way to see them. Plural because an app named `calendar` would shadow Python's own module.
 - **The token lives in its own model**, never on `Resident`, which is loaded everywhere and exported
   by the alumneliste; a secret there leaks through code that does not know it holds one.
 - **A prefix in the title** rather than a status or category: the title is the only thing every

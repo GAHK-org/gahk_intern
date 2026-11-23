@@ -26,8 +26,8 @@ from django.test import Client
 from django.test.utils import CaptureQueriesContext
 from django.utils import timezone
 
-from calendar_feed import feed
-from calendar_feed.models import CalendarSubscription
+from calendars import feed
+from calendars.models import CalendarSubscription
 from core import push
 from core.models import PushSubscription
 from events import access, services
@@ -180,7 +180,7 @@ def test_every_route_is_closed_to_non_administrators(
 
     Parametrised over every route so a new view cannot quietly be added outside the gate.
 
-    The calendar subscription (/calendar/settings, its own app) is not here: see test_calendar_feed.py.
+    The calendar subscription (/calendar/settings, its own app) is not here: see test_calendars.py.
     """
     client.force_login(beboer)
     url = EVENTS + path

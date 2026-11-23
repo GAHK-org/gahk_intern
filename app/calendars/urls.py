@@ -10,7 +10,7 @@ from django.urls import path
 
 from . import views
 
-app_name = "calendar_feed"
+app_name = "calendars"
 
 urlpatterns = [
     path("settings", views.settings_page, name="settings"),

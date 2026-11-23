@@ -219,14 +219,14 @@ def test_seed_demo_gives_the_logins_calendar_subscriptions_in_each_state() -> No
     from django.test import Client
     from django.urls import reverse
 
-    from calendar_feed.models import CalendarSubscription
+    from calendars.models import CalendarSubscription
 
     call_command("seed_demo", "--fresh", "--force", "--residents", "12", verbosity=0)
 
     def page(email: str) -> str:
         client = Client()
         client.force_login(Resident.objects.get(email=email))
-        return client.get(reverse("calendar_feed:settings")).content.decode()
+        return client.get(reverse("calendars:settings")).content.decode()
 
     assert "Sidst hentet" in page("beboer@gahk.dk")
     assert "ikke hentet adressen i over en uge" in page("formand@gahk.dk")
@@ -236,7 +236,7 @@ def test_seed_demo_gives_the_logins_calendar_subscriptions_in_each_state() -> No
 
     def feed(email: str) -> str:
         token = CalendarSubscription.objects.get(resident__email=email).token
-        return Client().get(reverse("calendar_feed:feed", args=[token])).content.decode()
+        return Client().get(reverse("calendars:feed", args=[token])).content.decode()
 
     everything, accepted_only = feed("beboer@gahk.dk"), feed("ak@gahk.dk")
     for entry in ("Ikke svaret: ", "Venteliste: ", "Aflyst: ", "fylder"):

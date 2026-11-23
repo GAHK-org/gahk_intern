@@ -4,7 +4,7 @@ Its own app rather than part of begivenheder, because the calendar is the RESIDE
 events': it carries birthdays today, and kitchen and cleaning shifts once those exist. Each source
 stays in its own app and this one only assembles them (see feed.py).
 
-The model came from events.CalendarFeedToken (moved in calendar_feed 0001/0002, same rows, same
+The model came from events.CalendarFeedToken (moved in calendars 0001/0002, same rows, same
 tokens), so every address handed out before the move keeps working.
 """
 

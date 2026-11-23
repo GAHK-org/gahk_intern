@@ -5,7 +5,7 @@ it, it cannot be aflyst, it has no capacity, and it must never reach anybody's p
 printed on the day, the way a paper calendar prints one. Writing Event rows for sixty residents
 every year would have handed all of that machinery something to do, and every bit of it would have
 been wrong. A resident's calendar subscription carries them as all-day entries of its own when they
-choose so (calendar_feed.feed), never as Event rows.
+choose so (calendars.feed), never as Event rows.
 
 That is also why this lives in `residents` rather than in `events`. It answers a question about
 PEOPLE, and the month grid is only its first caller; a dashboard strip of "fødselsdage i denne uge"

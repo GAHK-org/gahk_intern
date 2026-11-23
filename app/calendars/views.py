@@ -30,16 +30,16 @@ def settings_page(request: HttpRequest) -> HttpResponse:
         if form.is_valid():
             form.save()
             messages.success(request, "Gemt. Din kalender henter ændringen næste gang den opdaterer.")
-            return redirect("calendar_feed:settings")
+            return redirect("calendars:settings")
     else:
         form = SubscriptionForm(instance=subscription)
 
-    feed_url = request.build_absolute_uri(reverse("calendar_feed:feed", args=[subscription.token]))
+    feed_url = request.build_absolute_uri(reverse("calendars:feed", args=[subscription.token]))
     webcal_url = "webcal://" + feed_url.split("://", 1)[1]
     last_used = subscription.last_used_at
     return render(
         request,
-        "calendar_feed/settings.html",
+        "calendars/settings.html",
         {
             "form": form,
             "subscription": subscription,
@@ -59,7 +59,7 @@ def rotate_token(request: HttpRequest) -> HttpResponseRedirect:
         "Din kalenderadresse er skiftet. Husk at tilføje den nye i din kalender — "
         "den gamle holder op med at virke med det samme.",
     )
-    return redirect("calendar_feed:settings")
+    return redirect("calendars:settings")
 
 
 @require_GET
@@ -99,4 +99,4 @@ def calendar_feed(request: HttpRequest, token: str) -> HttpResponse:
 def old_feed_address(request: HttpRequest, token: str) -> HttpResponseRedirect:
     """/kalender/<token>.ics, the address before this moved under /calendar/feed/. Calendar apps and
     gahk.dk's pass-through follow a permanent redirect."""
-    return HttpResponseRedirect(reverse("calendar_feed:feed", args=[token]), status=301)
+    return HttpResponseRedirect(reverse("calendars:feed", args=[token]), status=301)

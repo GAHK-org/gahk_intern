@@ -9,7 +9,7 @@ from django.db import migrations, models
 
 class Migration(migrations.Migration):
     dependencies = [
-        ("calendar_feed", "0001_initial"),
+        ("calendars", "0001_initial"),
         ("events", "0004_move_calendar_feed_token"),
     ]
 

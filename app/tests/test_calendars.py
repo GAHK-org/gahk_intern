@@ -7,8 +7,8 @@ import pytest
 from django.test import Client
 from django.utils import timezone
 
-from calendar_feed.models import CalendarSubscription, EventChoice
-from calendar_feed.views import STALE_AFTER
+from calendars.models import CalendarSubscription, EventChoice
+from calendars.views import STALE_AFTER
 from events import services
 from events.models import Answer, Rsvp
 from residents.models import Resident

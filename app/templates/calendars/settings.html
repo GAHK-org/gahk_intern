@@ -20,7 +20,7 @@
     <div class="card-pad calsub-box">
       {% comment %}
         The address IS the credential: no Referer may carry it (rel="noreferrer" on every link that
-        holds it). See calendar_feed.views.calendar_feed. frontend/src/copy.ts runs the copy button.
+        holds it). See calendars.views.calendar_feed. frontend/src/copy.ts runs the copy button.
       {% endcomment %}
       <div class="calsub-address">
         <input type="text" id="calsub-url" value="{{ feed_url }}" readonly aria-label="Adressen til din kalender" data-select-on-focus>
@@ -142,7 +142,7 @@
 
   <section class="card-flat calsub-section">
     <div class="card-head"><h2>Ny adresse</h2></div>
-    <form method="post" action="{% url 'calendar_feed:rotate_token' %}" class="card-pad"
+    <form method="post" action="{% url 'calendars:rotate_token' %}" class="card-pad"
           onsubmit="return confirm('Lav en ny adresse? Den gamle holder op med at virke, og du skal tilføje den nye i din kalender igen.')">
       {% csrf_token %}
       <button type="submit" class="btn btn-secondary">Lav en ny adresse</button>

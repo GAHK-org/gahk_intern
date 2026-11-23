@@ -4,7 +4,7 @@ import django.db.models.deletion
 from django.conf import settings
 from django.db import migrations, models
 
-import calendar_feed.models
+import calendars.models
 import events.models
 
 
@@ -28,7 +28,7 @@ class Migration(migrations.Migration):
                 (
                     "token",
                     models.CharField(
-                        default=calendar_feed.models.new_token, editable=False, max_length=64, unique=True
+                        default=calendars.models.new_token, editable=False, max_length=64, unique=True
                     ),
                 ),
                 ("created_at", models.DateTimeField(auto_now_add=True)),

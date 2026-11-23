@@ -1570,7 +1570,7 @@
   .feed-warn .ni { width: 17px; height: 17px; stroke: currentColor; fill: none; flex: none; margin-top: 2px; }
   .feed-warn p { margin: 3px 0 0; font-size: 12.5px; }
 
-  /* /calendar/ (calendar_feed/settings.html): the resident's calendar subscription. */
+  /* /calendar/ (calendars/settings.html): the resident's calendar subscription. */
   .calsub-intro { margin: 0 0 16px; }
   .calsub-section { margin-bottom: 18px; }
   .calsub-box { display: flex; flex-direction: column; gap: 12px; }
