@@ -29,8 +29,9 @@
     <a href="?{{ base_query }}{% if base_query %}&amp;{% endif %}format=xlsx">Eksportér Excel</a>
   </p>
 
+  <div class="overflow-x-auto">
   <table cellpadding="6" class="text-sm zebra" style="width:100%; border-collapse:collapse">
-    <thead><tr style="text-align:left; border-bottom:1px solid #e6e8ec; white-space:nowrap">
+    <thead><tr style="text-align:left; border-bottom:1px solid var(--border-strong); white-space:nowrap">
       <th>Dato</th><th>Personer</th><th style="text-align:right">I alt</th>
       <th style="text-align:right">Pr. person</th><th>Varer</th><th></th>
     </tr></thead>
@@ -54,7 +55,7 @@
               <input type="hidden" name="q" value="{{ query }}">
               <input type="hidden" name="buyers" value="{{ buyers }}">
               <input type="hidden" name="page" value="{{ page_obj.number }}">
-              <button type="submit" class="btn bg-red-600!">Annullér</button>
+              <button type="submit" class="btn btn-danger">Annullér</button>
             </form>
           {% endif %}
         </td>
@@ -64,6 +65,7 @@
     {% endfor %}
     </tbody>
   </table>
+  </div>
 
   {% if page_obj.paginator.num_pages > 1 %}
     <p class="muted mt-4 flex items-center gap-3">

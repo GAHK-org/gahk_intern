@@ -3,32 +3,73 @@
 /* Scan the Django templates for class names (path is relative to THIS css file: frontend/src/). */
 @source "../../app/templates";
 
+/* The tokens below as Tailwind colours, so a template writes text-neg or border-line instead of reaching for
+   Tailwind's own palette (red-600, gray-200, emerald-700), which is a different green and cool greys
+   beside these warm ones. inline: the utilities read the variable itself. */
+@theme inline {
+  --color-ink: var(--ink); --color-muted: var(--muted); --color-faint: var(--faint);
+  --color-paper: var(--paper); --color-surface: var(--surface); --color-surface-2: var(--surface-2); --color-sunken: var(--sunken);
+  --color-line: var(--border); --color-line-strong: var(--border-strong);
+  --color-gahk-green: var(--green); --color-gahk-green-700: var(--green-700);
+  --color-gahk-green-050: var(--green-050); --color-gahk-green-100: var(--green-100);
+  --color-brass: var(--brass); --color-brass-ink: var(--brass-ink);
+  --color-pos: var(--pos); --color-neg: var(--neg); --color-neg-bg: var(--neg-bg); --color-neg-line: var(--neg-line);
+  --color-warn-bg: var(--warn-bg); --color-warn-line: var(--warn-line);
+}
+
 /* ---- Refined GAHK Green: design tokens (heritage green, warm neutrals, restrained brass) ---- */
 :root {
   --paper:#F6F5F1; --surface:#FFFFFF; --surface-2:#FBFAF7; --sunken:#F1EFE8;
   --border:#E7E4DB; --border-strong:#D8D5CA;
-  --ink:#1A231D; --muted:#616B62; --faint:#8A9188;
+  /* --faint was #8A9188, 2.97:1 on --paper; this clears 4.5:1 on white (4.24:1 on --paper) and stays
+     lighter than --muted, so timestamps and small labels are readable without losing the step. */
+  --ink:#1A231D; --muted:#616B62; --faint:#6F776E;
   --green:#1F5A3A; --green-700:#184A30; --green-050:#EAF2EC; --green-100:#D9E8DD;
   --brass:#A9822F; --brass-ink:#7A5E1E;
   --pos:#2E7D4F; --neg:#B23A3A; --warn:#A9822F; --warn-bg:#F5EEDD; --neg-bg:#F6E7E5;
+  --warn-line:#e7d8b0; --neg-line:#e7c7c3;  /* the border that goes with each tinted background */
   --radius:12px; --radius-sm:9px;
   --shadow:0 1px 2px rgba(24,40,30,.05), 0 8px 24px -12px rgba(24,40,30,.14);
   --shadow-sm:0 1px 2px rgba(24,40,30,.06);
 }
 
-/* Element defaults so existing templates (bare <button>/<input>/<table>) look right without rewrites. */
+/* Element defaults. Tailwind's reset strips the browser's own look from links, buttons, form controls,
+   headings and table cells; what a template leaves bare gets its look back here. Buttons are the
+   exception: a bare <button> stays unstyled (toolbars, menus and close crosses build on that), so an
+   action button carries .btn. Anything in a later layer — the components below, utilities — wins. */
 @layer base {
+  :root { accent-color: var(--green); }  /* checkboxes, radios, range, progress: house green, not browser blue */
   body { font-family: "Ubuntu", system-ui, "Segoe UI", Roboto, sans-serif; background: var(--paper); color: var(--ink); }
   h1 { @apply text-2xl font-bold my-3; letter-spacing:-.01em; text-wrap:balance; }
   h2 { @apply text-lg font-semibold my-2; }
-  h3 { text-wrap:balance; }
+  h3 { font-weight:600; text-wrap:balance; }
   label { @apply block font-semibold mt-3 mb-1; }
-  input[type=text], input[type=email], input[type=password], input[type=search],
-  input[type=number], input[type=date], textarea, select {
+  /* A checkbox or radio inside its own label (Django's RadioSelect, "Fremhævet" and the like): one
+     option on a line, not a bold block heading. */
+  label:not([class]):has(> input:is([type=checkbox], [type=radio])) { display:flex; align-items:center; gap:8px; font-weight:400; margin:4px 0; }
+  input:not([type]), input[type=text], input[type=email], input[type=password], input[type=search],
+  input[type=number], input[type=date], input[type=datetime-local], input[type=time], input[type=month],
+  input[type=week], input[type=url], input[type=tel], textarea, select {
     @apply w-full rounded-md p-2;
     border:1px solid var(--border-strong); background:var(--surface); color:var(--ink);
   }
   input:focus, textarea:focus, select:focus { outline:2px solid var(--green); outline-offset:1px; border-color:var(--green); }
+  /* The file picker's own button, drawn like .btn-secondary rather than as bare "Choose File" text. */
+  input[type=file] { max-width:100%; font-size:14px; color:var(--muted); }
+  input[type=file]::file-selector-button { margin-right:10px; padding:7px 13px; border:1px solid var(--border-strong);
+    border-radius:var(--radius-sm); background:var(--surface); color:var(--ink); font:inherit; font-weight:600; cursor:pointer; }
+  input[type=file]::file-selector-button:hover { background:var(--surface-2); border-color:var(--faint); }
+  /* The reset gives buttons the arrow cursor (Tailwind v4); everything clickable gets the hand. */
+  button:not(:disabled), [role=button]:not([aria-disabled=true]), summary, select:not(:disabled),
+  input:is([type=checkbox], [type=radio], [type=submit], [type=button], [type=reset]):not(:disabled) { cursor:pointer; }
+  /* A link with no class of its own is a link in running text: green and underlined, since the house
+     green is too close to the ink to tell apart by colour alone. Classed links (cards, menus, chips)
+     are styled by their class. */
+  a:not([class]) { color:var(--green-700); text-decoration:underline; text-decoration-color:color-mix(in srgb, currentColor 40%, transparent); text-underline-offset:2px; }
+  a:not([class]):hover { color:var(--green); text-decoration-color:currentColor; }
+  /* Templates ask for room with cellpadding="6", which the reset's padding:0 overrides; this is that
+     room, with a little more between columns. Tables with their own class (.zebra etc.) set theirs. */
+  th, td { padding:6px 10px; }
   th { @apply text-left; }
 }
 
@@ -91,7 +132,7 @@
   .btn svg { width:16px; height:16px; }
   .btn-secondary { background:var(--surface); border-color:var(--border-strong); color:var(--ink); }
   .btn-secondary:hover { background:var(--surface-2); border-color:var(--faint); color:var(--ink); }
-  .btn-danger { background:var(--neg-bg); border-color:#e7c7c3; color:var(--neg); }
+  .btn-danger { background:var(--neg-bg); border-color:var(--neg-line); color:var(--neg); }
   .btn-danger:hover { background:#f0d7d3; color:var(--neg); }
   /* A small busy ring for a .btn whose request takes a while (regnskab's alumneregninger). Takes the
      button's text colour, so it reads on any variant. */
@@ -103,8 +144,9 @@
 
   .chip { display:inline-flex; align-items:center; gap:5px; font-size:12px; font-weight:650; line-height:1.4;
     border-radius:999px; padding:2px 10px; background:var(--green-050); color:var(--green-700); border:1px solid var(--green-100); white-space:nowrap; }
-  .chip-brass { background:var(--warn-bg); color:var(--brass-ink); border-color:#e7d8b0; }
-  .chip-neg { background:var(--neg-bg); color:var(--neg); border-color:#e7c7c3; }
+  .chip-brass { background:var(--warn-bg); color:var(--brass-ink); border-color:var(--warn-line); }
+  .chip-neg { background:var(--neg-bg); color:var(--neg); border-color:var(--neg-line); }
+  .chip-neutral { background:var(--sunken); color:var(--muted); border-color:var(--border-strong); }
   /* An icon inside a chip. There is no base `.ni` rule anywhere in this stylesheet — every use is
      sized by whatever encloses it — so a chip that carried one had an <svg> with no width, no
      height and no viewport-derived size, which is 300x150 by CSS default. The lock on "Kun
@@ -141,6 +183,16 @@
   .btn-top svg { width:16px; height:16px; }
 
   .sidebar { grid-area:side; background:var(--surface); border-right:1px solid var(--border); padding:14px 12px; display:flex; flex-direction:column; gap:3px; overflow:auto; }
+  /* The window scrolls, not .main, so a grid cell as tall as the page took the menu with it: at the
+     bottom of a long page (the photo timeline) it was thousands of pixels up. It is sticky instead,
+     at least one screen tall (the clock stays at the bottom), and sidebar.ts moves its sticking point:
+     a longer menu scrolls along with the page until its end is in view, and back on scrolling up.
+     Desktop only: phones have the drawer (the max-width:960px block), and Den Hurtige's page never
+     scrolls, so its menu keeps filling the column it is given. */
+  @media (min-width:961px) {
+    .sidebar { position:sticky; top:var(--sidebar-top, 60px); align-self:start; min-height:calc(100dvh - 60px); overflow:visible; }
+    .chat-page .sidebar { position:static; align-self:stretch; min-height:0; overflow:auto; }
+  }
   .nav-label { font-size:10.5px; font-weight:700; letter-spacing:.13em; text-transform:uppercase; color:var(--faint); padding:14px 12px 6px; }
   .nav-item { display:flex; align-items:center; gap:11px; padding:9px 12px; border-radius:9px; color:#33413a; font-weight:500; font-size:14px; line-height:1.1; text-decoration:none; position:relative; }
   .nav-item .ni { width:18px; height:18px; color:var(--faint); flex:none; stroke:currentColor; fill:none; }
@@ -149,7 +201,7 @@
   .nav-item.active .ni { color:var(--green); }
   .nav-item.active::before { content:""; position:absolute; left:0; top:8px; bottom:8px; width:3px; border-radius:0 3px 3px 0; background:var(--green); }
   .side-foot { margin-top:auto; padding:10px 6px 4px; }
-  .side-foot .clock { display:flex; align-items:center; gap:7px; background:var(--warn-bg); color:var(--brass-ink); border:1px solid #e7d8b0; border-radius:8px; padding:7px 9px; font-weight:600; font-size:12px; }
+  .side-foot .clock { display:flex; align-items:center; gap:7px; background:var(--warn-bg); color:var(--brass-ink); border:1px solid var(--warn-line); border-radius:8px; padding:7px 9px; font-weight:600; font-size:12px; }
   .backdrop { display:none; }
   /* Nobody logged in (/install): no menu, so main also takes the sidebar's column. Before the
      phone media query below, whose single-column .app wins over this. */
@@ -160,19 +212,23 @@
   .content { padding:26px 30px 48px; }
   .page-head { display:flex; align-items:flex-end; justify-content:space-between; gap:16px; margin-bottom:18px; }
   .eyebrow { font-size:11px; font-weight:700; letter-spacing:.15em; text-transform:uppercase; color:var(--brass); }
+  .eyebrow a { color:inherit; text-decoration:none; }  /* a breadcrumb back up ("Sider", "Notifikationer") */
+  .eyebrow a:hover { text-decoration:underline; }
   .page-head h1 { font-size:26px; font-weight:750; margin:4px 0 0; }
   .head-actions { display:flex; gap:10px; flex-wrap:wrap; }
 
   /* --- dashboard pieces --- */
   .glance { display:flex; flex-wrap:wrap; align-items:center; gap:10px 26px; padding:15px 20px; background:var(--surface); border:1px solid var(--border); border-radius:var(--radius); box-shadow:var(--shadow-sm); margin-bottom:22px; }
-  .glance .g { display:flex; align-items:baseline; gap:9px; font-size:15px; }
+  /* wrap: an administrator's roles are a long row of chips, which held the phone page 600px wide */
+  .glance .g { display:flex; flex-wrap:wrap; align-items:baseline; gap:6px 9px; min-width:0; font-size:15px; }
   .glance .gk { font-size:11px; font-weight:700; letter-spacing:.09em; text-transform:uppercase; color:var(--faint); }
   .glance b { font-weight:700; }
   .grid2 { display:grid; grid-template-columns:1.6fr 1fr; gap:20px; align-items:start; }
   .card-flat { background:var(--surface); border:1px solid var(--border); border-radius:var(--radius); box-shadow:var(--shadow); overflow:hidden; }
   .card-head { display:flex; align-items:center; justify-content:space-between; gap:10px; padding:14px 18px; border-bottom:1px solid var(--border); }
   .card-head h2 { font-size:15px; font-weight:700; margin:0; }
-  .card-head a { font-size:13px; font-weight:600; color:var(--green-700); }
+  .card-head a { font-size:13px; font-weight:600; color:var(--green-700); text-decoration:none; }
+  .card-head a:hover { text-decoration:underline; }
   .card-pad { padding:16px 18px; }
   .quick { display:flex; flex-direction:column; gap:8px; }
   .quick a { display:flex; align-items:center; gap:11px; border:1px solid var(--border); border-radius:9px; padding:11px 13px; font-weight:600; font-size:14px; background:var(--surface-2); text-decoration:none; color:var(--ink); }
@@ -696,7 +752,7 @@
      So the empty state RECEDES and the full state becomes a pill. Half the new contrast comes
      from the retreat, which is what keeps the feed quiet -- most messages have no replies, and
      those now cost the eye almost nothing. --muted rather than --faint for it: this is an
-     interactive control, and --faint (#8A9188) lands at 2.97:1 on --paper, under the 4.5:1 a
+     interactive control, and --faint lands at 4.24:1 on --paper, still under the 4.5:1 a
      12.5px link needs. --muted clears it at 5.08:1 and still reads as the quieter of the two.
 
      No extra height either way. The action row is rendered on EVERY message (see .msg-actions
@@ -1194,7 +1250,7 @@
   .banner { display:flex; align-items:center; justify-content:space-between; gap:12px; padding:8px 18px; font-size:13.5px; font-weight:500; }
   .banner form { display:flex; gap:12px; align-items:center; }
   .banner a, .banner button { color:inherit; text-decoration:underline; background:none; border:0; font:inherit; font-weight:600; cursor:pointer; }
-  .banner-preview { background:var(--warn-bg); color:var(--brass-ink); border-bottom:1px solid #e7d8b0; }
+  .banner-preview { background:var(--warn-bg); color:var(--brass-ink); border-bottom:1px solid var(--warn-line); }
   .banner-dev { background:#3730a3; color:#fff; }
   /* "Installér GAHK Intern som app" on phones (base.html, install.ts). */
   .banner-install { background:var(--green-050); color:var(--green-700); border-bottom:1px solid var(--green-100); }
@@ -1232,7 +1288,7 @@
   @media (prefers-reduced-motion:reduce) { * { transition:none !important; } }
 
   /* Readable rendering for migrated CMS body HTML. */
-  .prose-gahk { @apply leading-relaxed text-gray-800; }
+  .prose-gahk { @apply leading-relaxed text-ink; }
   .prose-gahk p { @apply my-3; }
   .prose-gahk h2 { @apply text-xl font-semibold mt-6 mb-2; }
   .prose-gahk h3 { @apply text-lg font-semibold mt-4 mb-1; }
@@ -1241,15 +1297,15 @@
   /* overflow-wrap, because a link is now the one thing in here that can be unbreakable: linkify
      turns a bare pasted URL into an <a>, and its shortened TEXT is still 42 characters with no
      space in it. Without this a long one pushes the card wider than the column on a phone. */
-  .prose-gahk a { @apply text-emerald-700 underline; overflow-wrap:anywhere; }
+  .prose-gahk a { @apply text-gahk-green-700 underline; overflow-wrap:anywhere; }
   .prose-gahk img { @apply max-w-full h-auto rounded my-3; }
-  .prose-gahk blockquote { @apply border-l-4 border-emerald-700 pl-4 my-4 italic text-gray-700; }
+  .prose-gahk blockquote { @apply border-l-4 border-gahk-green-700 pl-4 my-4 italic text-muted; }
   /* Added for rendered Markdown (opslagstavlen). Migrated CMS pages get them too, which is a bonus
      rather than a coincidence: they were always allowed by cms/sanitize.py and simply unstyled. */
   .prose-gahk h4 { @apply text-base font-semibold mt-4 mb-1; }
   .prose-gahk hr { @apply my-6 border-t; border-color: var(--border); }
   .prose-gahk code { @apply px-1 py-0.5 rounded text-[0.9em]; background: var(--green-050); }
-  .prose-gahk pre { @apply p-3 my-3 rounded overflow-x-auto text-sm; background: #f6f8fa; }
+  .prose-gahk pre { @apply p-3 my-3 rounded overflow-x-auto text-sm; background: var(--sunken); }
   .prose-gahk pre code { @apply p-0 bg-transparent; }
   /* Tables are why the Markdown parser keeps the table plugin: the værelsesrunde results are one.
      Scrolls inside its own box so a wide table never makes the page scroll sideways. */
@@ -1324,12 +1380,12 @@
   .rsvp-actions .btn { flex: 1; justify-content: center; padding: 13px 15px; font-size: 15px; }
   .rsvp-nej { flex: 0 0 auto; }
   .rsvp-ja.is-chosen { box-shadow: inset 0 0 0 2px var(--green-700); }
-  .rsvp-nej.is-chosen { background: var(--neg-bg); border-color: #e7c7c3; color: var(--neg); }
+  .rsvp-nej.is-chosen { background: var(--neg-bg); border-color: var(--neg-line); color: var(--neg); }
   .rsvp-deadline, .rsvp-waiting, .rsvp-promoted { display: flex; align-items: center; gap: 7px;
     font-size: 12.5px; margin: 0; border-radius: 9px; padding: 8px 11px; }
-  .rsvp-deadline { color: var(--brass-ink); background: var(--warn-bg); border: 1px solid #e7d8b0; }
+  .rsvp-deadline { color: var(--brass-ink); background: var(--warn-bg); border: 1px solid var(--warn-line); }
   .rsvp-deadline .ni { width: 15px; height: 15px; stroke: currentColor; fill: none; flex: none; }
-  .rsvp-waiting { color: var(--brass-ink); background: var(--warn-bg); border: 1px solid #e7d8b0; }
+  .rsvp-waiting { color: var(--brass-ink); background: var(--warn-bg); border: 1px solid var(--warn-line); }
   .rsvp-promoted { color: var(--green-700); background: var(--green-050); border: 1px solid var(--green-100); }
   .rsvp-locked { display: flex; align-items: flex-start; gap: 10px; color: var(--muted);
     background: var(--sunken); border: 1px solid var(--border); border-radius: 9px; padding: 11px 12px; }
@@ -1404,7 +1460,7 @@
   .cal-legend span { display: inline-flex; align-items: center; gap: 6px; }
   .cal-key { width: 11px; height: 11px; border-radius: 3px; flex: none; }
   .cal-key-going { background: var(--green); }
-  .cal-key-waiting { background: var(--warn-bg); border: 1px solid #e7d8b0; }
+  .cal-key-waiting { background: var(--warn-bg); border: 1px solid var(--warn-line); }
   .cal-key-open { background: var(--surface); border: 1px solid var(--border-strong); }
 
   .cal-grid { display: flex; flex-direction: column; gap: 8px; }
@@ -1427,8 +1483,8 @@
     text-overflow: ellipsis; white-space: nowrap; }
   /* The same three colours as the list's chips, so the two views teach each other. */
   .cal-kommer { background: var(--green); color: #fff; }
-  .cal-venteliste { background: var(--warn-bg); color: var(--brass-ink); border: 1px solid #e7d8b0; }
-  .cal-nej { background: var(--neg-bg); color: var(--neg); border: 1px solid #e7c7c3; }
+  .cal-venteliste { background: var(--warn-bg); color: var(--brass-ink); border: 1px solid var(--warn-line); }
+  .cal-nej { background: var(--neg-bg); color: var(--neg); border: 1px solid var(--neg-line); }
   .cal-open { background: var(--surface); color: var(--ink); border: 1px solid var(--border-strong); }
   .cal-event.is-cancelled { text-decoration: line-through; opacity: .7; }
 
@@ -1491,7 +1547,7 @@
      a brass label in the cell and a brass frame round it, so the day stands out at any width. */
   .cal-cell.is-maerkedag { border-color: var(--brass); box-shadow: inset 0 0 0 1px var(--brass); }
   .cal-maerkedag { display: flex; align-items: center; gap: 5px; min-width: 0; padding: 3px 6px;
-    border-radius: 6px; background: var(--warn-bg); border: 1px solid #e7d8b0; color: var(--brass-ink);
+    border-radius: 6px; background: var(--warn-bg); border: 1px solid var(--warn-line); color: var(--brass-ink);
     font-size: 11.5px; font-weight: 700; line-height: 1.3; }
   .cal-maerkedag-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .cal-key-maerkedag { background: var(--warn-bg); border: 1px solid var(--brass); }
@@ -1507,7 +1563,7 @@
     border-top: 1px solid var(--border); color: var(--ink); text-decoration: none; }
   .agenda li:first-child .agenda-row { border-top: 0; }
   a.agenda-row:hover { background: var(--surface-2); }
-  .agenda-row.is-maerkedag { background: var(--warn-bg); border: 1px solid #e7d8b0; border-radius: 9px;
+  .agenda-row.is-maerkedag { background: var(--warn-bg); border: 1px solid var(--warn-line); border-radius: 9px;
     color: var(--brass-ink); }
   li:has(.is-maerkedag) + li .agenda-row { border-top: 0; }
   .agenda-date { flex: none; width: 40px; display: flex; flex-direction: column; align-items: center;
@@ -1553,7 +1609,7 @@
   .feed-url { margin: 0; padding: 11px 13px; border-radius: 9px; background: var(--sunken);
     border: 1px solid var(--border); font-size: 13px; overflow-wrap: anywhere; }
   .feed-warn { display: flex; align-items: flex-start; gap: 10px; padding: 11px 13px;
-    border-radius: 9px; background: var(--warn-bg); border: 1px solid #e7d8b0; color: var(--brass-ink); }
+    border-radius: 9px; background: var(--warn-bg); border: 1px solid var(--warn-line); color: var(--brass-ink); }
   .feed-warn .ni { width: 17px; height: 17px; stroke: currentColor; fill: none; flex: none; margin-top: 2px; }
   .feed-warn p { margin: 3px 0 0; font-size: 12.5px; }
 
@@ -1803,7 +1859,7 @@
   .chip-embedsgruppe { display: inline-block; background: var(--surface-2); color: var(--muted);
     border-color: var(--border-strong); font-size: 11px; padding: 1px 8px; min-width: 0;
     overflow: hidden; text-overflow: ellipsis; }
-  .chip-event { background: var(--warn-bg); color: var(--brass-ink); border-color: #e7d8b0;
+  .chip-event { background: var(--warn-bg); color: var(--brass-ink); border-color: var(--warn-line);
     display: inline-flex; align-items: center; gap: 5px; text-decoration: none; max-width: 100%;
     overflow: hidden; text-overflow: ellipsis; }
   .chip-event:hover { border-color: var(--brass); }
@@ -1917,23 +1973,23 @@
     white-space: nowrap;
     margin: 3px 0;
     padding: 3px 12px;
-    border: 1px solid #e2e8f0;
+    border: 1px solid var(--border-strong);
     border-radius: 9999px;
-    background: #fff;
+    background: var(--surface);
     font-size: 0.875rem;
-    color: #1f2937;
+    color: var(--ink);
   }
   .lineage li > ul { margin-left: 2rem; }
   /* stub from a parent node to its children's vertical bar */
   .lineage li:has(> ul) > .node::after {
-    content: ""; position: absolute; left: 100%; top: 50%; width: 1rem; border-top: 1px solid #cbd5e1;
+    content: ""; position: absolute; left: 100%; top: 50%; width: 1rem; border-top: 1px solid var(--border-strong);
   }
   /* per-child: horizontal stub + shared vertical bar */
   .lineage li > ul > li::before {
-    content: ""; position: absolute; left: -1rem; top: 50%; width: 1rem; border-top: 1px solid #cbd5e1;
+    content: ""; position: absolute; left: -1rem; top: 50%; width: 1rem; border-top: 1px solid var(--border-strong);
   }
   .lineage li > ul > li::after {
-    content: ""; position: absolute; left: -1rem; top: 0; bottom: 0; border-left: 1px solid #cbd5e1;
+    content: ""; position: absolute; left: -1rem; top: 0; bottom: 0; border-left: 1px solid var(--border-strong);
   }
   .lineage li > ul > li:first-child::after { top: 50%; }
   .lineage li > ul > li:last-child::after { bottom: 50%; }
@@ -1983,7 +2039,7 @@
   .kanban-move button { @apply text-xs; background: var(--surface-2); border: 1px solid var(--border-strong);
     border-radius: 6px; padding: 3px 7px; cursor: pointer; }
   .kanban-move button:hover { background: var(--green-050); border-color: var(--green); color: var(--green-700); }
-  .kanban-danger { color: var(--neg); border-color: #e7c7c3 !important; }
+  .kanban-danger { color: var(--neg); border-color: var(--neg-line) !important; }
   .kanban-danger:hover { background: var(--neg-bg) !important; border-color: var(--neg) !important; color: var(--neg) !important; }
 
   /* ---- Dragging a card (frontend/src/reparationer.ts) -----------------------------------------
@@ -2013,8 +2069,8 @@
   .kanban-note { font-size: 13px; }
   /* Column age (models.RepairTask.column_age): a left edge and a tint, so the colour reads at a glance
      across a full board without drowning the card's own text. */
-  .kanban-card[data-age="stale"] { border-color: #e7d8b0; border-left: 4px solid var(--warn); background: var(--warn-bg); }
-  .kanban-card[data-age="overdue"] { border-color: #e7c7c3; border-left: 4px solid var(--neg); background: var(--neg-bg); }
+  .kanban-card[data-age="stale"] { border-color: var(--warn-line); border-left: 4px solid var(--warn); background: var(--warn-bg); }
+  .kanban-card[data-age="overdue"] { border-color: var(--neg-line); border-left: 4px solid var(--neg); background: var(--neg-bg); }
   .kanban-card[data-age="done"] { border-color: #bfd8c8; border-left: 4px solid var(--pos); background: #E6F2EA; }
   .kanban-age { font-size: 12px !important; font-weight: 600; }
   .kanban-card[data-age="stale"] .kanban-age { color: var(--brass-ink); }
@@ -2167,6 +2223,7 @@
    }
    .album-folder { border-top:1px solid var(--border); padding-top:16px; }
    .album-folder h2 { display:flex; align-items:center; gap:8px; margin:0 0 12px; font-size:16px; }
+   .album-folder h2 a { color:inherit; text-decoration:none; }.album-folder h2 a:hover { text-decoration:underline; }
    .album-folder h2 svg, .album-subtitle svg { width:19px; height:19px; color:var(--brass); fill:none; stroke:currentColor; }
    .album-folder-grid { display:grid; grid-template-columns:repeat(auto-fill, minmax(min(100%, 150px), 1fr)); gap:14px; }
    /* Cover on top, name below: every card in a row is the same height whatever the album is called.
@@ -2627,7 +2684,7 @@
   .jobs-tile { display:block; padding:14px 16px; background:var(--surface); border:1px solid var(--border);
     border-radius:var(--radius); box-shadow:var(--shadow-sm); color:var(--ink); text-decoration:none; }
   a.jobs-tile:hover { border-color:var(--green-100); background:var(--green-050); color:var(--ink); }
-  .jobs-tile.is-alert { border-color:#e7c7c3; box-shadow:inset 4px 0 0 var(--neg), var(--shadow-sm); }
+  .jobs-tile.is-alert { border-color:var(--neg-line); box-shadow:inset 4px 0 0 var(--neg), var(--shadow-sm); }
   .jobs-tile-k { display:block; font-size:11px; font-weight:700; letter-spacing:.09em; text-transform:uppercase; color:var(--faint); }
   .jobs-tile-v { display:block; margin-top:4px; font-size:30px; font-weight:700; line-height:1.15; font-variant-numeric:tabular-nums; }
   .jobs-tile-s { display:block; margin-top:2px; font-size:12.5px; color:var(--muted); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
@@ -2644,6 +2701,8 @@
   .jobs-meter > span { display:block; height:100%; border-radius:2px; background:var(--green); }
   .jobs-meter.is-near { background:var(--warn-bg); }
   .jobs-meter.is-near > span { background:var(--brass); }
+  .jobs-progress { height:8px; margin-top:10px; border-radius:4px; background:var(--green-100); overflow:hidden; }
+  .jobs-progress > span { display:block; height:100%; border-radius:4px; background:var(--green); transition:width .4s ease; }
   .jobs-stale { padding:11px 18px; border-bottom:1px solid var(--border); background:var(--neg-bg); font-size:13px; }
   .jobs-stale a { font-weight:600; color:var(--neg); }
 
@@ -2728,6 +2787,7 @@
   .jobs-facts dd { margin:2px 0 0; }
   .jobs-pre { margin:0; padding:14px 18px; overflow-x:auto; font-size:12.5px; line-height:1.5; }
   .jobs-log td { padding:6px 14px; }
+  .jobs-log td:first-child { white-space:nowrap; }
   .jobs-log .jobs-message { white-space:pre-wrap; overflow-wrap:anywhere; }
   .jobs-log tr.is-warning td { background:var(--warn-bg); }
   .jobs-log tr.is-error td, .jobs-log tr.is-critical td { background:var(--neg-bg); }

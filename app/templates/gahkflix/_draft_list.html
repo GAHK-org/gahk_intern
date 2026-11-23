@@ -3,7 +3,7 @@
 <div class="flix-list">
   {% for video in drafts %}
     {% picture_url video "thumbnail" as thumb %}
-    <div class="flix-list-item">
+    <div class="flix-list-item"{% if video.latest_file.is_pending %} data-flix-pending{% endif %}>
       <span class="flix-card-img">{% if thumb %}<img src="{{ thumb }}" alt="">{% else %}<span class="flix-card-blank">{{ video.title|slice:":1"|upper }}</span>{% endif %}</span>
       <div>
         <h3><a href="{% url 'gahkflix:edit' video.pk %}">{{ video.title }}</a></h3>

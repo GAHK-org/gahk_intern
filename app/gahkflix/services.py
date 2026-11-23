@@ -20,20 +20,22 @@ from django.core.exceptions import ValidationError
 from django.core.files.base import ContentFile, File
 from django.db import IntegrityError, transaction
 from django.db.models import Avg, Count, F, Max, Q, QuerySet, Sum
-from django.db.models.functions import Coalesce, Lower, TruncDate
+from django.db.models.functions import Coalesce, Greatest, Lower, TruncDate
 from django.utils import timezone
 
 from core.job_directories import job_directory
+from core.job_progress import report_progress
 from photo_album.models import validate_tag_name
 from residents.models import Resident
 
 from . import dating, encoding, notify
-from .dating import DatePrecision, DateSource, PartialDate
+from .dating import DatePrecision, DateSource, PartialDate, parse_premiere, premiere_value
 from .models import (
     BIN_RETENTION,
     DRAFT_REMINDER_AFTER,
     DRAFT_TTL_DAYS,
     FRAMES_PER_DRAW,
+    MAX_DRAFTS,
     REQUEST_TTL,
     TRENDING_WINDOW,
     VIEW_DEDUPE_WINDOW,
@@ -170,13 +172,20 @@ def search_tags(query: str, limit: int = 20) -> list[str]:
 # --- Uploading ----------------------------------------------------------------------------------
 
 
-def pending_upload(resident: Resident) -> VideoFile | None:
-    """The upload of theirs still being processed — while there is one, they cannot start another."""
-    return (
-        VideoFile.objects.filter(uploaded_by=resident, state__in=(FileState.QUEUED, FileState.PROCESSING))
-        .select_related("video")
-        .first()
-    )
+def draft_count(resident: Resident) -> int:
+    return Video.objects.drafts().filter(uploaded_by=resident).count()
+
+
+def drafts_left(resident: Resident) -> int:
+    """How many more videos they may upload: a resident has at most MAX_DRAFTS unpublished drafts,
+    those still being processed included. Making a video a draft again may take them past it; it
+    only stops new uploads."""
+    return max(0, MAX_DRAFTS - draft_count(resident))
+
+
+def is_processing(video: Video) -> bool:
+    """Whether a file of the video is waiting for its encode or being encoded."""
+    return video.files.filter(state__in=(FileState.QUEUED, FileState.PROCESSING)).exists()
 
 
 def queue_ahead(video_file: VideoFile) -> int:
@@ -204,9 +213,14 @@ def fingerprint_duplicate(fingerprint: str, size: int) -> Video | None:
     return match.video if match else None
 
 
-def _upload_refusal(resident: Resident, fingerprint: str, size: int) -> str | None:
-    if (pending := pending_upload(resident)) is not None:
-        return f"Du har allerede en video, der behandles ({pending.video.title}). Vent, til den er færdig."
+def _upload_refusal(resident: Resident, fingerprint: str, size: int, video: Video | None) -> str | None:
+    if video is None and (count := draft_count(resident)) >= MAX_DRAFTS:
+        return (
+            f"Du har allerede {count} videoer, der ikke er udgivet (højst {MAX_DRAFTS}). "
+            "Udgiv eller slet en af dem, før du uploader flere."
+        )
+    if video is not None and is_processing(video):
+        return f"{video.title} behandles allerede. Vent, til den er færdig, før du uploader en ny version."
     if (duplicate := fingerprint_duplicate(fingerprint, size)) is not None:
         return f"Den video er allerede uploadet til GAHKFlix ({duplicate.title})."
     return None
@@ -229,7 +243,7 @@ def begin_upload(
     fingerprint = fingerprint.lower()
     if not valid_fingerprint(fingerprint):
         raise ValidationError("Ugyldigt fingeraftryk af filen.")
-    if error := _upload_refusal(resident, fingerprint, size):
+    if error := _upload_refusal(resident, fingerprint, size, video):
         raise ValidationError(error)
     video_uuid = str(video.uuid) if video else str(uuid4())
     file_uuid = str(uuid4())
@@ -282,14 +296,17 @@ def commit_upload(ticket: UploadTicket, resident: Resident, stored_size: int | N
     if stored_size != ticket.size:
         raise refuse("Filen kom ikke helt frem. Prøv igen.")
     with transaction.atomic():
-        # Locked, so two tabs committing at once cannot both get past the one-at-a-time rule.
+        # Locked, so two tabs committing at once cannot both get past the limit on drafts.
         Resident.objects.select_for_update().filter(pk=resident.pk).first()
-        if error := _upload_refusal(resident, ticket.fingerprint, ticket.size):
-            raise refuse(error)
+        revised = None
         if ticket.video is not None:
-            video = Video.objects.filter(pk=ticket.video, deleted_at__isnull=True).first()
-            if video is None:
+            revised = Video.objects.filter(pk=ticket.video, deleted_at__isnull=True).first()
+            if revised is None:
                 raise refuse("Videoen findes ikke længere.")
+        if error := _upload_refusal(resident, ticket.fingerprint, ticket.size, revised):
+            raise refuse(error)
+        if revised is not None:
+            video = revised
             # Earlier failed versions are only clutter once a new one is on its way.
             for failed in video.files.filter(state=FileState.FAILED).exclude(pk=video.file_id or 0):
                 _delete_keys(_file_keys(failed))
@@ -328,6 +345,7 @@ def commit_upload(ticket: UploadTicket, resident: Resident, stored_size: int | N
 
 def _heartbeat(video_file: VideoFile) -> encoding.Throttle:
     def write(fraction: float) -> None:
+        report_progress(fraction, "Behandler filmen")  # for the worker-jobs page and its watchdog
         VideoFile.objects.filter(pk=video_file.pk).update(progress=round(fraction * 100), heartbeat_at=_now())
 
     return encoding.Throttle(write)
@@ -491,23 +509,19 @@ def process_file(video_file: VideoFile, rng: random.Random | None = None) -> boo
         video_file.duration = info.duration
         video_file.width, video_file.height = info.width, info.height
         video_file.recorded_at = info.recorded_at
+        _guess_date(video_file, info)
         video_file.save(
             update_fields=[
                 "state", "progress", "error", "completed_at", "duration", "width", "height",
-                "recorded_at", "hd", "full_hd", "hd_size", "full_hd_size",
+                "recorded_at", "date_guess", "date_guess_source", "hd", "full_hd", "hd_size",
+                "full_hd_size",
             ]
         )  # fmt: skip
         video = Video.objects.select_for_update().get(pk=video.pk)
         previous = video.file
-        dated = video.release
         video.file = video_file
-        video.save(update_fields=["file", *_date_from_file(video, video_file, info)])
+        video.save(update_fields=["file"])
         changes: dict[str, Any] = {"file": video_file.original_name, "replaced": previous is not None}
-        if video.release != dated:
-            changes["released_on"] = {
-                "before": dated.iso() if dated else None,
-                "after": video.release.iso() if video.release else None,
-            }
         record_event(video, VideoEvent.Kind.PROCESSED, changes=changes)
         if previous is not None and previous.pk != video_file.pk:
             _delete_keys(_file_keys(previous))
@@ -517,22 +531,17 @@ def process_file(video_file: VideoFile, rng: random.Random | None = None) -> boo
     return True
 
 
-def _date_from_file(video: Video, video_file: VideoFile, info: encoding.Probe) -> list[str]:
-    """Guess the film's release date from its new file (dating.guess), unless it was set by hand.
-    Returns the fields it changed."""
-    if video.release_source == DateSource.MANUAL:
-        return []
+def _guess_date(video_file: VideoFile, info: encoding.Probe) -> None:
+    """Guess the film's release date from the file (dating.guess). It is only offered on the edit
+    page: the release date itself is filled in by hand."""
     found = dating.guess(
         name=video_file.original_name,
         recorded_at=info.recorded_at,
         tags=info.date_tags,
         modified_at=video_file.file_modified_at,
     )
-    if found is None:
-        return []
-    video.released_on, video.release_precision = found.date.start, found.date.precision
-    video.release_source = found.source
-    return ["released_on", "release_precision", "release_source"]
+    video_file.date_guess = found.date.iso() if found else ""
+    video_file.date_guess_source = found.source if found else ""
 
 
 def redraw_frames(video: Video, rng: random.Random | None = None) -> int:
@@ -745,7 +754,18 @@ def set_picture(
 # A video's editable details as one plain, JSON-ready dict. The edit form produces one, a proposal
 # stores the part of one that differs, and applying either goes through `apply_changes`.
 
-DETAIL_FIELDS = ("title", "description", "released_on", "series", "season", "episode", "cast", "tags")
+DETAIL_FIELDS = (
+    "title",
+    "description",
+    "released_on",
+    "premiere_at",
+    "premiere_blur",
+    "series",
+    "season",
+    "episode",
+    "cast",
+    "tags",
+)
 
 
 def cast_list(video: Video) -> list[dict[str, Any]]:
@@ -760,6 +780,8 @@ def snapshot(video: Video) -> dict[str, Any]:
         "title": video.title,
         "description": video.description,
         "released_on": release.iso() if (release := video.release) else None,
+        "premiere_at": premiere_value(video.premiere_at),
+        "premiere_blur": video.premiere_blur,
         "series": video.series_id,
         "season": video.season,
         "episode": video.episode,
@@ -829,6 +851,7 @@ def apply_changes(
     A picture replaced is kept, not deleted: the history names it, so it can be brought back.
     """
     details_before = snapshot(video) if any(key in DETAIL_FIELDS for key in changes) else {}
+    was_out = video.is_released
     pictures_before = {
         kind: {"key": key_of(getattr(video, kind)), "frame": getattr(video, f"{kind}_frame_id")}
         for kind in PICTURE_KINDS
@@ -836,17 +859,28 @@ def apply_changes(
     }
     notes: list[str] = []
     fields: list[str] = []
-    for name in ("title", "description", "season", "episode"):
+    for name in ("title", "description", "season", "episode", "premiere_blur"):
         if name in changes:
             setattr(video, name, changes[name])
             fields.append(name)
     if "released_on" in changes:
-        # Set by hand now: a new version of the file is no longer dated over it. Cleared, it is.
         release = PartialDate.parse(changes["released_on"])
         video.released_on = release.start if release else None
         video.release_precision = release.precision if release else DatePrecision.DAY
         video.release_source = DateSource.MANUAL if release else ""
         fields += ["released_on", "release_precision", "release_source"]
+    if "premiere_at" in changes:
+        video.premiere_at = parse_premiere(changes["premiere_at"])
+        fields.append("premiere_at")
+        if was_out and video.is_upcoming:
+            # Out, and now a premiere later (only within TAKE_BACK_WINDOW, forms.py): told again then.
+            video.announced_at = None
+            fields.append("announced_at")
+            transaction.on_commit(lambda: notify.withdraw_announcement(video))
+        _line_up(video)
+    # An upcoming premiere taken away, or moved to before the publishing: out now, so told now rather
+    # than at the next announce_premieres.
+    out_now = "premiere_at" in changes and not was_out and video.is_released and video.announced_at is None
     if "series" in changes:
         series = Series.objects.filter(pk=changes["series"]).first() if changes["series"] else None
         if changes["series"] and series is None:
@@ -868,7 +902,10 @@ def apply_changes(
         video.tags.set([tag_named(name) for name in changes["tags"]])
     if "cast" in changes:
         added = _replace_cast(video, changes["cast"])
-        transaction.on_commit(lambda: notify.credited(video, added, resident))
+        if not out_now:  # else _announce tells the whole cast
+            transaction.on_commit(lambda: notify.credited(video, added, resident))
+    if out_now:
+        _announce(video)
     # As it came out, which is not always as asked: a series deleted meanwhile, a name resolved.
     details_after = snapshot(video) if details_before else {}
     history = {
@@ -925,13 +962,16 @@ def _apply_series(series: Series, changes: dict[str, Any]) -> list[str]:
 # --- Publishing ---------------------------------------------------------------------------------
 
 
-def missing_for_publishing(video: Video) -> list[str]:
-    """Why the draft cannot be published yet, in the order the uploader should fix it."""
+def missing_for_publishing(video: Video, *, details: bool = True) -> list[str]:
+    """Why the draft cannot be published yet, in the order the uploader should fix it. Without
+    `details`, only what the details form sent along with "Udgiv" cannot fix (views.publish)."""
     missing = []
     if video.file is None:
         missing.append("Videoen er ikke færdigbehandlet.")
-    if not video.title.strip():
+    if details and not video.title.strip():
         missing.append("Videoen skal have en titel.")
+    if details and video.released_on is None:
+        missing.append("Udfyld udgivelsesdatoen – mindst året.")
     if not video.thumbnail:
         missing.append("Vælg en miniature.")
     if not video.banner:
@@ -940,18 +980,100 @@ def missing_for_publishing(video: Video) -> list[str]:
 
 
 def publish(video: Video, resident: Resident) -> None:
+    """Publish a draft. It is out at once, unless it is a premiere still to come: then it is listed as
+    upcoming, and announced at its premiere (announce_released)."""
     if missing := missing_for_publishing(video):
         raise ValidationError(missing)
     video.published_at = _now()
     video.save(update_fields=["published_at"])
     record_event(video, VideoEvent.Kind.PUBLISHED, resident)
+    if video.is_released:
+        _announce(video)
+    else:
+        _line_up(video)
+
+
+def _announce(video: Video) -> None:
+    """Tell everybody it is out, and its cast that they are in it — once (Video.announced_at)."""
+    video.announced_at = _now()
+    video.save(update_fields=["announced_at"])
     credited = list(video.cast.exclude(resident=None).values_list("resident_id", flat=True))
 
-    def announce() -> None:
+    def tell() -> None:
         notify.published(video)
         notify.credited(video, credited, video.uploaded_by)
 
-    transaction.on_commit(announce)
+    transaction.on_commit(tell)
+
+
+def unpublish(video: Video, resident: Resident) -> None:
+    """Make a video a draft again: an upcoming premiere, or one out for less than TAKE_BACK_WINDOW.
+    What everybody was told about it is withdrawn, and its days as a draft count from now."""
+    if not video.can_be_taken_back:
+        raise ValidationError(
+            "Videoen har været ude i mere end et døgn og kan ikke gøres til en kladde igen."
+        )
+    video.published_at = None
+    video.announced_at = None
+    video.draft_since = _now()
+    video.draft_warned_at = None
+    video.save(update_fields=["published_at", "announced_at", "draft_since", "draft_warned_at"])
+    record_event(video, VideoEvent.Kind.UNPUBLISHED, resident)
+    transaction.on_commit(lambda: notify.withdraw_announcement(video))
+
+
+# How far ahead a premiere's announcement is lined up on the minute (_line_up). More than the
+# quarter hour between two announce_premieres, so a sweep running a little late misses none.
+PREMIERE_LOOKAHEAD = timedelta(minutes=20)
+
+
+def _line_up(video: Video, now: datetime | None = None) -> bool:
+    """An upcoming premiere within PREMIERE_LOOKAHEAD gets a job at its minute that announces it.
+
+    Only that close: a job waiting days for its minute would sit taken but unacknowledged on the
+    broker, where a worker restart can lose it and the nightly sweep of delivered messages deletes
+    it. Further ahead, announce_premieres lines it up when its time comes near. A job that finds the
+    premiere moved, or already announced, does nothing (announce_released)."""
+    moment = now or _now()
+    premiere = video.premiere_at
+    if not video.is_upcoming or premiere is None or premiere - moment > PREMIERE_LOOKAHEAD:
+        return False
+    from .tasks import announce_released as job
+
+    transaction.on_commit(lambda: job.apply_async(eta=premiere))
+    return True
+
+
+def announce_premieres(now: datetime | None = None) -> tuple[int, int]:
+    """Every quarter hour: announce what has come out unannounced (a job lost, a premiere moved
+    earlier or taken away), and line up the premieres of the next PREMIERE_LOOKAHEAD to be announced
+    on their minute. Returns (announced, lined up)."""
+    moment = now or _now()
+    announced = announce_released(moment)
+    soon = Video.objects.upcoming(moment).filter(premiere_at__lte=moment + PREMIERE_LOOKAHEAD)
+    return announced, sum(_line_up(video, moment) for video in soon)
+
+
+def announce_released(now: datetime | None = None) -> int:
+    """Announce the published videos that have come out unannounced — premieres whose minute has
+    come, and any whose premiere was moved earlier or taken away. Returns how many. Run at a
+    premiere's minute (_line_up), and by the quarter-hourly announce_premieres."""
+    now = now or _now()
+    count = 0
+    for pk in Video.objects.released(now).filter(announced_at__isnull=True).values_list("pk", flat=True):
+        with transaction.atomic():
+            video = (
+                Video.objects.select_for_update()
+                .filter(pk=pk, announced_at__isnull=True, deleted_at__isnull=True)
+                .first()
+            )
+            if video is None or (video.premiere_at is not None and video.premiere_at > now):
+                continue  # announced, binned or moved later meanwhile
+            if video.comes_out_at_premiere:
+                record_event(video, VideoEvent.Kind.PREMIERED, None)
+            _announce(video)
+            count += 1
+    return count
 
 
 # --- Requests -----------------------------------------------------------------------------------
@@ -1126,11 +1248,18 @@ def _start_of(day: date) -> datetime:
     return timezone.make_aware(datetime.combine(day, time.min))
 
 
+def _drafts_since_before(moment: datetime) -> QuerySet[Video]:
+    """Drafts that became one before `moment`: uploaded, or last made a draft again (Video.draft_since)."""
+    return Video.objects.drafts().filter(
+        Q(draft_since__lt=moment) | Q(draft_since__isnull=True, created_at__lt=moment)
+    )
+
+
 def expired_drafts(today: date | None = None) -> QuerySet[Video]:
-    """Drafts whose deletion date (Video.draft_deleted_on) has come: uploaded DRAFT_TTL_DAYS or more
-    calendar days ago."""
+    """Drafts whose deletion date (Video.draft_deleted_on) has come: drafts for DRAFT_TTL_DAYS or more
+    calendar days."""
     today = today or timezone.localdate()
-    return Video.objects.drafts().filter(created_at__lt=_start_of(today - timedelta(days=DRAFT_TTL_DAYS - 1)))
+    return _drafts_since_before(_start_of(today - timedelta(days=DRAFT_TTL_DAYS - 1)))
 
 
 def purge(now: datetime | None = None) -> tuple[int, int]:
@@ -1160,10 +1289,9 @@ def drafts_to_remind(now: datetime | None = None) -> list[Video]:
     """Unpublished drafts more than a week old, the one to be deleted first first."""
     moment = now or _now()
     return list(
-        Video.objects.drafts()
-        .filter(created_at__lt=moment - DRAFT_REMINDER_AFTER)
+        _drafts_since_before(moment - DRAFT_REMINDER_AFTER)
         .select_related("uploaded_by")
-        .order_by("created_at", "pk")
+        .order_by(Coalesce("draft_since", "created_at"), "pk")
     )
 
 
@@ -1191,6 +1319,24 @@ def warn_expiring_drafts(now: datetime | None = None) -> int:
             notify.draft_expiring(video)
             count += 1
     return count
+
+
+def warn_unpublished_premieres(now: datetime | None = None) -> int:
+    """Daily: each uploader with a draft whose premiere is still ahead is told it is not published —
+    unpublished, it will have no premiere. Returns how many uploaders were told."""
+    moment = now or _now()
+    waiting = (
+        Video.objects.drafts()
+        .filter(premiere_at__gt=moment)
+        .select_related("uploaded_by")
+        .order_by("premiere_at", "pk")
+    )
+    by_uploader: dict[int, list[Video]] = defaultdict(list)
+    for video in waiting:
+        by_uploader[video.uploaded_by_id].append(video)
+    for own in by_uploader.values():
+        notify.premieres_unpublished(own, now=moment)
+    return len(by_uploader)
 
 
 # --- Files nothing refers to --------------------------------------------------------------------
@@ -1377,7 +1523,7 @@ def progress_by_video(resident: Resident, videos: Iterable[Video]) -> dict[int, 
 def continue_watching(resident: Resident, limit: int = 12) -> list[Video]:
     watches = (
         Watch.objects.filter(resident=resident, finished=False, position__gte=RESUME_FROM)
-        .filter(video__in=Video.objects.published())
+        .filter(video__in=Video.objects.released())
         .select_related("video__file", "video__series")
         .order_by("-position_at")[:limit]
     )
@@ -1388,12 +1534,12 @@ def trending(limit: int = 10, now: datetime | None = None) -> list[Video]:
     """The most unique viewers over the last week."""
     since = (now or _now()) - TRENDING_WINDOW
     rows = list(
-        ViewEvent.objects.filter(viewed_at__gte=since, video__in=Video.objects.published())
+        ViewEvent.objects.filter(viewed_at__gte=since, video__in=Video.objects.released())
         .values("video")
         .annotate(viewers=Count("resident", distinct=True), latest=Max("viewed_at"))
         .order_by("-viewers", "-latest")[:limit]
     )
-    videos = published().in_bulk([row["video"] for row in rows])
+    videos = released().in_bulk([row["video"] for row in rows])
     out = []
     for row in rows:
         video = videos[row["video"]]
@@ -1501,12 +1647,29 @@ def view_counts(videos: Iterable[Video]) -> dict[int, tuple[int, int]]:
 
 
 def published() -> QuerySet[Video]:
+    """Out, or an upcoming premiere: what the lists that show premieres draw from."""
     return Video.objects.published().select_related("file", "series")
 
 
+def released() -> QuerySet[Video]:
+    """What may be opened: everything but an upcoming premiere."""
+    return Video.objects.released().select_related("file", "series")
+
+
+def upcoming() -> list[Video]:
+    """The premieres still to come, the soonest first."""
+    return list(Video.objects.upcoming().select_related("file", "series").order_by("premiere_at", "pk"))
+
+
+def newest_first() -> list[Any]:
+    """Newest on GAHKFlix first: by when it came out there, its premiere or its publishing."""
+    return [Greatest("published_at", Coalesce("premiere_at", "published_at")).desc(), "-pk"]
+
+
 def search(query: str) -> QuerySet[Video]:
-    """Every word must turn up somewhere: title, description, a tag, a credit or the series."""
-    videos = published()
+    """Every word must turn up somewhere: title, description, a tag, a credit or the series. Upcoming
+    premieres are left out: their description, tags and cast are not out yet."""
+    videos = released()
     for word in query.split()[:8]:
         videos = videos.filter(
             Q(title__icontains=word)
@@ -1522,11 +1685,12 @@ def search(query: str) -> QuerySet[Video]:
 
 
 def series_with_episodes() -> QuerySet[Series]:
+    """Series with a published episode, an upcoming premiere included."""
     return Series.objects.filter(videos__in=Video.objects.published()).distinct()
 
 
 def episodes(series: Series) -> list[tuple[int | None, list[Video]]]:
-    """The published episodes, season by season, in order."""
+    """The published episodes, upcoming premieres included, season by season, in order."""
     ordered = sorted(
         published().filter(series=series),
         key=lambda v: (v.season or 0, v.episode or 10**6, v.display_date, v.pk),
@@ -1538,11 +1702,10 @@ def episodes(series: Series) -> list[tuple[int | None, list[Video]]]:
 
 
 def series_cover(series: Series) -> Video | None:
-    """The episode whose pictures stand for the whole series: the first one."""
-    for _season, videos in episodes(series):
-        if videos:
-            return videos[0]
-    return None
+    """The episode whose pictures stand for the whole series: the first one out, else the first
+    upcoming premiere (whose thumbnail is shown as it is before its premiere, and no banner)."""
+    flat = [video for _season, videos in episodes(series) for video in videos]
+    return next((video for video in flat if video.is_released), flat[0] if flat else None)
 
 
 def covers(series_list: Iterable[Series]) -> dict[int, Video]:
@@ -1556,7 +1719,9 @@ def covers(series_list: Iterable[Series]) -> dict[int, Video]:
 def next_episode(video: Video) -> Video | None:
     if video.series is None:
         return None
-    flat = [episode for _season, videos in episodes(video.series) for episode in videos]
+    flat = [
+        episode for _season, videos in episodes(video.series) for episode in videos if episode.is_released
+    ]
     ids = [episode.pk for episode in flat]
     if video.pk in ids and ids.index(video.pk) + 1 < len(flat):
         return flat[ids.index(video.pk) + 1]
@@ -1568,7 +1733,7 @@ def up_next(video: Video, resident: Resident) -> Video | None:
     if (episode := next_episode(video)) is not None:
         return episode
     finished = set(Watch.objects.filter(resident=resident, finished=True).values_list("video_id", flat=True))
-    newest = published().filter(series=None).order_by("-published_at")[:50]
+    newest = released().filter(series=None).order_by(*newest_first())[:50]
     for candidate in [*similar(video), *trending(20), *newest]:
         if (
             candidate.series_id is None
@@ -1579,7 +1744,7 @@ def up_next(video: Video, resident: Resident) -> Video | None:
             return candidate
     # Everything seen: start over with the film watched longest ago.
     rewatch = (
-        Watch.objects.filter(resident=resident, finished=True, video__in=published().filter(series=None))
+        Watch.objects.filter(resident=resident, finished=True, video__in=released().filter(series=None))
         .exclude(video=video)
         .exclude(video__file=None)
         .select_related("video__file")
@@ -1597,7 +1762,7 @@ def similar(video: Video, limit: int = 12) -> list[Video]:
     if not (tags or residents or names):
         return []
     scores: dict[int, int] = defaultdict(int)
-    others = published().exclude(pk=video.pk)
+    others = released().exclude(pk=video.pk)
     if video.series_id:
         others = others.exclude(series_id=video.series_id)
     for pk in others.filter(tags__in=tags).values_list("pk", flat=True):
@@ -1607,7 +1772,7 @@ def similar(video: Video, limit: int = 12) -> list[Video]:
     ).values_list("pk", flat=True):
         scores[pk] += 1
     ranked = sorted(scores, key=lambda pk: -scores[pk])[:limit]
-    found = published().in_bulk(ranked)
+    found = released().in_bulk(ranked)
     return [found[pk] for pk in ranked if pk in found]
 
 
@@ -1616,8 +1781,8 @@ def sort_date_ordering() -> list[Any]:
 
 
 def timeline() -> list[tuple[int, list[tuple[int | None, list[Video]]]]]:
-    """Every published video by year and month of its date, newest first. A video dated only to
-    its year comes after that year's months (month None)."""
+    """Every published video by year and month of its date, newest first, upcoming premieres
+    included. A video dated only to its year comes after that year's months (month None)."""
     years: dict[int, dict[int | None, list[Video]]] = defaultdict(lambda: defaultdict(list))
     for video in published().order_by(*sort_date_ordering()):
         years[video.display_date.year][video.display_month].append(video)
@@ -1628,22 +1793,22 @@ def timeline() -> list[tuple[int, list[tuple[int | None, list[Video]]]]]:
 
 
 def credits_of(resident: Resident) -> QuerySet[Video]:
-    return published().filter(cast__resident=resident).distinct()
+    return released().filter(cast__resident=resident).distinct()
 
 
 def credits_named(name: str) -> QuerySet[Video]:
-    return published().filter(cast__resident=None, cast__name__iexact=normalize_name(name.strip())).distinct()
+    return released().filter(cast__resident=None, cast__name__iexact=normalize_name(name.strip())).distinct()
 
 
 def tag_rows(limit: int = 4, minimum: int = 2) -> list[tuple[Tag, list[Video]]]:
     """The most used tags, each with its videos — the home page's genre rows."""
     tags = (
-        Tag.objects.filter(videos__in=Video.objects.published())
+        Tag.objects.filter(videos__in=Video.objects.released())
         .annotate(n=Count("videos", distinct=True))
         .filter(n__gte=minimum)
         .order_by("-n", Lower("name"))[:limit]
     )
-    return [(tag, list(published().filter(tags=tag).order_by("-published_at")[:20])) for tag in tags]
+    return [(tag, list(released().filter(tags=tag).order_by(*newest_first())[:20])) for tag in tags]
 
 
 def hero(candidates: list[Video], today: date | None = None) -> Video | None:
