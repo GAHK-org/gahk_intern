@@ -359,6 +359,19 @@ def mark_seen(rows: QuerySet[Notification]) -> int:
     return marked
 
 
+def withdraw(*, url: str, category_in: Iterable[str]) -> int:
+    """Take back what was said about `url` in the categories `category_in`: delete those rows, and
+    refresh the open bells of whoever could see one, so a badge never counts what is gone. A push
+    already shown on a phone cannot be taken back. Returns how many rows were deleted."""
+    rows = Notification.objects.filter(url=url, category__in=list(category_in))
+    # Read before the DELETE: afterwards there is nothing left to say whose they were.
+    recipients = list(rows.filter(in_app=True).values_list("recipient_id", flat=True).distinct())
+    deleted, _ = rows.delete()
+    if recipients:
+        live.inbox_changed(recipients)
+    return deleted
+
+
 def unseen_count(resident_id: int) -> int:
     """The bell's badge. Only what the dropdown can show — a push-only row is not unseen in-app."""
     return Notification.objects.filter(recipient_id=resident_id).visible().unseen().count()

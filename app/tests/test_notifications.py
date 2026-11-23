@@ -642,6 +642,33 @@ def test_mark_seen_stamps_only_what_was_unseen(make_resident: Callable[..., Resi
     assert not Notification.objects.unseen().exists()
 
 
+def test_withdraw_deletes_what_was_said_and_refreshes_the_bells_it_was_in(
+    make_resident: Callable[..., Resident], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An open bell must drop a withdrawn row at once, not keep counting it until a reload."""
+    a = make_resident(email="a@gahk.dk")
+    b = make_resident(email="b@gahk.dk")
+    c = make_resident(email="c@gahk.dk")
+    make_notification(a, category=categories.GAHKFLIX_NEW)
+    make_notification(b, category=categories.GAHKFLIX_CAST)
+    make_notification(c, category=categories.GAHKFLIX_NEW, in_app=False)  # push only: no bell
+    kept = [
+        make_notification(a, category=categories.GAHKFLIX_UPLOADS),  # another category
+        make_notification(a, category=categories.GAHKFLIX_NEW, url="/andet/"),  # another url
+    ]
+    changed: list[list[int]] = []
+    monkeypatch.setattr(services.live, "inbox_changed", lambda ids: changed.append(sorted(ids)))
+
+    withdrawn = services.withdraw(url=TARGET, category_in=(categories.GAHKFLIX_NEW, categories.GAHKFLIX_CAST))
+
+    assert withdrawn == 3
+    assert sorted(Notification.objects.values_list("pk", flat=True)) == sorted(n.pk for n in kept)
+    assert changed == [sorted([a.pk, b.pk])]
+    # Nothing left to withdraw: no bell is bothered.
+    assert services.withdraw(url=TARGET, category_in=(categories.GAHKFLIX_NEW,)) == 0
+    assert len(changed) == 1
+
+
 def test_unseen_count_is_the_residents_own_visible_unseen_rows(
     make_resident: Callable[..., Resident],
 ) -> None:
