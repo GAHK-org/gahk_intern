@@ -88,8 +88,8 @@ def _rows(viewer: Viewer, folders: list[Folder]) -> list[dict[str, Any]]:
     return [
         {
             "folder": folder,
-            # Admins and Inspektionen see a Delt mappe only by its number.
-            "name": f"Delt mappe {folder.shared.number}"
+            # Admins and Inspektionen see a Delt mappe only by its tag.
+            "name": f"Delt mappe {folder.shared.tag}"
             if folder.kind == Folder.Kind.SHARED and level == Level.META and folder.shared
             else folder.name,
             "members": members.get(folder.shared_id or 0) if folder.kind == Folder.Kind.SHARED else None,

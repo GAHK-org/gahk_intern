@@ -580,7 +580,7 @@ def _seed_changes(s: _Seeder) -> None:
 
 def _seed_shared(s: _Seeder) -> None:
     """Delte mapper. Only members see one: beboer@ moderates `Temafest`, oel@ `Studietur` (with
-    regnskab@, and formand@ as a member), and admin@, in neither, sees each as `Delt mappe #000N`
+    regnskab@, and formand@ as a member), and admin@, in neither, sees each as `Delt mappe <tag>`
     with its size and file count. `Høstfest` has expired and been archived to `Delte mapper/<year>`,
     readable by everyone under its name."""
     beboer, oel, ak = s.login("beboer@gahk.dk"), s.login("oel@gahk.dk"), s.login("ak@gahk.dk")
