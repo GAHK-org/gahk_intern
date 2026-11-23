@@ -63,6 +63,14 @@
 .cms-row-side { display: flex; flex-direction: column; align-items: flex-end; gap: 2px; flex: none; text-align: right; }
 .cms-row-side a { color: var(--green-700); font-weight: 600; }
 
+/* --- the bin ---------------------------------------------------------------------------------- */
+.cms-bin-row { flex-wrap: wrap; }
+.cms-bin-row:target { background: var(--warn-bg); }
+.cms-bin-thumb { width: 64px; height: 42px; object-fit: cover; border-radius: 6px; flex: none; }
+.cms-bin-warn { color: var(--brass-ink); }
+.cms-bin-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 8px 14px;
+  flex: none; margin-left: auto; }
+
 /* --- the edit forms -------------------------------------------------------------------------- */
 .cms-editor-grid { display: grid; grid-template-columns: minmax(0, 1fr) 320px; gap: var(--cms-gap); align-items: start; }
 .cms-editor-side { display: grid; gap: var(--cms-gap); }

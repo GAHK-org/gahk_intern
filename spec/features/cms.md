@@ -8,7 +8,8 @@ working when intern or the image storage is down; editing needs intern.
 
 - Administrator, Indstillingen, Inspektionen and PR-gruppen (the roles of the current month), and
   superusers. Nobody else sees Hjemmeside.
-- Only an administrator may delete a page. The front page can never be deleted.
+- Only an administrator may put a page in the bin, or delete one permanently from it. The front page
+  can never be deleted. Anyone who edits may restore anything from the bin.
 
 ## What can be edited
 
@@ -29,7 +30,8 @@ working when intern or the image storage is down; editing needs intern.
 ## The editor
 
 - Hjemmeside is in the intranet's menu under Administration, at `/hjemmeside/`, with tabs for the
-  overview, pages, news, front-page events, images, the menu, old addresses and the change log.
+  overview, pages, news, front-page events, images, the menu, old addresses, the change log and the
+  bin.
   gahk.dk's "Rediger siden" opens a page's editor directly.
 - Pages are listed by section, each with its address, who changed it last, a link to it on gahk.dk,
   and whether the menu leads to it.
@@ -43,7 +45,7 @@ working when intern or the image storage is down; editing needs intern.
   lost by opening it. Saving a page untouched changes nothing.
 - If someone else saved the page after it was opened, saving stops once and says so; saving again
   overwrites.
-- An image can only be deleted when nothing uses it; the library shows where each one is used.
+- An image can only be put in the bin when nothing uses it; the library shows where each one is used.
 - The menu is edited in place: text and link per entry, move up or down, remove, add.
 - The change log can be filtered by type and person and shows each change's before and after; text
   as a line-by-line difference.
@@ -70,6 +72,26 @@ working when intern or the image storage is down; editing needs intern.
 - Renaming a page keeps the old address working: it sends visitors on to the new one.
 - A page that nothing in the menu leads to (neither itself nor its section) is pointed out.
 
+## The bin
+
+- Nothing made in the editor is deleted outright. "Slet" on a page, news item, front-page event,
+  image or old address, and removing a menu entry, puts it in the bin (Papirkurv). It is gone from
+  gahk.dk and the editor's lists at the next publish; its text, address and file are kept.
+- The bin lists what is in it, newest first, with who put it there and when.
+- Anything can be restored at any time. A page comes back with its address and the old addresses
+  that went in with it; an address another page has taken since stays off, and the editor is told so.
+  A menu entry comes back at the end of the menu, if the menu has room. An old address comes back
+  only once its page is back and the address is free. Restored content that shows a picture still in
+  the bin says so.
+- After more than 30 days in the bin an item may be deleted permanently, one at a time. An image
+  some content (in the bin or not) still shows cannot be. A page deleted permanently takes its old
+  addresses with it; its saved versions are kept.
+- The bin is never emptied automatically.
+- While a page is in the bin, its address and old addresses are free for other pages.
+- Renaming a page back to an address it once had puts the now pointless old address in the bin.
+- Putting in the bin, restoring and deleting permanently are recorded in the change log, which links
+  to the item in the bin.
+
 ## Images
 
 - Uploads must be JPEG, PNG, GIF or WebP (an iPhone's HEIC becomes a JPEG). They are made at most
@@ -83,8 +105,8 @@ working when intern or the image storage is down; editing needs intern.
   intern.gahk.dk, also the ones no page used any more, and the content was pointed at the copies.
   Their old addresses on gahk.dk (`/static/legacy/image/…`, `/public/image/…`) send visitors on to
   the copies, so links from other websites and old mails keep working.
-- An old picture nothing uses shows as "Ikke i brug" and may be deleted; gahk.dk then drops it and
-  its old address at the next publish.
+- An old picture nothing uses shows as "Ikke i brug" and may be put in the bin; gahk.dk then drops it
+  and its old address at the next publish, until it is restored.
 - Images keep their file name, Danish letters included (Værelse på Øen.jpg is stored as
   Værelse_på_Øen.jpg and shown on gahk.dk as værelse-på-øen.jpg). Images already stored under a
   name without them keep that name.
@@ -120,6 +142,8 @@ working when intern or the image storage is down; editing needs intern.
 - A demo database's change log shows five weeks of made-up editing: every type and person its
   filters offer, text changes, a rename, a restore, and a fix made outside the editor. The newest
   save is a few hours old, so an editor has a recent "saved by" to show.
+- Its bin holds one of each kind: a page with an old address, binned over a month ago (deletable
+  permanently), and a news item, an event, an image, an old address and a menu entry binned days ago.
 
 ## Decisions
 
@@ -136,6 +160,11 @@ working when intern or the image storage is down; editing needs intern.
   site, where nobody can update them; 34 MB is a small price for none of them breaking.
 - **File names stay UTF-8.** Æ, ø and å are kept, not spelled out: a name only has to be
   normalized (a Mac sends "å" as two characters) and percent-encoded where it is part of an address.
+- **A bin, not deletion.** A mistaken "Slet" must always be recoverable, so deleting for good is a
+  separate, later and deliberate act on a single item; the 30 days give time to notice. Nothing
+  empties the bin by itself (for now).
+- **A binned page lets go of its address.** Otherwise a page in the bin would block its address for a
+  month.
 - **Plain-text headings.** They were shown as HTML without ever being cleaned.
 - **The menu is data.** It was written into the code, so changing it needed a developer.
 - **A visual editor that keeps the old pages intact.** Editors should not need HTML, but the old
@@ -150,3 +179,4 @@ working when intern or the image storage is down; editing needs intern.
   addresses like the rest of the intranet (`/hjemmeside/sider/…`), and its labels and messages are
   Danish. Everything only programs read is English: the code name `cms`, the picker's
   `images/library.json`, the `gahk_editor` cookie, gahk.dk's `/images/` copies and the outbox's codes.
+  The bin, added after the rule that new technical paths are English, is at `/hjemmeside/bin/`.

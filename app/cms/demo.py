@@ -11,6 +11,9 @@ part of the log worth looking at:
   * texts changed as line diffs, a page created and one renamed (its old address keeps working), a
     page edited twice and then put back to the earlier version (a restore, with its version);
   * the menu reordered (the list before and after), news and events created, edited and deleted;
+  * the bin (cms.bin) with one of each kind in it: a news item, an event, an image, an old address
+    and a menu entry binned days ago (not yet deletable for good), and a page with its old address
+    binned over a month ago, which an administrator may now delete permanently;
   * the latest change only hours old, so a page's editor has a recent "saved by" to name.
 
 It goes through cms.services, so each event is the one the editor writes, and the services' own
@@ -33,6 +36,7 @@ from audit import trail
 from audit.demo import HOUSE, IPV6, PHONES, Moment, ago
 from residents.models import Resident, Role, RoleAssignment
 
+from . import bin as cms_bin
 from . import services
 from .models import CmsImage, MenuItem, NewsItem, Page, PageRedirect, PageVersion, SiteSettings
 from .models import Event as CmsEvent
@@ -51,6 +55,8 @@ MENU = [
 ]
 DEFAULT_BACKGROUND = "/public/image/upload/images/gang.jpg"
 IMAGE_CAPTION = "Gården en sommeraften"
+BINNED_IMAGE_CAPTION = f"{IMAGE_CAPTION}, beskåret for skævt"
+BINNED_PAGE = "Sommerfest 2026"
 
 OPTAGELSE = (
     "<p>Sådan søger du ind.</p>\n"
@@ -266,11 +272,12 @@ def history(residents: list[Resident], now: datetime, rng: random.Random) -> lis
             {"body": OPTAGELSE.replace("3.150 kr.", "3.250 kr.")},
         ),
     ]
+    moments += _bin_moments(now, formand, admin, indstilling, inspektion)
     if oldest_news is not None:
         moments.append(
             Moment(
                 ago(now, 6, 11, 0),
-                lambda: services.delete_news(oldest_news, formand),
+                _binned(ago(now, 6, 11, 0), lambda: cms_bin.put_in_bin(oldest_news, formand)),
                 formand,
                 HOUSE,
                 reverse("cms:news_delete", args=[oldest_news.pk]),
@@ -280,13 +287,109 @@ def history(residents: list[Resident], now: datetime, rng: random.Random) -> lis
         moments.append(
             Moment(
                 ago(now, 4, 19, 35),
-                lambda: services.delete_event(seeded_event, indstilling),
+                _binned(ago(now, 4, 19, 35), lambda: cms_bin.put_in_bin(seeded_event, indstilling)),
                 indstilling,
                 HOUSE,
                 reverse("cms:event_delete", args=[seeded_event.pk]),
             )
         )
     return moments
+
+
+def _bin_moments(
+    now: datetime, formand: Resident, admin: Resident, indstilling: Resident, inspektion: Resident
+) -> list[Moment]:
+    """What fills the bin besides the news item and the event: a page made, renamed and binned over a
+    month ago (deletable for good now, by an administrator), and, days ago, a second picture, the
+    rundvisning address and the Legater menu entry (restorable, not yet deletable)."""
+    made_at, renamed_at, binned_at = ago(now, 35, 14, 0), ago(now, 34, 9, 30), ago(now, 32, 20, 15)
+    upload_at = ago(now, 26, 18, 40)
+
+    def page() -> Page:
+        return Page.all_objects.get(header=BINNED_PAGE)
+
+    return [
+        Moment(
+            made_at,
+            _dated(
+                made_at,
+                lambda: services.save_page(
+                    None,
+                    {
+                        "slug": "sommerfest",
+                        "header": BINNED_PAGE,
+                        "body": "<p>Sommerfesten holdes i gården lørdag den 20. juni. Alle alumner er velkomne.</p>",
+                    },
+                    indstilling,
+                ),
+            ),
+            indstilling,
+            HOUSE,
+            reverse("cms:page_create"),
+        ),
+        Moment(
+            renamed_at,
+            _dated(renamed_at, lambda: services.save_page(page(), {"slug": "sommerfest-2026"}, indstilling)),
+            indstilling,
+            HOUSE,
+        ),
+        Moment(
+            binned_at,
+            _binned(binned_at, lambda: cms_bin.put_in_bin(page(), admin)),
+            admin,
+            IPV6,
+        ),
+        Moment(
+            upload_at,
+            _dated(upload_at, lambda: _upload(inspektion, BINNED_IMAGE_CAPTION, crop=True)),
+            inspektion,
+            HOUSE,
+            reverse("cms:image_list"),
+        ),
+        Moment(
+            ago(now, 3, 10, 20),
+            _binned(
+                ago(now, 3, 10, 20),
+                lambda: cms_bin.put_in_bin(CmsImage.objects.get(caption=BINNED_IMAGE_CAPTION), inspektion),
+            ),
+            inspektion,
+            HOUSE,
+        ),
+        Moment(
+            ago(now, 2, 13, 50),
+            _binned(
+                ago(now, 2, 13, 50),
+                lambda: cms_bin.put_in_bin(PageRedirect.objects.get(old_path="rundvisning"), formand),
+            ),
+            formand,
+            HOUSE,
+            reverse("cms:redirect_list"),
+        ),
+        Moment(
+            ago(now, 7, 21, 0),
+            _binned(
+                ago(now, 7, 21, 0),
+                lambda: services.save_menu(
+                    [entry for entry in services.menu_state() if entry["url"] != "/legater"], formand
+                ),
+            ),
+            formand,
+            HOUSE,
+            reverse("cms:menu"),
+        ),
+    ]
+
+
+def _binned(at: datetime, play: Callable[[], object]) -> Callable[[], None]:
+    """Run something that puts things in the bin, then date them to the event, as _dated does."""
+
+    def run() -> None:
+        started = timezone.now()
+        play()
+        for kind in cms_bin.KINDS.values():
+            kind.model.all_objects.filter(binned_at__gte=started).update(binned_at=at)
+
+    return run
 
 
 def _people(now: datetime) -> tuple[Resident, Resident, Resident, Resident] | None:
@@ -314,9 +417,10 @@ def _people(now: datetime) -> tuple[Resident, Resident, Resident, Resident] | No
 def _reset_shared_content() -> None:
     """What --fresh does not wipe, back to a fresh database's: the menu, the default background, and
     no demo image (a second run would add another)."""
-    for image in CmsImage.objects.filter(caption__startswith=IMAGE_CAPTION):
+    for image in CmsImage.all_objects.filter(caption__startswith=IMAGE_CAPTION):
         image.delete()  # its file too
-    MenuItem.objects.all().delete()
+    MenuItem.all_objects.all().delete()
+    Page.all_objects.filter(header=BINNED_PAGE).delete()
     MenuItem.objects.bulk_create(
         [MenuItem(label=label, url=url, order=index * 10) for index, (url, label) in enumerate(MENU)]
     )
@@ -344,7 +448,7 @@ def _dated(at: datetime, play: Callable[[], object]) -> Callable[[], None]:
     return run
 
 
-def _upload(by: Resident) -> CmsImage:
+def _upload(by: Resident, caption: str = IMAGE_CAPTION, *, crop: bool = False) -> CmsImage:
     from PIL import Image, ImageDraw
 
     picture = Image.new("RGB", (1600, 1000), "#2f5d50")
@@ -354,10 +458,12 @@ def _upload(by: Resident) -> CmsImage:
     for x in range(260, 1400, 160):
         draw.rectangle((x, 240, x + 70, 340), fill="#e8d9a8")
         draw.rectangle((x, 420, x + 70, 520), fill="#e8d9a8")
+    if crop:
+        picture = picture.rotate(4, fillcolor="#ffffff").crop((120, 0, 1500, 900))
     data = BytesIO()
     picture.save(data, format="JPEG", quality=85)
     upload = SimpleUploadedFile("gaarden-sommer.jpg", data.getvalue(), content_type="image/jpeg")
-    return services.upload_image(upload, IMAGE_CAPTION, by)
+    return services.upload_image(upload, caption, by)
 
 
 def _fix_news_title() -> None:

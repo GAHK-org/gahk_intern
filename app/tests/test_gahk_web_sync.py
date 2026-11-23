@@ -408,13 +408,14 @@ def test_a_publish_that_breaks_still_lets_the_outbox_be_pulled(
 
 
 @pytest.mark.django_db
-def test_every_old_image_goes_to_gahk_dk_used_or_not_until_it_is_deleted(
+def test_every_old_image_goes_to_gahk_dk_used_or_not_until_it_is_binned(
     gahk_web: FakeGahkWeb,
     front_page: Page,
     django_capture_on_commit_callbacks: Callable[..., Any],
 ) -> None:
     """gahk.dk redirects every old picture address, so it gets every old picture, not only the ones
-    a page shows. Deleting one from the library takes it, and its redirect, off at the next publish."""
+    a page shows. Putting one in the bin takes it, and its redirect, off at the next publish."""
+    from cms import bin as cms_bin
     from cms import services
 
     climbing = _library_image()
@@ -431,7 +432,7 @@ def test_every_old_image_goes_to_gahk_dk_used_or_not_until_it_is_deleted(
     assert climbing.sha256 in gahk_web.images
 
     with django_capture_on_commit_callbacks(execute=True):
-        services.delete_image(climbing, None)
+        cms_bin.put_in_bin(climbing, None)
 
     published = gahk_web.published[-1]
     assert old_address not in published["legacy_images"]

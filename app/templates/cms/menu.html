@@ -20,6 +20,7 @@
         <li class="cms-menu-row">
           <span class="cms-menu-number" aria-hidden="true">{{ forloop.counter }}</span>
           <div class="cms-menu-fields">
+            <input type="hidden" name="id_{{ forloop.counter0 }}" value="{{ row.id }}">
             <label for="menu-label-{{ forloop.counter0 }}" class="sr-only">Tekst, punkt {{ forloop.counter }}</label>
             <input id="menu-label-{{ forloop.counter0 }}" type="text" name="label_{{ forloop.counter0 }}" value="{{ row.label }}" maxlength="60" placeholder="Tekst">
             <label for="menu-url-{{ forloop.counter0 }}" class="sr-only">Link, punkt {{ forloop.counter }}</label>
@@ -29,7 +30,7 @@
             <button type="submit" class="btn btn-secondary" name="action" value="up-{{ forloop.counter0 }}" title="Flyt op" aria-label="Flyt {{ row.label }} op"{% if forloop.first %} disabled{% endif %}>↑</button>
             <button type="submit" class="btn btn-secondary" name="action" value="down-{{ forloop.counter0 }}" title="Flyt ned" aria-label="Flyt {{ row.label }} ned"{% if forloop.last %} disabled{% endif %}>↓</button>
             <button type="submit" class="btn btn-danger" name="action" value="remove-{{ forloop.counter0 }}" title="Fjern" aria-label="Fjern {{ row.label }}"
-                    onclick="return confirm('Fjern «{{ row.label|escapejs }}» fra menuen?')">Fjern</button>
+                    onclick="return confirm('Fjern «{{ row.label|escapejs }}» fra menuen? Det lægges i papirkurven.')">Fjern</button>
           </div>
         </li>
       {% endfor %}

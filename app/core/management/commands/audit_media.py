@@ -125,7 +125,9 @@ class Command(BaseCommand):
             fields = [f for f in model._meta.get_fields() if isinstance(f, models.FileField)]
             if not fields:
                 continue
-            for row in model._default_manager.values_list(*[f.name for f in fields]):
+            # The base manager: a default one may leave rows out (the Hjemmeside's bin), and a binned
+            # row's file is still referenced.
+            for row in model._base_manager.values_list(*[f.name for f in fields]):
                 for value in row:
                     if not value:
                         continue
@@ -136,7 +138,7 @@ class Command(BaseCommand):
 
         # 2. The two CharFields holding a URL rather than a name.
         for value in [
-            *Page.objects.values_list("background_image", flat=True),
+            *Page.all_objects.values_list("background_image", flat=True),
             *PageVersion.objects.values_list("background_image", flat=True),
         ]:
             name = _name_from_url(value or "")
@@ -145,9 +147,9 @@ class Command(BaseCommand):
 
         # 3. /media/ URLs embedded in admin-authored HTML.
         for body in [
-            *Page.objects.values_list("body", flat=True),
-            *NewsItem.objects.values_list("body", flat=True),
-            *Event.objects.values_list("description", flat=True),
+            *Page.all_objects.values_list("body", flat=True),
+            *NewsItem.all_objects.values_list("body", flat=True),
+            *Event.all_objects.values_list("description", flat=True),
         ]:
             names.update(unquote(m.group(1)) for m in MEDIA_REF.finditer(body or ""))
 

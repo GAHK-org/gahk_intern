@@ -21,8 +21,8 @@
                 <td class="muted text-sm">{{ item.created_at|date:"j. b Y" }}{% if item.created_by %}, {{ item.created_by.full_name }}{% endif %}</td>
                 <td>
                   <form method="post" action="{% url 'cms:redirect_delete' item.pk %}"
-                        onsubmit="return confirm('Skal /{{ item.old_path|escapejs }} holde op med at sende videre? Links dertil giver så “siden findes ikke”.')">
-                    {% csrf_token %}<button type="submit" class="btn-link-danger">Slet</button>
+                        onsubmit="return confirm('Skal /{{ item.old_path|escapejs }} holde op med at sende videre? Links dertil giver så “siden findes ikke”. Omdirigeringen lægges i papirkurven.')">
+                    {% csrf_token %}<button type="submit" class="btn-link-danger">Læg i papirkurven</button>
                   </form>
                 </td>
               </tr>

@@ -22,16 +22,16 @@
         <p class="cms-label">Bruges</p>
         {% if usage %}
           <ul class="cms-plain-list">{% for place in usage %}<li>{{ place }}</li>{% endfor %}</ul>
-          <p class="muted cms-help">Et billede, der bruges, kan ikke slettes. Fjern det først fra stederne ovenfor.</p>
+          <p class="muted cms-help">Et billede, der bruges, kan ikke lægges i papirkurven. Fjern det først fra stederne ovenfor.</p>
         {% else %}
           <p class="muted">Ingen steder.</p>
           {% if image.legacy_path %}
-            <p class="muted cms-help">Fra den gamle hjemmeside: gahk.dk sender den gamle adresse (<code>/static/legacy/image/{{ image.legacy_path }}</code>) videre til billedet. Slettes det, holder den adresse op med at virke, og billedet kommer ikke tilbage.</p>
+            <p class="muted cms-help">Fra den gamle hjemmeside: gahk.dk sender den gamle adresse (<code>/static/legacy/image/{{ image.legacy_path }}</code>) videre til billedet. Lægges det i papirkurven, holder den adresse op med at virke, indtil billedet gendannes.</p>
           {% endif %}
           <form method="post" action="{% url 'cms:image_delete' image.pk %}"
-                onsubmit="return confirm('Slet billedet fra biblioteket?')">
+                onsubmit="return confirm('Læg billedet i papirkurven?')">
             {% csrf_token %}
-            <button type="submit" class="btn btn-danger">Slet billedet</button>
+            <button type="submit" class="btn btn-danger">Læg i papirkurven</button>
           </form>
         {% endif %}
       </div>

@@ -1,0 +1,57 @@
+{% extends "cms/base.html" %}
+{% comment %}
+  The bin (cms.bin): what the editor's "Slet" buttons put away. Every item can be restored; once it has
+  been here longer than KEEP_FOR it can also be deleted for good, one at a time.
+{% endcomment %}
+{% block cms_title %}Papirkurv{% endblock %}
+{% block cms_content %}
+  <div class="page-head">
+    <div>
+      <p class="eyebrow">Hjemmeside</p>
+      <h1>Papirkurv</h1>
+      <p class="muted text-sm">Det, der slettes i editoren, lægges her og vises ikke på gahk.dk. Alt kan gendannes. Når noget har ligget her i mere end {{ keep_days }} dage, kan det også slettes permanent, ét ad gangen. Papirkurven tømmes aldrig af sig selv.</p>
+    </div>
+  </div>
+  <section class="card-flat cms-section">
+    <ul class="cms-rows">
+      {% for entry in entries %}
+        <li class="cms-row cms-bin-row" id="{{ entry.anchor }}">
+          {% if entry.kind.key == "image" %}<img class="cms-bin-thumb" src="{{ entry.obj.url }}" alt="" loading="lazy">{% endif %}
+          <div class="cms-row-main">
+            <span class="cms-row-title">{{ entry.name }}</span>
+            <span class="chip chip-quiet">{{ entry.kind.label }}</span>
+            {% if entry.detail %}
+              <div class="cms-row-meta muted text-sm"><span{% if entry.detail_is_path %} class="cms-path"{% endif %}>{{ entry.detail }}</span></div>
+            {% endif %}
+            <div class="cms-row-meta muted text-sm">Lagt her {{ entry.obj.binned_at|date:"j. b Y, H:i" }}{% if entry.obj.binned_by %} af {{ entry.obj.binned_by.full_name }}{% endif %}</div>
+            {% if entry.redirects %}
+              <div class="cms-row-meta muted text-sm">Med de gamle adresser {% for path in entry.redirects %}<span class="cms-path">{{ path }}</span>{% if not forloop.last %}, {% endif %}{% endfor %}</div>
+            {% endif %}
+            {% if entry.usage %}
+              <div class="cms-row-meta text-sm cms-bin-warn">Bruges stadig: {{ entry.usage|join:", " }}</div>
+            {% endif %}
+          </div>
+          <div class="cms-bin-actions">
+            <form method="post" action="{% url 'cms:bin_restore' entry.kind.key entry.obj.pk %}">
+              {% csrf_token %}<button type="submit" class="btn btn-secondary">Gendan</button>
+            </form>
+            {% if not entry.may_delete_now %}
+              <span class="muted text-sm">Kan slettes permanent fra {{ entry.deletable_from|date:"j. b Y" }}</span>
+            {% elif entry.usage %}
+              <span class="muted text-sm">Kan ikke slettes, mens det bruges</span>
+            {% elif entry.kind.administrators_only and not is_admin %}
+              <span class="muted text-sm">En administrator kan slette den permanent</span>
+            {% else %}
+              <form method="post" action="{% url 'cms:bin_delete' entry.kind.key entry.obj.pk %}"
+                    onsubmit="return confirm('Slet «{{ entry.name|truncatechars:60|escapejs }}» permanent? Det kan ikke fortrydes.')">
+                {% csrf_token %}<button type="submit" class="btn-link-danger">Slet permanent</button>
+              </form>
+            {% endif %}
+          </div>
+        </li>
+      {% empty %}
+        <li class="card-pad muted">Papirkurven er tom.</li>
+      {% endfor %}
+    </ul>
+  </section>
+{% endblock %}

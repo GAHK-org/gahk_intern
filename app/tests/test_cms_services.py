@@ -14,6 +14,7 @@ from django.core.files.uploadedfile import SimpleUploadedFile
 from django.db import connection
 from PIL import Image
 
+from cms import bin as cms_bin
 from cms import services
 from cms.models import (
     CmsImage,
@@ -208,18 +209,18 @@ def test_restore_sanitizes_again(editor: Resident) -> None:
 
 
 @pytest.mark.django_db
-def test_deleting_a_page_keeps_its_history_and_the_front_page_cannot_go(editor: Resident) -> None:
+def test_deleting_a_page_bins_it_and_the_front_page_cannot_go(editor: Resident) -> None:
     front = Page.put_front_page(slug="velkommen", header="Velkommen")
     page = services.save_page(None, {"header": "Væk", "slug": "vaek", "body": "<p>tekst</p>"}, editor)
 
-    services.delete_page(page, editor)
+    cms_bin.put_in_bin(page, editor)
 
     assert not Page.objects.filter(slug="vaek").exists()
-    assert PageVersion.objects.filter(header="Væk", page__isnull=True).count() >= 2
-    deleted = events("cms.page.deleted").get()
-    assert changes(deleted)["body"] == ["<p>tekst</p>", None]
+    binned = Page.all_objects.get(slug="vaek")
+    assert binned.body == "<p>tekst</p>" and binned.binned_by == editor and binned.versions.exists()
+    assert events("cms.page.binned", kind="cms.page", entity_id=page.pk).exists()
     with pytest.raises(ValidationError):
-        services.delete_page(front, editor)
+        cms_bin.put_in_bin(front, editor)
 
 
 # ------------------------------------------------------------------------------- news and events
@@ -236,9 +237,10 @@ def test_news_and_events_are_cleaned_and_audited(editor: Resident) -> None:
     assert actions("cms.") == ["cms.news.created", "cms.event.created", "cms.event.updated"]
     assert changes(events("cms.event.updated").get()) == {"title": ["Havedag", "Havedag!"]}
 
-    services.delete_news(news, editor)
-    services.delete_event(event, editor)
+    cms_bin.put_in_bin(news, editor)
+    cms_bin.put_in_bin(event, editor)
     assert not NewsItem.objects.exists() and not Event.objects.exists()
+    assert NewsItem.all_objects.count() == Event.all_objects.count() == 1
     with pytest.raises(ValidationError):
         services.save_event(None, {"title": "Uden dato"}, editor)
 
@@ -287,18 +289,22 @@ def test_an_svg_or_a_non_image_is_a_file_error(editor: Resident) -> None:
 
 
 @pytest.mark.django_db
-def test_image_usage_and_delete(editor: Resident) -> None:
+def test_image_usage_and_bin(editor: Resident) -> None:
     image = services.upload_image(
         SimpleUploadedFile("a.png", _png(5, 5), content_type="image/png"), "A", editor
     )
-    Page.objects.create(slug="p", header="P", body=f'<img src="{image.url}">')
+    page = Page.objects.create(slug="p", header="P", body=f'<img src="{image.url}">')
     SiteSettings.objects.update_or_create(pk=1, defaults={"default_background": image.url})
 
     assert services.image_usage(image) == ["Side: P", "Standardbaggrund"]
     services.update_image(image, "Ny tekst", editor)
-    services.delete_image(image, editor)
-    assert not CmsImage.objects.exists()
-    assert actions("cms.") == ["cms.image.uploaded", "cms.image.updated", "cms.image.deleted"]
+    with pytest.raises(ValidationError):
+        cms_bin.put_in_bin(image, editor)  # still shown
+    SiteSettings.objects.filter(pk=1).update(default_background="")
+    Page.objects.filter(pk=page.pk).update(body="")
+    cms_bin.put_in_bin(image, editor)
+    assert not CmsImage.objects.exists() and CmsImage.all_objects.get().file
+    assert actions("cms.") == ["cms.image.uploaded", "cms.image.updated", "cms.image.binned"]
 
 
 @pytest.mark.django_db
@@ -343,7 +349,7 @@ def test_the_menu_is_replaced_as_a_whole_and_audited(editor: Resident) -> None:
     last = events("cms.menu.updated").last()
     assert last is not None and changes(last, "cms.menu")["menu"][0][0]["label"] == "Hjem"
     assert not last.entities.filter(kind="cms.menu_item").exists()  # one change: the whole menu
-    services.delete_menu_item(MenuItem.objects.get(label="Hjem"), editor)
+    cms_bin.put_in_bin(MenuItem.objects.get(label="Hjem"), editor)
     assert MenuItem.objects.count() == 1
 
 
@@ -390,8 +396,8 @@ def test_redirects_are_validated_and_audited(editor: Resident) -> None:
     with pytest.raises(ValidationError) as reserved:
         services.save_redirect(None, {"old_path": "api", "page": page}, editor)
     assert "old_path" in reserved.value.message_dict
-    services.delete_redirect(redirect, editor)
-    assert actions("cms.redirect.") == ["cms.redirect.created", "cms.redirect.deleted"]
+    cms_bin.put_in_bin(redirect, editor)
+    assert actions("cms.redirect.") == ["cms.redirect.created", "cms.redirect.binned"]
 
 
 @pytest.mark.django_db
