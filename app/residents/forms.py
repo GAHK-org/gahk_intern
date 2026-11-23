@@ -7,11 +7,13 @@ from typing import Any
 from django import forms
 from django.conf import settings
 from django.contrib.auth.forms import AuthenticationForm, PasswordResetForm
+from django.core.exceptions import NON_FIELD_ERRORS
 from django.core.files.uploadedfile import UploadedFile
 
 from core import mail as outbox
 from core.uploads import validate_image_upload
 
+from . import throttle
 from .models import Resident
 
 
@@ -50,6 +52,18 @@ class EmailAuthenticationForm(AuthenticationForm):
                 "spellcheck": "false",
             }
         )
+
+    def clean(self) -> dict[str, Any]:
+        # Checked here as well as in residents.backends, so the page can say why instead of
+        # "Forkert e-mail eller kodeord" — which would send the resident off to guess again.
+        username = self.cleaned_data.get("username")
+        if self.request is not None and username and throttle.login_blocked(self.request, username):
+            raise forms.ValidationError("Too many failed logins", code="throttled")
+        return super().clean()
+
+    @property
+    def throttled(self) -> bool:
+        return self.has_error(NON_FIELD_ERRORS, "throttled")
 
 
 class ResidentEditForm(forms.ModelForm):
@@ -165,6 +179,14 @@ class ResidentPasswordResetForm(PasswordResetForm):
             if unicodedata.normalize("NFKC", email).casefold()
             == unicodedata.normalize("NFKC", getattr(u, field)).casefold()
         )
+
+    def save(self, *args: Any, **kwargs: Any) -> None:  # noqa: ANN401 - Django's signature
+        # Over the limit, nothing is sent and the "done" page looks the same as ever: it never says
+        # whether a mail went out, so it cannot tell a stranger which addresses have an account.
+        request = kwargs.get("request")
+        if request is not None and not throttle.password_reset_allowed(request, self.cleaned_data["email"]):
+            return
+        super().save(*args, **kwargs)
 
     def send_mail(
         self,

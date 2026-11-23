@@ -29,6 +29,8 @@ logger = logging.getLogger(__name__)
 def log_failed_login(
     sender: object, credentials: dict[str, Any], request: HttpRequest | None = None, **_: object
 ) -> None:
+    if getattr(request, "login_throttled", False):
+        return  # refused before the password was looked at; residents.throttle logged why
     email = str(credentials.get("username") or "")
     try:
         user = Resident._default_manager.get_by_natural_key(email)

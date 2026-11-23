@@ -122,3 +122,19 @@ def test_post_accepts_every_known_placeholder(make_resident: Callable) -> None:
 
     assert response.status_code == 302
     assert AlumneregningSettings.get_solo().message_template == template
+
+
+@pytest.mark.django_db
+def test_post_rejects_a_real_pdf_named_as_something_else(make_resident: Callable) -> None:
+    """The name is what the file is stored as: a parseable PDF called x.html must not be kept as one."""
+    acc = make_resident(email="acc@gahk.dk", roles=("regnskab",))
+    c = Client()
+    c.force_login(acc)
+    polyglot = SimpleUploadedFile("brev.html", _real_pdf_bytes(), content_type="application/pdf")
+
+    html = c.post(
+        reverse("regnskab:alumneregning_settings"), {"message_template": "x", "followup_pdf": polyglot}
+    ).content.decode()
+
+    assert "skal være en PDF-fil" in html
+    assert AlumneregningSettings.get_solo().followup_pdf.name == ""

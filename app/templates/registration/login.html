@@ -3,7 +3,11 @@
 {% block content %}
   <h1>Log ind</h1>
   <div class="card" style="max-width:420px">
-    {% if form.errors %}<p class="errorlist">Forkert e-mail eller kodeord.</p>{% endif %}
+    {% if form.throttled %}
+      <p class="errorlist">For mange forkerte forsøg. Vent et kvarter, og prøv så igen.</p>
+    {% elif form.errors %}
+      <p class="errorlist">Forkert e-mail eller kodeord.</p>
+    {% endif %}
     {# novalidate: the browser's own e-mail check would block an address the server accepts. #}
     <form method="post" action="" novalidate>
       {% csrf_token %}

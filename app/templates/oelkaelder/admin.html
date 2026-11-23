@@ -28,7 +28,7 @@
         </td>
         <td>
           <form method="post" action="{% url 'oelkaelder:deactivate_shopper' shopper.id %}" class="inline"
-                onsubmit="return confirm('Deaktivér {{ shopper.resident.full_name }}?');">
+                onsubmit="return confirm('Deaktivér {{ shopper.resident.full_name|escapejs }}?');">
             {% csrf_token %}<button type="submit" class="btn btn-secondary">Deaktivér</button>
           </form>
         </td>
