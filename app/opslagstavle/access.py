@@ -32,6 +32,7 @@ from django.db.models import QuerySet
 from django.http import HttpRequest
 
 from core.rollout import Gate
+from residents.access_levels import Feature
 from residents.permissions import MODERATION_ROLES, View, request_has_role
 
 from .models import Notice, NoticeComment
@@ -48,7 +49,7 @@ ACCESS_ROLES: tuple[str, ...] | None = None
 
 # Read through a lambda, never passed by value: this module global is what tests rebind and what a
 # future edit flips to None, and a Gate holding the value would freeze at import. See core.rollout.
-_GATE = Gate(lambda: ACCESS_ROLES)
+_GATE = Gate(lambda: ACCESS_ROLES, Feature.OPSLAGSTAVLE)
 
 # The gate's surface, re-exported under the names this app has always used so no caller changed when
 # the mechanism moved to core.

@@ -19,6 +19,8 @@ the page they are looking at.
 from django.http import HttpRequest
 
 from core import live
+from residents.access_levels import Feature
+from residents.permissions import is_kitchen
 
 from .access import request_allowed
 from .models import Notice
@@ -28,8 +30,10 @@ TOPIC = FEATURE
 
 
 def may_listen(request: HttpRequest, rest: str) -> bool:
-    """The board's gate. One topic only, so anything after the prefix is a topic that does not exist."""
-    return not rest and request_allowed(request)
+    """The board's gate. One topic only, so anything after the prefix is a topic that does not exist.
+
+    Not the kitchen account: the board's signals are about everyone's posts, and it sees only its own."""
+    return not rest and request_allowed(request) and not is_kitchen(request)
 
 
 def notice_created(notice: Notice) -> None:
@@ -45,4 +49,4 @@ def notice_deleted(notice_pk: int) -> None:
 
 
 def register() -> None:
-    live.register(FEATURE, may_listen)
+    live.register(FEATURE, may_listen, Feature.OPSLAGSTAVLE)

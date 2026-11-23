@@ -9,6 +9,9 @@
   <p>Saldo: <strong class="{{ balance|sign_class }}">{{ balance }}</strong>
      <span class="muted">(målet er at holde sig på 0 eller derover)</span></p>
 
+  {% if "ak" in read_only_features %}
+    <p class="muted">Du er flyttet ud, så du kan se dine krydser, men ikke registrere nye.</p>
+  {% else %}
   <form method="post" action="{% url 'ak:add_self' %}" class="card max-w-md">
     {% csrf_token %}
     <h2>Registrér udført arbejde</h2>
@@ -18,6 +21,7 @@
     <input type="text" name="reason" placeholder="Hvad lavede du?" required>
     <p class="mt-3"><button type="submit" class="btn">Tilføj krydser</button></p>
   </form>
+  {% endif %}
 
   <table cellpadding="6" style="width:100%; border-collapse:collapse">
     <thead><tr style="text-align:left; border-bottom:1px solid var(--border-strong)"><th>Dato</th><th>Ændring</th><th>Type</th><th>Note</th></tr></thead>

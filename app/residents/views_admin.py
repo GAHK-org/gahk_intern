@@ -33,6 +33,7 @@ from core.tasks import task_time_limit
 from core.worker_logs import SENT_AT_HEADER, parse_sent_at
 
 from . import admin_access
+from .access_levels import PREVIEW_LEVEL_SESSION_KEY, AccessLevel
 from .models import AdminAccessGrant, Resident, Role, RoleAssignment, active_period
 from .permissions import (
     KITCHEN,
@@ -1220,10 +1221,17 @@ def roles(request: HttpRequest) -> HttpResponse:
 # admin previewing "beboer" can still end the preview. ----
 @require_can_preview
 def preview(request: HttpRequest) -> HttpResponse:
+    level = request.session.get(PREVIEW_LEVEL_SESSION_KEY)
     return render(
         request,
         "siteadmin/preview.html",
-        {"all_roles": Role.choices, "current": request.session.get(PREVIEW_SESSION_KEY)},
+        {
+            "all_roles": Role.choices,
+            "current": request.session.get(PREVIEW_SESSION_KEY),
+            "current_level": AccessLevel(level).label if level in {lv.value for lv in AccessLevel} else None,
+            # The resident and the kitchen are picked above, as "Ingen rolle" and "Køkkenet".
+            "levels": [lv for lv in AccessLevel if lv not in (AccessLevel.RESIDENT, AccessLevel.KITCHEN)],
+        },
     )
 
 
@@ -1231,8 +1239,13 @@ def preview(request: HttpRequest) -> HttpResponse:
 @require_can_preview
 def preview_set(request: HttpRequest) -> HttpResponseRedirect:
     mode = request.POST.get("mode")
+    request.session.pop(PREVIEW_LEVEL_SESSION_KEY, None)
     if mode == "clear":
         request.session.pop(PREVIEW_SESSION_KEY, None)
+    elif mode == "level" and request.POST.get("level") in {lv.value for lv in AccessLevel}:
+        # A level other than a resident's holds no role: its roles are previewed as none.
+        request.session[PREVIEW_SESSION_KEY] = []
+        request.session[PREVIEW_LEVEL_SESSION_KEY] = request.POST["level"]
     elif mode == "resident":
         request.session[PREVIEW_SESSION_KEY] = []
     elif mode == "admin":

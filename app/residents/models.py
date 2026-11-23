@@ -133,7 +133,7 @@ class Resident(AbstractBaseUser, PermissionsMixin):
         default=False
     )  # = holds any role in the active period (set by ETL/signals)
     # The shared kitchen-staff login: not a resident, sees only Den Hurtige's køkken channel,
-    # Reparationer and its own opslag (core.middleware.KitchenAccountGate).
+    # Reparationer and its own opslag (residents.access_levels).
     is_kitchen = models.BooleanField(default=False)
     date_joined = models.DateTimeField(default=timezone.now)
 

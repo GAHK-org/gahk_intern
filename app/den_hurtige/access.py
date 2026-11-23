@@ -26,6 +26,7 @@ from django.db.models import QuerySet
 from django.http import HttpRequest
 
 from core.rollout import Gate
+from residents.access_levels import Feature
 from residents.permissions import MODERATION_ROLES, View, effective_roles
 
 # None = every logged-in resident. A tuple = only those roles (administrator implies every role, so
@@ -39,7 +40,7 @@ ACCESS_ROLES: tuple[str, ...] | None = None
 
 # Read through a lambda, never passed by value: this global is what tests rebind and what the edit
 # above flips, and a Gate holding the value would freeze at import. See core.rollout.
-_GATE = Gate(lambda: ACCESS_ROLES)
+_GATE = Gate(lambda: ACCESS_ROLES, Feature.DEN_HURTIGE)
 
 # Who may delete somebody else's message. Aliased rather than redefined: the list is shared with
 # opslagstavlen and lives in residents.permissions, which owns every other role grouping.

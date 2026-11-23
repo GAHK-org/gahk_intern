@@ -32,6 +32,7 @@ from django.db.models import Q, QuerySet
 from django.http import HttpRequest
 
 from core.rollout import Gate
+from residents.access_levels import Feature
 from residents.models import Resident
 from residents.permissions import View, current_resident
 
@@ -58,7 +59,7 @@ ACCESS_ROLES: tuple[str, ...] | None = None
 
 # Read through a lambda, never passed by value: this global is what tests rebind and what the edit
 # above would flip, and a Gate holding the value would freeze at import. See core.rollout.
-_GATE = Gate(lambda: ACCESS_ROLES)
+_GATE = Gate(lambda: ACCESS_ROLES, Feature.EVENTS)
 
 is_limited = _GATE.is_limited
 

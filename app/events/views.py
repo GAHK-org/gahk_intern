@@ -26,6 +26,7 @@ from django.views.decorators.http import require_GET, require_POST
 from core.clock import current_date, current_datetime
 from core.danish import MONTHS, WEEKDAYS_SHORT
 from core.uploads import attached_image
+from residents import access_levels
 from residents import birthdays as birthdays_mod
 from residents.models import Resident
 from residents.permissions import current_resident
@@ -636,6 +637,10 @@ def calendar_feed(request: HttpRequest, token: str) -> HttpResponse:
         .order_by("starts_at")
         .distinct()
     )
+    # Someone whose access level has lost Begivenheder (moved out over a year ago) gets the same empty
+    # calendar as anyone with no answers: their client empties it rather than showing an error.
+    if not access_levels.allows(access_levels.real_level(resident), access_levels.Feature.EVENTS):
+        mine = mine.none()
     entries = [(event, _my_state(event, resident) == "venteliste") for event in mine]
 
     body = icalendar.feed(entries, name="GAHK – mine begivenheder")

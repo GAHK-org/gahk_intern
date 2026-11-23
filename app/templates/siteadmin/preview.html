@@ -9,6 +9,8 @@
     <p class="mb-2"><strong>Nuværende visning:</strong>
       {% if current is None %}
         Ingen — du ser siden som dig selv.
+      {% elif current_level %}
+        {{ current_level }}
       {% elif current %}
         {{ current|join:", " }}
       {% else %}
@@ -38,6 +40,21 @@
         <input type="hidden" name="mode" value="kitchen">
         <button type="submit" class="btn w-full">Køkkenet (ikke beboer)</button>
       </form>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Vælg adgangsniveau</h2>
+    <p class="muted">Hvad en, der flytter ind eller er flyttet ud, kan se. Uden roller.</p>
+    <div class="grid gap-2 sm:grid-cols-3 mt-2">
+      {% for level in levels %}
+        <form method="post" action="{% url 'siteadmin:preview_set' %}">
+          {% csrf_token %}
+          <input type="hidden" name="mode" value="level">
+          <input type="hidden" name="level" value="{{ level.value }}">
+          <button type="submit" class="btn w-full">{{ level.label }}</button>
+        </form>
+      {% endfor %}
     </div>
   </div>
 

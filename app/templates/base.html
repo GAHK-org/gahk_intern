@@ -14,7 +14,7 @@
   <link rel="manifest" href="{% static 'manifest.json' %}">
   <script src="{% static 'dist/app.js' %}" defer></script>
 </head>
-<body class="{% block body_class %}{% endblock %}" x-data="{ sidebar: false }"{% if user.is_authenticated %} data-mention-lookup="{% url 'mention_lookup' %}"{% endif %}>
+<body class="{% block body_class %}{% endblock %}" x-data="{ sidebar: false }"{% if "mentions" in features %} data-mention-lookup="{% url 'mention_lookup' %}"{% endif %}>
   {# Icon sprite: referenced from the sidebar via <use href="#i-…">. Stroke inherits the item colour. #}
   <svg width="0" height="0" style="position:absolute" aria-hidden="true">
     <defs>
@@ -75,7 +75,7 @@
   {% if preview_active %}
     <div class="banner banner-preview">
       <span>Forhåndsvisning: du ser siden som
-        <strong>{% if effective_roles %}{{ effective_roles|join:", " }}{% else %}beboer (ingen rolle){% endif %}</strong>.</span>
+        <strong>{% if preview_level %}{{ preview_level }}{% elif effective_roles %}{{ effective_roles|join:", " }}{% else %}beboer (ingen rolle){% endif %}</strong>.</span>
       <form method="post" action="{% url 'siteadmin:preview_set' %}">
         {% csrf_token %}<input type="hidden" name="mode" value="clear">
         <button type="submit">Afslut visning</button>
@@ -119,7 +119,7 @@
 
     <header class="topbar">
       <button class="hamburger" @click="sidebar = !sidebar" aria-label="Menu">☰</button>
-      {% if user.is_authenticated and "koekken" not in effective_roles %}{# searches the alumneliste: not for the kitchen account, nor before logging in #}
+      {% if "directory" in features %}{# searches the alumneliste: only for the levels that have it (residents.access_levels) #}
         <form class="topsearch" method="get" action="{% url 'directory' %}" role="search">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
           <input type="search" name="q" placeholder="Søg beboer, studie, e-mail…" aria-label="Søg beboer">
@@ -131,7 +131,7 @@
           <span class="hidden sm:inline">Forsiden</span>
         </a>
         {% if user.is_authenticated %}
-          {% include "notifications/_bell.html" %}
+          {% if "notifications" in features %}{% include "notifications/_bell.html" %}{% endif %}
           {% comment %}
             The avatar opens the account menu: the profile, the notification settings (the bell beside
             it is for reading them), the password, and logging out. Same Alpine pattern as the bell.
@@ -149,10 +149,12 @@
               <span class="sr-only">Min konto</span>
             </button>
             <div id="user-menu-panel" class="user-menu-panel" role="menu" x-show="open" x-cloak>
-              {% if "koekken" not in effective_roles %}{# the kitchen account has no profile page #}
+              {% if "profiles" in features %}{# the kitchen account and most former residents have no profile page #}
                 <a role="menuitem" href="{% url 'resident_profile' user.pk %}">Min profil</a>
               {% endif %}
-              <a role="menuitem" href="{% url 'notifications:preferences' %}">Notifikationsindstillinger</a>
+              {% if "notifications" in features %}
+                <a role="menuitem" href="{% url 'notifications:preferences' %}">Notifikationsindstillinger</a>
+              {% endif %}
               <a role="menuitem" href="{% url 'password_change' %}">Skift kodeord</a>
               <form method="post" action="{% url 'logout' %}">
                 {% csrf_token %}<button type="submit" role="menuitem">Log ud</button>

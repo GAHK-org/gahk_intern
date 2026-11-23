@@ -7,35 +7,12 @@ from django.core.exceptions import DisallowedHost, PermissionDenied
 from django.http import HttpRequest, HttpResponseRedirect
 from django.http.request import split_domain_port
 from django.http.response import HttpResponseBase
+from django.shortcuts import render
 from django.urls import reverse
 
-from residents.permissions import is_kitchen
+from residents.access_levels import AccessLevel, allows, feature_of, home_url_name, request_level
 
 from .storage import request_host
-
-# Where the kitchen account may go: an ALLOWLIST, because the intranet is the whole site — at the root
-# of intern.gahk.dk there is no "/intern/" prefix left to gate by, and anything not named here
-# (alumneliste, profiles, site-admin, Django admin, photo album, …) answers 403.
-KITCHEN_ALLOWED_PREFIXES = (
-    "/den-hurtige/",
-    "/opslagstavle/",
-    "/reparationer/",
-    "/notifikationer/",
-    # Password change and reset, with the reset links (residents.urls).
-    "/password-change",
-    "/password-reset",
-    "/admin/preview",  # so an admin previewing as the kitchen can end it
-    # Plumbing every allowed page needs: assets, Den Hurtige's images, the service worker, live
-    # updates, health probes and calendar feeds (token-authenticated, no session involved).
-    "/static/",
-    "/media/",
-    "/ws/",
-    "/kalender/",
-)
-# Logging in and out. /install is public anyway (how to install the app), and the kitchen tablet may
-# itself carry the old app from gahk.dk, whose notice links there: a 403 only for the kitchen account
-# would make no sense.
-KITCHEN_ALLOWED_PATHS = ("/sw.js", "/healthz", "/health", "/install", "/login", "/logout")
 
 
 def kitchen_home() -> str:
@@ -43,10 +20,6 @@ def kitchen_home() -> str:
     from den_hurtige import channels
 
     return channels.BY_SLUG[channels.KITCHEN_CHANNEL].url
-
-
-def kitchen_may_open(path: str) -> bool:
-    return path in KITCHEN_ALLOWED_PATHS or path.startswith(KITCHEN_ALLOWED_PREFIXES)
 
 
 class PresignForRequestHost:
@@ -73,22 +46,44 @@ class PresignForRequestHost:
             request_host.reset(token)
 
 
-class KitchenAccountGate:
-    """Keep the kitchen account (residents.permissions.is_kitchen) to its few pages.
+class AccessLevelGate:
+    """Keep each access level to the features the table gives it (residents.access_levels).
 
-    The rest of the site only checks login or roles, so without this it would see everything a
-    resident sees. Den Hurtige and Opslagstavlen narrow it further inside the apps.
+    Decided on the view a URL resolves to, never on the path: a path that is no page is the usual
+    404, and a view that is in no feature is for residents only, so a page nobody thought about is
+    closed rather than open. The features narrow it further inside (Den Hurtige's channels for the
+    kitchen, Opslagstavlen's own posts).
     """
 
     def __init__(self, get_response: Callable[[HttpRequest], HttpResponseBase]) -> None:
         self.get_response = get_response
 
     def __call__(self, request: HttpRequest) -> HttpResponseBase:
-        if is_kitchen(request):
-            path = request.path
-            # The dashboard and Den Hurtige's bare URL (the default channel) both land on its home.
-            if path in (reverse("dashboard"), reverse("den_hurtige:feed")):
-                return HttpResponseRedirect(kitchen_home())
-            if not kitchen_may_open(path):
-                raise PermissionDenied
         return self.get_response(request)
+
+    def process_view(
+        self,
+        request: HttpRequest,
+        view_func: Callable[..., HttpResponseBase],
+        view_args: tuple[object, ...],
+        view_kwargs: dict[str, object],
+    ) -> HttpResponseBase | None:
+        if not request.user.is_authenticated:
+            return None  # the view's own login check decides
+        level = request_level(request)
+        if level == AccessLevel.RESIDENT:
+            return None
+        name = request.resolver_match.view_name if request.resolver_match else ""
+        # The kitchen lands on its channel: from the dashboard, and from Den Hurtige's bare address,
+        # which would otherwise show the default channel it may not read.
+        if level == AccessLevel.KITCHEN and name in ("dashboard", "den_hurtige:feed"):
+            return HttpResponseRedirect(kitchen_home())
+        feature = feature_of(view_func)
+        if allows(level, feature, request.method or "GET"):
+            return None
+        if name == "dashboard":
+            home = home_url_name(level)
+            if home is None:
+                return render(request, "no_access.html", status=403)
+            return HttpResponseRedirect(reverse(home))
+        raise PermissionDenied

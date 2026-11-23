@@ -6,6 +6,7 @@ from notifications import views_admin as notifications_admin
 from photo_album import views_admin as photo_album_admin
 
 from . import views_admin
+from .access_levels import Feature, in_feature
 
 app_name = "siteadmin"
 
@@ -28,7 +29,8 @@ urlpatterns = [
         name="notification_device_cancel",
     ),
     path("adminadgang", views_admin.admin_access_view, name="admin_access"),
-    path("preview", views_admin.preview, name="preview"),
-    path("preview/set", views_admin.preview_set, name="preview_set"),
+    # For every level: an administrator previewing one must be able to end it (the view checks the role).
+    path("preview", in_feature(Feature.ACCOUNT, views_admin.preview), name="preview"),
+    path("preview/set", in_feature(Feature.ACCOUNT, views_admin.preview_set), name="preview_set"),
     path("dev-clock/set", views_admin.dev_clock_set, name="dev_clock_set"),  # DEBUG-only
 ]

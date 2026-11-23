@@ -13,6 +13,7 @@ an edit or a cancellation changes the facts, a comment changes the thread.
 from django.http import HttpRequest
 
 from core import live
+from residents.access_levels import Feature
 from residents.models import Resident
 
 from . import access
@@ -39,4 +40,4 @@ def event_changed(event_pk: int, kind: live.Kind = "changed") -> None:
 
 
 def register() -> None:
-    live.register(FEATURE, may_listen)
+    live.register(FEATURE, may_listen, Feature.EVENTS)

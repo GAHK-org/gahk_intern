@@ -373,7 +373,7 @@ def test_no_film_widget_for_a_reader_gahkflix_keeps_out(beboer: Resident, member
 
 
 def test_the_kitchen_account_gets_no_widgets(make_resident: Callable[..., Resident]) -> None:
-    """It can open neither the photo album nor GAHKFlix (core.middleware.KitchenAccountGate)."""
+    """It can open neither the photo album nor GAHKFlix (residents.access_levels)."""
     kitchen = make_resident(email="koekken@gahk.dk", is_kitchen=True)
     post(kitchen, f"Fra køkkenet\n\n{embed(album())}")
 

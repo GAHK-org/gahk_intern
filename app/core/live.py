@@ -37,7 +37,7 @@ from channels.layers import get_channel_layer
 from django.db import transaction
 from django.http import HttpRequest
 
-from residents.permissions import is_kitchen
+from residents.access_levels import Feature, has_feature
 
 logger = logging.getLogger(__name__)
 
@@ -47,10 +47,9 @@ logger = logging.getLogger(__name__)
 Authorizer = Callable[[HttpRequest, str], bool]
 
 _AUTHORIZERS: dict[str, Authorizer] = {}
-
-# The features the kitchen account may listen to, matching core.middleware.KITCHEN_ALLOWED_PREFIXES.
-# Not opslagstavle: its signals are about everyone's posts, and the kitchen sees only its own.
-KITCHEN_FEATURES = frozenset({"den-hurtige", "reparationer", "notifikationer"})
+# Each topic prefix's feature in residents.access_levels: a socket listens only to features its
+# access level may use, as its pages may only be opened.
+_FEATURES: dict[str, Feature] = {}
 
 # Channels refuses group names outside this alphabet and over 100 characters, and a topic is part
 # of a URL as well. Checked on both ends so a bad topic fails where it was written.
@@ -61,9 +60,11 @@ _MAX_TOPIC = 90  # leaves room for the group prefix under Channels' 100
 EVENT_TYPE = "live.event"
 
 
-def register(feature: str, authorize: Authorizer) -> None:
-    """Declare who may subscribe to `feature` and every `feature.<rest>` topic."""
+def register(feature: str, authorize: Authorizer, access_feature: Feature) -> None:
+    """Declare who may subscribe to `feature` and every `feature.<rest>` topic: those whose access
+    level may use `access_feature`, and of them whom `authorize` lets in."""
     _AUTHORIZERS[feature] = authorize
+    _FEATURES[feature] = access_feature
 
 
 def valid_topic(topic: str) -> bool:
@@ -79,10 +80,8 @@ def may_subscribe(request: HttpRequest, topic: str) -> bool:
     if not valid_topic(topic) or not request.user.is_authenticated:
         return False
     feature, _, rest = topic.partition(".")
-    if feature not in KITCHEN_FEATURES and is_kitchen(request):
-        return False
     authorize = _AUTHORIZERS.get(feature)
-    return authorize is not None and authorize(request, rest)
+    return authorize is not None and has_feature(request, _FEATURES[feature]) and authorize(request, rest)
 
 
 Kind = Literal["created", "changed", "deleted"]

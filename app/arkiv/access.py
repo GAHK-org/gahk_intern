@@ -40,6 +40,7 @@ from django.http import HttpRequest
 from django.utils import timezone
 
 from core.rollout import Gate
+from residents.access_levels import Feature
 from residents.models import Residency, Resident, Role, active_period
 from residents.permissions import View, current_resident, request_has_role
 
@@ -68,7 +69,7 @@ ACCESS_ROLES: tuple[str, ...] | None = None
 
 # Read through a lambda, never passed by value: this global is what tests rebind and what the edit
 # above would flip, and a Gate holding the value would freeze at import. See core.rollout.
-_GATE = Gate(lambda: ACCESS_ROLES)
+_GATE = Gate(lambda: ACCESS_ROLES, Feature.ARKIV)
 
 is_limited = _GATE.is_limited
 
