@@ -1,0 +1,114 @@
+# Domain boundaries, checked by Tach (https://docs.gauge.sh). The rules in prose are in
+# spec/architecture.md; `task architecture` runs this together with the other architecture checks.
+#
+#   uv run tach check           what CI's architecture workflow runs
+#   uv run tach show --mermaid  draw the module graph
+#
+# This file describes the TARGET design, not today's code: nothing is allow-listed, so the check
+# reports every existing violation until it has been fixed. Do not add new ones.
+#
+#   1. LAYERS: imports point down the list below, never up.
+#   2. depends_on: a feature may import a sibling feature only if it is listed there. None are yet;
+#      adding one is a design decision and shows up in review as a diff to this file.
+#   3. INTERFACES: from another domain you may import its `api` module, and nothing else.
+#
+# Tests and migrations are excluded: tests reach into internals on purpose, and migrations
+# reference other apps' migrations by design.
+
+source_roots = ["app"]
+exclude = [
+    "app/tests/**",
+    "**/tests.py",
+    "**/migrations/**",
+    "app/static/**",
+    "app/staticfiles/**",
+    "app/media/**",
+]
+exact = true                          # a depends_on entry nobody uses is an error, so the graph stays true
+forbid_circular_dependencies = true
+ignore_type_checking_imports = true   # `if TYPE_CHECKING:` imports are annotations, not coupling
+
+layers = [
+    "composition",  # wires domains together: URLs, settings, sidebar, site-admin console, operator commands
+    "features",     # one module per business domain
+    "platform",     # shared services that need to know who the user is
+    "identity",     # residents: who somebody is, their room and their roles this month
+    "kernel",       # core: framework-level helpers with no domain knowledge
+]
+
+[rules]
+unused_ignore_directives = "error"         # a `# tach-ignore` that suppresses nothing must go
+require_ignore_directive_reasons = "error" # `# tach-ignore(why) ...`, never a bare one
+
+# --- composition --------------------------------------------------------------------------------
+# May import anything from anyone (see the second [[interfaces]] block). Wiring and operator tooling
+# only, never business rules.
+
+[[modules]]
+paths = [
+    "config",
+    "core.context_processors",  # the sidebar: one entry per feature, gated by its access rules
+    "core.middleware",          # request wiring, e.g. sending the kitchen account to Den Hurtige
+    "core.management",          # seed_demo, etl_verify, audit_media: deliberately cross-domain
+    "core.demo",                # demo data for seed_demo
+    "residents.views_admin",    # the site-admin console: every domain's worker jobs, roles, preview
+    "residents.urls_admin",
+]
+layer = "composition"
+
+# --- features -----------------------------------------------------------------------------------
+# Independent of each other. Each reaches the layers below through their `api` modules.
+
+[[modules]]
+paths = [
+    "admissions", "ak", "arkiv", "cms", "den_hurtige", "events", "gahkflix", "oelkaelder",
+    "opslagstavle", "photo_album", "regnskab", "reparationer", "rooms", "stats",
+]
+layer = "features"
+depends_on = []
+
+# --- platform -----------------------------------------------------------------------------------
+# Shared services every feature uses and that need identity: in-app and push notifications, live
+# updates, rollout gates, mentions, the admin summary mail, scheduled maintenance.
+
+[[modules]]
+path = "notifications"
+layer = "platform"
+
+[[modules]]
+paths = ["core.admin_summary", "core.live", "core.mentions", "core.push", "core.rollout", "core.tasks"]
+layer = "platform"
+utility = true
+
+# --- identity and kernel ------------------------------------------------------------------------
+
+[[modules]]
+path = "residents"
+layer = "identity"
+
+[[modules]]
+path = "core"
+layer = "kernel"
+utility = true
+
+# --- interfaces ---------------------------------------------------------------------------------
+
+[[interfaces]]
+expose = ["api", "api\\..*"]
+from = [
+    "residents", "notifications", "admissions", "ak", "arkiv", "cms", "den_hurtige", "events",
+    "gahkflix", "oelkaelder", "opslagstavle", "photo_album", "regnskab", "reparationer", "rooms",
+    "stats",
+]
+
+[[interfaces]]
+expose = [".*"]
+from = [
+    "residents", "notifications", "admissions", "ak", "arkiv", "cms", "den_hurtige", "events",
+    "gahkflix", "oelkaelder", "opslagstavle", "photo_album", "regnskab", "reparationer", "rooms",
+    "stats",
+]
+visibility = [
+    "config", "core.context_processors", "core.middleware", "core.management", "core.demo",
+    "residents.views_admin", "residents.urls_admin",
+]

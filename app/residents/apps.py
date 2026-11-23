@@ -4,6 +4,8 @@ from django.apps import AppConfig
 class ResidentsConfig(AppConfig):
     default_auto_field = "django.db.models.BigAutoField"
     name = "residents"
+    # Storage names this app owns; only its code writes under them (spec/architecture.md).
+    storage_prefixes = ("profile_pictures/",)
 
     def ready(self) -> None:
         from core.media import register_cacheable
