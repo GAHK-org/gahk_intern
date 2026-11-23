@@ -30,7 +30,7 @@ def published(video: Video) -> None:
     notify(
         access.audience(everyone()),
         category=categories.GAHKFLIX_NEW,
-        title=f"{'Premiere' if video.premiere_at else 'Ny'} på GAHKFlix: {video.title}",
+        title=f"{'Premiere' if video.comes_out_at_premiere else 'Ny'} på GAHKFlix: {video.title}",
         body=video.description[:140],
         url=_video_url(video),
         exclude=video.uploaded_by_id,

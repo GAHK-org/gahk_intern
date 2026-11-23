@@ -12,6 +12,7 @@ from datetime import UTC, date, datetime, time, timedelta
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import TYPE_CHECKING, Any
+from unittest.mock import patch
 
 import imageio_ffmpeg
 import pytest
@@ -309,10 +310,38 @@ def test_the_edit_page_offers_the_files_date_and_the_original(admin: Resident) -
     # Nothing in the fields until it is used.
     assert 'name="released_year" value=' not in page
 
-    response = client.post(edit, details(video, title="Revyen"))
+    # A draft is saved without one; publishing needs at least the year, and says so at the field.
+    assert client.post(edit, details(video, title="Revyen")).status_code == 302
+    video.refresh_from_db()
+    assert video.title == "Revyen" and video.released_on is None
+    response = client.post(reverse("gahkflix:publish", args=[video.pk]), details(video))
     assert (
         response.status_code == 200 and "Udfyld udgivelsesdatoen – mindst året." in response.content.decode()
     )
+    assert response.context["form"].errors["released_year"]
+    video.refresh_from_db()
+    assert video.is_draft
+
+
+def test_a_release_date_once_given_stays_and_an_older_video_without_one_can_still_be_edited(
+    admin: Resident,
+) -> None:
+    """From before the date was filled in by hand: a typo is fixed without making up a year."""
+    old = make_video(admin, title="Revyn", released_on=None, days_old=3)
+    client = client_for(admin)
+    assert (
+        client.post(reverse("gahkflix:edit", args=[old.pk]), details(old, title="Revyen")).status_code == 302
+    )
+    old.refresh_from_db()
+    assert old.title == "Revyen" and old.released_on is None
+
+    dated = make_video(admin, title="Festen")
+    response = client.post(reverse("gahkflix:edit", args=[dated.pk]), details(dated, released_on=None))
+    assert (
+        response.status_code == 200 and "Udfyld udgivelsesdatoen – mindst året." in response.content.decode()
+    )
+    dated.refresh_from_db()
+    assert dated.released_on == date(2020, 1, 1)
 
 
 def test_a_draft_is_published_once_it_has_pictures(
@@ -1151,9 +1180,11 @@ def test_a_premiere_already_past_is_released_at_once(
             reverse("gahkflix:publish", args=[video.pk]), details(video, premiere_at=evening(-2))
         )
     video.refresh_from_db()
-    assert video.is_released and video.announced_at is not None
+    assert video.is_released and video.announced_at is not None and not video.comes_out_at_premiere
+    # Shown long before it came to GAHKFlix: new here, not a premiere.
     [announced] = notified(admin2, categories.GAHKFLIX_NEW)
-    assert announced.title == "Premiere på GAHKFlix: Revyen"
+    assert announced.title == "Ny på GAHKFlix: Revyen"
+    assert not video.events.filter(kind=VideoEvent.Kind.PREMIERED).exists()
     # Past its premiere, its page shows the day, not the time.
     page = client_for(admin2).get(reverse("gahkflix:detail", args=[video.pk])).content.decode()
     assert date_format(evening(-2), "j. F Y") in page and "kl. 20.00" not in page
@@ -1219,6 +1250,12 @@ def test_an_upcoming_premiere_is_listed_but_not_opened(
     assert f"Premiere {label}" in own and "Indtil da kan kun du og administratorerne" in own
     assert client_for(admin2).get(detail).status_code == 200
     assert "Kommende premierer" in client.get(reverse("gahkflix:mine")).content.decode()
+    # For them, its card is a link.
+    assert f'href="{detail}"' in client.get(reverse("gahkflix:home")).content.decode()
+    assert (
+        f'href="{detail}"'
+        in client_for(admin2).get(reverse("gahkflix:series", args=[series.pk])).content.decode()
+    )
 
 
 def test_an_upcoming_premiere_shows_its_thumbnail_blurred(
@@ -1245,6 +1282,9 @@ def test_an_upcoming_premiere_shows_its_thumbnail_blurred(
     light = contrast(content_of(uploader.get(url.replace("heavy", "light"))))
     assert contrast(shown.content) < light < sharp
     assert picture_url(video, as_premiere=False) == url.split("&")[0]
+    # A cached copy swept before it is read: from storage instead.
+    with patch("gahkflix.cache.cached_picture", return_value=Path("/nonexistent/swept.jpg")):
+        assert contrast(content_of(reader.get(url))) < sharp / 4
     # Once it is out, the thumbnail is itself again, at an address of its own.
     Video.objects.filter(pk=video.pk).update(premiere_at=timezone.now() - timedelta(minutes=1))
     video.refresh_from_db()
@@ -1267,7 +1307,10 @@ def test_a_premiere_is_announced_when_it_comes(
         assert tasks.announce_released() == 0
     assert not notified(admin2, categories.GAHKFLIX_NEW)
 
-    Video.objects.filter(pk=video.pk).update(premiere_at=timezone.now() - timedelta(seconds=30))
+    # A day on: published yesterday, its premiere has just come.
+    Video.objects.filter(pk=video.pk).update(
+        published_at=timezone.now() - timedelta(days=1), premiere_at=timezone.now() - timedelta(seconds=30)
+    )
     with django_capture_on_commit_callbacks(execute=True):
         assert tasks.announce_released() == 1
         assert tasks.announce_released() == 0  # once
@@ -1314,7 +1357,7 @@ def test_a_premiere_is_announced_on_its_minute_without_a_job_every_minute(
         assert tasks.announce_premieres() == "1 announced, 0 lined up"
 
 
-def test_a_premiere_taken_away_is_announced_by_the_next_round(
+def test_a_premiere_taken_away_is_announced_at_once(
     admin: Resident, admin2: Resident, django_capture_on_commit_callbacks: Callable[..., Any]
 ) -> None:
     video = make_video(admin, title="Revyen", published=False)
@@ -1322,16 +1365,14 @@ def test_a_premiere_taken_away_is_announced_by_the_next_round(
     client.post(reverse("gahkflix:publish", args=[video.pk]), details(video, premiere_at=evening(5)))
     video.refresh_from_db()
     today = timezone.localdate().isoformat()
-    assert (
-        client.post(
-            reverse("gahkflix:edit", args=[video.pk]), details(video, premiere_at=None, released_on=today)
-        ).status_code
-        == 302
-    )
-    video.refresh_from_db()
-    assert video.premiere_at is None and video.is_released
     with django_capture_on_commit_callbacks(execute=True):
-        assert services.announce_released() == 1
+        taken_away = client.post(
+            reverse("gahkflix:edit", args=[video.pk]), details(video, premiere_at=None, released_on=today)
+        )
+    assert taken_away.status_code == 302
+    video.refresh_from_db()
+    assert video.premiere_at is None and video.is_released and video.announced_at is not None
+    assert services.announce_released() == 0  # not left to the next round
     [announced] = notified(admin2, categories.GAHKFLIX_NEW)
     assert announced.title == "Ny på GAHKFlix: Revyen"
     assert not video.events.filter(kind=VideoEvent.Kind.PREMIERED).exists()
@@ -1401,10 +1442,13 @@ def test_a_video_out_less_than_a_day_can_be_made_a_draft_again(
 def test_a_video_out_less_than_a_day_can_get_a_premiere_later(
     admin: Resident, admin2: Resident, django_capture_on_commit_callbacks: Callable[..., Any]
 ) -> None:
+    """Published by mistake, with a wrong year at that: within the day it can still be a premiere."""
     video = make_video(admin, title="Revyen", published=False)
     client = client_for(admin)
-    publish_now(client, video, django_capture_on_commit_callbacks)
+    publish_now(client, video, django_capture_on_commit_callbacks, released_on="2024")
     assert notified(admin2, categories.GAHKFLIX_NEW)
+    Video.objects.filter(pk=video.pk).update(published_at=timezone.now() - timedelta(hours=20))
+    video.refresh_from_db()
     with django_capture_on_commit_callbacks(execute=True):
         moved = client.post(reverse("gahkflix:edit", args=[video.pk]), details(video, premiere_at=evening(2)))
     assert moved.status_code == 302
@@ -1417,6 +1461,45 @@ def test_a_video_out_less_than_a_day_can_get_a_premiere_later(
         assert services.announce_released() == 1
     [announced] = notified(admin2, categories.GAHKFLIX_NEW)
     assert announced.title == "Premiere på GAHKFlix: Revyen"
+    video.refresh_from_db()
+    assert video.release == dating.PartialDate(timezone.localdate(evening(2)), DatePrecision.DAY)
+
+
+def test_a_published_video_cannot_be_given_a_premiere_already_past_after_it_came_out(
+    admin: Resident, django_capture_on_commit_callbacks: Callable[..., Any]
+) -> None:
+    """It would seem to have come out then: its time windows would open again, and it would be first
+    under the newest, as often as anybody liked."""
+    video = make_video(admin, title="Revyen", days_old=25)
+    Video.objects.filter(pk=video.pk).update(published_at=timezone.now() - timedelta(days=25))
+    video.refresh_from_db()
+    newest = make_video(admin, title="Nyeste", days_old=1)
+    client = client_for(admin)
+    edit = reverse("gahkflix:edit", args=[video.pk])
+    response = client.post(edit, details(video, premiere_at=timezone.now() - timedelta(minutes=5)))
+    assert response.status_code == 200 and "skal ligge i fremtiden" in response.content.decode()
+    video.refresh_from_db()
+    assert video.premiere_at is None and not video.can_be_taken_back
+    assert Video.objects.released().order_by(*services.newest_first()).first() == newest
+
+    # Before its publishing it only records when the film was first shown, and changes nothing else.
+    shown = evening(-40)
+    assert client.post(edit, details(video, premiere_at=shown)).status_code == 302
+    video.refresh_from_db()
+    assert video.premiere_at == shown and not video.comes_out_at_premiere
+    assert not video.can_be_taken_back and not video.windows_from_premiere
+    # Saved again with the moment it already has, it is kept.
+    assert client.post(edit, details(video, title="Revyen 2026")).status_code == 302
+
+    # An upcoming premiere moved to a moment already past is refused alike: taken away, it is out now.
+    later = make_video(admin, title="Julerevyen", premiere_at=evening(3))
+    Video.objects.filter(pk=later.pk).update(published_at=timezone.now() - timedelta(hours=2))
+    later.refresh_from_db()
+    response = client.post(
+        reverse("gahkflix:edit", args=[later.pk]),
+        details(later, premiere_at=timezone.now() - timedelta(minutes=1)),
+    )
+    assert response.status_code == 200 and "Fjern fluebenet ved Premiere" in response.content.decode()
 
 
 def test_an_upcoming_premiere_can_be_made_a_draft_again_at_any_time(admin: Resident) -> None:

@@ -878,6 +878,9 @@ def apply_changes(
             fields.append("announced_at")
             transaction.on_commit(lambda: notify.withdraw_announcement(video))
         _line_up(video)
+    # An upcoming premiere taken away, or moved to before the publishing: out now, so told now rather
+    # than at the next announce_premieres.
+    out_now = "premiere_at" in changes and not was_out and video.is_released and video.announced_at is None
     if "series" in changes:
         series = Series.objects.filter(pk=changes["series"]).first() if changes["series"] else None
         if changes["series"] and series is None:
@@ -899,7 +902,10 @@ def apply_changes(
         video.tags.set([tag_named(name) for name in changes["tags"]])
     if "cast" in changes:
         added = _replace_cast(video, changes["cast"])
-        transaction.on_commit(lambda: notify.credited(video, added, resident))
+        if not out_now:  # else _announce tells the whole cast
+            transaction.on_commit(lambda: notify.credited(video, added, resident))
+    if out_now:
+        _announce(video)
     # As it came out, which is not always as asked: a series deleted meanwhile, a name resolved.
     details_after = snapshot(video) if details_before else {}
     history = {
@@ -1063,7 +1069,7 @@ def announce_released(now: datetime | None = None) -> int:
             )
             if video is None or (video.premiere_at is not None and video.premiere_at > now):
                 continue  # announced, binned or moved later meanwhile
-            if video.premiere_at is not None:
+            if video.comes_out_at_premiere:
                 record_event(video, VideoEvent.Kind.PREMIERED, None)
             _announce(video)
             count += 1

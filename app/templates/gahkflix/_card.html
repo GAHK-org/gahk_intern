@@ -1,7 +1,7 @@
 {% load gahkflix %}{% picture_url video "thumbnail" as thumb %}
-{% if video.is_upcoming %}
-{# An upcoming premiere: listed with its title, series, moment and thumbnail (blurred as chosen), not opened. #}
-<div class="flix-card is-upcoming" title="{{ video.title }} har premiere {{ video.premiere_label }}">
+{% if video.is_upcoming %}{% can_open video as openable %}
+{# An upcoming premiere: listed with its title, series, moment and thumbnail (blurred as chosen), opened only by its uploader and the administrators. #}
+{% if openable %}<a class="flix-card is-upcoming" href="{% url 'gahkflix:detail' video.pk %}"{% else %}<div class="flix-card is-upcoming"{% endif %} title="{{ video.title }} har premiere {{ video.premiere_label }}">
   <span class="flix-card-img">
     {% if thumb %}<img src="{{ thumb }}" alt="" loading="lazy" decoding="async">{% else %}<span class="flix-card-blank" aria-hidden="true">{{ video.title|slice:":1"|upper }}</span>{% endif %}
     <span class="flix-card-badge is-premiere">Premiere</span>
@@ -11,7 +11,7 @@
       <span class="flix-card-premiere">{{ video.premiere_label }}</span>
     </span>
   </span>
-</div>
+{% if openable %}</a>{% else %}</div>{% endif %}
 {% else %}
 <a class="flix-card{% if video.progress %} has-progress{% endif %}" href="{% if resume %}{% url 'gahkflix:play' video.pk %}{% else %}{% url 'gahkflix:detail' video.pk %}{% endif %}" title="{{ video.title }}"{% if resume %} data-flix-play{% endif %}>
   <span class="flix-card-img">

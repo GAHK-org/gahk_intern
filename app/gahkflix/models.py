@@ -15,8 +15,9 @@ out: at publishing, or at its premiere (Video.announced_at). Once published:
   * for 30 days after the upload, the uploader and the administrators edit its details directly;
     after that a change is a proposal one other administrator must accept (ChangeRequest.Kind.EDIT).
 
-A premiere after the upload counts as the upload here: until its minute it is open as a draft is, and
-the windows run from it (Video.window_start).
+A premiere still ahead when the video is published counts as the upload here: until its minute it is
+open as a draft is, and the windows run from it (Video.window_start). A premiere already past then only
+records when the film was first shown.
 
 "Administrators" here, as everywhere in GAHKFlix, means the administrator role and Fotogruppen
 (gahkflix.access.is_administrator).
@@ -46,8 +47,8 @@ from photo_album.models import TAG_MAX_LENGTH, validate_tag_name
 from .dating import DatePrecision, DateSource, PartialDate, premiere_label
 from .storage import get_video_storage
 
-# The windows in the spec, all counted from the upload (Video.created_at) — or from a premiere after
-# it, which nobody has seen before (Video.window_start).
+# The windows in the spec, all counted from the upload (Video.created_at) — or from the premiere it
+# comes out at, which nobody has seen before (Video.window_start).
 REVISION_WINDOW = timedelta(days=7)
 DIRECT_DELETE_WINDOW = timedelta(days=7)
 EDIT_WINDOW = timedelta(days=30)
@@ -237,8 +238,8 @@ class Video(models.Model):
     uploaded_by = models.ForeignKey(
         settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name="gahkflix_uploads"
     )
-    # The upload. Every time window in the policy (module docstring) runs from here, or from a later
-    # premiere (window_start).
+    # The upload. Every time window in the policy (module docstring) runs from here, or from the
+    # premiere it comes out at (window_start).
     created_at = models.DateTimeField(auto_now_add=True)
     published_at = models.DateTimeField(null=True, blank=True)
     # The film's own date, as much of it as is known: a day, a month or a year (dating.py), stored
@@ -357,10 +358,20 @@ class Video(models.Model):
         return premiere_label(self.premiere_at)
 
     @property
+    def comes_out_at_premiere(self) -> bool:
+        """It has a premiere after its publishing (or, for a draft, after its upload), so it comes out
+        there. A premiere already past at publishing only records when the film was first shown: the
+        video is out at once, and is no premiere on GAHKFlix (forms.py keeps one from being set later
+        than the publishing yet already past, which would move when it came out)."""
+        after = self.published_at or self.created_at
+        return self.premiere_at is not None and self.premiere_at > after
+
+    @property
     def window_start(self) -> datetime:
-        """Where the time windows run from: the upload, or a premiere after it. Nobody sees a premiere
-        before its minute, so until then it is open as a draft is, and its windows run from then."""
-        if self.premiere_at is not None and self.premiere_at > self.created_at:
+        """Where the time windows run from: the upload, or the premiere it comes out at. Nobody sees a
+        premiere before its minute, so until then it is open as a draft is, and its windows run from
+        then."""
+        if self.comes_out_at_premiere and self.premiere_at is not None:
             return self.premiere_at
         return self.created_at
 

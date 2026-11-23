@@ -94,8 +94,9 @@ intern site's sidebar and top bar; its own header links back to the intern site.
   title, description, release date, series, season and episode, credits (residents, or people from
   outside by name, each with an optional role) and tags (the photo album's tag rules).
 - The release date (`Udgivelsesdato`) is known to the day, the month or only the year, and must be
-  filled in by hand, at least the year: saving the details and publishing both need it. It cannot
-  lie in the future, unless the video is a premiere (below).
+  filled in by hand, at least the year, to publish. Once a video has one it cannot be emptied; an
+  older video without one can still be edited without it. It cannot lie in the future, unless the
+  video is a premiere (below).
 - The date the file suggests is guessed when it is processed and only offered: `Brug videoens dato`
   puts it in the fields, with where it came from beside it. The guess: a whole date written in the
   file's name or in its date tags first; else the camera's clock, unless a year (or month) written
@@ -129,23 +130,27 @@ intern site's sidebar and top bar; its own header links back to the intern site.
 
 - Beside `Udgivelsesdato` is a `Premiere` box. Ticked, the release is a whole moment — year, month,
   day and a time to the minute, all required — and may lie up to a year ahead. Only a premiere has a
-  time. A video out for more than a day cannot be given a premiere in the future.
+  time. A video out for more than a day cannot be given a premiere in the future. Within the day it
+  can, so one published by mistake can still be made a premiere.
+- A premiere already past only records when the film was first shown. On a video already published,
+  it must lie before the publishing: a premiere after it would have to be in the future.
 - A premiere chooses how its thumbnail is shown until then: `Ikke sløret`, `Lidt sløret`, `Middel
   sløret` or `Meget sløret`. The edit page previews it.
 - Published before its premiere, a video is upcoming: it is listed in `Kommer snart`, its series and
-  the timeline as a card that cannot be opened, showing only its title, series, season and episode,
-  the exact premiere (`24. december 2026 kl. 20.00`) and its thumbnail as chosen. Its page, player,
-  files and banner stay closed to everybody but its uploader and the administrators, and it is not
-  found by search, tags, cast pages, `Mere som denne`, Top 10 or autoplay.
+  the timeline as a card showing only its title, series, season and episode, the exact premiere
+  (`24. december 2026 kl. 20.00`) and its thumbnail as chosen. Its page, player, files and banner
+  stay closed to everybody but its uploader and the administrators, for whom the card is a link;
+  it is not found by search, tags, cast pages, `Mere som denne`, Top 10 or autoplay.
 - At its premiere it opens to everybody, and everybody with access and its credited residents are
   notified, as at publishing (`Premiere på GAHKFlix: …`); the history notes it. A premiere already
-  past when the video is published is out at once. Once out, its page shows the date only, not the
-  time.
+  past when the video is published is out at once and announced as any new video (`Ny på GAHKFlix:
+  …`). Taking an upcoming premiere away brings the video out, and announces it, at once. Once out,
+  its page shows the date only, not the time.
 - Every day at 10.20, an uploader with drafts whose premiere is still ahead is warned they are not
   published (urgent within the last day): unpublished, there is no premiere.
 - Until its premiere, a video is open as a draft is: edited freely, given a new version or binned by
   its uploader. Afterwards the time windows (7 days for new versions and binning, 30 for free edits)
-  run from the premiere, or from the upload when the premiere was before it.
+  run from the premiere, or from the upload when the premiere was already past at publishing.
 
 ## Taking a video back
 
@@ -219,8 +224,10 @@ intern site's sidebar and top bar; its own header links back to the intern site.
 - Two MP4 renditions and a quality switch rather than adaptive streaming: no extra player to ship,
   and nothing to break on a phone.
 - The time windows run from the upload, but a draft is its uploader's own until published. A premiere
-  after the upload counts as the upload: the windows guard what people have seen, and nobody sees a
-  premiere before its minute (it could be made a draft and changed anyway). Its
+  still ahead at publishing counts as the upload: the windows guard what people have seen, and nobody
+  sees a premiere before its minute (it could be made a draft and changed anyway). A premiere set
+  after the publishing yet already past is refused rather than counted: it would open the windows
+  again, and put the video first under the newest, as often as anybody liked. Its
   deletion is counted in calendar days, so it has one date that every reminder can name.
 - Reminders go out in the morning, not with the nightly sweeps: they are read by people.
 - The player opens over the page rather than as a page of its own because a browser only lets a page

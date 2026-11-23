@@ -205,11 +205,11 @@ a.flix-chip:hover { border-color: #fff; }
 .flix-state.is-failed { background: #4a0f12; color: #ff8a8f; }
 .flix-state.is-binned { background: #3a3a3a; color: #bbb; }
 .flix-state.is-premiere { background: #10304a; color: #9fd0ff; }
-/* An upcoming premiere: listed, not opened. */
-.flix-card.is-upcoming, .flix-episode.is-upcoming { cursor: default; }
+/* An upcoming premiere: listed, not opened — but a link for its uploader and the administrators. */
+div.flix-card.is-upcoming, div.flix-episode.is-upcoming { cursor: default; }
 .flix-card-badge.is-premiere { background: #fff; color: #141414; }
 .flix-card-premiere { display: block; margin-top: 3px; font-size: 12px; font-weight: 700; color: #fff; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.flix-episode.is-upcoming:hover { background: none; }
+div.flix-episode.is-upcoming:hover { background: none; }
 .flix-banner-note { margin: 0 var(--flix-gutter) 16px; padding: 12px 16px; border-radius: 4px; background: #2b2410; border: 1px solid #5b4a10; color: #f1dc8f; font-size: 14px; }
 
 .flix-episodes { padding: 8px var(--flix-gutter) 0; max-width: 1100px; }

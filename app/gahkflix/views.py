@@ -588,15 +588,18 @@ def _premiere_response(video: Video, level: str, *, cacheable: bool) -> HttpResp
         return _picture_response(key)
     if not key:
         raise Http404("no picture")
-    cached = cache.cached_picture(key)
-    try:
-        if cached is not None:
+    data = None
+    if (cached := cache.cached_picture(key)) is not None:
+        try:
             data = cached.read_bytes()
-        else:
+        except OSError:
+            pass  # swept meanwhile: from storage, as _picture_response does
+    if data is None:
+        try:
             with get_video_storage().open(key, "rb") as handle:
                 data = handle.read()
-    except (FileNotFoundError, OSError) as exc:
-        raise Http404("file not found") from exc
+        except OSError as exc:
+            raise Http404("file not found") from exc
     response = HttpResponse(encoding.premiere_jpeg(data, level), content_type="image/jpeg")
     response.headers["Cache-Control"] = PICTURE_CACHE_CONTROL if cacheable else "no-store"
     response.headers["Vary"] = "Cookie"
@@ -996,7 +999,7 @@ def publish(request: HttpRequest, pk: int) -> HttpResponse:
         return redirect("gahkflix:detail", video.pk)
     resident = current_resident(request)
     if "title" in request.POST:
-        form = VideoDetailsForm(request.POST, video=video)
+        form = VideoDetailsForm(request.POST, video=video, publishing=True)
         if not form.is_valid():
             return _edit_page(request, video, form)
         try:

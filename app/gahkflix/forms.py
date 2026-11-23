@@ -23,10 +23,12 @@ NUMBER_ATTRS = {"inputmode": "numeric", "pattern": "[0-9]*", "autocomplete": "of
 class VideoDetailsForm(forms.Form):
     """A video's details as one form. Cast and tags arrive as JSON from their editors (gahkflix.ts).
 
-    The release date is three fields, of which only the year is needed, and that one always: a month
-    and a day nobody knows are left out rather than made up (dating.py). It cannot be in the future — unless the video
-    is a premiere (`premiere`), which comes out at a whole moment: the day, month and year, and a
-    time (`premiere_time`), which only a premiere has.
+    The release date is three fields, of which only the year is needed: a month and a day nobody
+    knows are left out rather than made up (dating.py). The year is needed to publish (`publishing`),
+    and once a video has a date it cannot be taken away; an older video without one may be edited
+    without it. It cannot be in the future — unless the video is a premiere (`premiere`), which comes
+    out at a whole moment: the day, month and year, and a time (`premiere_time`), which only a
+    premiere has.
     """
 
     title = forms.CharField(max_length=200, label="Titel")
@@ -90,8 +92,9 @@ class VideoDetailsForm(forms.Form):
     cast = forms.CharField(required=False, widget=forms.HiddenInput)
     tags = forms.CharField(required=False, widget=forms.HiddenInput)
 
-    def __init__(self, *args: Any, video: Video, **kwargs: Any) -> None:  # noqa: ANN401
+    def __init__(self, *args: Any, video: Video, publishing: bool = False, **kwargs: Any) -> None:  # noqa: ANN401
         self.video = video
+        self.publishing = publishing
         self.release: PartialDate | None = None
         self.premiere_at: datetime | None = None
         super().__init__(*args, **kwargs)
@@ -185,9 +188,23 @@ class VideoDetailsForm(forms.Form):
                 "premiere",
                 "Videoen har været ude i mere end et døgn, så den kan ikke længere få premiere senere.",
             )
+        elif self._moves_when_it_came_out(moment, now):
+            self.add_error(
+                "premiere",
+                "Videoen er allerede udgivet, så en premiere efter udgivelsen skal ligge i fremtiden. "
+                "Fjern fluebenet ved Premiere, hvis den skal ud nu.",
+            )
         else:
             self.premiere_at = moment
             self.release = PartialDate(moment.date(), DatePrecision.DAY)
+
+    def _moves_when_it_came_out(self, moment: datetime, now: datetime) -> bool:
+        """A published video given a premiere already past, yet after its publishing: it would seem to
+        have come out then, which would open its time windows again and put it first under the newest
+        (models.Video.comes_out_at_premiere). Before the publishing, it only records when the film was
+        first shown; the moment it already has is kept."""
+        published = self.video.published_at
+        return published is not None and published < moment <= now and moment != self.video.premiere_at
 
     def _clean_release(self, data: dict[str, Any]) -> None:
         if data.get("premiere"):
@@ -197,7 +214,7 @@ class VideoDetailsForm(forms.Form):
         if day and not month:
             self.add_error("released_day", "Vælg også måneden, eller lad dagen stå tom.")
         elif not year:
-            if "released_year" not in self.errors:
+            if "released_year" not in self.errors and (self.publishing or self.video.released_on):
                 self.add_error("released_year", "Udfyld udgivelsesdatoen – mindst året.")
         else:
             try:

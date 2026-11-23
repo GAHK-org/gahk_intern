@@ -30,6 +30,14 @@ def picture_url(video: Video | None, kind: str = "thumbnail", *, as_premiere: bo
     return url
 
 
+@register.simple_tag(takes_context=True)
+def can_open(context: dict[str, Any], video: Video) -> bool:
+    """Whether this reader may open the video's page: an upcoming premiere's card is a link for its
+    uploader and the administrators, and only a card for everybody else."""
+    request = context.get("request")
+    return request is not None and access.can_see(request, video)
+
+
 @register.simple_tag
 def frame_url(frame: VideoFrame) -> str:
     return f"{reverse('gahkflix:frame', args=[frame.video_id, frame.pk])}?v={_version(key_of(frame.image))}"

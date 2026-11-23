@@ -1,6 +1,6 @@
 {% load gahkflix %}{% picture_url episode "thumbnail" as thumb %}
-{% if episode.is_upcoming %}
-<div class="flix-episode is-upcoming">
+{% if episode.is_upcoming %}{% can_open episode as openable %}
+{% if openable %}<a class="flix-episode is-upcoming{% if current and current.pk == episode.pk %} is-current{% endif %}" href="{% url 'gahkflix:detail' episode.pk %}">{% else %}<div class="flix-episode is-upcoming">{% endif %}
   <span class="flix-episode-no">{{ episode.episode|default:forloop.counter }}</span>
   <span class="flix-card-img">
     {% if thumb %}<img src="{{ thumb }}" alt="" loading="lazy">{% else %}<span class="flix-card-blank" aria-hidden="true">{{ episode.title|slice:":1"|upper }}</span>{% endif %}
@@ -11,7 +11,7 @@
     <p>Har premiere {{ episode.premiere_label }}.</p>
   </span>
   <span class="flix-episode-len"></span>
-</div>
+{% if openable %}</a>{% else %}</div>{% endif %}
 {% else %}
 <a class="flix-episode{% if current and current.pk == episode.pk %} is-current{% endif %}" href="{% url 'gahkflix:detail' episode.pk %}">
   <span class="flix-episode-no">{{ episode.episode|default:forloop.counter }}</span>
