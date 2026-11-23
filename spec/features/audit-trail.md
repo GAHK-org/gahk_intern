@@ -10,9 +10,11 @@ and what every changed field held before and after. Under Administration → Rev
   thing it involved.
 - For each thing involved: whether it was created, changed, deleted or only took part, its name at
   the time, and each changed field before and after.
-- Logging in, failed logins (with the reason, and the address typed when there is no such account),
-  logging out, changing a password, asking for a reset link (with the address asked for and how
-  many accounts it reached), and setting a password from a link.
+- Logging in, failed logins (with the reason), logging out, changing a password, asking for a reset
+  link (with the account it reached, if any), and setting a password from a link.
+- An address typed into the login or reset form that matches no account is kept only as its domain
+  and a keyed hash, never as typed: people type their password into that box. Searching the page for
+  the address still finds every try with it.
 - Being refused a page one's roles do not open. Not while an administrator previews another role.
 - Roles given and removed, admin access approved and refused, the alumneliste copied, saved and
   added to, residents created and edited, the room round ended, and an administrator viewing the
@@ -30,10 +32,17 @@ and what every changed field held before and after. Under Administration → Rev
 - Reactions and similar small things, each app saying which of its models it leaves out and why.
 - The outbox's own rows: queued, tried, sent, failed, emptied. The mail page shows them.
 
-## Append-only
+## Append-only, for a fixed time
 
-- Nothing in the trail can be changed or deleted, by anyone: the database refuses it.
-- Deleting a resident or anything else leaves its history as it was, with the names it had then.
+- Nothing in the trail can be changed, by anyone, and nothing can be deleted before its time is up:
+  the database refuses it.
+- Logins, failed logins, logouts and reset requests are kept for a year; everything else for five
+  years, as long as bookkeeping is kept. Every night the events past their time are deleted, and the
+  trail records how many.
+- Deleting a resident or anything else leaves its history as it was, with the names it had then,
+  until that history's time is up.
+- A request to delete one's data does not reach the trail before its time is up: it is the record of
+  who did what.
 
 ## The audit page
 
@@ -41,7 +50,8 @@ and what every changed field held before and after. Under Administration → Rev
 - Newest first, 50 at a time, with "Ældre" for the next 50.
 - Each line: when, who, what, and the thing it was about. Unfolding it shows the details, the IP
   address, and every thing involved with its changes; long texts unfold on their own.
-- Filters: free search (a person, a thing's name, an action), area (Login og adgang, Beboere og
+- Filters: free search (a person, a thing's name, an action by its name on the page or its code, an
+  address typed into the login form), area (Login og adgang, Beboere og
   roller, …), source (web, worker, system), from and to dates, and only "Uden handling".
 - A person's name shows everything they did; a thing's name shows its whole history.
 
@@ -55,7 +65,10 @@ and what every changed field held before and after. Under Administration → Rev
 - One general trail for every feature, so "everything Anna did last week" is one question. A feature
   keeps a table of its own only for what the general trail cannot hold.
 - Append-only in the database, not just in the code, so even an administrator with the Django admin
-  cannot tidy the history. The price: personal data in the trail stays as long as the trail does.
+  cannot tidy the history. The price: personal data in the trail stays as long as the trail does,
+  which is why that is a fixed time (decided 2026-11-23), and why a typed address is only hashed.
+- The retention rule lives once, in the database (audit migration 0002): the trigger and the nightly
+  purge ask the same function. Changing a period is a migration.
 - A change nobody claimed is still recorded, so nothing is unseen; in the test suite it is an error,
   so every screen and job names what it does.
 - Names are kept as they were at the time: a resident who changes name or is deleted still reads

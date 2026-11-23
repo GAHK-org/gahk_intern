@@ -252,11 +252,12 @@ def send_alumneregninger_view(request: HttpRequest) -> HttpResponse:
     date_from, date_to = period
     _warn_missing_account_numbers(request, date_from, date_to)
 
-    trail.record(
+    # Recorded only once the job is queued: an event block that raises writes nothing.
+    with trail.event(
         "regnskab.alumneregninger.sent",
         details={"date_from": date_from.isoformat(), "date_to": date_to.isoformat()},
-    )
-    tasks.send_alumneregninger_task.delay(date_from.isoformat(), date_to.isoformat())
+    ):
+        tasks.send_alumneregninger_task.delay(date_from.isoformat(), date_to.isoformat())
     messages.success(
         request,
         f"Alumneregninger for {date_from.isoformat()} til {date_to.isoformat()} er sat i kø og sendes i "
