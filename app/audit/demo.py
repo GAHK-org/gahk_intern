@@ -8,10 +8,10 @@ checkout:
   * logins by every documented account and a few others, from the house network, phones and an IPv6
     address, and some logouts;
   * failed logins of both kinds a resident causes: a wrong password followed by the right one, and an
-    address with no account, typed with an å (the trail writes it with ascii(), so it shows); and a
+    address with no account, typed with an å (the trail keeps only its domain and a keyed hash); and a
     night-time burst of wrong passwords against admin@ from an address no resident uses;
   * a password changed, and a reset link asked for (first with a private address that has no account,
-    then the right one) and used;
+    kept the same way, then the right one) and used;
   * pages refused: beboer@ trying the roles page, a resident trying the audit page;
   * roles given and removed, and the two-person rule both ways: one new administrator approved and
     one refused, each role taken away again afterwards;
@@ -240,11 +240,11 @@ def _failed_logins(cast: _Cast, now: datetime) -> list[Moment]:
         # A wrong password on the phone, then the right one: the everyday case.
         Moment(ago(now, 9, 21, 14, 5), _failed(beboer, {"reason": "wrong password"}), None, PHONES[0], login),
         Moment(ago(now, 9, 21, 14, 40), _login(beboer), beboer, PHONES[0], login),
-        # An address with no account: "formånd", the keyboard's å for a. The trail keeps what arrived,
-        # written with ascii(), which is how a helper sees why it failed.
+        # An address with no account: "formånd", the keyboard's å for a. The trail keeps its domain
+        # and a keyed hash, so searching the page for "formånd@gahk.dk" finds it.
         Moment(
             ago(now, 16, 8, 2, 10),
-            _failed(None, {"reason": "no account", "email": ascii("formånd@gahk.dk")}),
+            _failed(None, {"reason": "no account", **trail.typed_address("formånd@gahk.dk")}),
             None,
             HOUSE,
             login,
@@ -284,7 +284,7 @@ def _new_password(person: Resident, action: str, actor: Resident) -> Callable[[]
 
 
 def _reset_asked(email: str, account: Resident | None) -> Callable[[], None]:
-    details = {"email": ascii(email), "accounts": 1 if account else 0}
+    details: dict[str, object] = {"accounts": 1} if account else {"accounts": 0, **trail.typed_address(email)}
     return lambda: trail.record(
         "auth.password_reset.requested", actor=None, details=details, involve=[(account, "subject")]
     )

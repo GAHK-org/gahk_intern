@@ -438,6 +438,12 @@ CELERY_BEAT_SCHEDULE = {
         "task": "core.tasks.purge_delivered_broker_messages",
         "schedule": crontab(minute=50, hour=4),
     },
+    # 03:10: the audit trail's retention, a year for logins and reset requests and five years for the
+    # rest (audit migration 0002).
+    "purge-expired-audit-events": {
+        "task": "audit.tasks.purge_expired",
+        "schedule": crontab(minute=10, hour=3),
+    },
     "purge-outgoing-mail": {
         "task": "core.tasks.purge_outgoing_mail",
         "schedule": crontab(minute=55, hour=4),

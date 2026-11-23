@@ -45,13 +45,15 @@ AREAS = {
     "core": "Fælles",
     "stats": "Statistik",
     "scheduler": "Planlagte opgaver",
+    "audit": "Revisionsspor",
 }
 
 
 # What the audit page calls the keys events put in their details.
 DETAIL_LABELS = {
     "reason": "Årsag",
-    "email": "E-mail",
+    "email_domain": "Domæne",
+    "email_hash": "Adresse (nøgle)",
     "accounts": "Konti",
     "path": "Side",
     "roles": "Roller",
@@ -134,9 +136,15 @@ class Filters:
             events = events.filter(at__date__lte=self.until)
         if self.q:
             named = AuditEntity.objects.filter(name__icontains=self.q).values("event_id")
-            events = events.filter(
-                Q(actor_name__icontains=self.q) | Q(action__icontains=self.q) | Q(pk__in=named)
+            matches = (
+                Q(actor_name__icontains=self.q)
+                | Q(action__icontains=self.q)
+                | Q(action__in=trail.actions_called(self.q))
+                | Q(pk__in=named)
             )
+            if "@" in self.q:  # an address typed into the login or reset form is kept only hashed
+                matches |= Q(details__email_hash=trail.address_hash(self.q))
+            events = events.filter(matches)
         return events
 
 

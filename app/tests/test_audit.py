@@ -1,6 +1,7 @@
 """The general audit trail (audit.trail): append-only, what an event captures, the unclaimed fallback,
 the security events, coverage of every model, and the audit page."""
 
+import datetime
 from collections.abc import Callable
 
 import pytest
@@ -10,6 +11,7 @@ from django.core import mail
 from django.db import DatabaseError, connection, transaction
 from django.test import Client, RequestFactory
 from django.urls import reverse
+from django.utils import timezone
 from django.utils.encoding import force_bytes
 from django.utils.http import urlsafe_base64_encode
 
@@ -62,6 +64,70 @@ def test_the_database_refuses_to_change_or_delete_a_row() -> None:
         ):
             cursor.execute(sql)
     assert AuditEvent.objects.get().action == event.action == "test.thing"
+
+
+def _backdated_event(action: str, days: int) -> AuditEvent:
+    with trail.backdated(timezone.now() - datetime.timedelta(days=days)):
+        trail.record(action, actor=None)
+    return AuditEvent.objects.latest("id")
+
+
+@pytest.mark.django_db
+def test_the_database_lets_a_row_go_only_once_its_retention_ran_out(
+    make_resident: Callable[..., Resident],
+) -> None:
+    anna = make_resident(email="anna@gahk.dk", phone="111")
+    with trail.backdated(timezone.now() - datetime.timedelta(days=2 * 365)):
+        with trail.event("residents.resident.updated", actor=None, subject=anna):
+            anna.phone = "222"
+            anna.save()
+    kept = AuditEvent.objects.get()
+    entity = kept.entities.get()
+    for sql in (
+        f"DELETE FROM audit_auditchange WHERE entity_id = {entity.pk}",
+        f"DELETE FROM audit_auditentity WHERE id = {entity.pk}",
+        f"DELETE FROM audit_auditevent WHERE id = {kept.pk}",
+    ):
+        with (
+            pytest.raises(DatabaseError, match="append-only"),
+            transaction.atomic(),
+            connection.cursor() as cursor,
+        ):
+            cursor.execute(sql)  # two years old, and kept for five
+
+    expired = _backdated_event("auth.login", days=366)
+    with connection.cursor() as cursor:
+        cursor.execute(f"DELETE FROM audit_auditevent WHERE id = {expired.pk}")
+    assert not AuditEvent.objects.filter(pk=expired.pk).exists()
+
+
+@pytest.mark.django_db
+def test_the_nightly_purge_deletes_what_expired_and_says_how_much(
+    make_resident: Callable[..., Resident],
+) -> None:
+    from audit.tasks import purge_expired
+
+    anna = make_resident(email="anna@gahk.dk", phone="111")
+    for action in ("auth.login", "auth.login.failed", "auth.logout", "auth.password_reset.requested"):
+        _backdated_event(action, days=366)
+    young_login = _backdated_event("auth.login", days=300)
+    young_change = _backdated_event("residents.role.added", days=366)
+    with trail.backdated(timezone.now() - datetime.timedelta(days=5 * 366)):
+        with trail.event("residents.resident.updated", actor=None, subject=anna):
+            anna.phone = "222"
+            anna.save()
+
+    assert purge_expired() == 5
+    assert set(AuditEvent.objects.values_list("action", flat=True)) == {
+        young_login.action,
+        young_change.action,
+        "audit.expired.purged",
+    }
+    assert not AuditEntity.objects.filter(kind="residents.resident").exists()
+    assert not AuditChange.objects.exists()
+    assert AuditEvent.objects.get(action="audit.expired.purged").details == {"count": 5}
+    assert purge_expired() == 0
+    assert AuditEvent.objects.filter(action="audit.expired.purged").count() == 1, "nothing purged, no event"
 
 
 @pytest.mark.django_db
@@ -296,8 +362,20 @@ def test_failed_logins_say_why(make_resident: Callable[..., Resident]) -> None:
         {"reason": "wrong password"},
     )
     assert wrong.entities.get().entity_id == anna.pk
-    assert unknown.details == {"reason": "no account", "email": "'ukendt@gahk.dk'"}
+    assert unknown.details == {"reason": "no account", **trail.typed_address("ukendt@gahk.dk")}
+    assert unknown.details["email_domain"] == "gahk.dk"
+    assert "ukendt" not in str(unknown.details)
     assert not unknown.entities.exists()
+
+
+@pytest.mark.django_db
+def test_a_password_typed_as_the_address_is_not_kept() -> None:
+    Client().post(LOGIN, {"username": "Hemmeligt@kodeord", "password": "x"})
+    Client().post(LOGIN, {"username": "hemmeligt@kodeord ", "password": "y"})
+    first, second = AuditEvent.objects.order_by("id")
+    assert "emmeligt" not in str(first.details) and "kodeord" not in str(first.details)
+    assert set(first.details) == {"reason", "email_hash"}, "no domain: it does not look like one"
+    assert first.details == second.details, "the same address typed twice is one hash"
 
 
 @pytest.mark.django_db
@@ -344,10 +422,11 @@ def test_password_change_and_reset(make_resident: Callable[..., Resident]) -> No
     assert AuditChange.objects.get(entity__event=changed).redacted
     assert (asked.action, asked.details, asked.entities.get().entity_id) == (
         "auth.password_reset.requested",
-        {"email": "'anna@gahk.dk'", "accounts": 1},
+        {"accounts": 1},
         anna.pk,
     )
-    assert asked_unknown.details == {"email": "'ingen@gahk.dk'", "accounts": 0}
+    assert asked_unknown.details == {"accounts": 0, **trail.typed_address("ingen@gahk.dk")}
+    assert "ingen" not in str(asked_unknown.details)
     assert (completed.action, completed.actor_id) == ("auth.password_reset.completed", anna.pk)
 
 
@@ -454,7 +533,10 @@ def test_regnskab_sending_the_alumneregninger_and_one_again_are_events(
     from regnskab import tasks
     from regnskab.models import AlumneregningSend
 
-    monkeypatch.setattr(tasks.send_alumneregninger_task, "delay", lambda *args: None)
+    def broker_down(*args: object) -> None:
+        raise ConnectionError("no broker")
+
+    monkeypatch.setattr(tasks.send_alumneregninger_task, "delay", broker_down)
     regnskab = make_resident(email="acc@gahk.dk", roles=("regnskab",))
     anna = make_resident(email="anna@gahk.dk", phone="111")
     period = {"date_from": "2026-08-01", "date_to": "2026-08-31"}
@@ -464,7 +546,13 @@ def test_regnskab_sending_the_alumneregninger_and_one_again_are_events(
     client = Client()
     client.force_login(regnskab)
 
-    client.post(reverse("regnskab:send_alumneregninger"), {"fra": "2026-08-01", "til": "2026-08-31"})
+    send = reverse("regnskab:send_alumneregninger")
+    with pytest.raises(ConnectionError):
+        client.post(send, {"fra": "2026-08-01", "til": "2026-08-31"})
+    assert not AuditEvent.objects.filter(action="regnskab.alumneregninger.sent").exists(), "never queued"
+
+    monkeypatch.setattr(tasks.send_alumneregninger_task, "delay", lambda *args: None)
+    client.post(send, {"fra": "2026-08-01", "til": "2026-08-31"})
     sent = AuditEvent.objects.get(action="regnskab.alumneregninger.sent")
     assert (sent.actor, sent.details) == (regnskab, period)
 
@@ -516,7 +604,9 @@ def test_the_audit_page_shows_and_filters_the_trail(make_resident: Callable[...,
         anna.phone = "222"
         anna.set_password("ny")
         anna.save()
-    trail.record("auth.login.failed", actor=None, details={"reason": "no account", "email": "'x@y.dk'"})
+    trail.record(
+        "auth.login.failed", actor=None, details={"reason": "no account", **trail.typed_address("x@y.dk")}
+    )
     client = Client()
     client.force_login(admin)
 
@@ -532,6 +622,38 @@ def test_the_audit_page_shows_and_filters_the_trail(make_resident: Callable[...,
     by_area = client.get("/admin/audit?area=auth").content.decode()
     assert "mislykket login" in by_area and "rettede beboer" not in by_area
     assert "mislykket login" not in client.get("/admin/audit?q=anna").content.decode()
+
+
+@pytest.mark.django_db
+def test_the_audit_page_finds_actions_by_their_names_and_typed_addresses_by_hash(
+    make_resident: Callable[..., Resident],
+) -> None:
+    from audit import presentation
+
+    admin = make_resident(email="admin@gahk.dk", roles=[Role.ADMINISTRATOR])
+    anna = make_resident(email="anna@gahk.dk", phone="111")
+    trail.record("residents.role.added", actor=admin, subject=anna, details={"role": "ak"})
+    with trail.event("residents.resident.updated", actor=admin, subject=anna):
+        anna.phone = "222"
+        anna.save()
+    trail.record(
+        "auth.login.failed", actor=None, details={"reason": "no account", **trail.typed_address("x@y.dk")}
+    )
+
+    def found(q: str) -> set[str]:
+        return set(presentation.Filters(q=q).queryset().values_list("action", flat=True))
+
+    assert found("Gav rolle") == {"residents.role.added"}
+    assert found("rettede beboer") == {"residents.resident.updated"}
+    assert "scheduler.task.updated" in trail.actions_called("ændret: planlagt"), "a kind's generic name"
+    assert found("residents.role") == {"residents.role.added"}, "the code still works"
+    assert found(" X@Y.dk") == {"auth.login.failed"}, "the address typed, found by its hash"
+    assert found("z@y.dk") == set()
+
+    client = Client()
+    client.force_login(admin)
+    page = client.get("/admin/audit?q=gav+rolle").content.decode()
+    assert "gav rolle" in page.lower() and "mislykket login" not in page
 
 
 @pytest.mark.django_db
