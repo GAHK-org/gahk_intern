@@ -2,17 +2,23 @@
 
 Without them, the login form takes as many password guesses as a script can send, and the reset form
 mails a resident as often as somebody asks it to. Every one of those mails goes out through one.com,
-which locks the whole SMTP account after about 25 in five minutes (settings.MAIL_RATE_LIMIT) — so a
-loop on the reset form would also stop every other mail the site sends.
+which throttles the whole SMTP account after about 25 in five minutes — so a loop on the reset form
+would also hold up every other mail the site sends.
 
-Counted in Django's cache, per address and per client IP, each in a fixed window that starts with
-the first attempt. The cache is the web process's own memory (no CACHES setting), which is exactly
-right while `web` is one process (DEPLOY.md §4); a restart forgets the counts, which costs nothing
-worth keeping.
+Counted in Django's cache, each count in a fixed window that starts with its first attempt. The
+cache is the web process's own memory (no CACHES setting), which is exactly right while `web` is one
+process (DEPLOY.md §4); a restart forgets the counts, which costs nothing worth keeping.
 
-The address is counted together with the IP, not on its own: the dorm shares one public IP, but an
-address counted alone would let anybody lock a resident out from anywhere by typing their address
-wrong ten times. The IP's own, much higher limit catches one source guessing across many addresses.
+THE DORM IS ONE IP. All 61 residents reach the site through the dorm's single public address, so a
+limit per IP is a limit on the whole dorm at once, and the numbers below are sized for that:
+
+  * A login's address is counted together with the IP, not on its own. Counted alone, anybody could
+    lock a resident out from anywhere by typing their address wrong ten times.
+  * The IP's own login limit only catches one source guessing across many addresses, and leaves
+    every resident about five typos in the same quarter hour before it touches anybody.
+  * The IP's reset limit lets every resident ask for a link in the same hour (a move-in evening).
+    There is deliberately no site-wide cap: it would drop real residents' links without a word,
+    while a burst that does reach one.com's throttle only delays them (core.mail waits and retries).
 """
 
 import hashlib
@@ -27,13 +33,16 @@ from core.client_ip import client_ip
 
 logger = logging.getLogger(__name__)
 
+# Residents behind the dorm's one public IP; the per-IP limits are sized from it.
+RESIDENTS_SHARING_AN_IP = 61
+
 LOGIN_WINDOW = timedelta(minutes=15)
 LOGIN_FAILURES_PER_ADDRESS = 10  # from one IP
-LOGIN_FAILURES_PER_IP = 100
+LOGIN_FAILURES_PER_IP = 5 * RESIDENTS_SHARING_AN_IP
 
 RESET_WINDOW = timedelta(hours=1)
 RESETS_PER_ADDRESS = 3
-RESETS_PER_IP = 10
+RESETS_PER_IP = RESIDENTS_SHARING_AN_IP
 
 
 def _normalise(address: str | None) -> str:

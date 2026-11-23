@@ -92,6 +92,22 @@ def _fail(client: Client, email: str, times: int, ip: str = "203.0.113.7") -> No
         client.post(LOGIN, {"username": email, "password": "forkert"}, REMOTE_ADDR=ip)
 
 
+DORM_IP = "203.0.113.7"
+
+
+@pytest.mark.django_db
+def test_the_whole_dorm_can_mistype_behind_its_one_ip(make_resident: Callable[..., Resident]) -> None:
+    """All residents share the dorm's public IP: a few typos each must not lock anybody out."""
+    residents = [make_resident(email=f"r{n}@gahk.dk", password="rigtig") for n in range(61)]
+    client = Client()
+    for resident in residents:
+        _fail(client, resident.email, 4, ip=DORM_IP)
+
+    response = client.post(LOGIN, {"username": "r60@gahk.dk", "password": "rigtig"}, REMOTE_ADDR=DORM_IP)
+
+    assert response.status_code == 302
+
+
 @pytest.mark.django_db
 def test_too_many_wrong_passwords_refuse_even_the_right_one(make_resident: Callable[..., Resident]) -> None:
     make_resident(email="a@gahk.dk", password="rigtig")
@@ -201,7 +217,10 @@ def test_password_reset_mails_an_address_only_a_few_times_an_hour(
 
 
 @pytest.mark.django_db
-def test_password_reset_is_limited_per_ip(make_resident: Callable[..., Resident]) -> None:
+def test_every_resident_in_the_dorm_can_reset_in_the_same_hour_but_not_more(
+    make_resident: Callable[..., Resident],
+) -> None:
+    assert throttle.RESETS_PER_IP >= 61  # residents behind the dorm's one IP
     for n in range(throttle.RESETS_PER_IP + 1):
         make_resident(email=f"r{n}@gahk.dk", password="rigtig")
     client = Client()
