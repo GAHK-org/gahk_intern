@@ -87,6 +87,12 @@ RULES: list[dict[str, Any]] = [
         "Filter": {"Prefix": "drive/"},
         "NoncurrentVersionExpiration": {"NoncurrentDays": MEDIA_UNDO_DAYS},
     },
+    {
+        "ID": "expire-drive-markers",
+        "Status": "Enabled",
+        "Filter": {"Prefix": "drive/"},
+        "Expiration": {"ExpiredObjectDeleteMarker": True},
+    },
     # --- Phase 1 media ---------------------------------------------------------------------------
     {
         "ID": "expire-noncurrent-versions",
