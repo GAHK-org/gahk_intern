@@ -489,9 +489,9 @@ def test_a_failed_ffmpeg_says_why() -> None:
 def test_a_conversion_claim_lasts_as_long_as_a_conversion_may_run() -> None:
     """Shorter, and a second worker could take the row while the first is still encoding it."""
     from photo_album.models import DERIVATIVE_CLAIM_TTL
-    from photo_album.tasks import MEDIA_TASK_TIME_LIMIT
+    from photo_album.tasks import ENCODE_TASK_TIME_LIMIT
 
-    assert DERIVATIVE_CLAIM_TTL == timedelta(seconds=MEDIA_TASK_TIME_LIMIT)
+    assert DERIVATIVE_CLAIM_TTL == timedelta(seconds=ENCODE_TASK_TIME_LIMIT)
 
 
 @pytest.mark.django_db
@@ -508,3 +508,25 @@ def test_the_size_of_an_original_is_recorded_on_upload_and_backfilled(
 
     media.refresh_from_db()
     assert (result.sized, result.remaining, media.size) == (1, 0, len(b"not a video"))
+
+
+@pytest.mark.django_db
+def test_a_conversion_the_watchdog_stops_fails_saying_why_and_is_released(
+    make_resident: Callable[..., Resident], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from celery.exceptions import SoftTimeLimitExceeded
+
+    from photo_album import services
+
+    media = _broken_video(make_resident)
+
+    def stopped(*_: object) -> None:
+        raise SoftTimeLimitExceeded
+
+    monkeypatch.setattr(services, "video_variants", stopped)
+    with pytest.raises(DerivativesNotBuilt, match=r"clip\.mpg .*Stopped at its time limit\. Attempt 1 of 3"):
+        build_media_derivatives.apply(args=(media.pk,), task_id="first")
+
+    media.refresh_from_db()
+    assert media.derivative_state == DerivativeState.PENDING
+    assert media.derivative_started_at is None  # the nightly pass may take it at once

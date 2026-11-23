@@ -40,6 +40,7 @@ urlpatterns = [
     path("v/<int:pk>/kandidat/<int:frame>", views.frame_image, name="frame"),
     path("v/<int:pk>/status", views.status, name="status"),
     path("v/<int:pk>/rediger", views.edit, name="edit"),
+    path("v/<int:pk>/unpublish", views.unpublish, name="unpublish"),
     path("v/<int:pk>/billeder", views.choose_picture, name="choose_picture"),
     path("v/<int:pk>/nye-billeder", views.new_frames, name="new_frames"),
     path("v/<int:pk>/udgiv", views.publish, name="publish"),

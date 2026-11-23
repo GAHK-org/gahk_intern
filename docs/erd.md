@@ -60,6 +60,9 @@ erDiagram
         text keyword_arguments
         json lines
         int omitted
+        float progress
+        string progress_step
+        datetime progressed_at
     }
 
     core_PushDeliveryDay {
@@ -75,6 +78,22 @@ erDiagram
         string name
         string hostname
         datetime beat_at
+    }
+
+    core_OutgoingMail {
+        int id PK
+        datetime created_at
+        text subject
+        text recipients
+        json payload
+        string kind
+        string status
+        int attempts
+        datetime next_attempt_at
+        datetime last_attempt_at
+        datetime expires_at
+        datetime sent_at
+        text error
     }
 
     residents_Resident {
@@ -830,6 +849,10 @@ erDiagram
         date released_on
         string release_precision
         string release_source
+        datetime premiere_at
+        string premiere_blur
+        datetime announced_at
+        datetime draft_since
         int series_id FK
         int season
         int episode
@@ -867,6 +890,8 @@ erDiagram
         int width
         int height
         datetime recorded_at
+        string date_guess
+        string date_guess_source
         string full_hd
         string hd
         int full_hd_size
@@ -986,6 +1011,7 @@ erDiagram
         string outcome
         text detail
         datetime sent_at
+        int mail_id FK
     }
 
     core_PushSubscription }o--|| residents_Resident : "user"
@@ -1111,6 +1137,7 @@ erDiagram
     gahkflix_VideoEvent }o--|o gahkflix_ChangeRequest : "request"
     regnskab_EconomicLedgerEntry }o--|| residents_Resident : "resident"
     regnskab_AlumneregningSend }o--|| residents_Resident : "resident"
+    regnskab_AlumneregningSend }o--|o core_OutgoingMail : "mail"
 ```
 
 ## admissions
@@ -1419,6 +1446,9 @@ erDiagram
         text keyword_arguments
         json lines
         int omitted
+        float progress
+        string progress_step
+        datetime progressed_at
     }
 
     core_PushDeliveryDay {
@@ -1434,6 +1464,22 @@ erDiagram
         string name
         string hostname
         datetime beat_at
+    }
+
+    core_OutgoingMail {
+        int id PK
+        datetime created_at
+        text subject
+        text recipients
+        json payload
+        string kind
+        string status
+        int attempts
+        datetime next_attempt_at
+        datetime last_attempt_at
+        datetime expires_at
+        datetime sent_at
+        text error
     }
 
     residents_Resident { }
@@ -1584,6 +1630,10 @@ erDiagram
         date released_on
         string release_precision
         string release_source
+        datetime premiere_at
+        string premiere_blur
+        datetime announced_at
+        datetime draft_since
         int series_id FK
         int season
         int episode
@@ -1621,6 +1671,8 @@ erDiagram
         int width
         int height
         datetime recorded_at
+        string date_guess
+        string date_guess_source
         string full_hd
         string hd
         int full_hd_size
@@ -2135,12 +2187,16 @@ erDiagram
         string outcome
         text detail
         datetime sent_at
+        int mail_id FK
     }
+
+    core_OutgoingMail { }
 
     residents_Resident { }
 
     regnskab_EconomicLedgerEntry }o--|| residents_Resident : "resident"
     regnskab_AlumneregningSend }o--|| residents_Resident : "resident"
+    regnskab_AlumneregningSend }o--|o core_OutgoingMail : "mail"
 ```
 
 ## reparationer

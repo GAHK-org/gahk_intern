@@ -1,26 +1,43 @@
 import logging
 from datetime import date
 
-from celery import shared_task
+from celery import Task, shared_task
 
-from . import alumneregning, economic
+from . import alumneregning
 
 logger = logging.getLogger(__name__)
 
+# e-conomic's rate limit is per minute; three tries spread over a few minutes see it through.
+ECONOMIC_RETRY_COUNTDOWN = 2 * 60
 
-@shared_task
-def send_alumneregninger_task(date_from_iso: str, date_to_iso: str) -> None:
+
+class AlumneregningerFailed(Exception):
+    """Raised at the end of a send in which someone's statement could not be made, so the job shows as
+    failed on the worker-jobs page rather than done (#397). Who and why is on the status page."""
+
+
+@shared_task(bind=True, max_retries=3)
+def send_alumneregninger_task(self: Task, date_from_iso: str, date_to_iso: str) -> int:
     """Runs the actual send in the background — a page load blocking for the duration of hundreds of
-    e-conomic calls and SMTP sends, inside a single HTTP request, does not survive a proxy/browser
-    timeout partway through. regnskab.views.send_alumneregninger_view queues this instead of calling
+    e-conomic calls, inside a single HTTP request, does not survive a proxy/browser timeout partway
+    through. regnskab.views.send_alumneregninger_view queues this instead of calling
     send_alumneregninger directly; regnskab.alumneregning.AlumneregningSend is the status/audit trail,
     since the results no longer exist only in a rendered response.
 
-    Catches EconomicAuthError specifically: send_alumneregninger already logs it before re-raising (to
-    abort the batch rather than report the same failure once per remaining alumne), and there is no
-    HTTP response left for a background task to show it on — letting it propagate would just mark this
-    an unhandled Celery task failure, noisier than the log line already written."""
-    try:
-        alumneregning.send_alumneregninger(date.fromisoformat(date_from_iso), date.fromisoformat(date_to_iso))
-    except economic.EconomicAuthError:
-        logger.error("alumneregning task: aborted — see the error logged by send_alumneregninger above")
+    It makes the statements and queues their mails; core.mail delivers them, within the mail server's
+    rate limit, and retries each until it goes through. The job itself is tried again when e-conomic's
+    rate limit failed someone (the rerun skips whoever was sent theirs), and fails if anyone is left
+    failed — as it does on EconomicAuthError, already logged by send_alumneregninger. Returns how many
+    statements it made."""
+    date_from, date_to = date.fromisoformat(date_from_iso), date.fromisoformat(date_to_iso)
+    results = alumneregning.send_alumneregninger(date_from, date_to)
+    failed = [r for r in results if r.outcome == "failed"]
+    if any(r.retryable for r in failed) and self.request.retries < self.max_retries:
+        logger.info("alumneregning task: %d failed on e-conomic's rate limit; trying again", len(failed))
+        raise self.retry(countdown=ECONOMIC_RETRY_COUNTDOWN)
+    if failed:
+        raise AlumneregningerFailed(
+            f"{len(failed)} af {len(results)} alumneregninger kunne ikke laves: "
+            + "; ".join(f"{r.resident.full_name}: {r.detail}" for r in failed)
+        )
+    return len(results)

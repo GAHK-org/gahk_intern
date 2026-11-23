@@ -5,7 +5,8 @@ It is stored as the first day of what is known (Video.released_on) with its prec
 travels as ISO 8601 cut to that precision — "2015", "2015-03", "2015-03-12" — wherever it is a
 value: the edit form, a proposal, the history.
 
-THE GUESS, made when a file is processed (`guess`): a date somebody wrote — in the file's name, or
+THE GUESS, made when a file is processed (`guess`) and only offered on the edit page
+(VideoFile.date_guess): a date somebody wrote — in the file's name, or
 in one of its date tags — beats the camera's clock when the two disagree. An exported or
 re-encoded film carries the day it was exported, while "Revy 2009.mp4" says what it is. The file's
 last-modified time comes last: it is as often the day the file was copied.
@@ -99,6 +100,33 @@ def label(value: str | None) -> str:
     """A date as a proposal or the history stores it, for people to read."""
     parsed = PartialDate.parse(value)
     return parsed.label() if parsed else ""
+
+
+# --- Premieres ----------------------------------------------------------------------------------
+#
+# A premiere is a whole moment, to the minute (Video.premiere_at). As a value — the edit form, a
+# proposal, the history — it is ISO 8601 in local time with its offset: "2026-12-24T20:00+01:00".
+
+
+def premiere_value(moment: datetime | None) -> str | None:
+    return timezone.localtime(moment).isoformat(timespec="minutes") if moment else None
+
+
+def parse_premiere(value: str | None) -> datetime | None:
+    if not value:
+        return None
+    try:
+        moment = datetime.fromisoformat(value)
+    except ValueError:
+        return None
+    return moment if timezone.is_aware(moment) else timezone.make_aware(moment)
+
+
+def premiere_label(moment: datetime | None) -> str:
+    """ "24. december 2026 kl. 20.00"."""
+    if moment is None:
+        return ""
+    return date_format(timezone.localtime(moment), "j. F Y \\k\\l. H.i")
 
 
 def _plausible(year: int, month: int | None = None, day: int | None = None) -> PartialDate | None:

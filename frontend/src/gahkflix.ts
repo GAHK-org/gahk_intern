@@ -176,7 +176,14 @@ function initLiveSearch(): void {
 
 // --- Uploading ------------------------------------------------------------------------------------
 
-type UploadConfig = { beginUrl: string; commitUrl: string; video: number | null; maxBytes: number };
+type UploadConfig = {
+  beginUrl: string;
+  commitUrl: string;
+  video: number | null;
+  maxBytes: number;
+  maxFiles: number;
+  maxDrafts: number;
+};
 type UploadPlan = { mode: "s3" | "direct"; url: string; fields?: Record<string, string> };
 
 const FINGERPRINT_PART = 4 * 1024 * 1024;
@@ -211,16 +218,18 @@ function sendWithProgress(
   });
 }
 
+/** The upload widget: one file for a new version, or several new videos, sent one after another. */
 function initUpload(): void {
   const root = document.querySelector<HTMLElement>("[data-flix-upload]");
   const config = jsonConfig<UploadConfig>("flix-upload-config");
   if (!root || !config) return;
   const drop = root.querySelector<HTMLElement>("[data-flix-drop]")!;
   const input = root.querySelector<HTMLInputElement>("[data-flix-file]")!;
-  const progress = root.querySelector<HTMLElement>("[data-flix-progress]")!;
-  const meter = root.querySelector<HTMLElement>("[data-flix-meter]")!;
+  const queue = root.querySelector<HTMLOListElement>("[data-flix-queue]")!;
   const status = root.querySelector<HTMLElement>("[data-flix-upload-status]")!;
+  let room = config.maxFiles;
   let busy = false;
+  const roomNote = root.querySelector<HTMLElement>("[data-flix-room]");
 
   const say = (text: string, error = false) => {
     status.textContent = text;
@@ -230,80 +239,152 @@ function initUpload(): void {
     event.preventDefault();
   };
 
-  async function upload(file: File): Promise<void> {
-    if (busy) return;
+  /** One file's row in the list: its name, size, a meter and what is happening to it. */
+  function row(file: File) {
+    const item = document.createElement("li");
+    item.className = "flix-upload-item";
+    const head = document.createElement("p");
+    const name = document.createElement("b");
+    name.textContent = file.name;
+    const size = document.createElement("span");
+    size.className = "muted";
+    size.textContent = ` ${formatBytes(file.size)}`;
+    head.append(name, size);
+    const meterBox = document.createElement("div");
+    meterBox.className = "flix-meter";
+    const meter = document.createElement("span");
+    meterBox.append(meter);
+    const line = document.createElement("p");
+    line.className = "flix-upload-status";
+    item.append(head, meterBox, line);
+    queue.append(item);
+    return {
+      progress: (fraction: number) => (meter.style.width = `${(fraction * 100).toFixed(1)}%`),
+      say: (text: string, error = false) => {
+        line.textContent = text;
+        line.classList.toggle("is-error", error);
+      },
+      done: (editUrl: string) => {
+        meterBox.hidden = true;
+        line.textContent = "Uploadet. Den behandles nu. ";
+        const link = document.createElement("a");
+        link.href = editUrl;
+        link.textContent = "Skriv titel og oplysninger";
+        line.append(link);
+      },
+      failed: (text: string) => {
+        meterBox.hidden = true;
+        line.textContent = text;
+        line.classList.add("is-error");
+      },
+    };
+  }
+
+  /** Send one file; the address of its edit page, or an Error saying why not. */
+  async function send(file: File, show: ReturnType<typeof row>): Promise<string> {
+    if (file.size > config!.maxBytes) {
+      throw new Error(`Videoen er for stor (${formatBytes(file.size)}; højst ${formatBytes(config!.maxBytes)}).`);
+    }
+    show.say("Tjekker filen …");
+    const begun = await postJSON(config!.beginUrl, {
+      name: file.name,
+      size: file.size,
+      type: file.type,
+      fingerprint: await fingerprint(file),
+      lastModified: String(file.lastModified || ""),
+      video: config!.video,
+    });
+    if (!begun.ok) throw new Error(await errorOf(begun, "Uploaden kunne ikke starte."));
+    const { token, upload: plan } = (await begun.json()) as { token: string; upload: UploadPlan };
+
+    const form = new FormData();
+    const headers: Record<string, string> = {};
+    if (plan.mode === "s3") {
+      for (const [name, value] of Object.entries(plan.fields ?? {})) form.append(name, value);
+    } else {
+      form.append("token", token);
+      headers["X-CSRFToken"] = csrfToken();
+    }
+    form.append("file", file);
+    const started = performance.now();
+    const statusCode = await sendWithProgress(plan.url, form, headers, (loaded, total) => {
+      const fraction = loaded / total;
+      show.progress(fraction);
+      const seconds = (performance.now() - started) / 1000;
+      const rate = loaded / Math.max(seconds, 0.001);
+      const left = rate > 0 ? (total - loaded) / rate : 0;
+      show.say(
+        `Sender … ${Math.floor(fraction * 100)} % · ${formatBytes(rate)}/s` +
+          (fraction < 1 && seconds > 3 ? ` · ca. ${formatSeconds(left)} tilbage` : ""),
+      );
+    });
+    if (statusCode < 200 || statusCode >= 300) throw new Error("Lageret afviste filen. Prøv igen.");
+
+    show.say("Gemmer …");
+    const committed = await postJSON(config!.commitUrl, { token });
+    if (!committed.ok) throw new Error(await errorOf(committed, "Uploaden kunne ikke gemmes."));
+    return ((await committed.json()) as { editUrl: string }).editUrl;
+  }
+
+  async function upload(files: File[]): Promise<void> {
+    if (busy || !files.length) return;
     if (!window.crypto?.subtle) {
       say("Din browser kan ikke uploade her. Brug en opdateret browser over https.", true);
       return;
     }
-    if (file.size > config!.maxBytes) {
-      say(`Videoen er for stor (${formatBytes(file.size)}; højst ${formatBytes(config!.maxBytes)}).`, true);
+    if (config!.video && files.length > 1) {
+      say("Vælg kun én fil: den nye version.", true);
+      return;
+    }
+    if (files.length > room) {
+      // Not the first few of them quietly: the uploader picks which.
+      say(
+        room
+          ? `Du har plads til ${room} ${room === 1 ? "kladde" : "kladder"} mere (højst ${config!.maxDrafts}), ` +
+              `men valgte ${files.length} filer. Vælg færre.`
+          : `Du har allerede ${config!.maxDrafts} videoer, der ikke er udgivet. Udgiv eller slet en af dem først.`,
+        true,
+      );
       return;
     }
     busy = true;
     drop.hidden = true;
-    progress.hidden = false;
-    progress.querySelector("[data-flix-filename]")!.textContent = file.name;
-    progress.querySelector("[data-flix-filesize]")!.textContent = formatBytes(file.size);
-    meter.style.width = "0%";
+    queue.hidden = false;
+    queue.replaceChildren();
+    say(files.length > 1 ? `Sender ${files.length} videoer, én ad gangen. Lad siden være åben imens.` : "");
     window.addEventListener("beforeunload", guard);
-    try {
-      say("Tjekker filen …");
-      const begun = await postJSON(config!.beginUrl, {
-        name: file.name,
-        size: file.size,
-        type: file.type,
-        fingerprint: await fingerprint(file),
-        lastModified: String(file.lastModified || ""),
-        video: config!.video,
-      });
-      if (!begun.ok) throw new Error(await errorOf(begun, "Uploaden kunne ikke starte."));
-      const { token, upload: plan } = (await begun.json()) as { token: string; upload: UploadPlan };
-
-      const form = new FormData();
-      const headers: Record<string, string> = {};
-      if (plan.mode === "s3") {
-        for (const [name, value] of Object.entries(plan.fields ?? {})) form.append(name, value);
-      } else {
-        form.append("token", token);
-        headers["X-CSRFToken"] = csrfToken();
+    const rows = files.map(row);
+    const sent: string[] = [];
+    for (const [index, file] of files.entries()) {
+      try {
+        sent.push(await send(file, rows[index]));
+        rows[index].done(sent[sent.length - 1]);
+        room -= config!.video ? 0 : 1;
+        if (roomNote) roomNote.textContent = `, og du har plads til ${room} ${room === 1 ? "kladde" : "kladder"} mere`;
+        refreshLiveLists(); // the file just saved joins the list above
+      } catch (error) {
+        rows[index].failed(error instanceof Error ? error.message : "Uploaden mislykkedes.");
       }
-      form.append("file", file);
-      const started = performance.now();
-      const statusCode = await sendWithProgress(plan.url, form, headers, (loaded, total) => {
-        const fraction = loaded / total;
-        meter.style.width = `${(fraction * 100).toFixed(1)}%`;
-        const seconds = (performance.now() - started) / 1000;
-        const rate = loaded / Math.max(seconds, 0.001);
-        const left = rate > 0 ? (total - loaded) / rate : 0;
-        say(
-          `Sender … ${Math.floor(fraction * 100)} % · ${formatBytes(rate)}/s` +
-            (fraction < 1 && seconds > 3 ? ` · ca. ${formatSeconds(left)} tilbage` : ""),
-        );
-      });
-      if (statusCode < 200 || statusCode >= 300) throw new Error("Lageret afviste filen. Prøv igen.");
-
-      say("Gemmer …");
-      const committed = await postJSON(config!.commitUrl, { token });
-      if (!committed.ok) throw new Error(await errorOf(committed, "Uploaden kunne ikke gemmes."));
-      const { editUrl } = await committed.json();
-      window.removeEventListener("beforeunload", guard);
-      say("Færdig. Videoen behandles nu …");
-      window.location.href = editUrl;
-    } catch (error) {
-      window.removeEventListener("beforeunload", guard);
-      busy = false;
-      drop.hidden = false;
-      progress.hidden = true;
-      input.value = "";
-      say(error instanceof Error ? error.message : "Uploaden mislykkedes.", true);
     }
+    window.removeEventListener("beforeunload", guard);
+    busy = false;
+    input.value = "";
+    if (files.length === 1 && sent.length === 1) {
+      say("Færdig. Videoen behandles nu …");
+      window.location.href = sent[0];
+      return;
+    }
+    drop.hidden = room <= 0;
+    if (files.length === 1) say("");
+    else
+      say(
+        `${sent.length} af ${files.length} videoer er uploadet. De behandles én ad gangen; ` +
+          "skriv titel og oplysninger imens.",
+        sent.length < files.length,
+      );
   }
 
-  input.addEventListener("change", () => {
-    const file = input.files?.[0];
-    if (file) void upload(file);
-  });
+  input.addEventListener("change", () => void upload([...(input.files ?? [])]));
   drop.addEventListener("dragover", (event) => {
     event.preventDefault();
     drop.classList.add("is-over");
@@ -312,14 +393,49 @@ function initUpload(): void {
   drop.addEventListener("drop", (event) => {
     event.preventDefault();
     drop.classList.remove("is-over");
-    const files = event.dataTransfer?.files;
-    if (files && files.length > 1) {
-      // Not the first of them quietly: the next can only go once this one is processed anyway.
-      say(`Du kan uploade én video ad gangen. Træk kun én af de ${files.length} filer herind.`, true);
-      return;
-    }
-    if (files?.[0]) void upload(files[0]);
+    void upload([...(event.dataTransfer?.files ?? [])]);
   });
+}
+
+/** Lists of one's own uploads (`data-flix-live`: the address of a fresh copy) that follow the
+ * processing as it happens: re-fetched every few seconds while any of them (`data-flix-pending`) waits
+ * or is processed, and at once when the uploader has saved a new file. */
+const LIVE_LIST_MS = 3000;
+const liveLists: (() => Promise<void>)[] = [];
+
+function initLiveLists(): void {
+  for (const section of document.querySelectorAll<HTMLElement>("[data-flix-live]")) {
+    const target = section.querySelector<HTMLElement>("[data-flix-live-list]")!;
+    let timer = 0;
+    const schedule = () => {
+      window.clearTimeout(timer);
+      if (target.querySelector("[data-flix-pending]")) timer = window.setTimeout(() => void refresh(), LIVE_LIST_MS);
+    };
+    const refresh = async () => {
+      window.clearTimeout(timer);
+      if (!document.hidden) {
+        try {
+          const response = await fetch(section.dataset.flixLive!, { credentials: "same-origin" });
+          if (response.ok) {
+            target.innerHTML = await response.text();
+            section.hidden = !target.querySelector(".flix-list-item");
+          }
+        } catch {
+          // A missed refresh is harmless; the next one catches up.
+        }
+      }
+      schedule();
+    };
+    liveLists.push(refresh);
+    schedule();
+    document.addEventListener("visibilitychange", () => {
+      if (!document.hidden) void refresh();
+    });
+  }
+}
+
+function refreshLiveLists(): void {
+  for (const refresh of liveLists) void refresh();
 }
 
 type ProcessingStatus = { state: string; progress: number; ahead: number };
@@ -754,7 +870,9 @@ function detailValues(form: HTMLFormElement): Record<string, string> {
     if (!field.name || field.name === "csrfmiddlewaretoken") continue;
     // The cast and the tags are JSON, written by the server one way and by their editors another.
     let value = field.value;
-    if (field.type === "hidden") {
+    if (field instanceof HTMLInputElement && field.type === "checkbox") {
+      value = field.checked ? "on" : "";
+    } else if (field.type === "hidden") {
       try {
         value = JSON.stringify(JSON.parse(value || "null"));
       } catch {
@@ -795,7 +913,8 @@ function initDetailsKeeper(): void {
     for (const field of detailFields(form)) {
       const value = kept.values[field.name];
       if (value === undefined || value === kept.base[field.name] || value === loaded[field.name]) continue;
-      field.value = value;
+      if (field instanceof HTMLInputElement && field.type === "checkbox") field.checked = value === "on";
+      else field.value = value;
       restored = true;
     }
     if (notice) notice.hidden = !restored;
@@ -815,6 +934,54 @@ function initDetailsKeeper(): void {
   });
   window.addEventListener("pageshow", (event) => {
     if (event.persisted) letGo = false; // back from the browser's cache: the page is as it was left
+  });
+}
+
+/** The release date's Premiere box: only a premiere has a time and a blur for its thumbnail, and the
+ * preview shows the thumbnail as the blur chosen makes it (views.picture blurs it). */
+function initPremiere(): void {
+  const box = document.querySelector<HTMLElement>("[data-flix-premiere]");
+  const tick = box?.querySelector<HTMLInputElement>('input[type="checkbox"]');
+  if (!box || !tick) return;
+  const blur = box.querySelector<HTMLSelectElement>("select[name='premiere_blur']");
+  const preview = box.querySelector<HTMLImageElement>("[data-flix-premiere-preview]");
+  const time = box.querySelector<HTMLInputElement>("input[name='premiere_time']");
+  const sync = () => {
+    for (const part of box.querySelectorAll<HTMLElement>("[data-flix-premiere-only]")) part.hidden = !tick.checked;
+    for (const part of box.querySelectorAll<HTMLElement>("[data-flix-premiere-hide]")) part.hidden = tick.checked;
+    if (time) time.required = tick.checked;
+  };
+  tick.addEventListener("change", () => {
+    sync();
+    if (tick.checked) time?.focus();
+  });
+  blur?.addEventListener("change", () => {
+    if (preview) preview.src = `${preview.dataset.flixPremierePreview}&premiere=${encodeURIComponent(blur.value)}`;
+  });
+  blur?.dispatchEvent(new Event("change"));
+  sync();
+}
+
+/** "Brug videoens dato": the date the file suggests ("2015", "2015-03" or "2015-03-12") put in the
+ * year, month and day, a part it does not know left empty. Nothing is filled in without it. */
+function initDateGuess(): void {
+  const button = document.querySelector<HTMLButtonElement>("[data-flix-date-guess]");
+  const form = button?.closest("form");
+  if (!button || !form) return;
+  button.addEventListener("click", () => {
+    const [year = "", month = "", day = ""] = (button.dataset.flixDateGuess ?? "").split("-");
+    const parts: [string, string][] = [
+      ["released_year", year],
+      ["released_month", month ? String(Number(month)) : ""],
+      ["released_day", day ? String(Number(day)) : ""],
+    ];
+    for (const [name, value] of parts) {
+      const field = form.elements.namedItem(name) as HTMLInputElement | HTMLSelectElement | null;
+      if (!field) continue;
+      field.value = value;
+      field.dispatchEvent(new Event("input", { bubbles: true }));
+      field.dispatchEvent(new Event("change", { bubbles: true }));
+    }
   });
 }
 
@@ -1925,9 +2092,12 @@ if (body.classList.contains("flix")) {
   initCharts();
   initForms();
   initLiveSearch();
+  initLiveLists();
   initUpload();
   initProcessing();
   initDetailsKeeper(); // before the editors, which read what it puts back
+  initPremiere();
+  initDateGuess();
   initCastEditor();
   initTagEditor();
   initNumberPickers();

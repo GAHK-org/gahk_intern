@@ -140,6 +140,16 @@
   .btn-top svg { width:16px; height:16px; }
 
   .sidebar { grid-area:side; background:var(--surface); border-right:1px solid var(--border); padding:14px 12px; display:flex; flex-direction:column; gap:3px; overflow:auto; }
+  /* The window scrolls, not .main, so a grid cell as tall as the page took the menu with it: at the
+     bottom of a long page (the photo timeline) it was thousands of pixels up. It is sticky instead,
+     at least one screen tall (the clock stays at the bottom), and sidebar.ts moves its sticking point:
+     a longer menu scrolls along with the page until its end is in view, and back on scrolling up.
+     Desktop only: phones have the drawer (the max-width:960px block), and Den Hurtige's page never
+     scrolls, so its menu keeps filling the column it is given. */
+  @media (min-width:961px) {
+    .sidebar { position:sticky; top:var(--sidebar-top, 60px); align-self:start; min-height:calc(100dvh - 60px); overflow:visible; }
+    .chat-page .sidebar { position:static; align-self:stretch; min-height:0; overflow:auto; }
+  }
   .nav-label { font-size:10.5px; font-weight:700; letter-spacing:.13em; text-transform:uppercase; color:var(--faint); padding:14px 12px 6px; }
   .nav-item { display:flex; align-items:center; gap:11px; padding:9px 12px; border-radius:9px; color:#33413a; font-weight:500; font-size:14px; line-height:1.1; text-decoration:none; position:relative; }
   .nav-item .ni { width:18px; height:18px; color:var(--faint); flex:none; stroke:currentColor; fill:none; }
@@ -166,7 +176,8 @@
 
   /* --- dashboard pieces --- */
   .glance { display:flex; flex-wrap:wrap; align-items:center; gap:10px 26px; padding:15px 20px; background:var(--surface); border:1px solid var(--border); border-radius:var(--radius); box-shadow:var(--shadow-sm); margin-bottom:22px; }
-  .glance .g { display:flex; align-items:baseline; gap:9px; font-size:15px; }
+  /* wrap: an administrator's roles are a long row of chips, which held the phone page 600px wide */
+  .glance .g { display:flex; flex-wrap:wrap; align-items:baseline; gap:6px 9px; min-width:0; font-size:15px; }
   .glance .gk { font-size:11px; font-weight:700; letter-spacing:.09em; text-transform:uppercase; color:var(--faint); }
   .glance b { font-weight:700; }
   .grid2 { display:grid; grid-template-columns:1.6fr 1fr; gap:20px; align-items:start; }
@@ -2647,6 +2658,8 @@
   .jobs-meter > span { display:block; height:100%; border-radius:2px; background:var(--green); }
   .jobs-meter.is-near { background:var(--warn-bg); }
   .jobs-meter.is-near > span { background:var(--brass); }
+  .jobs-progress { height:8px; margin-top:10px; border-radius:4px; background:var(--green-100); overflow:hidden; }
+  .jobs-progress > span { display:block; height:100%; border-radius:4px; background:var(--green); transition:width .4s ease; }
   .jobs-stale { padding:11px 18px; border-bottom:1px solid var(--border); background:var(--neg-bg); font-size:13px; }
   .jobs-stale a { font-weight:600; color:var(--neg); }
 
@@ -2731,6 +2744,7 @@
   .jobs-facts dd { margin:2px 0 0; }
   .jobs-pre { margin:0; padding:14px 18px; overflow-x:auto; font-size:12.5px; line-height:1.5; }
   .jobs-log td { padding:6px 14px; }
+  .jobs-log td:first-child { white-space:nowrap; }
   .jobs-log .jobs-message { white-space:pre-wrap; overflow-wrap:anywhere; }
   .jobs-log tr.is-warning td { background:var(--warn-bg); }
   .jobs-log tr.is-error td, .jobs-log tr.is-critical td { background:var(--neg-bg); }
