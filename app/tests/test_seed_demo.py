@@ -131,15 +131,19 @@ def test_seed_demo_leaves_one_tombstone_with_its_replies_intact() -> None:
 @pytest.mark.django_db
 def test_seed_demo_gives_the_logins_notifications_in_every_state() -> None:
     """The bell and the notifications page need something to show on a fresh checkout."""
-    from notifications import services
+    from notifications import categories, services
     from notifications.categories import Importance
     from notifications.models import Notification
 
     call_command("seed_demo", "--fresh", "--force", "--residents", "12", verbosity=0)
     beboer = Resident.objects.get(email="beboer@gahk.dk")
-    mine = Notification.objects.filter(recipient=beboer)
+    # Leave out what GAHKFlix tells beboer@ about their own uploads (gahkflix.demo): this test is about
+    # the rows notifications.demo seeds.
+    uploads = Notification.objects.filter(recipient=beboer, category=categories.GAHKFLIX_UPLOADS)
+    mine = Notification.objects.filter(recipient=beboer).exclude(pk__in=uploads)
 
-    assert services.unseen_count(beboer.pk) == 4
+    assert uploads.exists()
+    assert services.unseen_count(beboer.pk) - uploads.visible().unseen().count() == 4
     assert mine.visible().filter(importance=Importance.KRITISK).exists()
     assert mine.visible().filter(seen_at__isnull=False).count() == 2
     assert any(len(n.actors) == 2 for n in mine)  # "Mette og Jonas svarede"
@@ -147,7 +151,8 @@ def test_seed_demo_gives_the_logins_notifications_in_every_state() -> None:
     assert beboer.notification_preferences.filter(push=False).exists()
 
     call_command("seed_demo", "--fresh", "--force", "--residents", "12", verbosity=0)  # still idempotent
-    assert Notification.objects.filter(recipient__email="beboer@gahk.dk").count() == 7
+    again = Notification.objects.filter(recipient__email="beboer@gahk.dk")
+    assert again.exclude(category=categories.GAHKFLIX_UPLOADS).count() == 7
 
 
 @pytest.mark.django_db
@@ -345,3 +350,57 @@ def test_seed_demo_leaves_no_mail_waiting_for_a_backend_that_really_sends(settin
 
     assert not OutgoingMail.objects.filter(status=OutgoingMail.Status.QUEUED).exists()
     assert OutgoingMail.objects.filter(status=OutgoingMail.Status.FAILED).exists()
+
+
+@pytest.mark.django_db
+def test_seed_demo_gives_gahkflix_premieres_partial_dates_and_drafts_in_every_state() -> None:
+    """What the premieres and the drafts look like is hard to reach by hand: a premiere only comes out
+    at its minute, and a draft is processing for seconds. The demo holds each state still."""
+    from datetime import timedelta
+
+    from django.utils import timezone
+
+    from gahkflix import services
+    from gahkflix.dating import DatePrecision, DateSource
+    from gahkflix.models import MAX_DRAFTS, FileState, PremiereBlur, Video, VideoEvent
+
+    call_command("seed_demo", "--fresh", "--force", "--residents", "12", verbosity=0)
+    now = timezone.now()
+
+    # `Kommer snart`, soonest first: the series' next episode, then beboer@'s own film.
+    upcoming = list(Video.objects.upcoming().order_by("premiere_at"))
+    assert [v.title for v in upcoming] == ["Fællesspisning", "Vinterbadning"]
+    assert upcoming[0].series is not None and upcoming[0].episode == 3
+    assert {v.premiere_blur for v in upcoming} == {PremiereBlur.LIGHT, PremiereBlur.HEAVY}
+    assert upcoming[1].uploaded_by.email == "beboer@gahk.dk"
+    assert all(v.announced_at is None for v in upcoming), "an upcoming premiere is announced at its minute"
+
+    # Out a few hours ago, published before its premiere and announced at it; still takeable back.
+    concert = Video.objects.get(title="Kælderkoncert")
+    assert concert.is_released and concert.premiere_at < now
+    assert concert.published_at < concert.premiere_at == concert.announced_at
+    assert concert.can_be_taken_back
+    assert concert.events.filter(kind=VideoEvent.Kind.PREMIERED).exists()
+
+    # The three kinds of release date.
+    precisions = set(Video.objects.released().values_list("release_precision", flat=True))
+    assert precisions == {DatePrecision.DAY, DatePrecision.MONTH, DatePrecision.YEAR}
+
+    # beboer@'s drafts, one of each kind, with room left to upload more.
+    beboer = Resident.objects.get(email="beboer@gahk.dk")
+    drafts = Video.objects.drafts().filter(uploaded_by=beboer)
+    assert 1 <= MAX_DRAFTS - drafts.count() < MAX_DRAFTS
+    states = {draft.title: draft.files.get().state for draft in drafts}
+    assert states["Revyprøve"] == FileState.PROCESSING
+    assert states["Gangmøde"] == FileState.QUEUED
+    assert services.queue_ahead(drafts.get(title="Gangmøde").files.get()) == 1
+    assert states["Lydoptagelse"] == FileState.FAILED
+    summer = drafts.get(title="Sommerfest")
+    assert summer.released_on is None, "the date is the uploader's to fill in"
+    assert summer.file.date_guess_source == DateSource.NAME and summer.file.date_guess
+    assert services.missing_for_publishing(summer) == ["Udfyld udgivelsesdatoen – mindst året."]
+    party = drafts.get(title="Gangfest")
+    assert party.premiere_at > now and not services.missing_for_publishing(party)
+    trip = drafts.get(title="Rusturen")
+    assert trip.draft_since is not None and trip.draft_since > trip.created_at + timedelta(days=60)
+    assert trip.events.filter(kind=VideoEvent.Kind.UNPUBLISHED).exists()

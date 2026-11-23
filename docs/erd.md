@@ -877,6 +877,10 @@ erDiagram
         date released_on
         string release_precision
         string release_source
+        datetime premiere_at
+        string premiere_blur
+        datetime announced_at
+        datetime draft_since
         int series_id FK
         int season
         int episode
@@ -914,6 +918,8 @@ erDiagram
         int width
         int height
         datetime recorded_at
+        string date_guess
+        string date_guess_source
         string full_hd
         string hd
         int full_hd_size
@@ -1694,6 +1700,10 @@ erDiagram
         date released_on
         string release_precision
         string release_source
+        datetime premiere_at
+        string premiere_blur
+        datetime announced_at
+        datetime draft_since
         int series_id FK
         int season
         int episode
@@ -1731,6 +1741,8 @@ erDiagram
         int width
         int height
         datetime recorded_at
+        string date_guess
+        string date_guess_source
         string full_hd
         string hd
         int full_hd_size
