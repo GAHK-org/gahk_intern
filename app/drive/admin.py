@@ -58,7 +58,7 @@ class SharedMemberInline(admin.TabularInline):
 
 @admin.register(SharedFolder)
 class SharedFolderAdmin(admin.ModelAdmin):
-    list_display = ("number", "expires_on", "on_expiry", "archived_at")
+    list_display = ("tag", "expires_on", "on_expiry", "archived_at")
     list_filter = ("on_expiry",)
     raw_id_fields = ("created_by",)
     inlines = [SharedMemberInline]
