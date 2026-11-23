@@ -372,6 +372,14 @@ CELERY_BEAT_SCHEDULE = {
         "task": "gahkflix.tasks.recover_stalled",
         "schedule": crontab(minute="13-59/15"),
     },
+    # Lines up each GAHKFlix premiere of the next 20 minutes to be announced on its minute, and
+    # announces any that came out unannounced (gahkflix.services.announce_premieres). Not every
+    # minute: that is 1440 jobs a day on the worker-jobs page for a handful of premieres a year.
+    # Free quarter-hour minutes, off the */15 sweeps above and the 2-minute gahk.dk sync.
+    "gahkflix-announce-premieres": {
+        "task": "gahkflix.tasks.announce_premieres",
+        "schedule": crontab(minute="3-59/15"),
+    },
     # GAHKFlix's bin and expired requests after 30 days, unpublished drafts after 90, and stored files
     # nothing refers to (gahkflix.services.sweep_orphans).
     "gahkflix-housekeeping": {
@@ -387,6 +395,12 @@ CELERY_BEAT_SCHEDULE = {
     "gahkflix-warn-expiring-drafts": {
         "task": "gahkflix.tasks.warn_expiring_drafts",
         "schedule": crontab(minute=15, hour=10),
+    },
+    # Daily, after the draft warnings: a draft with a premiere ahead is not published yet, and will
+    # have no premiere unless it is (gahkflix.services.warn_unpublished_premieres).
+    "gahkflix-warn-unpublished-premieres": {
+        "task": "gahkflix.tasks.warn_unpublished_premieres",
+        "schedule": crontab(minute=20, hour=10),
     },
     "purge-worker-job-logs": {
         "task": "core.tasks.purge_worker_job_logs",
