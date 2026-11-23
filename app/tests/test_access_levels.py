@@ -1,4 +1,4 @@
-"""Access levels (residents.access_levels): what someone moving in, living here, or moved out gets.
+"""Access levels (access.policy, access.levels): what someone moving in, living here, or moved out gets.
 
 Marked `access_levels`, so accounts here get their real level from their months on the alumneliste
 rather than the other tests' default resident (conftest._accounts_live_here).
@@ -10,22 +10,14 @@ import pytest
 from django.test import Client
 from django.urls import URLPattern, URLResolver, get_resolver
 
+from access.levels import levels_of, real_level
+from access.policy import POLICY, Access, AccessLevel, Feature, access, feature_of
 from core import live
 from core.clock import current_date
 from core.models import Room
 from events.models import Answer, CalendarFeedToken, Event, Rsvp
 from notifications import categories, services
 from notifications.models import Notification
-from residents.access_levels import (
-    POLICY,
-    Access,
-    AccessLevel,
-    Feature,
-    access,
-    feature_of,
-    levels_of,
-    real_level,
-)
 from residents.models import Residency, Resident, Role
 
 pytestmark = [pytest.mark.django_db, pytest.mark.access_levels]
@@ -100,7 +92,7 @@ def test_the_level_follows_the_months_on_the_alumneliste(
     person: Callable[..., Resident], months_ago: tuple[int, ...], level: AccessLevel
 ) -> None:
     someone = person(*months_ago)
-    assert levels_of([someone])[someone.pk] == level  # as notifications ask, many at a time
+    assert levels_of([someone.pk])[someone.pk] == level  # as notifications ask, many at a time
     assert real_level(Resident.objects.get(pk=someone.pk)) == level  # as a request asks
 
 
@@ -108,7 +100,7 @@ def test_a_role_this_month_a_superuser_and_the_kitchen(person: Callable[..., Res
     left_with_a_role = person(20, roles=[Role.INDSTILLING])
     superuser = person(is_superuser=True)
     kitchen = person(is_kitchen=True)
-    assert levels_of([left_with_a_role, superuser, kitchen]) == {
+    assert levels_of([left_with_a_role.pk, superuser.pk, kitchen.pk]) == {
         left_with_a_role.pk: L.RESIDENT,
         superuser.pk: L.RESIDENT,
         kitchen.pk: L.KITCHEN,
@@ -355,3 +347,155 @@ def test_only_an_administrator_can_preview_a_level(person: Callable[..., Residen
     resident = _client(person(0))
     resident.post("/admin/preview/set", {"mode": "level", "level": L.NO_ACCESS.value})
     assert resident.get("/alumneliste/").status_code == 200
+
+
+# --- stored on the account, and kept current ----------------------------------------------------------
+
+
+def _stored(someone: Resident) -> AccessLevel:
+    return AccessLevel(Resident.objects.values_list("access_level", flat=True).get(pk=someone.pk))
+
+
+def test_the_level_is_stored_and_a_request_asks_nothing_more(person: Callable[..., Resident]) -> None:
+    from django.db import connection
+    from django.test.utils import CaptureQueriesContext
+
+    someone = person(5)
+    assert _stored(someone) == L.MOVED_OUT_3_TO_12_MONTHS
+    client = _client(someone)
+    with CaptureQueriesContext(connection) as queries:
+        assert client.get("/stamtree/").status_code == 403
+    # The roles still ask which month is in effect; the level's aggregate of someone's months is gone.
+    assert not [q for q in queries if "residents_residency" in q["sql"] and "MAX(" in q["sql"]]
+
+
+def test_a_change_to_the_months_or_roles_moves_the_level_at_once(person: Callable[..., Resident]) -> None:
+    from residents.models import RoleAssignment, active_period
+
+    someone = person(20)
+    assert _stored(someone) == L.MOVED_OUT_OVER_A_YEAR
+    _on_lists(someone, -1)  # on next month's list
+    assert _stored(someone) == L.MOVING_IN
+    Residency.objects.filter(resident=someone).delete()
+    assert _stored(someone) == L.NO_ACCESS
+
+    year, month = active_period()
+    role = RoleAssignment.objects.create(resident=someone, role=Role.AK, year=year, month=month)
+    assert _stored(someone) == L.RESIDENT
+    role.delete()
+    assert _stored(someone) == L.NO_ACCESS
+
+    someone.is_kitchen = True
+    someone.save()
+    assert _stored(someone) == L.KITCHEN
+    assert someone.access_level == L.KITCHEN, "the instance in hand follows"
+
+
+def test_a_list_for_a_newer_month_that_has_started_moves_everyone(
+    person: Callable[..., Resident], this_month: Resident
+) -> None:
+    """Made late: the month in effect is still last month's list until this month's first row."""
+    Residency.objects.filter(resident=this_month).delete()
+    stayed = person(1)  # on last month's list, which is in effect again
+    assert _stored(stayed) == L.RESIDENT
+    _on_lists(this_month, 0)  # this month's list begins
+    assert _stored(stayed) == L.MOVED_OUT_UNDER_1_MONTH
+    Residency.objects.filter(resident=this_month).delete()  # and is taken back
+    assert _stored(stayed) == L.RESIDENT
+
+
+def test_the_night_catches_up_with_what_the_signals_did_not_see(person: Callable[..., Resident]) -> None:
+    """What time alone moves (a list made ahead taking effect on the 1st, the moved-out limits) is
+    no write at all; a queryset .update() stands in for it here."""
+    from access.tasks import refresh_access_levels
+
+    someone = person(2)
+    Residency.objects.filter(resident=someone).update(year=2000)  # no signal
+    assert _stored(someone) == L.MOVED_OUT_1_TO_3_MONTHS
+    refresh_access_levels.apply()
+    assert _stored(someone) == L.MOVED_OUT_OVER_A_YEAR
+
+
+def test_every_migrate_works_the_levels_out(person: Callable[..., Resident]) -> None:
+    """A deploy fills the new column, and picks up a change to the rule itself."""
+    from django.core.management import call_command
+
+    someone = person(0)
+    Resident.objects.update(access_level=L.NO_ACCESS)
+    call_command("migrate", verbosity=0)
+    assert _stored(someone) == L.RESIDENT
+
+
+def test_a_whole_list_is_worked_out_once_at_the_end(person: Callable[..., Resident]) -> None:
+    from access.levels import refreshed_once
+
+    someone = person(20)
+    with refreshed_once():
+        _on_lists(someone, 1, 0)
+        assert _stored(someone) == L.MOVED_OUT_OVER_A_YEAR, "not yet"
+    assert _stored(someone) == L.RESIDENT
+
+
+def test_the_list_editor_works_the_levels_out(person: Callable[..., Resident]) -> None:
+    """next_month_list writes in a refreshed_once(): the newcomer it adds is moving in after it."""
+    from residents.models import next_period
+
+    indstilling = _client(person(0, roles=[Role.INDSTILLING]))
+    newcomer = person()
+    room = _room(321)
+    ny, nm = next_period()
+    response = indstilling.post(
+        "/alumneliste/naeste-maaned?period=next",
+        {"action": "add_existing", "resident": newcomer.pk, "room": room.pk},
+    )
+    assert response.status_code == 302
+    assert Residency.objects.filter(resident=newcomer, year=ny, month=nm).exists()
+    assert _stored(newcomer) == L.MOVING_IN
+
+
+# --- the Indstilling's override ------------------------------------------------------------------------
+
+
+def test_the_indstilling_can_override_the_level_until_a_last_day(person: Callable[..., Resident]) -> None:
+    from datetime import timedelta
+
+    from access.tasks import refresh_access_levels
+
+    indstilling = _client(person(0, roles=[Role.INDSTILLING]))
+    guest = person()
+    page = indstilling.get(f"/beboer/{guest.pk}/rediger").content.decode()
+    assert "Adgang nu: <strong>Ingen adgang</strong>" in page
+    last_day = current_date() + timedelta(days=10)
+    form = {
+        "first_name": guest.first_name,
+        "last_name": guest.last_name or "X",
+        "email": guest.email,
+        "access_level_override": L.MOVED_OUT_3_TO_12_MONTHS.value,
+        "access_level_override_until": last_day.isoformat(),
+    }
+    assert indstilling.post(f"/beboer/{guest.pk}/rediger", form).status_code == 302
+    assert _stored(guest) == L.MOVED_OUT_3_TO_12_MONTHS
+    assert _client(guest).get("/den-hurtige/").status_code == 200
+
+    # Past its last day, the night ends it and clears it.
+    Resident.objects.filter(pk=guest.pk).update(
+        access_level_override_until=current_date() - timedelta(days=1)
+    )
+    refresh_access_levels.apply()
+    guest.refresh_from_db()
+    assert guest.access_level == L.NO_ACCESS
+    assert guest.access_level_override == "" and guest.access_level_override_until is None
+
+
+def test_an_override_does_not_beat_a_role_or_the_kitchen(person: Callable[..., Resident]) -> None:
+    holder = person(20, roles=[Role.AK], access_level_override=L.NO_ACCESS.value)
+    kitchen = person(is_kitchen=True, access_level_override=L.RESIDENT.value)
+    assert _stored(holder) == L.RESIDENT
+    assert _stored(kitchen) == L.KITCHEN
+
+
+def test_the_kitchen_is_no_override(person: Callable[..., Resident]) -> None:
+    from residents.forms import ResidentEditForm
+
+    field = ResidentEditForm().fields["access_level_override"]
+    assert L.KITCHEN.value not in {value for value, _label in field.choices}  # type: ignore[attr-defined]

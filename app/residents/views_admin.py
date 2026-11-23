@@ -27,13 +27,14 @@ from django.views.decorators.http import require_POST
 from django_celery_beat.models import PeriodicTask
 from kombu.exceptions import DecodeError
 
+from access.levels import PREVIEW_LEVEL_SESSION_KEY
+from access.policy import AccessLevel
 from config.celery import app as celery_app
 from core.models import WorkerJobLog
 from core.tasks import task_time_limit
 from core.worker_logs import SENT_AT_HEADER, parse_sent_at
 
 from . import admin_access
-from .access_levels import PREVIEW_LEVEL_SESSION_KEY, AccessLevel
 from .models import AdminAccessGrant, Resident, Role, RoleAssignment, active_period
 from .permissions import (
     KITCHEN,

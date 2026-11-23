@@ -18,6 +18,7 @@ from django.utils import timezone
 from django.utils.encoding import force_bytes
 from django.utils.http import url_has_allowed_host_and_scheme, urlsafe_base64_encode
 
+from access.levels import refreshed_once
 from core.danish import MONTHS
 from core.mentions import mentionable
 from core.models import Cleaning, Room, Workgroup
@@ -499,6 +500,7 @@ def _target_period(request: HttpRequest, current: tuple[int, int]) -> tuple[int,
 
 
 @role_required("indstilling")  # administrator/superuser pass via all-access
+@refreshed_once()  # a whole month's rows: work the access levels out once, at the end
 def next_month_list(request: HttpRequest) -> HttpResponse | HttpResponseRedirect:
     """Indstilling (and admin) edit an alumneliste: copy the list forward, then set each resident's
     room, embedsgruppe (workgroup) and cleaning, and add/remove people. A privileged embedsgruppe

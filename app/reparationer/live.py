@@ -12,8 +12,8 @@ loses those cards on the next signal or page load, as it did before.
 
 from django.http import HttpRequest
 
+from access.policy import Feature
 from core import live
-from residents.access_levels import Feature
 
 FEATURE = "reparationer"
 TOPIC = FEATURE

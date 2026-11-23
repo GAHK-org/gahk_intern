@@ -16,8 +16,8 @@ from collections.abc import Iterable
 
 from django.http import HttpRequest
 
+from access.policy import Feature
 from core import live
-from residents.access_levels import Feature
 
 FEATURE = "notifikationer"
 

@@ -120,6 +120,9 @@ erDiagram
         bool is_active
         bool is_staff
         bool is_kitchen
+        string access_level
+        string access_level_override
+        date access_level_override_until
         datetime date_joined
     }
 
@@ -2270,6 +2273,9 @@ erDiagram
         bool is_active
         bool is_staff
         bool is_kitchen
+        string access_level
+        string access_level_override
+        date access_level_override_until
         datetime date_joined
     }
 

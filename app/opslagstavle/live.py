@@ -18,8 +18,8 @@ the page they are looking at.
 
 from django.http import HttpRequest
 
+from access.policy import Feature
 from core import live
-from residents.access_levels import Feature
 from residents.permissions import is_kitchen
 
 from .access import request_allowed

@@ -25,8 +25,8 @@ from collections.abc import Collection
 from django.db.models import QuerySet
 from django.http import HttpRequest
 
+from access.policy import Feature
 from core.rollout import Gate
-from residents.access_levels import Feature
 from residents.permissions import MODERATION_ROLES, View, effective_roles
 
 # None = every logged-in resident. A tuple = only those roles (administrator implies every role, so

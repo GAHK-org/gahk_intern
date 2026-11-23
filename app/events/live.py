@@ -12,8 +12,8 @@ an edit or a cancellation changes the facts, a comment changes the thread.
 
 from django.http import HttpRequest
 
+from access.policy import Feature
 from core import live
-from residents.access_levels import Feature
 from residents.models import Resident
 
 from . import access

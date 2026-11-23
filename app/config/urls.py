@@ -11,10 +11,10 @@ from django.contrib import admin
 from django.urls import include, path, re_path
 from django.views.generic import TemplateView
 
+from access.policy import Feature, in_feature
 from core.media import serve_media
 from events import views as events_views
 from photo_album.views import serve_media as serve_photo_album_media
-from residents.access_levels import Feature, in_feature
 
 urlpatterns = [
     path("django-admin/", admin.site.urls),

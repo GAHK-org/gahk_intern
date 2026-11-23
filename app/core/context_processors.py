@@ -6,6 +6,8 @@ from django.conf import settings
 from django.http import HttpRequest
 from django.urls import reverse
 
+from access.levels import PREVIEW_LEVEL_SESSION_KEY, request_level
+from access.policy import LEVEL_LABELS, Access, AccessLevel, Feature, access, allows, may_open
 from arkiv.access import roles_allowed as arkiv_allowed
 from core.middleware import kitchen_home
 from den_hurtige.access import roles_allowed as den_hurtige_allowed
@@ -13,17 +15,6 @@ from events.access import roles_allowed as events_allowed
 from gahkflix.access import roles_allowed as gahkflix_allowed
 from opslagstavle.access import roles_allowed as opslagstavle_allowed
 from photo_album.access import roles_allowed as photo_album_allowed
-from residents.access_levels import (
-    LEVEL_LABELS,
-    PREVIEW_LEVEL_SESSION_KEY,
-    Access,
-    AccessLevel,
-    Feature,
-    access,
-    allows,
-    may_open,
-    request_level,
-)
 from residents.permissions import CMS_EDITOR_ROLES, KITCHEN, can_preview, effective_roles
 
 NavItem = tuple[str, str, str]  # (url, label, icon-key from the base.html sprite)
@@ -34,7 +25,7 @@ def _nav_intern(roles: Collection[str], user_pk: int) -> list[NavSection]:
     """Internal menu grouped into sidebar sections, built from the *effective* role set: base items for
     every resident plus each embedsgruppe's admin tools. Each item is (url, label, icon); empty sections
     are dropped. Honors the preview override (roles come from effective_roles)."""
-    if KITCHEN in roles:  # the kitchen account: its own labels and home (core.middleware.AccessLevelGate)
+    if KITCHEN in roles:  # the kitchen account: its own labels and home (access.middleware.AccessLevelGate)
         return [
             (
                 "Køkkenet",

@@ -31,8 +31,8 @@ from collections.abc import Collection
 from django.db.models import Q, QuerySet
 from django.http import HttpRequest
 
+from access.policy import Feature
 from core.rollout import Gate
-from residents.access_levels import Feature
 from residents.models import Resident
 from residents.permissions import View, current_resident
 

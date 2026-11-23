@@ -42,10 +42,11 @@ from django.template.loader import render_to_string
 from django.urls import reverse
 from django.utils.safestring import SafeString
 
+from access.levels import has_feature
+from access.policy import Feature
 from core import embeds as embed_syntax
 from core.embeds import Embed
 from core.markdown import embed_references
-from residents.access_levels import Feature, has_feature
 from residents.permissions import current_resident, effective_roles
 
 from .models import Notice

@@ -16,9 +16,10 @@ from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
 from django.views.decorators.http import require_POST
 
+from access.levels import has_feature
+from access.policy import Feature
 from core import push
 from gahkflix import access as gahkflix_access
-from residents.access_levels import Feature, has_feature
 from residents.permissions import current_resident, is_kitchen
 
 from . import categories, services
@@ -30,7 +31,7 @@ DROPDOWN_SIZE = 10
 
 VIEWS = (("kronologisk", "Kronologisk"), ("kategori", "Efter kategori"))
 
-# The feature each settings group's notifications open (residents.access_levels): a level without it
+# The feature each settings group's notifications open (access.policy): a level without it
 # is never sent them, so the page leaves the group out.
 GROUP_FEATURES = {
     "chat": Feature.DEN_HURTIGE,

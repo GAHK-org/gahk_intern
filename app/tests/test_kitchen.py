@@ -65,7 +65,7 @@ def test_the_rest_of_the_site_is_closed(kitchen: Resident, path: str) -> None:
     assert _client(kitchen).get(path).status_code == 403
 
 
-# What the kitchen's own pages need beside them (residents.access_levels: the account pages, files
+# What the kitchen's own pages need beside them (access.policy: the account pages, files
 # and the public ones). None may answer 403 — a 404 for a missing file is fine.
 @pytest.mark.parametrize(
     "path",

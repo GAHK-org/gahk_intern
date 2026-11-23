@@ -2,11 +2,11 @@
 
 from django.urls import path
 
+from access.policy import Feature, in_feature
 from notifications import views_admin as notifications_admin
 from photo_album import views_admin as photo_album_admin
 
 from . import views_admin
-from .access_levels import Feature, in_feature
 
 app_name = "siteadmin"
 

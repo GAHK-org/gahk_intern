@@ -15,19 +15,21 @@ def pytest_configure(config: pytest.Config) -> None:
 
 @pytest.fixture(autouse=True)
 def _accounts_live_here(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch) -> None:
-    """An account a test makes is a resident (residents.access_levels), as it was before the levels.
+    """An account a test makes is a resident (access.levels), as it was before the levels.
 
     make_resident puts nobody on the alumneliste, and a thousand tests that are about something else
-    would otherwise each have to set up residency months. The kitchen account stays the kitchen.
+    would otherwise each have to set up residency months. Saving an account works its level out
+    (access.signals), with this rule. The kitchen account stays the kitchen.
     Tests about the levels themselves are marked `access_levels` and get the real rule.
     """
     if request.node.get_closest_marker("access_levels"):
         return
-    from residents import access_levels
+    from access import levels
+    from access.policy import AccessLevel
 
-    # What a person's residency months make of them (the kitchen, superusers and role holders are
-    # decided before this is asked).
-    monkeypatch.setattr(access_levels, "_level", lambda *_months: access_levels.AccessLevel.RESIDENT)
+    # What a person's residency months make of them (the kitchen, superusers, role holders and an
+    # override are decided before this is asked).
+    monkeypatch.setattr(levels, "from_months", lambda *_months: AccessLevel.RESIDENT)
 
 
 def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:

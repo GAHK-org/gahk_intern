@@ -1,22 +1,15 @@
-"""Who may use which part of the intranet: a person's access level, and what each level gets.
+"""What each access level gets: the table, and which feature each page is in.
 
 Roles say what someone may DO (moderate, edit gahk.dk, the embedsgrupper's tools). The access level
-says which parts of the site exist for them at all, and it follows where they live:
-
-  * RESIDENT: on the alumneliste in effect (residents.models.active_period), or holding a role this
-    month, or a superuser. Everything.
-  * MOVING_IN: on a coming month's alumneliste but not the one in effect.
-  * MOVED_OUT_*: was on the alumneliste but is not any more, graded by how long ago, in whole
-    months: last on the list in the month before the one in effect is "under a month".
-  * KITCHEN: the kitchen staff's shared login (Resident.is_kitchen).
-  * NO_ACCESS: an account that has never been on any list and is none of the above.
+says which parts of the site exist for them at all. Whose level is what lives in access.levels; this
+module is the rule, and knows nothing about the alumneliste.
 
 THE TABLE (POLICY) is the whole rule: each level's access to each Feature, NONE, READ or FULL. READ
 lets through only requests that change nothing (GET, HEAD, OPTIONS). A feature is a part of the site
 that the URLconf marks with `in_feature`; a view that belongs to no feature is for residents only,
 so a new page is closed to everyone else until somebody puts it in a feature on purpose.
 
-The gate (core.middleware.AccessLevelGate) applies the table to every request; the sidebar, the
+The gate (access.middleware.AccessLevelGate) applies the table to every request; the sidebar, the
 topbar, notifications, live updates and each feature's rollout gate (core.rollout) ask it the same
 question, so a level never sees a link, a notification or a live signal for a page it cannot open.
 """
@@ -27,15 +20,13 @@ from typing import Any, cast
 from urllib.parse import urlsplit
 
 from django.core.exceptions import ImproperlyConfigured
-from django.db.models import Case, F, IntegerField, Max, Q, When
-from django.http import HttpRequest
 from django.urls import Resolver404, URLPattern, URLResolver, resolve
-
-from .models import Residency, Resident, RoleAssignment, active_period
-from .permissions import PREVIEW_SESSION_KEY, can_preview, is_kitchen, real_roles
 
 
 class AccessLevel(StrEnum):
+    """Who someone is to the intranet. Worked out from the alumneliste (access.levels) and stored on
+    the account (Resident.access_level)."""
+
     RESIDENT = "resident"
     MOVING_IN = "moving_in"
     MOVED_OUT_UNDER_1_MONTH = "moved_out_under_1_month"
@@ -60,6 +51,10 @@ LEVEL_LABELS = {
     AccessLevel.KITCHEN: "Køkkenet",
     AccessLevel.NO_ACCESS: "Ingen adgang",
 }
+# For the account's fields (Resident.access_level and its override).
+LEVEL_CHOICES = [(level.value, LEVEL_LABELS[level]) for level in AccessLevel]
+# What the Indstilling may set by hand: any level but the kitchen's, which is the account's flag.
+OVERRIDE_CHOICES = [(value, label) for value, label in LEVEL_CHOICES if value != AccessLevel.KITCHEN]
 
 
 class Feature(StrEnum):
@@ -227,137 +222,6 @@ def feature_of_url(url: str) -> Feature | None:
         return feature_of(resolve(urlsplit(url).path).func)
     except Resolver404:
         return None
-
-
-# ---- whose level is what --------------------------------------------------------------------------
-
-PREVIEW_LEVEL_SESSION_KEY = "preview_access_level"
-_LEVEL_VALUES = frozenset(level.value for level in AccessLevel)
-_LEVEL_MEMO = "_gahk_access_level"
-
-
-def _month_index(year: int, month: int) -> int:
-    return year * 12 + month - 1
-
-
-def levels_of(residents: Iterable[Resident], with_roles: set[int] | None = None) -> dict[int, AccessLevel]:
-    """Each resident's real access level, in three queries however many there are.
-
-    `with_roles`: those of them known to hold a role in the month in effect, when the caller has
-    already looked (real_level has, through real_roles); otherwise this looks.
-    """
-    residents = list(residents)
-    year, month = active_period()
-    now = _month_index(year, month)
-    ids = [r.pk for r in residents]
-    index = F("year") * 12 + F("month") - 1
-    # Per resident: the last month on a list in effect by now, and the last month on any list.
-    months: dict[int, tuple[int | None, int | None]] = {
-        row["resident_id"]: (row["last_past"], row["last"])
-        for row in Residency.objects.filter(resident_id__in=ids)
-        .values("resident_id")
-        .annotate(
-            last_past=Max(
-                Case(
-                    When(year__lt=year, then=index),
-                    When(year=year, month__lte=month, then=index),
-                    output_field=IntegerField(),
-                )
-            ),
-            last=Max(index),
-        )
-    }
-    if with_roles is None:
-        with_roles = set(
-            RoleAssignment.objects.filter(resident_id__in=ids, year=year, month=month).values_list(
-                "resident_id", flat=True
-            )
-        )
-    out: dict[int, AccessLevel] = {}
-    for resident in residents:
-        if resident.is_kitchen:
-            out[resident.pk] = AccessLevel.KITCHEN
-        elif resident.is_superuser or resident.pk in with_roles:
-            out[resident.pk] = AccessLevel.RESIDENT
-        else:
-            out[resident.pk] = _level(now, *months.get(resident.pk, (None, None)))
-    return out
-
-
-def _level(now: int, last_past: int | None, last: int | None) -> AccessLevel:
-    """From month indexes: the month in effect, someone's last month on a list in effect by then,
-    and their last month on any list (a coming one included)."""
-    if last_past == now:
-        return AccessLevel.RESIDENT
-    if last is not None and last > now:
-        return AccessLevel.MOVING_IN
-    if last_past is None:
-        return AccessLevel.NO_ACCESS
-    return _moved_out(now - last_past)
-
-
-def _moved_out(months_away: int) -> AccessLevel:
-    """`months_away` is 1 in the first month off the list."""
-    if months_away <= 1:
-        return AccessLevel.MOVED_OUT_UNDER_1_MONTH
-    if months_away <= 3:
-        return AccessLevel.MOVED_OUT_1_TO_3_MONTHS
-    if months_away <= 12:
-        return AccessLevel.MOVED_OUT_3_TO_12_MONTHS
-    return AccessLevel.MOVED_OUT_OVER_A_YEAR
-
-
-def real_level(user: Resident) -> AccessLevel:
-    """The user's own level, never the preview. Memoised on the user instance, which lives one
-    request, as residents.permissions.real_roles is."""
-    cached = getattr(user, _LEVEL_MEMO, None)
-    if cached is None:
-        if user.is_kitchen:
-            cached = AccessLevel.KITCHEN
-        elif real_roles(user):  # a superuser or a role this month: the request has these already
-            cached = AccessLevel.RESIDENT
-        else:
-            cached = _level_without_roles(user)
-        setattr(user, _LEVEL_MEMO, cached)
-    return cached
-
-
-def _level_without_roles(user: Resident) -> AccessLevel:
-    """levels_of for one person known to hold no role, in ONE query: the month in effect (what
-    active_period works out) and their own months, aggregated together. Asked on every request."""
-    from core.clock import current_date
-
-    today = current_date()
-    index = F("year") * 12 + F("month") - 1
-    in_effect = Q(year__lt=today.year) | Q(year=today.year, month__lte=today.month)
-    row = Residency.objects.aggregate(
-        now=Max(index, filter=in_effect),
-        last_past=Max(index, filter=in_effect & Q(resident=user)),
-        last=Max(index, filter=Q(resident=user)),
-    )
-    now = row["now"] if row["now"] is not None else _month_index(today.year, today.month)
-    return _level(now, row["last_past"], row["last"])
-
-
-def request_level(request: HttpRequest) -> AccessLevel:
-    """The level this request is treated as. An administrator previewing a level ("Se side som") gets
-    that level; previewing the kitchen gets the kitchen's."""
-    user = request.user
-    if not isinstance(user, Resident):
-        return AccessLevel.NO_ACCESS
-    previewed = request.session.get(PREVIEW_LEVEL_SESSION_KEY)
-    if previewed in _LEVEL_VALUES and can_preview(user):
-        return AccessLevel(previewed)
-    if is_kitchen(request):
-        return AccessLevel.KITCHEN
-    if PREVIEW_SESSION_KEY in request.session and can_preview(user):
-        return AccessLevel.RESIDENT  # previewing a role: a resident holding it
-    return real_level(user)
-
-
-def has_feature(request: HttpRequest, feature: Feature, method: str = "GET") -> bool:
-    """Whether this request's level may use `feature` (a logged-in check is the caller's)."""
-    return allows(request_level(request), feature, method)
 
 
 def may_open(level: AccessLevel, url: str) -> bool:

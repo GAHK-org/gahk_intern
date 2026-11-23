@@ -35,7 +35,8 @@ from django.db.models import Q, QuerySet
 from django.http import HttpRequest
 from django.http.response import HttpResponseBase
 
-from residents.access_levels import Feature, has_feature
+from access.levels import has_feature
+from access.policy import Feature
 from residents.models import RoleAssignment, active_period
 from residents.permissions import View, effective_roles
 
@@ -46,7 +47,7 @@ class Gate:
     `roles` returns None when the feature is open to every logged-in resident, or a tuple of role
     names when it is still limited to them.
 
-    `feature` is the feature's place in residents.access_levels: a request is allowed only if its
+    `feature` is the feature's place in access.policy: a request is allowed only if its
     access level may use it as well, so another feature asking (Opslagstavlen's embeds, the
     dashboard's agenda, a live socket) gets the same answer as the gate in front of the views.
     """

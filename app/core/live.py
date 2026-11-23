@@ -37,7 +37,8 @@ from channels.layers import get_channel_layer
 from django.db import transaction
 from django.http import HttpRequest
 
-from residents.access_levels import Feature, has_feature
+from access.levels import has_feature
+from access.policy import Feature
 
 logger = logging.getLogger(__name__)
 
@@ -47,7 +48,7 @@ logger = logging.getLogger(__name__)
 Authorizer = Callable[[HttpRequest, str], bool]
 
 _AUTHORIZERS: dict[str, Authorizer] = {}
-# Each topic prefix's feature in residents.access_levels: a socket listens only to features its
+# Each topic prefix's feature in access.policy: a socket listens only to features its
 # access level may use, as its pages may only be opened.
 _FEATURES: dict[str, Feature] = {}
 

@@ -30,10 +30,11 @@ from django.db.models import Q, QuerySet
 from django.urls import reverse
 from django.utils.http import url_has_allowed_host_and_scheme
 
+from access import levels as access_levels
+from access.policy import AccessLevel, may_open
 from core import push
 from core.clock import current_datetime
 from core.models import PushSubscription
-from residents import access_levels
 from residents.models import Residency, Resident, RoleAssignment, active_period
 
 from . import categories, live
@@ -137,7 +138,7 @@ def _ids(recipients: Recipients) -> list[int]:
 
 
 def _who_may_open(ids: list[int], url: str) -> list[int]:
-    """Those of `ids` whose access level may open `url` (residents.access_levels).
+    """Those of `ids` whose access level may open `url` (access.policy).
 
     Nobody is told about a page they cannot open: a former resident who once commented on a post in
     a feature they have since lost still gets no reply notifications from it, and a push device does
@@ -146,11 +147,9 @@ def _who_may_open(ids: list[int], url: str) -> list[int]:
     """
     if not ids:
         return ids
-    levels = access_levels.levels_of(
-        Resident.objects.filter(pk__in=ids).only("pk", "is_kitchen", "is_superuser")
-    )
-    opens = {level: access_levels.may_open(level, url) for level in set(levels.values())}
-    return [rid for rid in ids if opens.get(levels.get(rid, access_levels.AccessLevel.NO_ACCESS), False)]
+    levels = access_levels.levels_of(ids)
+    opens = {level: may_open(level, url) for level in set(levels.values())}
+    return [rid for rid in ids if opens.get(levels.get(rid, AccessLevel.NO_ACCESS), False)]
 
 
 def _with_devices(ids: Iterable[int]) -> set[int]:

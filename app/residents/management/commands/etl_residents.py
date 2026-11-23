@@ -17,6 +17,7 @@ from typing import Any
 from django.core.management.base import BaseCommand, CommandError
 from django.db import transaction
 
+from access.levels import refreshed_once
 from core.etl import decode_month_number, fetch_all
 from core.models import Cleaning, Room, Workgroup
 from residents.models import Residency, Resident, Role, RoleAssignment
@@ -39,6 +40,7 @@ def _date(value: datetime.datetime | datetime.date | None) -> datetime.date | No
 class Command(BaseCommand):
     help = "Migrate residents, monthly roles and residency from the legacy DB."
 
+    @refreshed_once()  # every resident's months: work the access levels out once, at the end
     @transaction.atomic
     def handle(self, *args, **opts) -> None:  # noqa: ANN002, ANN003
         if not Room.objects.exists():

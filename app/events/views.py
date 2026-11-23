@@ -23,10 +23,11 @@ from django.urls import reverse
 from django.utils import timezone
 from django.views.decorators.http import require_GET, require_POST
 
+from access import levels as access_levels
+from access.policy import Feature, allows
 from core.clock import current_date, current_datetime
 from core.danish import MONTHS, WEEKDAYS_SHORT
 from core.uploads import attached_image
-from residents import access_levels
 from residents import birthdays as birthdays_mod
 from residents.models import Resident
 from residents.permissions import current_resident
@@ -639,7 +640,7 @@ def calendar_feed(request: HttpRequest, token: str) -> HttpResponse:
     )
     # Someone whose access level has lost Begivenheder (moved out over a year ago) gets the same empty
     # calendar as anyone with no answers: their client empties it rather than showing an error.
-    if not access_levels.allows(access_levels.real_level(resident), access_levels.Feature.EVENTS):
+    if not allows(access_levels.real_level(resident), Feature.EVENTS):
         mine = mine.none()
     entries = [(event, _my_state(event, resident) == "venteliste") for event in mine]
 

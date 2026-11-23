@@ -12,8 +12,8 @@ write, and the feed's slow backstop poll is what takes it off the screen.
 
 from django.http import HttpRequest
 
+from access.policy import Feature
 from core import live
-from residents.access_levels import Feature
 from residents.permissions import effective_roles
 
 from . import channels

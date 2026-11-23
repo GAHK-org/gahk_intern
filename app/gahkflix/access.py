@@ -27,8 +27,8 @@ from django.db.models import Q, QuerySet
 from django.http import HttpRequest
 from django.utils import timezone
 
+from access.policy import Feature
 from core.rollout import Gate
-from residents.access_levels import Feature
 from residents.models import Resident, Role, RoleAssignment, active_period
 from residents.permissions import current_resident, request_has_role
 

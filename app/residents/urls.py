@@ -3,11 +3,12 @@
 from django.contrib.auth import views as auth_views
 from django.urls import include, path, reverse_lazy
 
+from access.policy import Feature, in_feature
+
 from . import views
-from .access_levels import Feature, in_feature
 from .forms import EmailAuthenticationForm, ResidentPasswordResetForm
 
-# Each view's feature decides which access levels reach it (residents.access_levels). A view in no
+# Each view's feature decides which access levels reach it (access.policy). A view in no
 # feature (regnskab, edit_resident: role tools) is for residents only.
 urlpatterns = [
     path("", in_feature(Feature.DASHBOARD, views.dashboard), name="dashboard"),

@@ -572,8 +572,7 @@ def test_the_poll_resolves_roles_once_per_request(
 
     sql = [q["sql"] for q in captured.captured_queries]
     assert sum("residents_roleassignment" in s for s in sql) == 1
-    # active_period for the roles, and the access level's one aggregate (residents.access_levels).
-    assert sum("residents_residency" in s for s in sql) == 2
+    assert sum("residents_residency" in s for s in sql) == 1
 
 
 def test_feed_items_returns_only_the_post_list(

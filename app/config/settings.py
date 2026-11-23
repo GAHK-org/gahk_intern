@@ -68,6 +68,7 @@ INSTALLED_APPS = [
     # GAHK domains
     "core",
     "residents",
+    "access",
     "admissions",
     "cms",
     "ak",
@@ -97,7 +98,8 @@ MIDDLEWARE = [
     # The "gahk_editor" hint cookie for gahk.dk's "Rediger siden" (EDITOR_HINT_COOKIE_DOMAIN).
     # Needs the user; set or deleted only when its state changes, never on static files or media.
     "cms.middleware.EditorHintCookie",
-    "core.middleware.AccessLevelGate",
+    # Which parts of the site each access level reaches (access.policy).
+    "access.middleware.AccessLevelGate",
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
     # No visit counter: gahk.dk counts its own visits, and cms.tasks.sync_gahk_web pulls the totals.
@@ -287,6 +289,12 @@ CELERY_BEAT_SCHEDULE = {
     "sync-gahk-web": {
         "task": "cms.tasks.sync_gahk_web",
         "schedule": crontab(minute="*/2"),
+    },
+    # 00:01, just after midnight: work every access level out again, so a list made ahead takes
+    # effect on the 1st and the moved-out limits pass with the months (access.tasks).
+    "refresh-access-levels": {
+        "task": "access.tasks.refresh_access_levels",
+        "schedule": crontab(minute=1, hour=0),
     },
     # 00:05, just after midnight: gahk.dk re-renders, so "kommende begivenheder" drops yesterday's.
     "rebuild-gahk-web": {

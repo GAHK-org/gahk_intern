@@ -9,6 +9,7 @@ from django.conf import settings
 from django.contrib.auth.forms import AuthenticationForm, PasswordResetForm
 from django.core.files.uploadedfile import UploadedFile
 
+from access.policy import OVERRIDE_CHOICES
 from core import mail as outbox
 from core.uploads import validate_image_upload
 
@@ -69,6 +70,8 @@ class ResidentEditForm(forms.ModelForm):
             "move_out_date",
             "sponsor",
             "fylgje_raw",
+            "access_level_override",
+            "access_level_override_until",
         ]
         labels = {
             "first_name": "Fornavn",
@@ -81,11 +84,20 @@ class ResidentEditForm(forms.ModelForm):
             "move_out_date": "Fraflyttet",
             "sponsor": "Fylgje (fadder)",
             "fylgje_raw": "Fylgje (fritekst, hvis ukendt)",
+            "access_level_override": "Adgang (undtagelse)",
+            "access_level_override_until": "Undtagelsen gælder til og med",
+        }
+        help_texts = {
+            "access_level_override": (
+                "Kun for den, alumnelisten ikke passer på. Tom: adgangen følger alumnelisten."
+            ),
+            "access_level_override_until": "Tom: indtil undtagelsen fjernes.",
         }
         widgets = {
             "birthday": LocalDateInput(),
             "move_in_date": LocalDateInput(),
             "move_out_date": LocalDateInput(),
+            "access_level_override_until": LocalDateInput(),
         }
 
     def __init__(self, *args, **kwargs) -> None:  # noqa: ANN002, ANN003
@@ -97,6 +109,15 @@ class ResidentEditForm(forms.ModelForm):
                 "first_name", "last_name"
             )
         sponsor.required = False
+        override = self.fields["access_level_override"]
+        if isinstance(override, forms.ChoiceField):
+            override.choices = [("", "Følger alumnelisten"), *OVERRIDE_CHOICES]
+
+    def clean(self) -> dict[str, Any]:
+        data = super().clean() or {}
+        if not data.get("access_level_override"):
+            data["access_level_override_until"] = None  # an end date with nothing to end
+        return data
 
 
 class ProfileEditForm(forms.ModelForm):
