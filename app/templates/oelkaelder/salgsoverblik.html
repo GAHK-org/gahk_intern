@@ -29,6 +29,7 @@
     <a href="?{{ base_query }}{% if base_query %}&amp;{% endif %}format=xlsx">Eksportér Excel</a>
   </p>
 
+  <div class="overflow-x-auto">
   <table cellpadding="6" class="text-sm zebra" style="width:100%; border-collapse:collapse">
     <thead><tr style="text-align:left; border-bottom:1px solid var(--border-strong); white-space:nowrap">
       <th>Dato</th><th>Personer</th><th style="text-align:right">I alt</th>
@@ -64,6 +65,7 @@
     {% endfor %}
     </tbody>
   </table>
+  </div>
 
   {% if page_obj.paginator.num_pages > 1 %}
     <p class="muted mt-4 flex items-center gap-3">
