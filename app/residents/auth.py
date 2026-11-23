@@ -41,8 +41,10 @@ def log_failed_login(
     try:
         user = Resident._default_manager.get_by_natural_key(email)
     except (Resident.DoesNotExist, Resident.MultipleObjectsReturned):
-        logger.warning("Login failed: no account for %s", ascii(email))
-        _audit_failed_login(None, {"reason": "no account", "email": ascii(email)})
+        # Only the domain and a keyed hash of what was typed: people type their password here.
+        typed = trail.typed_address(email)
+        logger.warning("Login failed: no account for address %s", typed["email_hash"])
+        _audit_failed_login(None, {"reason": "no account", **typed})
         return
     # The account is known here, so its id is enough: no need to log the address as well.
     reason = "account inactive" if not user.is_active else "wrong password"
@@ -103,15 +105,19 @@ class PasswordChangeView(auth_views.PasswordChangeView):
 
 
 class PasswordResetView(auth_views.PasswordResetView):
-    """Asking for a reset link is recorded with the address asked for, and the account it reached if
-    any: Django answers "sent" either way, so the trail is the only place that tells them apart."""
+    """Asking for a reset link is recorded with the account it reached, or, when it reached none, the
+    domain and a keyed hash of the address typed (trail.typed_address): Django answers "sent" either
+    way, so the trail is the only place that tells them apart."""
 
     def form_valid(self, form: PasswordResetForm) -> HttpResponse:
         email = form.cleaned_data["email"]
         accounts = list(form.get_users(email))
+        details: dict[str, object] = {"accounts": len(accounts)}
+        if not accounts:
+            details.update(trail.typed_address(email))
         with trail.event(
             "auth.password_reset.requested",
-            details={"email": ascii(email), "accounts": len(accounts)},
+            details=details,
             involve=[(account, "subject") for account in accounts],
         ):
             return super().form_valid(form)
