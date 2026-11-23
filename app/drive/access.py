@@ -15,7 +15,7 @@ A resident who has moved out has no access to anything. Nothing is deleted when 
 past months stay in the residency lists, so they get exactly the same access back if they return.
 
 A DELT MAPPE is its members' only: moderators and editors write, readers read. Admins and
-Inspektionen see that it exists - its number, members, files and size - and nothing else. Once
+Inspektionen see that it exists - its tag, members, files and size - and nothing else. Once
 archived it is read by every resident.
 
 LOCKS narrow writing further (models.Lockable). A folder's lock covers everything below it; a
@@ -253,7 +253,7 @@ class Viewer:
             return Level.READ
         role = self.shared_roles.get(shared)
         if role is None:
-            # That it exists, never what is in it: only the Delt mappe itself, under its number.
+            # That it exists, never what is in it: only the Delt mappe itself, under its tag.
             return Level.META if self.oversees and folder.kind == Folder.Kind.SHARED else Level.NONE
         return Level.READ if role == SharedMember.Role.READ else Level.WRITE
 
