@@ -52,6 +52,28 @@ def test_the_archive_prefixes_are_listed_separately() -> None:
     assert "arkiv" not in prefixes, "a bare 'arkiv' prefix would overlap every other arkiv rule"
 
 
+def _prefixes_the_app_writes() -> set[str]:
+    """Read from the code that makes the keys, so a new prefix without its rules fails below."""
+    from core.storage import MEDIA_PREFIX
+    from gahkflix.models import _video_key
+    from photo_album.dashboard import STORAGE_PREFIXES
+
+    gahkflix = _video_key("uuid").split("/")[0]
+    return {f"{MEDIA_PREFIX}/", *STORAGE_PREFIXES, f"{gahkflix}/"}
+
+
+def test_every_prefix_the_app_writes_frees_what_it_deletes() -> None:
+    """Deleting a photo, a film or an import only writes a delete marker on a versioned bucket. Each
+    prefix the app writes needs a rule that expires the noncurrent versions that leaves, and one that
+    clears the markers, or the bytes are billed for ever."""
+    for prefix in _prefixes_the_app_writes():
+        rules = [r for r in RULES if r["Filter"].get("Prefix") == prefix]
+        assert any("NoncurrentVersionExpiration" in r for r in rules), f"{prefix} never frees a deleted file"
+        assert any(r.get("Expiration", {}).get("ExpiredObjectDeleteMarker") for r in rules), (
+            f"{prefix} keeps its delete markers for ever"
+        )
+
+
 def test_days_and_delete_marker_are_never_in_one_expiration() -> None:
     """S3 rejects the combination outright, so the marker cleanup has to be its own rule."""
     for rule in RULES:

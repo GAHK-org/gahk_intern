@@ -108,6 +108,39 @@ RULES: list[dict[str, Any]] = [
         "Filter": {"Prefix": "media/"},
         "NoncurrentVersionExpiration": {"NoncurrentDays": ARCHIVE_UNDO_DAYS},
     },
+    {
+        "ID": "expire-media-markers",
+        "Status": "Enabled",
+        "Filter": {"Prefix": "media/"},
+        "Expiration": {"ExpiredObjectDeleteMarker": True},
+    },
+    # --- The photo album's and GAHKFlix's files ---------------------------------------------------
+    # Deleting a photo, a film (or what gahkflix.tasks.housekeeping purges) or a finished import
+    # writes a delete marker and nothing more, so without these the bytes are billed for ever.
+    # Uploaded originals get the archive's month. An import ZIP has been copied into its album by the
+    # time it is deleted, so a day is enough - and they are the largest objects in the bucket.
+    *(
+        rule
+        for name, prefix, days in (
+            ("photo-album", "photo-album/", ARCHIVE_UNDO_DAYS),
+            ("photo-album-imports", "photo-album-imports/", DERIVED_UNDO_DAYS),
+            ("gahkflix", "gahkflix/", ARCHIVE_UNDO_DAYS),
+        )
+        for rule in (
+            {
+                "ID": f"expire-noncurrent-{name}",
+                "Status": "Enabled",
+                "Filter": {"Prefix": prefix},
+                "NoncurrentVersionExpiration": {"NoncurrentDays": days},
+            },
+            {
+                "ID": f"expire-{name}-markers",
+                "Status": "Enabled",
+                "Filter": {"Prefix": prefix},
+                "Expiration": {"ExpiredObjectDeleteMarker": True},
+            },
+        )
+    ),
     # --- Coolify's database dumps ------------------------------------------------------------------
     # `data/coolify/…`, which is Coolify's own layout and not ours to choose (DEPLOY.md 4d).
     #
