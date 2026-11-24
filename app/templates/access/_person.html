@@ -1,6 +1,7 @@
 {% comment %}A resident's access, on their edit page (person_context in the access app's views).{% endcomment %}
 <div class="card" style="max-width:640px">
   <h2>Adgang</h2>
+  {% if grant_form %}<p class="muted"><a href="{% url 'access:person' resident.pk %}">Se hvad rollerne giver, og hvad der ændrer sig →</a></p>{% endif %}
   <p><strong>Lige nu:</strong>
     {% for label in access_roles %}<span class="chip">{{ label }}</span>{% empty %}<span class="muted">Ingen adgang</span>{% endfor %}
   </p>
@@ -11,7 +12,7 @@
         <tr class="border-b border-line{% if not current %} muted{% endif %}">
           <td class="p-2">{{ label }}</td>
           <td class="p-2">{{ grant.reason }}</td>
-          <td class="p-2">{{ grant.starts_on|date:"j. M Y" }} – {% if grant.ends_on %}{{ grant.ends_on|date:"j. M Y" }}{% else %}indtil videre{% endif %}</td>
+          <td class="p-2">{{ grant.starts_on|date:"j. F Y" }} – {% if grant.ends_on %}{{ grant.ends_on|date:"j. F Y" }}{% else %}indtil videre{% endif %}</td>
           <td class="p-2 text-right">
             {% if current and grant_form %}
               <form method="post" action="{% url 'access:grant_end' grant.pk %}">{% csrf_token %}

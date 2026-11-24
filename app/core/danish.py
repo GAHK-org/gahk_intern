@@ -35,3 +35,8 @@ WEEKDAYS_SHORT = ("man", "tir", "ons", "tor", "fre", "lør", "søn")
 def month_label(year: int, month: int) -> str:
     """ "September 2026" — capitalised, as a heading rather than as prose."""
     return f"{MONTHS[month].capitalize()} {year}"
+
+
+def genitive(name: str) -> str:
+    """Danish possessive: "Annas", but "Lars'" after s, x or z."""
+    return f"{name}'" if name[-1:].lower() in "sxz" and name else f"{name}s"

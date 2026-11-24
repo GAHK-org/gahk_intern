@@ -12,6 +12,7 @@ from access.api import (
     Grade,
     Permissions,
     can_preview,
+    previewed_person_id,
     previewed_roles,
     request_permissions,
 )
@@ -172,6 +173,14 @@ def _active_nav_url(sections: list[NavSection], path: str) -> str:
     return best
 
 
+def _person_label(pk: int) -> str:
+    from core.danish import genitive
+    from residents.models import Resident
+
+    person = Resident.objects.filter(pk=pk).only("first_name", "last_name").first()
+    return f"{genitive(person.full_name)} roller" if person is not None else "en konto, der ikke findes"
+
+
 def _preview_label(roles: frozenset[str]) -> str:
     """How the preview banner names what the site is shown as."""
     if not roles:
@@ -189,13 +198,18 @@ def navigation(request: HttpRequest) -> dict[str, object]:
     previewer = can_preview(request.user) if authed else False
     nav_intern = _nav_intern(request, permissions, roles, request.user.pk or 0) if authed else []
     previewed = previewed_roles(request) if previewer else None
+    person = previewed_person_id(request) if previewed is not None else None
     ctx: dict[str, object] = {
         "public_site_url": settings.PUBLIC_SITE_URL,
         "nav_intern": nav_intern,
         "active_nav_url": _active_nav_url(nav_intern, request.path),
         "access": TemplateAccess(permissions),
         "preview_active": previewed is not None and PREVIEW_SESSION_KEY in request.session,
-        "preview_label": _preview_label(previewed) if previewed is not None else "",
+        "preview_label": _person_label(person)
+        if person is not None
+        else _preview_label(previewed)
+        if previewed is not None
+        else "",
         "can_preview": previewer,
         "wiki_url": settings.WIKI_URL,
     }

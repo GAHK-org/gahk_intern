@@ -22,11 +22,13 @@ from django.views.decorators.http import require_POST
 
 from audit import trail
 from core.clock import current_date
+from core.danish import genitive
 from residents.forms import password_link_mail
 from residents.models import Resident
 from residents.permissions import current_resident
 
-from .api import KITCHEN, ROLE_LABELS, can, permission_required, real_roles
+from .api import KITCHEN, ROLE_LABELS, can, can_preview, permission_required, real_roles
+from .explain import day, explain
 from .forms import GrantForm, KitchenStaffForm
 from .models import Grant
 
@@ -168,6 +170,32 @@ def _send_welcome(request: HttpRequest, account: Resident) -> bool:
         logger.exception("Failed sending the welcome mail to kitchen account %s", account.pk)
         return False
     return True
+
+
+@permission_required("access.manage")
+def person(request: HttpRequest, pk: int) -> HttpResponse:
+    """One account's access, and why: its roles with where each comes from, what each feature is
+    open for, and what is about to change."""
+    resident = get_object_or_404(Resident, pk=pk)
+    return render(request, "access/person.html", _person_page(request, resident, own=False))
+
+
+def mine(request: HttpRequest) -> HttpResponse:
+    """The same page about oneself."""
+    resident = current_resident(request)
+    return render(request, "access/person.html", _person_page(request, resident, own=True))
+
+
+def _person_page(request: HttpRequest, resident: Resident, *, own: bool) -> dict[str, object]:
+    explanation = explain(resident)
+    return {
+        "resident": resident,
+        "own": own,
+        "explanation": explanation,
+        "changes": [(day(change.on), change.text) for change in explanation.changes],
+        "may_preview": not own and can_preview(request.user),
+        "whose": genitive(resident.first_name),
+    }
 
 
 def person_context(request: HttpRequest, resident: Resident) -> dict[str, object]:
