@@ -3,7 +3,8 @@
 GAHK Intern is a modular monolith: one Django project, one database, one bucket, and inside it
 apps that each own their data and their rules. Other apps reach an app only through its public
 `api.py`. The checks below report every crossing. They are not required to pass yet; the totals
-start high and fall as the code is moved over. New code must not add to them.
+start high and fall as the code is moved over. New code must not add to them: until January 2027
+(#484) CI fails a pull request only when it adds findings.
 
 ## Layers
 
@@ -79,6 +80,10 @@ Imports point down this list, never up.
 - **Reported, not enforced, for now.** No Django system check (it would stop `runserver`), and the
   raw-SQL rule is kept out of `ruff.toml`, so the required lint, test and migration jobs are
   unaffected.
+- **Fail on new findings only, until January 2027.** Failing on every old finding turned every
+  pull request red, which teaches people to ignore the check. `--fail-on new` keeps it quiet
+  unless a PR adds a crossing. Issue #484 switches it back to `--fail-on any` with the agreed
+  exceptions and makes it required.
 - **The guard runs only under pytest.** It reads the call stack on every write. Production never
   loads it, and tests cover the paths that matter.
 - **No database role or schema per app.** One Django process uses one connection for every app, so

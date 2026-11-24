@@ -14,8 +14,8 @@ compared without line numbers, so an unrelated edit above an old violation does 
 A missing or unreadable file on the base side means the base predates that check, and everything
 counts as new; on the head side it means the check itself broke, which fails the report.
 
-Exits 1 when the head has any finding (`--fail-on any`, today's setting: the check is reported but
-not required) or only when it has new ones (`--fail-on new`, for when it becomes required).
+Exits 1 when the head has any finding (`--fail-on any`) or only when it has new ones
+(`--fail-on new`, the workflow's temporary setting until January 2027, #484).
 """
 
 import argparse
@@ -174,8 +174,8 @@ def report(head: Path, base: Path) -> tuple[str, int, int, list[str]]:
         "## Architecture",
         "",
         (
-            "Code that crosses an app boundary (spec/architecture.md). Not a required check yet: "
-            "the totals are expected to be high, but please do not add new findings."
+            "Code that crosses an app boundary (spec/architecture.md). The totals are expected to "
+            "be high for now; this check fails only when a pull request adds findings."
         ),
         "",
         *table,

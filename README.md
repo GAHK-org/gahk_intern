@@ -72,8 +72,8 @@ task architecture  # Tach (imports), rå SQL og check_architecture (relationer o
 ```
 
 Testsuiten melder desuden, når en test skriver i en anden apps tabeller eller filer. CI's
-Architecture-workflow sammenligner en PR med dens base. Den er ikke et påkrævet tjek endnu, men nye
-fund skal undgås.
+Architecture-workflow sammenligner en PR med dens base. Den er ikke et påkrævet tjek endnu og fejler
+kun, når en PR tilføjer nye fund (midlertidigt, indtil januar 2027: #484).
 
 ## Branches og pull requests
 

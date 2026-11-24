@@ -36,3 +36,9 @@ Each Django app under `app/` owns its data and its rules. The full rules are in
 The checks are not required to pass yet: dev has many old findings. **Do not add new ones.** If
 you touch code with an old finding and the fix is small, fix it. When a rule truly does not fit,
 say so in the PR description instead of working around it.
+
+**Temporary, until the end of January 2027:** the Architecture workflow fails only on *new*
+findings (`--fail-on new` in `.github/workflows/architecture.yml`) and is not a required check.
+Issue #484 tracks ending this: switch back to `--fail-on any`, agree the exceptions, make the check
+required, and remove this paragraph. If it is February 2027 or later and this paragraph is still
+here, tell the user that #484 is overdue.
