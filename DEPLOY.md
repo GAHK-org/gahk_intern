@@ -497,6 +497,11 @@ than a snippet somebody pastes into a shell.
 | `expire-built-zips` | `arkiv-zip/` | marks built zips at 7 days, purges the version a day later |
 | `expire-built-zip-markers` | `arkiv-zip/` | clears the delete markers that leaves |
 | `expire-noncurrent-versions` | `media/` | 30 days |
+| `expire-media-markers` | `media/` | clears the delete markers once their versions are gone |
+| `expire-noncurrent-photo-album` | `photo-album/` | deleted photos and videos actually go, 30 days later |
+| `expire-noncurrent-photo-album-imports` | `photo-album-imports/` | an import ZIP is already in its album when it is deleted, so 1 day |
+| `expire-noncurrent-gahkflix` | `gahkflix/` | deleted and purged films actually go, 30 days later |
+| `expire-photo-album-markers`, `expire-photo-album-imports-markers`, `expire-gahkflix-markers` | the same | clears the delete markers |
 | `expire-noncurrent-backups` | `data/` | makes Coolify's own deletions free the bytes, after 7 days |
 | `expire-backup-markers` | `data/` | clears those delete markers |
 
