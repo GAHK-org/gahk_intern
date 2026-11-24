@@ -30,6 +30,7 @@ import datetime
 import decimal
 import ipaddress
 import logging
+import re
 import uuid
 from collections.abc import Callable, Iterable, Iterator
 from contextvars import ContextVar
@@ -41,6 +42,7 @@ from django.db import models, transaction
 from django.db.models.signals import m2m_changed, post_delete, post_save, pre_save
 from django.http import HttpRequest
 from django.utils import timezone
+from django.utils.crypto import salted_hmac
 
 logger = logging.getLogger(__name__)
 
@@ -169,6 +171,41 @@ def kind_label(kind: str) -> str:
 
 def known_actions() -> dict[str, str]:
     return dict(_actions)
+
+
+def actions_called(text: str) -> list[str]:
+    """The actions whose name on the audit page contains `text`: "gav rolle" finds the code
+    "residents.role.added". Named actions, and the created/changed/deleted of every registered kind."""
+    wanted = text.casefold()
+    codes = [
+        *_actions,
+        *(f"{kind}.{verb}" for kind in _by_kind for verb in ("created", "updated", "deleted")),
+    ]
+    return [code for code in codes if wanted in action_label(code).casefold()]
+
+
+# --- addresses typed into the login and reset forms ------------------------------------------------
+
+_DOMAIN = re.compile(r"[a-z0-9-]+(\.[a-z0-9-]+)+")
+
+
+def typed_address(typed: str) -> dict[str, str]:
+    """What the trail keeps of an address typed into the login or the reset form that matched no
+    account: its domain, when it looks like one, and a keyed hash. Never the text itself, since people
+    type their password into that box. The hash still ties repeated tries of one address together,
+    and searching the audit page for the address finds them (`address_hash`)."""
+    address = typed.strip().casefold()
+    _, at, domain = address.rpartition("@")
+    kept = {"email_hash": address_hash(address)}
+    if at and _DOMAIN.fullmatch(domain):
+        kept["email_domain"] = domain
+    return kept
+
+
+def address_hash(address: str) -> str:
+    """Keyed with SECRET_KEY: a plain hash of an address is undone by hashing guesses."""
+    normal = address.strip().casefold()
+    return salted_hmac("audit.typed_address", normal, algorithm="sha256").hexdigest()[:16]
 
 
 def kinds() -> list[str]:
