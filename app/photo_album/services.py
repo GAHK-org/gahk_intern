@@ -2194,9 +2194,11 @@ def delete(media: Media, resident: Resident, now: datetime | None = None) -> Non
 
 
 def permanently_delete(media: Media) -> None:
-    """Remove all stored media variants and their database record."""
-    _delete_files(media)
+    """Remove the database record and, once that commits, every stored variant. A selection deletes
+    many in one transaction (one audit event): a failure part-way rolls the rows back, and their
+    files must still be there. Outside a transaction the files go at once."""
     media.delete()
+    transaction.on_commit(lambda: _delete_files(media))
 
 
 def purge_expired(now: datetime | None = None) -> int:

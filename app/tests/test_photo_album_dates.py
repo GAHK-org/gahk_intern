@@ -12,6 +12,7 @@ import pytest
 from django.core.files.base import ContentFile, File
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.core.management import call_command
+from django.db import transaction
 from django.test import Client, override_settings
 from django.urls import reverse
 from django.utils import timezone
@@ -395,16 +396,34 @@ def _stored(field: object) -> bytes | None:
 
 
 @pytest.mark.django_db
-def test_deleting_an_item_deletes_its_sidecar(make_resident: Callable[..., Resident]) -> None:
+def test_deleting_an_item_deletes_its_sidecar(
+    make_resident: Callable[..., Resident], django_capture_on_commit_callbacks: Callable[..., Any]
+) -> None:
     resident = make_resident()
     album = Album.objects.create(folder="2004", name="Fest")
     media = upload_media(album=album, uploaded_file=_upload("IMG_1.JPG", jpeg_bytes()), resident=resident)
     media.sidecar.save("IMG_1.JPG", ContentFile(_appledouble(local(2004, 5, 1))))
     storage, name = media.sidecar.storage, media.sidecar.name
 
-    services.permanently_delete(media)
+    with django_capture_on_commit_callbacks(execute=True):  # the files go once the delete commits
+        services.permanently_delete(media)
 
     assert not storage.exists(name)
+
+
+@pytest.mark.django_db
+def test_a_delete_that_rolls_back_keeps_its_files(make_resident: Callable[..., Resident]) -> None:
+    resident = make_resident()
+    album = Album.objects.create(folder="2004", name="Fest")
+    media = upload_media(album=album, uploaded_file=_upload("IMG_1.JPG", jpeg_bytes()), resident=resident)
+    storage, name, pk = media.original.storage, media.original.name, media.pk
+
+    with pytest.raises(RuntimeError), transaction.atomic():
+        services.permanently_delete(media)
+        raise RuntimeError("a later item in the selection failed")
+
+    assert Media.objects.filter(pk=pk).exists()
+    assert storage.exists(name)
 
 
 @pytest.mark.django_db
