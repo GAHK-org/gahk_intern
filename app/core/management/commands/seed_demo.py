@@ -36,8 +36,6 @@ from django.utils import timezone
 from admissions.models import Application
 from ak.models import AkEntry, AkMonthlyCharge
 from ak.services import apply_monthly_charge
-from arkiv.demo import seed as seed_arkiv
-from arkiv.models import ArchiveFile, ArchiveFolder
 from audit import trail
 from audit.demo import seed as seed_audit_trail
 from audit.models import AuditChange, AuditEntity, AuditEvent
@@ -189,10 +187,6 @@ WIPE_ORDER: list[type[models.Model]] = [
     # The demo outbox (core.demo). After AlumneregningSend, whose mail it would otherwise only null.
     OutgoingMail,
     Resident,
-    # Before Workgroup: ArchiveFolder references it with PROTECT (a SET_NULL would silently turn a
-    # gated folder into a world-readable one), so the archive has to go first or --fresh cannot run.
-    ArchiveFile,
-    ArchiveFolder,
     Room,
     Workgroup,
     Cleaning,
@@ -260,7 +254,6 @@ class Command(BaseCommand):
         self._seed_stats()
         seed_opslagstavle(residents, self.now, self.rng)
         seed_events(residents, self.now, self.rng)
-        seed_arkiv(residents, self.now, self.rng)
         seed_photo_album(residents, self.now, self.rng)
         seed_gahkflix(residents, self.now, self.rng)
         # After both: these posts embed an album and a film seeded just above.
