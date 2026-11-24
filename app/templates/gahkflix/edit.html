@@ -6,11 +6,15 @@
     <div style="display:flex;flex-wrap:wrap;align-items:center;gap:12px;margin-bottom:18px">
       <h1 class="flix-page-title" style="margin:0">{{ video.title }}</h1>
       {% if video.is_draft %}<span class="flix-state is-draft">Kladde</span>{% endif %}
+      {% if video.is_upcoming %}<span class="flix-state is-premiere">Premiere {{ video.premiere_label }}</span>{% endif %}
       {% if video.is_published %}<a class="flix-btn flix-btn-small flix-btn-quiet" href="{% url 'gahkflix:detail' video.pk %}">Se videoen</a>{% endif %}
       <a class="flix-btn flix-btn-small flix-btn-quiet" href="{% url 'gahkflix:history' video.pk %}">Historik</a>
+      {% if video.file.original %}<a class="flix-btn flix-btn-small flix-btn-quiet" href="{% url 'gahkflix:download' video.pk 'original' %}" title="{{ video.file.original_name }}" download>Hent originalen <span class="muted">{{ video.file.size|filesizeformat }}</span></a>{% endif %}
     </div>
     {% if video.is_draft %}
       <p class="muted" style="margin:-8px 0 18px;font-size:14px">Kun du og administratorerne kan se kladden. Den slettes med alle sine filer {{ video.draft_deleted_on|date:"j. F Y" }}, hvis den ikke er udgivet inden.</p>
+    {% elif video.is_upcoming %}
+      <p class="muted" style="margin:-8px 0 18px;font-size:14px">Videoen har premiere {{ video.premiere_label }}. Indtil da kan kun du og administratorerne åbne den; alle andre ser titlen, {% if video.series %}serien, {% endif %}tidspunktet og miniaturen ({{ video.get_premiere_blur_display|lower }}). Når premieren begynder, får alle besked.</p>
     {% endif %}
 
     {# --- Processing and publishing ------------------------------------------------------------ #}
@@ -27,7 +31,6 @@
           <div class="flix-meter"><span data-flix-meter style="width:{{ latest_file.progress }}%"></span></div>
         </div>
         <p class="flix-upload-status" data-flix-processing-status>{% if latest_file.state == "queued" %}{% with ahead=latest_file|queue_ahead %}I kø · {% if ahead %}{{ ahead }} video{{ ahead|pluralize:"er" }} foran{% else %}den er den næste{% endif %}{% endwith %}{% else %}{{ latest_file.progress }} % færdig{% endif %}</p>
-        <p class="flix-help">Du kan uploade én video ad gangen: den næste, når denne er færdigbehandlet.</p>
       </div>
     {% elif latest_file.state == "failed" %}
       <div class="flix-panel" style="border-color:#5c1a1e">
@@ -44,18 +47,36 @@
           <p>Før videoen kan udgives:</p>
           <ul style="margin:0 0 6px;padding-left:20px;color:#f1dc8f">{% for item in missing %}<li>{{ item }}</li>{% endfor %}</ul>
         {% else %}
-          <p>Alt er klar. Når du udgiver den, kan alle på GAHKFlix se den{% if video.cast.exists %}, og de medvirkende får besked{% endif %}. Det, du har skrevet under Oplysninger, gemmes med.</p>
+          {% if video.premiere_to_come %}
+            <p>Alt er klar. Videoen har premiere {{ video.premiere_label }}. Når du udgiver den, vises den til alle som en kommende premiere med titel, tidspunkt og miniature, og ved premieren kan alle se den{% if video.cast.exists %}, og de medvirkende får besked{% endif %}. Det, du har skrevet under Oplysninger, gemmes med.</p>
+          {% else %}
+            <p>Alt er klar. Når du udgiver den, kan alle på GAHKFlix se den{% if video.cast.exists %}, og de medvirkende får besked{% endif %}. Det, du har skrevet under Oplysninger, gemmes med.</p>
+          {% endif %}
         {% endif %}
         {# Part of the details form below, so what is typed there is saved with it (views.publish). #}
         <div class="flix-actions">
-          <button class="flix-btn flix-btn-red" type="submit" form="flix-details" formaction="{% url 'gahkflix:publish' video.pk %}"{% if missing %} disabled{% endif %}>Udgiv videoen</button>
+          <button class="flix-btn flix-btn-red" type="submit" form="flix-details" formaction="{% url 'gahkflix:publish' video.pk %}"{% if publish_blocked %} disabled{% endif %}>Udgiv videoen</button>
         </div>
+      </div>
+    {% endif %}
+
+    {% if can_unpublish %}
+      <div class="flix-panel">
+        <h2>Træk udgivelsen tilbage</h2>
+        {% if video.is_upcoming %}
+          <p>Videoen har ikke haft premiere endnu, så du kan gøre den til en kladde igen. Så bliver den ikke vist som kommende premiere, og der er ingen premiere, før du udgiver den igen.</p>
+        {% else %}
+          <p>Videoen kom ud {{ video.out_at|date:"j. F \k\l. H.i" }}. Indtil {{ video.take_back_until|date:"j. F \k\l. H.i" }} kan du gøre den til en kladde igen eller give den premiere senere under Udgivelsesdato. Beskeden om den til alle trækkes tilbage; en push, der allerede er vist, kan ikke.</p>
+        {% endif %}
+        <form method="post" action="{% url 'gahkflix:unpublish' video.pk %}" data-flix-confirm="Gør videoen til en kladde igen? Kun du og administratorerne kan så se den.">{% csrf_token %}
+          <button class="flix-btn flix-btn-small flix-btn-quiet" type="submit">Gør til kladde igen</button>
+        </form>
       </div>
     {% endif %}
 
     {% if needs_approval %}
       <p class="flix-banner-note" style="margin:0 0 18px">
-        Videoen blev uploadet for mere end 30 dage siden. Ændringer – også af billederne – sendes til godkendelse hos en anden administrator.
+        {% if video.windows_from_premiere %}Videoen havde premiere for mere end 30 dage siden.{% else %}Videoen blev uploadet for mere end 30 dage siden.{% endif %} Ændringer – også af billederne – sendes til godkendelse hos en anden administrator.
         {% if open_edit %}<a href="{% url 'gahkflix:request' open_edit.pk %}">Se det ventende forslag</a>.{% endif %}
       </p>
     {% elif video.is_published %}
@@ -64,25 +85,41 @@
 
     <div class="flix-two">
       {# --- Details ----------------------------------------------------------------------------- #}
-      {# What is typed here outlives the page reloading under it (gahkflix.ts, initDetailsKeeper). #}
-      <form method="post" action="{% url 'gahkflix:edit' video.pk %}" id="flix-details" class="flix-panel flix-form" data-flix-details="{{ video.pk }}"{% if form.is_bound %} data-flix-bound{% endif %}>{% csrf_token %}
+      {# What is typed here outlives the page reloading under it (gahkflix.ts, initDetailsKeeper). autocomplete="off": #}
+      {# the browser must not also put back what the fields held before a reload, over what the server sends now. #}
+      <form method="post" action="{% url 'gahkflix:edit' video.pk %}" id="flix-details" class="flix-panel flix-form" autocomplete="off" data-flix-details="{{ video.pk }}"{% if form.is_bound %} data-flix-bound{% endif %}>{% csrf_token %}
         <h2>Oplysninger</h2>
         <div class="flix-unsaved" role="status" data-flix-unsaved hidden>Det, du har skrevet herunder, er ikke gemt endnu. <button type="button" data-flix-discard>Fortryd det</button></div>
         {{ form.non_field_errors }}
         <label for="{{ form.title.id_for_label }}">Titel</label>{{ form.title }}{{ form.title.errors }}
         <label for="{{ form.description.id_for_label }}">Beskrivelse</label>{{ form.description }}{{ form.description.errors }}
-        <fieldset class="flix-date">
-          <legend>Udgivelsesdato</legend>
-          <div class="flix-date-fields">{{ form.released_day }}{{ form.released_month }}{{ form.released_year }}</div>
-          {{ form.released_day.errors }}{{ form.released_month.errors }}{{ form.released_year.errors }}
-          <span class="flix-help">
-            {% if video.release_source == "manual" %}Sat i hånden.
-            {% elif video.release_source == "name" %}Gættet ud fra filnavnet. Ret den, hvis den er forkert.
-            {% elif video.release_source == "metadata" %}Gættet ud fra videofilens metadata. Ret den, hvis den er forkert.
-            {% elif video.release_source == "modified" %}Gættet ud fra filens ændringsdato, som også kan være dagen, den blev kopieret. Ret den, hvis den er forkert.
-            {% elif processing %}Gættes ud fra videofilen, når den er behandlet.
-            {% else %}Uden en udgivelsesdato bruges uploaddatoen.{% endif %}
-            Kun året er nødvendigt: lad dag og måned stå tomme, hvis du ikke kender dem.
+        {# A premiere has a time and may lie ahead; the time and the blur show only when it is ticked (gahkflix.ts, initPremiere). #}
+        <fieldset class="flix-date" data-flix-premiere>
+          <legend>Udgivelsesdato <label class="flix-check">{{ form.premiere }} Premiere</label></legend>
+          <div class="flix-date-fields">{{ form.released_year }}{{ form.released_month }}{{ form.released_day }}<span class="flix-date-time" data-flix-premiere-only>{{ form.premiere_time }}</span></div>
+          {{ form.premiere.errors }}{{ form.released_year.errors }}{{ form.released_month.errors }}{{ form.released_day.errors }}{{ form.premiere_time.errors }}
+          <span class="flix-help" data-flix-premiere-only>En premiere udkommer på minuttet og må ligge ude i fremtiden. Indtil da ser alle andre kun titlen, {% if video.series %}serien, {% endif %}tidspunktet og miniaturen; ved premieren får alle besked. Efter premieren vises kun datoen.</span>
+          <div class="flix-premiere-blur" data-flix-premiere-only>
+            <div>
+              <label for="{{ form.premiere_blur.id_for_label }}">{{ form.premiere_blur.label }}</label>
+              {{ form.premiere_blur }}{{ form.premiere_blur.errors }}
+            </div>
+            {% picture_url video "thumbnail" as_premiere=False as plain_thumb %}
+            {% if plain_thumb %}<span class="flix-card-img"><img src="{{ plain_thumb }}&amp;premiere={{ form.premiere_blur.value|default:'none' }}" alt="Miniaturen før premieren" data-flix-premiere-preview="{{ plain_thumb }}"></span>{% endif %}
+          </div>
+          {# The date the file suggests, put in the fields only when asked (gahkflix.ts, initDateGuess). #}
+          {% with guessed=video.file.guessed_date %}
+            {% if guessed %}
+              <div class="flix-date-guess">
+                <button type="button" class="flix-btn flix-btn-small flix-btn-quiet" data-flix-date-guess="{{ video.file.date_guess }}">Brug videoens dato</button>
+                <span class="flix-help">{{ guessed.label }}, {% if video.file.date_guess_source == "name" %}fra filnavnet{% elif video.file.date_guess_source == "metadata" %}fra videofilens metadata{% else %}filens ændringsdato, som også kan være dagen, den blev kopieret{% endif %}.</span>
+              </div>
+            {% elif processing %}
+              <span class="flix-help">Når videoen er behandlet, kan du her bruge den dato, videofilen har.</span>
+            {% endif %}
+          {% endwith %}
+          <span class="flix-help" data-flix-premiere-hide>
+            Året skal udfyldes; lad måned og dag stå tomme, hvis du ikke kender dem. Datoen kan ikke ligge i fremtiden; sæt flueben ved Premiere, hvis videoen skal udkomme på et bestemt tidspunkt.
           </span>
         </fieldset>
         {{ episode_numbers|json_script:"flix-episode-numbers" }}
@@ -145,7 +182,7 @@
           <p>Miniaturen er videoens kort; banneret er det store billede øverst på videoens side. Begge skal vælges.</p>
           <h3 class="flix-subhead">Valgt nu</h3>
           <div class="flix-chosen">
-            <figure><figcaption>Miniature</figcaption><span class="flix-card-img">{% picture_url video "thumbnail" as thumb %}{% if thumb %}<img src="{{ thumb }}" alt="Nuværende miniature">{% else %}<span class="flix-card-blank">?</span>{% endif %}</span></figure>
+            <figure><figcaption>Miniature</figcaption><span class="flix-card-img">{% picture_url video "thumbnail" as_premiere=False as thumb %}{% if thumb %}<img src="{{ thumb }}" alt="Nuværende miniature">{% else %}<span class="flix-card-blank">?</span>{% endif %}</span></figure>
             <figure><figcaption>Banner</figcaption><span class="flix-card-img">{% picture_url video "banner" as banner %}{% if banner %}<img src="{{ banner }}" alt="Nuværende banner">{% else %}<span class="flix-card-blank">?</span>{% endif %}</span></figure>
           </div>
 
@@ -243,7 +280,7 @@
         {% elif video.is_published and not processing %}
           <section id="ny-version" class="flix-panel">
             <h2>Ny version af filen</h2>
-            <p>Videofilen kan kun skiftes de første 7 dage efter upload, og de er gået ({{ video.revision_window_ends|date:"j. F Y" }}).</p>
+            <p>Videofilen kan kun skiftes de første 7 dage efter {% if video.windows_from_premiere %}premieren{% else %}upload{% endif %}, og de er gået ({{ video.revision_window_ends|date:"j. F Y" }}).</p>
           </section>
         {% endif %}
 
@@ -262,10 +299,10 @@
           {% elif open_delete %}
             <p>Der er en anmodning om at slette videoen. <a href="{% url 'gahkflix:request' open_delete.pk %}">Se anmodningen</a>.</p>
           {% elif can_request_deletion %}
-            <p>Videoen er over 7 dage gammel. Den kan kun slettes, hvis to andre administratorer godkender det.</p>
+            <p>{% if video.windows_from_premiere %}Premieren var for over 7 dage siden.{% else %}Videoen er over 7 dage gammel.{% endif %} Den kan kun slettes, hvis to andre administratorer godkender det.</p>
             <a class="flix-btn flix-btn-small flix-btn-quiet" href="{% url 'gahkflix:request_deletion' video.pk %}">Anmod om sletning</a>
           {% else %}
-            <p>Videoen er over 7 dage gammel og kan kun slettes af administratorerne. Skriv til dem, hvis den skal fjernes.</p>
+            <p>{% if video.windows_from_premiere %}Premieren var for over 7 dage siden, så videoen kan{% else %}Videoen er over 7 dage gammel og kan{% endif %} kun slettes af administratorerne. Skriv til dem, hvis den skal fjernes.</p>
           {% endif %}
         </section>
       </div>
