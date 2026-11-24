@@ -21,6 +21,7 @@ from django.utils.http import url_has_allowed_host_and_scheme
 from ak.models import AkEntry
 from audit import trail
 from core.models import OutgoingMail
+from oelkaelder.services import balances as oelkaelder_balances
 from residents.models import Account, Residency, prev_period
 from residents.permissions import current_resident
 from residents.views import DA_MONTHS, _parse_period, _period_options
@@ -38,7 +39,8 @@ class Row(NamedTuple):
 
 
 def _row(resident: Account, room: int | None) -> Row:
-    oek_ore = sum((a.balance_ore for a in resident.shopper_accounts.all()), 0)
+    # Read from GAHK-konto, where the ølkælder money lives.
+    oek_ore = sum(oelkaelder_balances(resident.shopper_accounts.all()).values(), 0)
     return Row(resident, room, AkEntry.balance_for(resident), oek_ore)
 
 

@@ -449,3 +449,50 @@ def test_the_check_finds_a_row_changed_behind_the_triggers(world) -> None:  # no
     report = checks.run_and_report()
     assert any("hash" in fault for fault in report.faults)
     assert AuditEvent.objects.filter(action="credit.check.failed").exists()
+
+
+def test_only_the_books_own_accounts_may_be_without_a_limit(world) -> None:  # noqa: ANN001
+    oel = world.cellar.holder
+    renter = ledger.open_account(actor=None, book=world.cellar, holder=oel, name="Renter", unlimited=True)
+    assert renter.credit_limit_ore is None
+    with pytest.raises(LedgerError, match="uden kreditgrænse"):
+        ledger.open_account(
+            actor=None,
+            book=world.cellar,
+            holder=holder_for_person(world.bob.person),
+            name="X",
+            unlimited=True,
+        )
+
+
+def test_history_is_dated_when_it_happened_and_ignores_limits(world) -> None:  # noqa: ANN001
+    import datetime
+
+    from django.utils import timezone
+
+    then = timezone.now() - datetime.timedelta(days=400)
+    made = ledger.record_history(
+        kind=Transfer.Kind.TRANSFER,
+        sender=world.bob_o,
+        receiver=world.takings,
+        amount_ore=90000,  # far past Bob's -200 kr
+        sender_text="Køb #1",
+        receiver_text="Køb #1: Bob",
+        at=then,
+        dedupe_token=token(),
+        source="test",
+    )
+    assert made.created_at == then and made.created_by is None
+    assert bal(world.bob_o) == -90000
+    with pytest.raises(LedgerError, match="én kontofører"):
+        ledger.record_history(
+            kind=Transfer.Kind.TRANSFER,
+            sender=world.bob_o,
+            receiver=world.bob_g,
+            amount_ore=1,
+            sender_text="x",
+            receiver_text="x",
+            at=then,
+            dedupe_token=token(),
+            source="test",
+        )

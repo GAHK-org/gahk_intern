@@ -269,8 +269,10 @@ def test_management_command_charges_last_month(make_resident: Callable) -> None:
     assert AkEntry.objects.filter(resident=r, kind=AkEntry.Kind.MONTHLY, year=y, month=m).count() == 1
 
 
-def test_ak_charge_and_oelkaelder_statements_run_on_the_first() -> None:
-    """Both settle the previous month, so both are scheduled for the 1st."""
+def test_ak_charge_and_monthly_statements_run_on_the_first() -> None:
+    """Both settle the previous month, so both are scheduled for the 1st (GAHK-konto's statement
+    covers the ølkælder accounts since its own monthly mail was retired)."""
     schedule = settings.CELERY_BEAT_SCHEDULE
-    for name in ("apply-ak-monthly-assessment", "email-oelkaelder-monthly-statements"):
+    assert "email-oelkaelder-monthly-statements" not in schedule
+    for name in ("apply-ak-monthly-assessment", "credit-monthly-statements"):
         assert schedule[name]["schedule"].day_of_month == {1}, name

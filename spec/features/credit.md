@@ -34,6 +34,10 @@ ledger of claims that can never be changed after the fact.
   book recording its own side (mellemregning ↔ bank) once the real money has moved; a pair that
   does not mirror is a settlement half recorded.
 - The same send twice (a double press, a retry) is one transfer: each form carries its own token.
+- A feature's history from before the ledger (Ølkælder's) is imported once as transfers dated when
+  they happened, never into a book that has closed a period or that an anchor already covers.
+- A book's own accounts that stand for the keeper's money (takings, interest) have no limit, like
+  its bank account.
 
 ## Who sees and does what
 

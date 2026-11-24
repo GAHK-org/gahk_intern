@@ -2,6 +2,7 @@
 ølkælder-admin screens for deposits/balances."""
 
 import json
+import uuid
 from collections.abc import Iterable
 from datetime import date, datetime, timedelta
 from typing import TypedDict
@@ -25,27 +26,19 @@ from core.uploads import attached_image
 from residents.models import Account
 from residents.permissions import current_resident
 
-from .forms import InterestPolicyForm, PurchasePolicyForm, WarningForm
+from . import ledger, services
+from .forms import ExemptionForm, InterestPolicyForm, WarningForm
 from .models import (
     Adjustment,
     Deposit,
+    InterestExemption,
     InterestPolicy,
     Product,
-    PurchasePolicy,
     PurchaseShare,
     Shopper,
     Transaction,
     TransactionItem,
     Warning,
-)
-from .services import (
-    apply_interest,
-    bulk_balances,
-    record_adjustment,
-    record_deposit,
-    record_purchase,
-    void_adjustment,
-    void_purchase,
 )
 
 
@@ -73,84 +66,72 @@ def shop(request: HttpRequest) -> HttpResponse:
     if not _is_kiosk(request):
         raise PermissionDenied("Tillen er kun tilgængelig fra kollegiets netværk.")
     products = Product.objects.filter(active=True).order_by("-highlighted", "name")
-    shoppers = list(
-        Shopper.objects.filter(active=True).select_related("resident").order_by("resident__first_name")
+    # Every balance in one query; the tile shows it, and whether the account is at its limit.
+    shoppers = ledger.with_balance(Shopper.objects.filter(active=True)).select_related(
+        "resident", "credit_account"
     )
-    # Balances in three queries rather than three per shopper per read — the template shows each
-    # balance and also needs to know whether the shopper is over the credit limit.
-    policy = PurchasePolicy.get()
-    balances = bulk_balances(shoppers)
-    rows = [(s, balances[s.pk], policy.blocks(balances[s.pk])) for s in shoppers]
+    rows = []
+    for s in shoppers.order_by("resident__first_name"):
+        balance = ledger.annotated(s)
+        rows.append((s, balance, services.blocked(balance, s.credit_account.credit_limit_ore)))
     # Tiles are server-rendered (the till's iPad runs iOS 10.3 and cannot use the Alpine/Tailwind
     # bundle); the template's inline ES5 only enhances them. See app/templates/oelkaelder/shop.html.
     return render(
         request,
         "oelkaelder/shop.html",
-        {
-            "products": products,
-            "shopper_rows": rows,
-            "block_limit_kr": policy.block_below_ore // 100,
-            "block_below_ore": policy.block_below_ore,
-        },
+        {"products": products, "shopper_rows": rows, "token": uuid.uuid4()},
     )
+
+
+def _token(request: HttpRequest) -> uuid.UUID | None:
+    """The form's send token, if it carries a valid one."""
+    try:
+        return uuid.UUID(request.POST.get("token", ""))
+    except ValueError:
+        return None
 
 
 @require_POST
 def purchase(request: HttpRequest) -> HttpResponseRedirect:
     if not _is_kiosk(request):
         raise PermissionDenied
+    # In the order they were picked: the first is the executor, who pays the remainder.
     shopper_ids = [int(x) for x in request.POST.getlist("shopper")]
     try:
         lines = json.loads(request.POST.get("basket", "[]"))
         if not isinstance(lines, list):
             raise ValueError("Ugyldig kurv.")
-        txn = record_purchase(shopper_ids, lines)
+        txn = services.record_purchase(shopper_ids, lines, token=_token(request))
         messages.success(request, f"Køb registreret (#{txn.id}).")
     except (ValueError, KeyError, TypeError, json.JSONDecodeError, Product.DoesNotExist) as e:
         messages.error(request, str(e) or "Ugyldigt køb.")
     return redirect("oelkaelder:shop")
 
 
-def _account_entries(accounts: list[Shopper]) -> list[_Entry]:
-    """Combined account statement for one or more shopper accounts: purchase shares as debits,
-    deposits and adjustments as credits, newest first. Shared by the resident's own `min-saldo` page
-    and the ØK per-person history so the two can never disagree about what someone owes."""
-    shares = (
-        PurchaseShare.objects.filter(shopper__in=accounts, transaction__is_valid=True)
-        .select_related("transaction")
-        .prefetch_related("transaction__items__product")
-    )
-    deposits = Deposit.objects.filter(shopper__in=accounts, is_valid=True)
-    adjustments = Adjustment.objects.filter(shopper__in=accounts, is_valid=True)
-    entries: list[_Entry] = [
+def _entries(shoppers: list[Shopper], limit: int) -> list[_Entry]:
+    """The shoppers' ølkælder account statement, from the ledger, newest first. Shared by the
+    resident's own `min-saldo` page and the ØK per-person history so the two can never disagree."""
+    return [
         _Entry(
-            created_at=s.transaction.created_at,
-            text=", ".join(f"{i.quantity}× {i.product.name}" for i in s.transaction.items.all()) or "Køb",
-            amount_ore=-s.share_ore,  # debit
+            created_at=line.transfer.created_at,
+            text=line.posting.text,
+            amount_ore=line.posting.amount_ore,
         )
-        for s in shares
-    ] + [
-        _Entry(created_at=d.created_at, text="Indbetaling", amount_ore=d.amount_ore)  # credit
-        for d in deposits
+        for line in services.statement(shoppers, limit=limit)
     ]
-    entries += [
-        _Entry(created_at=a.created_at, text=a.reason or a.get_kind_display(), amount_ore=a.amount_ore)
-        for a in adjustments
-    ]
-    entries.sort(key=lambda e: e["created_at"], reverse=True)
-    return entries
 
 
 @login_required
 def my_balance(request: HttpRequest) -> HttpResponse:
-    """Balance + a combined account statement (deposits as credits, purchase shares as debits)."""
-    accounts = list(current_resident(request).shopper_accounts.all())
+    """Balance + the account's statement, both from GAHK-konto, with a link to the account page there."""
+    shoppers = list(current_resident(request).shopper_accounts.select_related("credit_account"))
+    balances = services.balances(shoppers)
     return render(
         request,
         "oelkaelder/my.html",
         {
-            "accounts": [(a, a.balance_ore) for a in accounts],
-            "entries": _account_entries(accounts)[:100],
+            "accounts": [(s, balances[s.pk]) for s in shoppers],
+            "entries": _entries(shoppers, 100),
             "bank_reg": settings.OELKAELDER_BANK_REG,
             "bank_account": settings.OELKAELDER_BANK_ACCOUNT,
         },
@@ -159,25 +140,32 @@ def my_balance(request: HttpRequest) -> HttpResponse:
 
 @permission_required("access.oelkaelder_manage")
 def admin(request: HttpRequest) -> HttpResponse:
-    active = Shopper.objects.filter(active=True).select_related("resident")
-    rows = sorted(((s, s.balance_ore) for s in active), key=lambda t: t[1])  # debtors first
+    shoppers = ledger.with_balance(Shopper.objects.select_related("resident", "credit_account"))
+    active = [(s, ledger.annotated(s)) for s in shoppers.filter(active=True)]
+    rows = sorted(active, key=lambda t: t[1])  # debtors first
     inactive = [
-        (s, s.balance_ore)
-        for s in Shopper.objects.filter(active=False)
-        .select_related("resident")
-        .order_by("resident__first_name")
+        (s, ledger.annotated(s)) for s in shoppers.filter(active=False).order_by("resident__first_name")
     ]
-    residents_without_account = Account.objects.filter(shopper_accounts__isnull=True).order_by(
-        "first_name", "last_name"
-    )
+    residents_without_account = Account.objects.filter(
+        shopper_accounts__isnull=True, person__isnull=False
+    ).order_by("first_name", "last_name")
     deposits = (
-        Deposit.objects.filter(is_valid=True).select_related("shopper__resident").order_by("-created_at")[:15]
+        Deposit.objects.filter(services.not_reversed())
+        .select_related("shopper__resident")
+        .order_by("-created_at", "-id")[:15]
     )
     warning_forms = [(WarningForm(instance=Warning.objects.filter(pk=num).first()), num) for num in (1, 2)]
     report_links = [
         ("Indbetalingsrapport", "oelkaelder:report_deposits"),
         ("Salgsrapport", "oelkaelder:report_sales"),
         ("Antal", "oelkaelder:report_quantity"),
+    ]
+    today = timezone.localdate()
+    exemptions = [
+        (e, e.applies_on(today))
+        for e in InterestExemption.objects.filter(Q(ends_on__isnull=True) | Q(ends_on__gte=today))
+        .select_related("credit_account__holder__person")
+        .order_by("starts_on", "pk")
     ]
     return render(
         request,
@@ -189,7 +177,9 @@ def admin(request: HttpRequest) -> HttpResponse:
             "deposits": deposits,
             "warning_forms": warning_forms,
             "interest_form": InterestPolicyForm(instance=InterestPolicy.get()),
-            "purchase_policy_form": PurchasePolicyForm(instance=PurchasePolicy.get()),
+            "exemption_form": ExemptionForm(initial={"starts_on": today}),
+            "exemptions": exemptions,
+            "book": ledger.book(),
             "report_links": report_links,
         },
     )
@@ -217,11 +207,15 @@ def activate_shopper(request: HttpRequest) -> HttpResponseRedirect:
 @permission_required("access.oelkaelder_manage")
 def add_shopper(request: HttpRequest) -> HttpResponseRedirect:
     resident = get_object_or_404(Account, pk=request.POST.get("resident") or 0)
-    _, created = Shopper.objects.get_or_create(resident=resident, defaults={"active": True})
-    if created:
-        messages.success(request, f"{resident.full_name} tilføjet som alumne.")
-    else:
+    if Shopper.objects.filter(resident=resident).exists():
         messages.error(request, f"{resident.full_name} har allerede en konto.")
+        return redirect("oelkaelder:admin")
+    try:
+        ledger.open_shopper(resident)
+    except ledger.NoPerson as e:
+        messages.error(request, str(e))
+    else:
+        messages.success(request, f"{resident.full_name} tilføjet som alumne.")
     return redirect("oelkaelder:admin")
 
 
@@ -252,24 +246,51 @@ def update_interest(request: HttpRequest) -> HttpResponseRedirect:
 
 @require_POST
 @permission_required("access.oelkaelder_manage")
-def update_purchase_policy(request: HttpRequest) -> HttpResponseRedirect:
-    form = PurchasePolicyForm(request.POST, instance=PurchasePolicy.get())
-    if form.is_valid():
-        form.save()
-        messages.success(request, "Købsgrænsen er gemt.")
+def apply_interest_view(request: HttpRequest) -> HttpResponseRedirect:
+    try:
+        count = services.apply_interest(current_resident(request))
+    except ValueError as e:
+        messages.error(request, str(e))
+        return redirect("oelkaelder:admin")
+    if count:
+        messages.success(request, f"Rente anvendt: {count} postering(er).")
     else:
-        messages.error(request, "Kunne ikke gemme købsgrænsen.")
+        messages.info(
+            request,
+            "Ingen rente anvendt (renten er slået fra, eller ingen skylder over grænsen, "
+            "som ikke allerede har fået rente i denne måned).",
+        )
     return redirect("oelkaelder:admin")
 
 
 @require_POST
 @permission_required("access.oelkaelder_manage")
-def apply_interest_view(request: HttpRequest) -> HttpResponseRedirect:
-    count = apply_interest()
-    if count:
-        messages.success(request, f"Rente anvendt: {count} postering(er).")
+def add_exemption(request: HttpRequest) -> HttpResponseRedirect:
+    form = ExemptionForm(request.POST)
+    if not form.is_valid():
+        messages.error(
+            request,
+            "Kunne ikke gemme fritagelsen: "
+            + "; ".join(str(m) for errors in form.errors.values() for m in errors),
+        )
+        return redirect("oelkaelder:admin")
+    data = form.cleaned_data
+    try:
+        services.add_exemption(
+            data["shopper"], data["reason"], data["starts_on"], data["ends_on"], current_resident(request)
+        )
+    except ValueError as e:
+        messages.error(request, str(e))
     else:
-        messages.info(request, "Ingen rente anvendt (renten er slået fra, eller ingen skylder over grænsen).")
+        messages.success(request, f"{data['shopper'].resident.full_name} er fritaget for rente.")
+    return redirect("oelkaelder:admin")
+
+
+@require_POST
+@permission_required("access.oelkaelder_manage")
+def end_exemption(request: HttpRequest, pk: int) -> HttpResponseRedirect:
+    services.end_exemption(get_object_or_404(InterestExemption, pk=pk), current_resident(request))
+    messages.success(request, "Rentefritagelsen er afsluttet.")
     return redirect("oelkaelder:admin")
 
 
@@ -306,24 +327,37 @@ def report_deposits(request: HttpRequest) -> HttpResponse:
     start, end = _report_range(request)
     lo = timezone.make_aware(datetime.combine(start, datetime.min.time()))
     hi = timezone.make_aware(datetime.combine(end, datetime.max.time()))
-    data = []
-    for s in Shopper.objects.filter(active=True).select_related("resident").order_by("resident__first_name"):
-        total = s.deposits.filter(is_valid=True, created_at__range=(lo, hi)).aggregate(x=Sum("amount_ore"))[
-            "x"
-        ]
-        data.append([s.resident.full_name, _kr(total or 0), _kr(s.balance_ore)])
+    shoppers = list(
+        ledger.with_balance(Shopper.objects.filter(active=True))
+        .select_related("resident")
+        .order_by("resident__first_name")
+    )
+    paid = dict(
+        Deposit.objects.filter(services.not_reversed(), shopper__in=shoppers, created_at__range=(lo, hi))
+        .values("shopper_id")
+        .annotate(total=Sum("amount_ore"))
+        .values_list("shopper_id", "total")
+    )
+    data = [[s.resident.full_name, _kr(paid.get(s.pk) or 0), _kr(ledger.annotated(s))] for s in shoppers]
     return _report_response(
         request, "Indbetalinger", ["Navn", "Indbetalinger", "Saldo"], data, f"indbetalinger-{start}-{end}"
+    )
+
+
+def _sold_items(start: date, end: date) -> QuerySet[TransactionItem]:
+    """The items of the sales that stand (not voided) in the range."""
+    lo = timezone.make_aware(datetime.combine(start, datetime.min.time()))
+    hi = timezone.make_aware(datetime.combine(end, datetime.max.time()))
+    return TransactionItem.objects.filter(
+        transaction__in=services.counted_sales().filter(created_at__range=(lo, hi))
     )
 
 
 @permission_required("access.oelkaelder_manage")
 def report_sales(request: HttpRequest) -> HttpResponse:
     start, end = _report_range(request)
-    lo = timezone.make_aware(datetime.combine(start, datetime.min.time()))
-    hi = timezone.make_aware(datetime.combine(end, datetime.max.time()))
     rows = (
-        TransactionItem.objects.filter(transaction__is_valid=True, transaction__created_at__range=(lo, hi))
+        _sold_items(start, end)
         .values("product__name")
         .annotate(qty=Sum("quantity"), total=Sum("price_ore"))
         .order_by("product__name")
@@ -335,10 +369,8 @@ def report_sales(request: HttpRequest) -> HttpResponse:
 @permission_required("access.oelkaelder_manage")
 def report_quantity(request: HttpRequest) -> HttpResponse:
     start, end = _report_range(request)
-    lo = timezone.make_aware(datetime.combine(start, datetime.min.time()))
-    hi = timezone.make_aware(datetime.combine(end, datetime.max.time()))
     rows = (
-        TransactionItem.objects.filter(transaction__is_valid=True, transaction__created_at__range=(lo, hi))
+        _sold_items(start, end)
         .values("product__name")
         .annotate(qty=Sum("quantity"))
         .order_by("product__name")
@@ -363,12 +395,14 @@ NO_BUYERS = "(ukendt — fraflytter)"
 class _SaleRow(TypedDict):
     txn_id: int
     created_at: datetime
-    is_valid: bool
+    voided: bool
     has_buyers: bool
     people: str
     total_ore: int
     per_person: str
     items: str
+    # The sharers besides the executor whose part still stands: each may be moved to the executor.
+    movable: list[tuple[int, str]]
 
 
 def _sales_range(request: HttpRequest) -> tuple[date, date]:
@@ -406,7 +440,9 @@ def _sales_queryset(start: date, end: date, query: str, buyers: str) -> QuerySet
         Prefetch("items", queryset=TransactionItem.objects.select_related("product").order_by("id")),
         Prefetch(
             "shares",
-            queryset=PurchaseShare.objects.select_related("shopper__resident").order_by("id"),
+            queryset=PurchaseShare.objects.select_related(
+                "shopper__resident", "transfer__reversed_by", "moved_transfer__reversed_by"
+            ).order_by("id"),
         ),
     )
     if query:
@@ -439,6 +475,13 @@ def _per_person(shares: list[PurchaseShare]) -> str:
     return _kr(low) if low == high else f"{_kr(low)}–{_kr(high)}"
 
 
+def _person(share: PurchaseShare, executor: PurchaseShare) -> str:
+    name = share.shopper.resident.full_name
+    if share.moved_transfer_id is not None:
+        return f"{name} (ikke med; betalt af {executor.shopper.resident.full_name})"
+    return name
+
+
 def _sale_rows(transactions: Iterable[Transaction]) -> list[_SaleRow]:
     """Build display rows from prefetched data — no further queries. Used by both the HTML page and
     the export so the two can never disagree."""
@@ -446,18 +489,26 @@ def _sale_rows(transactions: Iterable[Transaction]) -> list[_SaleRow]:
     for txn in transactions:
         items = list(txn.items.all())
         shares = list(txn.shares.all())
+        paid = [s for s in shares if s.transfer_id is not None]
+        live = [s for s in shares if services.is_live(s.transfer) or services.is_live(s.moved_transfer)]
+        voided = bool(paid) and not live
         rows.append(
             _SaleRow(
                 txn_id=txn.pk,
                 created_at=txn.created_at,
-                is_valid=txn.is_valid,
+                voided=voided,
                 has_buyers=bool(shares),
-                people=", ".join(s.shopper.resident.full_name for s in shares) or NO_BUYERS,
+                people=", ".join(_person(s, shares[0]) for s in shares) or NO_BUYERS,
                 # Sum the items, not the shares: for a transaction whose buyers were never migrated the
                 # share sum is 0, and reporting 0 kr would make the cellar look like it sold nothing.
                 total_ore=sum(i.price_ore for i in items),
                 per_person=_per_person(shares),
                 items=", ".join(f"{i.quantity}× {i.product.name}" for i in items) or "—",
+                movable=[
+                    (s.pk, s.shopper.resident.full_name)
+                    for s in shares[1:]
+                    if s.moved_transfer_id is None and services.is_live(s.transfer)
+                ],
             )
         )
     return rows
@@ -492,7 +543,7 @@ def all_sales(request: HttpRequest) -> HttpResponse:
                 _kr(r["total_ore"]),
                 r["per_person"],
                 r["items"],
-                "" if r["is_valid"] else "Annulleret",
+                "Annulleret" if r["voided"] else "",
             ]
             for r in _sale_rows(qs)
         ]
@@ -518,18 +569,39 @@ def all_sales(request: HttpRequest) -> HttpResponse:
 @permission_required("access.oelkaelder_manage")
 def void_sale(request: HttpRequest, pk: int) -> HttpResponseRedirect:
     """Annullér a mistaken sale. POST-only: the legacy `deleteTransaction` moved money on GET."""
-    if void_purchase(pk, current_resident(request).email):
-        messages.success(request, f"Køb #{pk} annulleret. Købernes saldi er rettet.")
-    else:
-        messages.info(request, f"Køb #{pk} var allerede annulleret.")
+    get_object_or_404(Transaction, pk=pk)
+    try:
+        if services.void_purchase(pk, current_resident(request)):
+            messages.success(request, f"Køb #{pk} annulleret. Købernes saldi er rettet.")
+        else:
+            messages.info(request, f"Køb #{pk} var allerede annulleret.")
+    except ValueError as e:
+        messages.error(request, str(e))
+    query = _filter_query(request.POST, extra_keys=("page",))
+    return redirect(f"{reverse('oelkaelder:all_sales')}?{query}")
+
+
+@require_POST
+@permission_required("access.oelkaelder_manage")
+def move_share(request: HttpRequest, pk: int) -> HttpResponseRedirect:
+    """A sharer who was not part of the basket: their share is moved to whoever made the purchase."""
+    share = get_object_or_404(PurchaseShare.objects.select_related("shopper__resident"), pk=pk)
+    try:
+        services.move_share_to_executor(pk, current_resident(request))
+        messages.success(
+            request,
+            f"{share.shopper.resident.full_name}s andel af køb #{share.transaction_id} er flyttet til køberen.",
+        )
+    except ValueError as e:
+        messages.error(request, str(e))
     query = _filter_query(request.POST, extra_keys=("page",))
     return redirect(f"{reverse('oelkaelder:all_sales')}?{query}")
 
 
 @permission_required("access.oelkaelder_manage")
 def person_history(request: HttpRequest) -> HttpResponse:
-    """One resident's full ølkælder history — purchases, deposits and adjustments — so the ØK can see
-    not just what somebody bought but why their balance is what it is."""
+    """One resident's full ølkælder history — purchases, deposits and adjustments, as their account's
+    statement — so the ØK can see not just what somebody bought but why their balance is what it is."""
     residents = (
         Account.objects.filter(shopper_accounts__isnull=False).distinct().order_by("first_name", "last_name")
     )
@@ -539,22 +611,24 @@ def person_history(request: HttpRequest) -> HttpResponse:
     if raw_id.isdigit():
         chosen = residents.filter(pk=int(raw_id)).first()
         if chosen:
-            accounts = list(chosen.shopper_accounts.all())
+            accounts = list(chosen.shopper_accounts.select_related("credit_account"))
+    balances = services.balances(accounts)
+    adjustments = (
+        Adjustment.objects.filter(shopper__in=accounts)
+        .select_related("shopper", "transfer__reversed_by")
+        .order_by("-created_at", "-id")
+        if accounts
+        else []
+    )
     return render(
         request,
         "oelkaelder/person.html",
         {
             "residents": residents,
             "chosen": chosen,
-            "accounts": [(a, a.balance_ore) for a in accounts],
-            "entries": _account_entries(accounts)[:200] if accounts else [],
-            "adjustments": (
-                Adjustment.objects.filter(shopper__in=accounts, kind=Adjustment.Kind.MANUAL)
-                .select_related("shopper")
-                .order_by("-created_at")
-                if accounts
-                else []
-            ),
+            "accounts": [(a, balances[a.pk]) for a in accounts],
+            "entries": _entries(accounts, 200) if accounts else [],
+            "adjustments": [(a, services.is_live(a.transfer)) for a in adjustments],
         },
     )
 
@@ -576,10 +650,12 @@ def _signed_ore(amount_kr: str, direction: str) -> int:
 @permission_required("access.oelkaelder_manage")
 def add_adjustment(request: HttpRequest, pk: int) -> HttpResponseRedirect:
     """Manually correct one shopper's balance, with a mandatory written explanation."""
-    shopper = get_object_or_404(Shopper, pk=pk)
+    shopper = get_object_or_404(Shopper.objects.select_related("resident", "credit_account"), pk=pk)
     try:
         amount = _signed_ore(request.POST.get("amount_kr", ""), request.POST.get("direction", "subtract"))
-        record_adjustment(shopper, amount, request.POST.get("reason", ""), current_resident(request).email)
+        services.record_adjustment(
+            shopper, amount, request.POST.get("reason", ""), current_resident(request), token=_token(request)
+        )
         messages.success(
             request, f"Justering på {_kr(amount)} kr registreret for {shopper.resident.full_name}."
         )
@@ -592,20 +668,25 @@ def add_adjustment(request: HttpRequest, pk: int) -> HttpResponseRedirect:
 @permission_required("access.oelkaelder_manage")
 def void_adjustment_view(request: HttpRequest, pk: int) -> HttpResponseRedirect:
     adjustment = get_object_or_404(Adjustment, pk=pk)
-    if void_adjustment(pk, current_resident(request).email):
-        messages.success(request, "Justering annulleret.")
-    else:
-        messages.info(request, "Justeringen var allerede annulleret.")
+    try:
+        if services.void_adjustment(pk, current_resident(request)):
+            messages.success(request, "Justering annulleret.")
+        else:
+            messages.info(request, "Justeringen var allerede annulleret.")
+    except ValueError as e:
+        messages.error(request, str(e))
     return redirect(f"{reverse('oelkaelder:person_history')}?resident={adjustment.shopper.resident_id}")
 
 
 @require_POST
 @permission_required("access.oelkaelder_manage")
 def add_deposit(request: HttpRequest, pk: int) -> HttpResponseRedirect:
-    shopper = get_object_or_404(Shopper, pk=pk)
+    shopper = get_object_or_404(Shopper.objects.select_related("resident", "credit_account"), pk=pk)
     try:
         kr = float(request.POST.get("amount_kr", "0").replace(",", "."))
-        record_deposit(shopper, round(kr * 100))
+        services.record_deposit(
+            shopper, round(kr * 100), actor=current_resident(request), token=_token(request)
+        )
         messages.success(request, f"Indbetaling registreret for {shopper.resident.full_name}.")
     except ValueError as e:
         messages.error(request, str(e))
@@ -615,11 +696,15 @@ def add_deposit(request: HttpRequest, pk: int) -> HttpResponseRedirect:
 @require_POST
 @permission_required("access.oelkaelder_manage")
 def void_deposit(request: HttpRequest, pk: int) -> HttpResponseRedirect:
-    """Soft-delete a mistaken deposit (is_valid=False) — the balance is derived, so it just drops out."""
-    deposit = get_object_or_404(Deposit, pk=pk, is_valid=True)
-    deposit.is_valid = False
-    deposit.save(update_fields=["is_valid"])
-    messages.success(request, "Indbetaling annulleret.")
+    """Reverse a mistaken deposit: its transfer from the bank goes back."""
+    deposit = get_object_or_404(Deposit, pk=pk)
+    try:
+        if services.void_deposit(deposit, current_resident(request)):
+            messages.success(request, "Indbetaling annulleret.")
+        else:
+            messages.info(request, "Indbetalingen var allerede annulleret.")
+    except ValueError as e:
+        messages.error(request, str(e))
     return redirect("oelkaelder:admin")
 
 

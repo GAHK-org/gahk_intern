@@ -512,10 +512,6 @@ CELERY_BEAT_SCHEDULE = {
         "task": "events.tasks.remind_rsvp_deadlines",
         "schedule": crontab(minute=0, hour=17),
     },
-    "email-oelkaelder-monthly-statements": {
-        "task": "oelkaelder.tasks.send_monthly_statements",
-        "schedule": crontab(minute=10, hour=6, day_of_month=1),
-    },
     # The month that just ended, to everyone with Django-admin access. In the day, after the night's
     # sweeps and the AK charge: people read it.
     "email-admin-monthly-summary": {

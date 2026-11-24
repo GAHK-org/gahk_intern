@@ -3,20 +3,27 @@
 Money is already in øre in the legacy data, imported as-is into the *_ore fields. Shoppers attach to a
 migrated resident (former-resident shoppers are skipped). The legacy `intern_oelkaelder_purchase` stored
 no per-shopper amount — we reconstruct each transaction's split here with **largest-remainder** rounding
-so the shares sum exactly to the item total, and the new balance is derived from this ledger.
+so the shares sum exactly to the item total. The money then goes into GAHK-konto as dated history
+(oelkaelder.history), the voided rows followed by their reversal, so balances are what the old ones were.
+
+It loads an empty ølkælder once: the ledger is append-only, so with history already in it the command
+refuses rather than delete the records its transfers belong to.
 
 High-volume tables (transactions, items, shares, deposits, the ~100k-row log) are bulk-created.
 """
 
 import json
 
-from django.core.management.base import BaseCommand
+from django.core.management.base import BaseCommand, CommandError
 from django.db import transaction
 from django.utils import timezone
 
 from audit import trail
 from core.etl import fetch_all, resident_id_remap
+from oelkaelder import history
+from oelkaelder.ledger import open_shopper_account
 from oelkaelder.models import (
+    Adjustment,
     Deposit,
     LogEntry,
     Product,
@@ -46,6 +53,16 @@ class Command(BaseCommand):
     def handle(self, *args, **opts) -> None:  # noqa: ANN002, ANN003
         from residents.models import Account
 
+        linked = (
+            Deposit.objects.filter(transfer__isnull=False).exists()
+            or PurchaseShare.objects.filter(transfer__isnull=False).exists()
+            or Adjustment.objects.filter(transfer__isnull=False).exists()
+        )
+        if linked:
+            raise CommandError(
+                "The ølkælder's money is in GAHK-konto already, which can never be undone: load an empty "
+                "database instead."
+            )
         remap = resident_id_remap()
         resident_ids = set(Account.objects.values_list("id", flat=True))
 
@@ -81,21 +98,28 @@ class Command(BaseCommand):
             if rid not in resident_ids:
                 shopper_skipped += 1
                 continue
+            existing = Shopper.objects.filter(id=s["shopperId"]).first()
             Shopper.objects.update_or_create(
                 id=s["shopperId"],
-                defaults={"resident_id": rid, "active": saldo_active.get(s["shopperId"], True)},
+                defaults={
+                    "resident_id": rid,
+                    "active": saldo_active.get(s["shopperId"], True),
+                    "credit_account": existing.credit_account
+                    if existing is not None
+                    else open_shopper_account(Account.objects.get(pk=rid)),
+                },
             )
             shopper_ok.add(s["shopperId"])
 
         # ---- transactions (delete cascades to items/shares) ----
         Transaction.objects.all().delete()
-        Transaction.objects.bulk_create(
-            [
-                Transaction(id=t["ID"], created_at=t["time"] or timezone.now(), is_valid=bool(t["valid"]))
-                for t in fetch_all("SELECT * FROM intern_oelkaelder_transaction")
-            ],
-            batch_size=2000,
-        )
+        voided: dict[str, set[int]] = {"deposit": set(), "transaction": set(), "adjustment": set()}
+        txns = []
+        for t in fetch_all("SELECT * FROM intern_oelkaelder_transaction"):
+            txns.append(Transaction(id=t["ID"], created_at=t["time"] or timezone.now()))
+            if not t["valid"]:
+                voided["transaction"].add(t["ID"])
+        Transaction.objects.bulk_create(txns, batch_size=2000)
         txn_ids = set(Transaction.objects.values_list("id", flat=True))
 
         # ---- deposits ----
@@ -111,9 +135,10 @@ class Command(BaseCommand):
                     shopper_id=d["shopperId"],
                     amount_ore=max(d["amount"] or 0, 0),
                     created_at=d["time"] or timezone.now(),
-                    is_valid=bool(d["valid"]),
                 )
             )
+            if not d["valid"]:
+                voided["deposit"].add(d["ID"])
         Deposit.objects.bulk_create(deps, batch_size=2000)
 
         # ---- items (+ accumulate per-transaction totals) ----
@@ -146,6 +171,9 @@ class Command(BaseCommand):
                 shares.append(PurchaseShare(transaction_id=tid, shopper_id=sid, share_ore=amount))
         PurchaseShare.objects.bulk_create(shares, batch_size=2000)
 
+        # ---- the money, into GAHK-konto ----
+        moved = history.import_history(voided=voided)
+
         # ---- warnings + log ----
         for w in fetch_all("SELECT * FROM intern_oelkaelder_warnings"):
             Warning.objects.update_or_create(
@@ -171,6 +199,7 @@ class Command(BaseCommand):
                 f"(skipped {shopper_skipped} w/o migrated resident), {Deposit.objects.count()} deposits "
                 f"(skipped {dep_skipped}), {Transaction.objects.count()} transactions, "
                 f"{TransactionItem.objects.count()} items, {len(shares)} purchase shares, "
-                f"{Warning.objects.count()} warnings, {LogEntry.objects.count()} log rows."
+                f"{Warning.objects.count()} warnings, {LogEntry.objects.count()} log rows; "
+                f"into GAHK-konto: {moved}."
             )
         )

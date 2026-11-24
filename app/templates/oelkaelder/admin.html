@@ -8,6 +8,7 @@
       <a href="{% url 'oelkaelder:all_sales' %}" class="btn">Salgsoverblik</a>
       <a href="{% url 'oelkaelder:person_history' %}" class="btn">Personoversigt</a>
       <a href="{% url 'oelkaelder:products' %}" class="btn">Varer &amp; priser</a>
+      <a href="{% url 'credit:book' book.pk %}" class="btn btn-secondary">GAHK-konto: {{ book.name }}</a>
     </span>
   </div>
 
@@ -18,10 +19,11 @@
     {% for shopper, balance in rows %}
       <tr style="border-bottom:1px solid var(--border)">
         <td>{{ shopper.resident.full_name }}</td>
-        <td class="{{ balance|sign_class }} whitespace-nowrap">{{ balance|kr }}</td>
+        <td class="{{ balance|sign_class }} whitespace-nowrap"><a href="{% url 'credit:account' shopper.credit_account_id %}">{{ balance|kr }}</a></td>
         <td>
           <form method="post" action="{% url 'oelkaelder:deposit' shopper.id %}" style="display:flex; gap:.4rem">
             {% csrf_token %}
+            <input type="hidden" name="token" value="{% new_token %}">
             <input type="text" name="amount_kr" placeholder="kr" style="width:6rem">
             <button type="submit" class="btn btn-secondary" aria-label="Indbetal">+</button>
           </form>
@@ -93,18 +95,48 @@
     </form>
   </div>
 
-  <div class="card mt-8" style="max-width:34rem">
-    <h2>Købsgrænse</h2>
+  <div class="card mt-8">
+    <h2>Rentefritagelser</h2>
     <p class="muted" style="font-size:13.5px">
-      Når spærringen er slået til, kan kiosken ikke sælge til nogen hvis saldo er under grænsen —
-      hverken alene eller som del af et delt køb. De ser en besked om at indbetale først.
-      Slået fra betyder at gæld kun udløser advarselsmails og rente, som i det gamle system.
+      En fritaget konto springes over, når renten anvendes, fra startdatoen til og med slutdatoen.
     </p>
-    <form method="post" action="{% url 'oelkaelder:update_purchase_policy' %}">
+    {% if exemptions %}
+      <table cellpadding="6" class="text-sm" style="width:100%; border-collapse:collapse">
+        <thead><tr style="text-align:left; border-bottom:1px solid var(--border-strong)">
+          <th>Alumne</th><th>Begrundelse</th><th>Fra</th><th>Til og med</th><th></th></tr></thead>
+        <tbody>
+        {% for exemption, now in exemptions %}
+          <tr style="border-bottom:1px solid var(--border)">
+            <td>{{ exemption.credit_account.holder.name }}</td>
+            <td>{{ exemption.reason }}</td>
+            <td class="whitespace-nowrap">{{ exemption.starts_on|date:"Y-m-d" }}</td>
+            <td class="whitespace-nowrap">{% if exemption.ends_on %}{{ exemption.ends_on|date:"Y-m-d" }}{% else %}indtil videre{% endif %}{% if not now %} <span class="muted">(ikke begyndt)</span>{% endif %}</td>
+            <td class="text-right">
+              <form method="post" action="{% url 'oelkaelder:end_exemption' exemption.pk %}" class="inline"
+                    onsubmit="return confirm('Afslut rentefritagelsen?');">
+                {% csrf_token %}<button type="submit" class="btn btn-secondary">Afslut</button>
+              </form>
+            </td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    {% else %}<p class="muted">Ingen konti er fritaget for rente.</p>{% endif %}
+    <form method="post" action="{% url 'oelkaelder:add_exemption' %}" class="mt-3">
       {% csrf_token %}
-      {{ purchase_policy_form.as_p }}
-      <button type="submit" class="btn">Gem købsgrænse</button>
+      {{ exemption_form.as_p }}
+      <button type="submit" class="btn">Fritag for rente</button>
     </form>
+  </div>
+
+  <div class="card mt-8" style="max-width:34rem">
+    <h2>Kreditgrænse</h2>
+    <p class="muted" style="font-size:13.5px">
+      Hver ølkælder-konto har sin egen kreditgrænse i GAHK-konto (nye konti får bogens standard).
+      Kiosken sælger kun, hvis saldoen efter købet ligger på eller over grænsen — for alle i et delt
+      køb. Grænsen for den enkelte konto ændres på kontoens side under
+      <a href="{% url 'credit:book' book.pk %}">GAHK-konto: {{ book.name }}</a>.
+    </p>
   </div>
 
   <h2 class="mt-8">Rapporter</h2>

@@ -279,8 +279,15 @@ idempotent, so a retry or an overlapping run is harmless.
 | `gahkflix.tasks.weekly_draft_reminders` | Mondays 10:05 | Reminds each uploader of their drafts more than a week old, and sends the administrators and Fotogruppen an overview of all of them. In the day, unlike the sweeps: people read these. |
 | `gahkflix.tasks.warn_expiring_drafts` | Daily 10:15 | The day before an unpublished draft is deleted, warns its uploader and the administrators — once. |
 | `events.tasks.remind_rsvp_deadlines` | Daily 17:00 | Sends due RSVP reminders. |
-| `oelkaelder.tasks.send_monthly_statements` | Day 1, 06:10 | Mails every active ølkælder account its previous calendar month, like the AK charge above. **Sends real mail to residents** — the only task here that does. |
 | `core.tasks.send_admin_monthly_summary` | Day 1, 09:05 | Mails everyone with Django-admin access (superusers and accepted administrators) a summary: how many jobs ran and failed in the month that just ended, failures by type, and who holds superuser, administrator and the other roles now, with the Django-admin grants decided during the month. Replaced the twice-daily test mail that proved Beat and the worker were alive; core migration 0016 deletes that mail's stored Beat row. |
+
+The ølkælder's own monthly statement mail (`oelkaelder.tasks.send_monthly_statements`, day 1 06:10) is
+retired: the ølkælder accounts are in GAHK-konto now, and its signed monthly statement covers them.
+Oelkaelder migration 0009 deletes the task's stored Beat row. The same migration imports the whole
+ølkælder history into GAHK-konto (one transfer per old deposit, share and adjustment, dated when it
+happened). It is not atomic and skips what it has done, so a deploy that times out on it is simply run
+again. It refuses once the Ølkælder book has closed a period or an anchor covers its accounts: deploy
+it before anyone makes that book by hand, or before the first nightly anchor after doing so.
 
 **Delete the matching Coolify Scheduled Tasks in the same deploy, not afterwards.** Coolify runs
 them *inside the already-running `web` container*, so nothing here can see them or turn them off,

@@ -9,6 +9,7 @@ the who-may check, never the money rules.
   charge   a book's managers take money from an account in their book, into an account their book's
            holder holds (its bank, its own takings). Not stopped by the limit: the keeper decides.
   reverse  a book's managers undo a transfer into an account of their book. Not stopped by limits.
+  record_history  a feature's history from before the ledger, dated when it happened (an import).
 
 Each runs in one database transaction: the accounts it touches are locked in id order (two writes
 can never wait on each other), their balances read under the lock, the transfer and its two postings
@@ -17,6 +18,7 @@ when the money crosses books, the database's own checks forced on the spot, and 
 written beside it. All of it commits, or none of it.
 """
 
+import datetime
 import uuid
 from collections.abc import Iterable
 from dataclasses import dataclass
@@ -29,7 +31,7 @@ from audit import trail
 from residents.models import Account
 
 from . import chain, holders
-from .models import Book, CreditAccount, Holder, Posting, Transfer
+from .models import Book, Closing, CreditAccount, Holder, Posting, Transfer
 
 TEXT_LENGTH = 140
 MAIN_ACCOUNT_NAME = "Generel"
@@ -119,13 +121,22 @@ def open_account(
     holder: Holder,
     name: str,
     credit_limit_ore: int | None = None,
+    unlimited: bool = False,
 ) -> CreditAccount:
-    """A new account in `book`. Its managers open them; `actor=None` is the system."""
+    """A new account in `book`. Its managers open them; `actor=None` is the system. `unlimited`: one
+    of the book's own accounts that stands for the keeper's money (its takings, the interest it
+    charges), so like the bank it has no limit; only the book's holder may hold one."""
     if actor is not None and not holders.manages(actor, book):
         raise LedgerError("Kun kontoførerens ansvarlige kan oprette konti her.")
-    limit = book.default_credit_limit_ore if credit_limit_ore is None else credit_limit_ore
-    if limit > 0:
-        raise LedgerError("En kreditgrænse er 0 eller negativ.")
+    limit: int | None
+    if unlimited:
+        if holder.pk != book.holder_id:
+            raise LedgerError("Kun kontoførerens egne konti kan være uden kreditgrænse.")
+        limit = None
+    else:
+        limit = book.default_credit_limit_ore if credit_limit_ore is None else credit_limit_ore
+        if limit > 0:
+            raise LedgerError("En kreditgrænse er 0 eller negativ.")
     with trail.event("credit.account.opened", actor=actor):
         return CreditAccount.objects.create(
             book=book, holder=holder, name=name.strip(), credit_limit_ore=limit
@@ -336,6 +347,49 @@ def reverse(
     )
 
 
+def record_history(
+    *,
+    kind: str,
+    sender: CreditAccount,
+    receiver: CreditAccount,
+    amount_ore: int,
+    sender_text: str,
+    receiver_text: str,
+    at: datetime.datetime,
+    dedupe_token: uuid.UUID,
+    source: str,
+    reverses: Transfer | None = None,
+) -> Transfer:
+    """A feature's own history from before it kept its money here, written as it happened: dated
+    `at`, by nobody, never stopped by a limit (history is history). Only for importing that history
+    (oelkaelder.history), in order, oldest first, so ids still follow the dates. Never into a book
+    that has closed a period: a closing has fixed what stood before it."""
+    if kind not in (Transfer.Kind.TRANSFER, Transfer.Kind.CHARGE, Transfer.Kind.REVERSAL):
+        raise LedgerError("Kun overførsler, opkrævninger og tilbageførsler kan indlæses.")
+    if (kind == Transfer.Kind.REVERSAL) != (reverses is not None):
+        raise LedgerError("En tilbageførsel skal nævne, hvad den tilbagefører.")
+    if sender.book_id != receiver.book_id:
+        raise LedgerError("Historik indlæses kun inden for én kontofører.")
+    if Closing.objects.filter(book_id=sender.book_id).exists():
+        raise LedgerError(
+            f"Kontoføreren {sender.book} har lukket en periode; historik kan ikke længere indlæses i den."
+        )
+    return _move(
+        kind=kind,
+        sender=sender,
+        receiver=receiver,
+        amount_ore=amount_ore,
+        sender_text=sender_text,
+        receiver_text=receiver_text,
+        actor=None,
+        dedupe_token=dedupe_token,
+        source=source,
+        limited=False,
+        reverses=reverses,
+        at=at,
+    )
+
+
 def _sides(transfer: Transfer) -> tuple[Posting, Posting]:
     """(the side money left, the side it went to)."""
     postings = sorted(transfer.postings.select_related("account__book"), key=lambda p: p.amount_ore)
@@ -380,7 +434,9 @@ def _move(
     source: str,
     limited: bool,
     reverses: Transfer | None = None,
+    at: datetime.datetime | None = None,
 ) -> Transfer:
+    """`at`: when the transfer happened, for record_history alone; everything else is dated now."""
     if amount_ore <= 0:
         raise LedgerError("Beløbet skal være større end 0.")
     if sender.pk == receiver.pk:
@@ -416,7 +472,10 @@ def _move(
         with trail.event(action, actor=actor, involve=[(sender, "sender"), (receiver, "receiver")]) as event:
             try:
                 with transaction.atomic():
+                    # Dated by the field's default unless history says when (record_history).
+                    dated = {"created_at": at} if at is not None else {}
                     made = Transfer(
+                        **dated,
                         kind=kind,
                         created_by=actor,
                         source=source[:80],
@@ -431,6 +490,7 @@ def _move(
             _post(made, sender, receiver, amount_ore, sender_text, receiver_text, heads)
             if crossing:
                 companion = Transfer(
+                    **dated,
                     kind=Transfer.Kind.COMPANION,
                     created_by=actor,
                     source=source[:80],

@@ -338,27 +338,29 @@ def test_discard_is_role_gated(make_resident: Callable) -> None:
 # ---------------------------------------------------------------- ølkælder money (F-003)
 @pytest.mark.django_db
 def test_purchase_split_is_exact_and_atomic(make_resident: Callable) -> None:
-    from oelkaelder.models import Product, Shopper
+    from oelkaelder.ledger import balance, open_shopper
+    from oelkaelder.models import Product
     from oelkaelder.services import record_purchase
 
     p = Product.objects.create(name="Øl", price_ore=1500)
-    s1 = Shopper.objects.create(resident=make_resident(email="s1@gahk.dk"))
-    s2 = Shopper.objects.create(resident=make_resident(email="s2@gahk.dk"))
+    s1 = open_shopper(make_resident(email="s1@gahk.dk"))
+    s2 = open_shopper(make_resident(email="s2@gahk.dk"))
     txn = record_purchase([s1.id, s2.id], [{"product": p.id, "mode": "fixed", "qty": 3}])  # 4500 øre / 2
     total = sum(sh.share_ore for sh in txn.shares.all())
     assert total == 4500
-    assert s1.balance_ore + s2.balance_ore == -4500  # derived from the ledger
+    assert balance(s1) + balance(s2) == -4500  # derived from the ledger
 
 
 @pytest.mark.django_db
 def test_my_balance_shows_account_statement(make_resident: Callable) -> None:
-    from oelkaelder.models import Product, Shopper
+    from oelkaelder.ledger import open_shopper
+    from oelkaelder.models import Product
     from oelkaelder.services import record_deposit, record_purchase
 
     p = Product.objects.create(name="Øl", price_ore=1500)
     r = make_resident(email="buyer@gahk.dk")
-    s = Shopper.objects.create(resident=r)
-    record_deposit(s, 5000)  # 50,00 kr credit
+    s = open_shopper(r)
+    record_deposit(s, 5000, actor=None)  # 50,00 kr credit
     record_purchase(
         [s.id], [{"product": p.id, "mode": "fixed", "qty": 2}]
     )  # 30,00 kr debit, all to this shopper
@@ -368,6 +370,7 @@ def test_my_balance_shows_account_statement(make_resident: Callable) -> None:
     html = c.get("/oelkaelder/min-saldo").content.decode()
     assert "Kontoudtog" in html
     assert "2× Øl" in html and "-30,00 kr" in html  # purchase debit (signed)
+    assert f"/credit/accounts/{s.credit_account_id}/" in html  # and the account in GAHK-konto
     assert "Indbetaling" in html and "50,00 kr" in html  # deposit credit
 
 

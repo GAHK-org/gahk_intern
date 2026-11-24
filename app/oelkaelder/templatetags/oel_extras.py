@@ -1,3 +1,5 @@
+import uuid
+
 from django import template
 
 register = template.Library()
@@ -24,3 +26,9 @@ def kr_value(ore: int | None) -> str:
         return f"{int(ore) / 100:.2f}"
     except (TypeError, ValueError):
         return ""
+
+
+@register.simple_tag
+def new_token() -> str:
+    """A fresh send token for a form that moves money: the same form posted twice is one send."""
+    return str(uuid.uuid4())

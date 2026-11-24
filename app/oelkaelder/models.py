@@ -1,14 +1,14 @@
 """Ølkælder — beer-cellar POS (F-003).
 
-Fixes baked in: all money is **integer øre** (never float); a shopper's **balance is derived from the
-ledger** (deposits - purchase shares of valid transactions), eliminating the non-atomic read-modify-write
-`saldo` bug; line prices come from the product (server-side pricing, never the client); a purchase's
-split is stored per shopper with **largest-remainder** rounding so shares sum exactly to the price; the
-purchase write (transaction + items + shares) is wrapped in `transaction.atomic` at the view layer.
+Ølkælder keeps its own records (products, baskets and their items, shoppers, deposits, adjustments,
+warnings, policies, its log); every kroner they stand for moved as a transfer in GAHK-konto (credit),
+and every balance is read from there. A record is voided when its transfer is reversed. Money is
+integer øre; line prices come from the product, never the client.
 """
 
+from datetime import date
+
 from django.db import models
-from django.db.models import Sum
 from django.utils import timezone
 
 
@@ -56,32 +56,34 @@ class Shopper(models.Model):  # intern_shopper (+ intern_oelkaelder_saldo.active
         "residents.Account", on_delete=models.CASCADE, related_name="shopper_accounts"
     )
     active = models.BooleanField(default=True)
+    # The shopper's money: their ølkælder account in GAHK-konto's Ølkælder book, held by their person.
+    # Every balance is read from there (oelkaelder.ledger); nothing here sums money.
+    credit_account = models.OneToOneField("credit.CreditAccount", on_delete=models.PROTECT, related_name="+")
 
     def __str__(self) -> str:
         return self.resident.full_name
 
-    @property
-    def balance_ore(self) -> int:
-        """Derived balance = valid deposits - purchase shares + valid adjustments (e.g. interest).
-        Negative = the shopper owes money."""
-        deposits = self.deposits.filter(is_valid=True).aggregate(s=Sum("amount_ore"))["s"] or 0
-        spent = (
-            self.purchase_shares.filter(transaction__is_valid=True).aggregate(s=Sum("share_ore"))["s"] or 0
-        )
-        adjustments = self.adjustments.filter(is_valid=True).aggregate(s=Sum("amount_ore"))["s"] or 0
-        return deposits - spent + adjustments
-
 
 class Deposit(models.Model):  # intern_oelkaelder_deposit
+    """The record of money paid in: the ledger has the transfer (Ølkælder's bank → the shopper), this
+    keeps it findable for the deposit report. Voided = its transfer reversed."""
+
     shopper = models.ForeignKey(Shopper, on_delete=models.CASCADE, related_name="deposits")
     amount_ore = models.PositiveIntegerField()
     created_at = models.DateTimeField(default=timezone.now)
-    is_valid = models.BooleanField(default=True)  # soft-delete (legacy `valid`)
+    # None only for a legacy deposit of 0 kr, which moved nothing.
+    transfer = models.OneToOneField(
+        "credit.Transfer", null=True, blank=True, on_delete=models.PROTECT, related_name="+"
+    )
 
 
 class Transaction(models.Model):  # intern_oelkaelder_transaction
+    """One basket from the till. What it cost each sharer is a transfer each (PurchaseShare); it is
+    voided when every one of them is reversed."""
+
     created_at = models.DateTimeField(default=timezone.now)
-    is_valid = models.BooleanField(default=True)
+    # The till's send: the same basket posted twice (a double tap) is one sale.
+    dedupe_token = models.UUIDField(null=True, blank=True, unique=True)
 
     class Meta:
         # The -id tiebreak is load-bearing, not cosmetic: legacy created_at is minute-resolution and the
@@ -101,9 +103,20 @@ class TransactionItem(models.Model):  # intern_oelkaelder_transaction_item
 
 
 class PurchaseShare(models.Model):  # intern_oelkaelder_purchase (+ the per-shopper split amount, NEW)
+    """One sharer's part of a basket and the transfer that paid it (their account → Salg)."""
+
     transaction = models.ForeignKey(Transaction, on_delete=models.CASCADE, related_name="shares")
     shopper = models.ForeignKey(Shopper, on_delete=models.PROTECT, related_name="purchase_shares")
-    share_ore = models.PositiveIntegerField()  # largest-remainder split; shares sum to the transaction total
+    share_ore = models.PositiveIntegerField()  # what this sharer paid; the shares sum to the total
+    # None only for a share of 0 kr (a basket of fewer øre than sharers), which moved nothing.
+    transfer = models.OneToOneField(
+        "credit.Transfer", null=True, blank=True, on_delete=models.PROTECT, related_name="+"
+    )
+    # Set when the sharer was not part of it: their transfer reversed, and this charge took the same
+    # amount from the basket's executor instead.
+    moved_transfer = models.OneToOneField(
+        "credit.Transfer", null=True, blank=True, on_delete=models.PROTECT, related_name="+"
+    )
 
     class Meta:
         constraints = [models.UniqueConstraint(fields=["transaction", "shopper"], name="uniq_txn_shopper")]
@@ -124,8 +137,9 @@ class LogEntry(models.Model):  # intern_oelkaelder_log (audit trail)
 
 
 class Adjustment(models.Model):
-    """A signed correction to a shopper's balance (part of the derived ledger). Negative = a charge
-    that increases their debt (e.g. monthly interest); positive = a credit. Soft-deletable."""
+    """The record of a correction to a shopper's balance: monthly interest (a charge into Renter) or a
+    manual one (a charge into, or money from, Justeringer). Signed: negative = more debt. Voided =
+    its transfer reversed."""
 
     class Kind(models.TextChoices):
         INTEREST = "interest", "Rente"
@@ -136,7 +150,10 @@ class Adjustment(models.Model):
     kind = models.CharField(max_length=20, choices=Kind.choices, default=Kind.MANUAL)
     reason = models.CharField(max_length=255, blank=True)
     created_at = models.DateTimeField(default=timezone.now)
-    is_valid = models.BooleanField(default=True)
+    # None only for a legacy adjustment of 0 kr, which moved nothing.
+    transfer = models.OneToOneField(
+        "credit.Transfer", null=True, blank=True, on_delete=models.PROTECT, related_name="+"
+    )
 
 
 class InterestPolicy(models.Model):
@@ -151,35 +168,30 @@ class InterestPolicy(models.Model):
         return cls.objects.get_or_create(pk=1)[0]
 
 
-class PurchasePolicy(models.Model):
-    """Single-row config (pk=1) for the ølkælder credit limit — how far into debt a shopper may go
-    before the till refuses to sell to them.
+class InterestExemption(models.Model):
+    """An ølkælder account the monthly interest skips, from one day until another (or for good).
+    Ølkælder's own rule, kept here: a GAHK-konto account knows nothing of interest."""
 
-    Deliberately separate from InterestPolicy. Both happen to default to -100 kr, and the till used
-    to hardcode that same number, which is how "you owe enough to be charged interest" quietly
-    became "you may not buy anything" — two different policies that ØK should be able to set apart.
-
-    Off by default: the legacy till never blocked a purchase (Oelkaelder_model::addItem has no
-    balance check), so switching it on is a decision for the ølkælder officers, not a silent
-    inheritance from a hardcoded template condition.
-    """
-
-    active = models.BooleanField(default=False)
-    # Balance strictly below this refuses the sale. Negative = the shopper owes money.
-    block_below_ore = models.IntegerField(default=-10000)  # -100 kr
+    credit_account = models.ForeignKey("credit.CreditAccount", on_delete=models.PROTECT, related_name="+")
+    reason = models.CharField(max_length=255)
+    starts_on = models.DateField()
+    ends_on = models.DateField(null=True, blank=True)  # the last day it applies; None = until ended
+    created_by = models.ForeignKey(
+        "residents.Account", null=True, blank=True, on_delete=models.SET_NULL, related_name="+"
+    )
+    created_at = models.DateTimeField(default=timezone.now)
 
     class Meta:
-        verbose_name = "Købsgrænse"
-        verbose_name_plural = "Købsgrænser"
+        ordering = ["-starts_on", "-id"]
+        constraints = [
+            models.CheckConstraint(
+                condition=models.Q(ends_on__isnull=True) | models.Q(ends_on__gte=models.F("starts_on")),
+                name="oelk_exemption_ends_after_it_starts",
+            )
+        ]
 
     def __str__(self) -> str:
-        state = f"spærret under {self.block_below_ore / 100:.2f} kr" if self.active else "slået fra"
-        return f"Købsgrænse: {state}"
+        return f"Rentefritagelse: {self.credit_account}"
 
-    @classmethod
-    def get(cls) -> "PurchasePolicy":
-        return cls.objects.get_or_create(pk=1)[0]
-
-    def blocks(self, balance_ore: int) -> bool:
-        """Whether a shopper on this balance may not buy. Always False while the policy is off."""
-        return self.active and balance_ore < self.block_below_ore
+    def applies_on(self, day: date) -> bool:
+        return self.starts_on <= day and (self.ends_on is None or day <= self.ends_on)

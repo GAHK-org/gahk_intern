@@ -58,17 +58,17 @@
       <span class="luk" id="closeAlumneliste">&#10005;</span>
       <span id="confirm-split">Bekræft delt køb (<span id="split-count">0</span>)</span>
     </div>
-    <p>Vælg køber, eller "fordel på" flere for at dele købet ligeligt.</p>
+    <p>Vælg køber, eller "fordel på" flere for at dele købet ligeligt. Den første, du vælger, betaler resten.</p>
     <ul id="alumneliste-checkout">
       {% for s, balance, blocked in shopper_rows %}
         {% comment %}
-          `blocked` comes from PurchasePolicy (off by default), not a hardcoded amount: the same
-          number also drives the interest threshold, and the two are separate policies.
+          `blocked`: the balance is at the account's own credit limit (GAHK-konto), so nothing can be
+          bought; a purchase that would take it past the limit is refused by the server, by name.
         {% endcomment %}
         <li class="shopper {% if blocked %}inaktiv{% endif %}"
             data-id="{{ s.pk }}" data-rid="{{ s.resident_id }}" data-name="{{ s.resident.full_name }}">
           <div class="alumnumName">{{ s.resident.full_name }} <small>#{{ s.resident_id }}</small></div>
-          <div class="balance{% if balance <= block_below_ore %} spaerret-balance{% elif balance < 0 %} negativ{% endif %}">{{ balance|kr }}</div>
+          <div class="balance{% if blocked %} spaerret-balance{% elif balance < 0 %} negativ{% endif %}">{{ balance|kr }}</div>
           {% if blocked %}
             <div class="spaerret">Spærret &ndash; indbetal først</div>
           {% else %}
@@ -100,7 +100,7 @@
     {% endcomment %}
     <div class="box" id="blocked">
       <h1>Kontoen er spærret</h1>
-      <p>Du skylder mere end {{ block_limit_kr }} kr, så der kan ikke handles på kontoen.
+      <p>Saldoen har nået kontoens kreditgrænse, så der kan ikke handles på kontoen.
          Indbetal til ølkælderkontoen, så åbner den igen.</p>
       <div class="buttoncheckout" id="okblocked">OK</div>
     </div>
@@ -108,6 +108,8 @@
 
   <form method="post" action="{% url 'oelkaelder:purchase' %}" id="buy-form" class="hidden">
     {% csrf_token %}
+    {% comment %} The basket's send: posted twice (a double tap), it is still one sale. {% endcomment %}
+    <input type="hidden" name="token" value="{{ token }}">
     <div id="hidden-fields"></div>
   </form>
 {% endblock %}
@@ -119,7 +121,8 @@
 (function () {
   "use strict";
   var basket = [];   // {productId, name, mode, unitOre, stepOre, qty, grams}
-  var chosen = [];   // {pk, name} selected buyers (>1 = split)
+  var chosen = [];   // {pk, name} selected buyers (>1 = split), in the order they were picked: the
+                     // first is the executor and pays the remainder, so the order is posted as is
   var countdownTimer = null, countdownLeft = 5;
 
   var $ = function (id) { return document.getElementById(id); };

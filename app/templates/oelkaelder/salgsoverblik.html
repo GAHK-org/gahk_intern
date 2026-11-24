@@ -37,26 +37,30 @@
     </tr></thead>
     <tbody>
     {% for row in rows %}
-      <tr{% if not row.is_valid %} class="muted line-through"{% endif %}>
+      <tr{% if row.voided %} class="muted line-through"{% endif %}>
         <td class="whitespace-nowrap">{{ row.created_at|date:"Y-m-d H:i" }}</td>
         <td{% if not row.has_buyers %} class="muted"{% endif %}>{{ row.people }}</td>
         <td class="text-right whitespace-nowrap">{{ row.total_ore|kr }}</td>
         <td class="text-right whitespace-nowrap">{{ row.per_person }}</td>
         <td>{{ row.items }}</td>
         <td class="text-right whitespace-nowrap">
-          {% if not row.is_valid %}
+          {% if row.voided %}
             Annulleret
           {% elif row.has_buyers %}
             <form method="post" action="{% url 'oelkaelder:void_sale' row.txn_id %}" style="display:inline"
                   onsubmit="return confirm('Annullér købet på {{ row.total_ore|kr }} for {{ row.people }}? Købernes saldi rettes automatisk.');">
               {% csrf_token %}
-              <input type="hidden" name="start" value="{{ start|date:'Y-m-d' }}">
-              <input type="hidden" name="end" value="{{ end|date:'Y-m-d' }}">
-              <input type="hidden" name="q" value="{{ query }}">
-              <input type="hidden" name="buyers" value="{{ buyers }}">
-              <input type="hidden" name="page" value="{{ page_obj.number }}">
+              {% include "oelkaelder/_sales_filters.html" %}
               <button type="submit" class="btn btn-danger">Annullér</button>
             </form>
+            {% for share_id, name in row.movable %}
+              <form method="post" action="{% url 'oelkaelder:move_share' share_id %}" style="display:inline"
+                    onsubmit="return confirm('{{ name }} var ikke med? Andelen flyttes til den, der lavede købet.');">
+                {% csrf_token %}
+                {% include "oelkaelder/_sales_filters.html" %}
+                <button type="submit" class="btn btn-secondary">{{ name }} var ikke med</button>
+              </form>
+            {% endfor %}
           {% endif %}
         </td>
       </tr>
