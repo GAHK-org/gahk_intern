@@ -140,6 +140,16 @@
   .btn-top svg { width:16px; height:16px; }
 
   .sidebar { grid-area:side; background:var(--surface); border-right:1px solid var(--border); padding:14px 12px; display:flex; flex-direction:column; gap:3px; overflow:auto; }
+  /* The window scrolls, not .main, so a grid cell as tall as the page took the menu with it: at the
+     bottom of a long page (the photo timeline) it was thousands of pixels up. It is sticky instead,
+     at least one screen tall (the clock stays at the bottom), and sidebar.ts moves its sticking point:
+     a longer menu scrolls along with the page until its end is in view, and back on scrolling up.
+     Desktop only: phones have the drawer (the max-width:960px block), and Den Hurtige's page never
+     scrolls, so its menu keeps filling the column it is given. */
+  @media (min-width:961px) {
+    .sidebar { position:sticky; top:var(--sidebar-top, 60px); align-self:start; min-height:calc(100dvh - 60px); overflow:visible; }
+    .chat-page .sidebar { position:static; align-self:stretch; min-height:0; overflow:auto; }
+  }
   .nav-label { font-size:10.5px; font-weight:700; letter-spacing:.13em; text-transform:uppercase; color:var(--faint); padding:14px 12px 6px; }
   .nav-item { display:flex; align-items:center; gap:11px; padding:9px 12px; border-radius:9px; color:#33413a; font-weight:500; font-size:14px; line-height:1.1; text-decoration:none; position:relative; }
   .nav-item .ni { width:18px; height:18px; color:var(--faint); flex:none; stroke:currentColor; fill:none; }
@@ -166,7 +176,8 @@
 
   /* --- dashboard pieces --- */
   .glance { display:flex; flex-wrap:wrap; align-items:center; gap:10px 26px; padding:15px 20px; background:var(--surface); border:1px solid var(--border); border-radius:var(--radius); box-shadow:var(--shadow-sm); margin-bottom:22px; }
-  .glance .g { display:flex; align-items:baseline; gap:9px; font-size:15px; }
+  /* wrap: an administrator's roles are a long row of chips, which held the phone page 600px wide */
+  .glance .g { display:flex; flex-wrap:wrap; align-items:baseline; gap:6px 9px; min-width:0; font-size:15px; }
   .glance .gk { font-size:11px; font-weight:700; letter-spacing:.09em; text-transform:uppercase; color:var(--faint); }
   .glance b { font-weight:700; }
   .grid2 { display:grid; grid-template-columns:1.6fr 1fr; gap:20px; align-items:start; }
@@ -2568,6 +2579,40 @@
   .jobs-pill.is-on { background:var(--green); border-color:var(--green); color:#fff; }
   .jobs-pill.is-on b { color:#fff; }
   .jobs-pager { display:flex; justify-content:space-between; align-items:center; gap:12px; padding:12px 18px; border-top:1px solid var(--border); font-size:14px; }
+
+  /* ---- Revisionsspor (audit/_events.html): one line per event, its changes folded under it ---- */
+  .audit-search { display:block; margin-top:4px; width:220px; max-width:100%; padding:6px 8px; font-size:14px; font-weight:400; }
+  .jobs-filters input[type="date"] { display:block; margin-top:4px; padding:5px 8px; font-size:14px; font-weight:400; }
+  .audit-events { list-style:none; margin:0; padding:0; }
+  .audit-event { padding:10px 18px; border-bottom:1px solid var(--border); font-size:14px; }
+  .audit-event.is-unclaimed { background:var(--warn-bg); }
+  .audit-line { display:flex; flex-wrap:wrap; align-items:baseline; gap:4px 12px; }
+  .audit-time { flex:none; width:128px; color:var(--muted); font-size:13px; font-variant-numeric:tabular-nums; white-space:nowrap; }
+  .audit-what { flex:1 1 320px; min-width:0; overflow-wrap:anywhere; }
+  .audit-actor { font-weight:650; }
+  .audit-subject { font-weight:600; }
+  .audit-tags { display:flex; gap:6px; }
+  .audit-more { margin:6px 0 2px 140px; }
+  .audit-more > summary { cursor:pointer; color:var(--muted); font-size:13px; }
+  .audit-details { display:flex; flex-wrap:wrap; gap:6px 20px; margin:8px 0; font-size:13px; }
+  .audit-details dt { font-size:11.5px; color:var(--muted); }
+  .audit-details dd { margin:0; overflow-wrap:anywhere; }
+  .audit-entity { margin-top:10px; }
+  .audit-entity-head { display:flex; flex-wrap:wrap; align-items:center; gap:6px 8px; font-size:13.5px; }
+  .audit-op-deleted { background:var(--neg-bg); color:var(--neg); border-color:var(--neg-line); }
+  .audit-op-involved { background:var(--surface-2); color:var(--muted); border-color:var(--border); }
+  .audit-changes { margin-top:6px; border-collapse:collapse; font-size:13px; }
+  .audit-changes th, .audit-changes td { padding:4px 12px 4px 0; text-align:left; vertical-align:top; overflow-wrap:break-word; }
+  .audit-changes td { min-width:11ch; }
+  .audit-changes thead th { font-size:11px; font-weight:650; letter-spacing:.04em; text-transform:uppercase; color:var(--muted); }
+  .audit-changes tbody th { font-weight:600; white-space:nowrap; }
+  .audit-before { color:var(--muted); text-decoration:line-through; text-decoration-color:var(--border-strong); }
+  .audit-long { max-width:60ch; white-space:pre-wrap; padding:6px 0; }
+  .audit-empty { padding:16px 18px; }
+  @media (max-width:720px) {
+    .audit-time { width:auto; }
+    .audit-more { margin-left:0; }
+  }
 
   /* The job's page: sent → started → finished, with the wait and the run between them. */
   .jobs-title { display:flex; align-items:center; flex-wrap:wrap; gap:10px; }
