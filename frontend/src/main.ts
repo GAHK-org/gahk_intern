@@ -17,11 +17,11 @@ import "./highlight"; // marks a board search's words in the cards (no-op withou
 import "./events"; // begivenheder guest-list picker (no-op elsewhere)
 import "./reparationer"; // reparationer kanban drag-and-drop (no-op elsewhere)
 import "./mention"; // @-mention picker on every [data-mentionable] field (no-op without one)
-import "./imageviewer"; // full-screen picture viewer: Arkiv, opslagstavlen, Den Hurtige
-import "./arkiv"; // Arkiv direct-to-bucket upload + selection (no-op elsewhere)
+import "./imageviewer"; // full-screen picture viewer: opslagstavlen, Den Hurtige
 import "./photo-album"; // photo album gallery viewer (no-op outside album pages)
 import "./gahkflix"; // GAHKFlix: rows, uploader, editors and player (no-op outside body.flix)
 import "./topbar"; // hide the sticky top bar on scroll-down (phones only)
+import "./sidebar"; // the menu scrolls with the page until its end is in view (desktop only)
 import "./cms-loader"; // Hjemmeside, the gahk.dk editor: fetches its own code on its pages only
 import "./cms.css"; // its styles (small; in app.css so the lazy chunks carry no CSS)
 import "./install"; // the phone install banner, and /install's steps and install prompt

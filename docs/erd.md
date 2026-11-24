@@ -7,6 +7,38 @@
 
 ```mermaid
 erDiagram
+    audit_AuditEvent {
+        int id PK
+        datetime at
+        string action
+        int actor_id FK
+        string actor_name
+        string source
+        string correlation_id
+        string ip
+        json details
+        bool unclaimed
+    }
+
+    audit_AuditEntity {
+        int id PK
+        int event_id FK
+        string kind
+        int entity_id
+        string name
+        string operation
+        string role
+    }
+
+    audit_AuditChange {
+        int id PK
+        int entity_id FK
+        string field
+        json before
+        json after
+        bool redacted
+    }
+
     core_Room {
         int id PK
         int legacy_index
@@ -78,6 +110,22 @@ erDiagram
         string name
         string hostname
         datetime beat_at
+    }
+
+    core_OutgoingMail {
+        int id PK
+        datetime created_at
+        text subject
+        text recipients
+        json payload
+        string kind
+        string status
+        int attempts
+        datetime next_attempt_at
+        datetime last_attempt_at
+        datetime expires_at
+        datetime sent_at
+        text error
     }
 
     residents_Resident {
@@ -629,34 +677,6 @@ erDiagram
         datetime uploaded_at
     }
 
-    arkiv_ArchiveFolder {
-        int id PK
-        int parent_id FK
-        string name
-        int workgroup_id FK
-        int effective_workgroup_id FK
-        int created_by_id FK
-        datetime created_at
-        datetime locked_at
-        datetime unlocked_until
-        datetime deleted_at
-    }
-
-    arkiv_ArchiveFile {
-        int id PK
-        int folder_id FK
-        string name
-        string sha256
-        string size
-        string content_type
-        int uploaded_by_id FK
-        datetime uploaded_at
-        datetime deleted_at
-        int deleted_by_id FK
-        bool has_thumbnail
-        bool has_preview
-    }
-
     photo_album_Tag {
         int id PK
         string name
@@ -851,6 +871,10 @@ erDiagram
         date released_on
         string release_precision
         string release_source
+        datetime premiere_at
+        string premiere_blur
+        datetime announced_at
+        datetime draft_since
         int series_id FK
         int season
         int episode
@@ -888,6 +912,8 @@ erDiagram
         int width
         int height
         datetime recorded_at
+        string date_guess
+        string date_guess_source
         string full_hd
         string hd
         int full_hd_size
@@ -1007,8 +1033,12 @@ erDiagram
         string outcome
         text detail
         datetime sent_at
+        int mail_id FK
     }
 
+    audit_AuditEvent }o--|o residents_Resident : "actor"
+    audit_AuditEntity }o--|| audit_AuditEvent : "event"
+    audit_AuditChange }o--|| audit_AuditEntity : "entity"
     core_PushSubscription }o--|| residents_Resident : "user"
     residents_Resident }o--|o residents_Resident : "sponsor"
     residents_Residency }o--|| residents_Resident : "resident"
@@ -1084,13 +1114,6 @@ erDiagram
     reparationer_RepairComment }o--|| residents_Resident : "author"
     reparationer_RepairImage }o--|| reparationer_RepairTask : "task"
     reparationer_RepairImage }o--|o reparationer_RepairComment : "comment"
-    arkiv_ArchiveFolder }o--|o arkiv_ArchiveFolder : "parent"
-    arkiv_ArchiveFolder }o--|o core_Workgroup : "workgroup"
-    arkiv_ArchiveFolder }o--|o core_Workgroup : "effective_workgroup"
-    arkiv_ArchiveFolder }o--|o residents_Resident : "created_by"
-    arkiv_ArchiveFile }o--|| arkiv_ArchiveFolder : "folder"
-    arkiv_ArchiveFile }o--|o residents_Resident : "uploaded_by"
-    arkiv_ArchiveFile }o--|o residents_Resident : "deleted_by"
     photo_album_Album }o--|o photo_album_Album : "parent"
     photo_album_Album }o--o{ photo_album_Tag : "tags"
     photo_album_Media }o--|| photo_album_Album : "album"
@@ -1138,6 +1161,7 @@ erDiagram
     gahkflix_VideoEvent }o--|o gahkflix_ChangeRequest : "request"
     regnskab_EconomicLedgerEntry }o--|| residents_Resident : "resident"
     regnskab_AlumneregningSend }o--|| residents_Resident : "resident"
+    regnskab_AlumneregningSend }o--|o core_OutgoingMail : "mail"
 ```
 
 ## admissions
@@ -1210,49 +1234,47 @@ erDiagram
     ak_AkMonthlyCharge }o--|o residents_Resident : "updated_by"
 ```
 
-## arkiv
+## audit
 
 ```mermaid
 erDiagram
-    arkiv_ArchiveFolder {
+    audit_AuditEvent {
         int id PK
-        int parent_id FK
-        string name
-        int workgroup_id FK
-        int effective_workgroup_id FK
-        int created_by_id FK
-        datetime created_at
-        datetime locked_at
-        datetime unlocked_until
-        datetime deleted_at
+        datetime at
+        string action
+        int actor_id FK
+        string actor_name
+        string source
+        string correlation_id
+        string ip
+        json details
+        bool unclaimed
     }
 
-    arkiv_ArchiveFile {
+    audit_AuditEntity {
         int id PK
-        int folder_id FK
+        int event_id FK
+        string kind
+        int entity_id
         string name
-        string sha256
-        string size
-        string content_type
-        int uploaded_by_id FK
-        datetime uploaded_at
-        datetime deleted_at
-        int deleted_by_id FK
-        bool has_thumbnail
-        bool has_preview
+        string operation
+        string role
     }
 
-    core_Workgroup { }
+    audit_AuditChange {
+        int id PK
+        int entity_id FK
+        string field
+        json before
+        json after
+        bool redacted
+    }
 
     residents_Resident { }
 
-    arkiv_ArchiveFolder }o--|o arkiv_ArchiveFolder : "parent"
-    arkiv_ArchiveFolder }o--|o core_Workgroup : "workgroup"
-    arkiv_ArchiveFolder }o--|o core_Workgroup : "effective_workgroup"
-    arkiv_ArchiveFolder }o--|o residents_Resident : "created_by"
-    arkiv_ArchiveFile }o--|| arkiv_ArchiveFolder : "folder"
-    arkiv_ArchiveFile }o--|o residents_Resident : "uploaded_by"
-    arkiv_ArchiveFile }o--|o residents_Resident : "deleted_by"
+    audit_AuditEvent }o--|o residents_Resident : "actor"
+    audit_AuditEntity }o--|| audit_AuditEvent : "event"
+    audit_AuditChange }o--|| audit_AuditEntity : "entity"
 ```
 
 ## cms
@@ -1466,6 +1488,22 @@ erDiagram
         datetime beat_at
     }
 
+    core_OutgoingMail {
+        int id PK
+        datetime created_at
+        text subject
+        text recipients
+        json payload
+        string kind
+        string status
+        int attempts
+        datetime next_attempt_at
+        datetime last_attempt_at
+        datetime expires_at
+        datetime sent_at
+        text error
+    }
+
     residents_Resident { }
 
     core_PushSubscription }o--|| residents_Resident : "user"
@@ -1626,6 +1664,10 @@ erDiagram
         date released_on
         string release_precision
         string release_source
+        datetime premiere_at
+        string premiere_blur
+        datetime announced_at
+        datetime draft_since
         int series_id FK
         int season
         int episode
@@ -1663,6 +1705,8 @@ erDiagram
         int width
         int height
         datetime recorded_at
+        string date_guess
+        string date_guess_source
         string full_hd
         string hd
         int full_hd_size
@@ -2189,12 +2233,16 @@ erDiagram
         string outcome
         text detail
         datetime sent_at
+        int mail_id FK
     }
+
+    core_OutgoingMail { }
 
     residents_Resident { }
 
     regnskab_EconomicLedgerEntry }o--|| residents_Resident : "resident"
     regnskab_AlumneregningSend }o--|| residents_Resident : "resident"
+    regnskab_AlumneregningSend }o--|o core_OutgoingMail : "mail"
 ```
 
 ## reparationer

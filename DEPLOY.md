@@ -58,7 +58,8 @@ GAHK_WEB_KEY=<64 random chars>                     # = [sync] key in gahk.dk's c
 # EDITOR_HINT_COOKIE_DOMAIN=.gahk.dk                # default; the "gahk_editor" hint cookie for gahk.dk's "Rediger siden"
 DATABASE_URL=postgres://gahk:<pw>@postgres:5432/gahk
 SMTP_HOST=send.one.com  SMTP_USER=…  SMTP_PASSWORD=…  SMTP_PORT=587
-EMAIL_BACKEND=django.core.mail.backends.smtp.EmailBackend
+EMAIL_BACKEND=django.core.mail.backends.smtp.EmailBackend   # what core.mail's queue delivers through — see below
+MAIL_RATE_LIMIT=10                                # optional: bulk (alumneregninger, ølkælder) mails per 5 minutes; other mail is never held; one.com blocks at ~25
 DEFAULT_FROM_EMAIL=autosvar@gahk.dk               # ⚠ must be an alias of SMTP_USER — see below
 OELKAELDER_FROM_EMAIL=bierkeller@gahk.dk          # ⚠ second sender, same requirement
 WIFI_PASSWORD=…  GOOGLE_CALENDAR_USER=…  GOOGLE_CALENDAR_PASSWORD=…
@@ -103,13 +104,14 @@ From address that account is not itself or an alias of:
 inside the running container — this is the only way to confirm, since MX stays on one.com (§7) and
 the app relays through their smarthost, so existing SPF/DKIM for gahk.dk covers it with no new DNS:
 ```
-python manage.py sendtestemail you@example.com                       # exercises DEFAULT_FROM_EMAIL
-DEFAULT_FROM_EMAIL=$OELKAELDER_FROM_EMAIL python manage.py sendtestemail you@example.com
+python manage.py check_mail_server you@example.com                              # DEFAULT_FROM_EMAIL
+python manage.py check_mail_server you@example.com --from "$OELKAELDER_FROM_EMAIL"
 ```
-Exit 0 = delivered. A failure here is otherwise near-invisible in the UI: the mails are best-effort
-so the app keeps working, and only the server log records the rejection. The one exception is
-password reset — Django's built-in view does not suppress errors, so a bad `DEFAULT_FROM_EMAIL`
-turns "glemt kodeord" into a 500 for the resident.
+`check_mail_server` sends straight through the real backend, past the app's mail queue, and fails with
+the server's answer; no error = the server accepted it. (`sendtestemail` would only queue the mail:
+every mail goes through `core.mail`'s outbox.) In running use, a refused mail fails the
+`core.tasks.deliver_mail` job on the worker-jobs page and is listed under "Outgoing mails" in Django
+admin, where it can be sent again once the cause is fixed.
 
 ## 3. CI (GitHub Actions — `.github/workflows/ci.yml`) **[you: create the repo]**
 Fresh repo (do **not** import the legacy history — it contains plaintext secrets, scope §5). Jobs:
@@ -161,7 +163,7 @@ arrive** (Traefik v3's default `readTimeout`). Measured on 2026-10-19: a body dr
 got a 502 after 61 s. That is what stopped the Dropbox album "Bornholm med GAHK - April 06" (3.2 GB)
 twelve times while every album under 540 MB went through. The import script, the import page and
 the album upload (for files of 8 MB or more) now send straight to the bucket in parts
-(`photo_album/direct_upload.py`), as Arkiv does — which in the browser needs the bucket's CORS rule
+(`photo_album/direct_upload.py`), as GAHKFlix does — which in the browser needs the bucket's CORS rule
 (§4c). Every other form still meets the minute. Raising it is a Coolify setting (the proxy's
 configuration, e.g. `--entrypoints.https.transport.respondingTimeouts.readTimeout=3600s`), not
 something this repository controls.
@@ -422,15 +424,15 @@ broken on the live site today, independently of any of this, and are a separate 
 
 #### The bucket needs a CORS rule for uploads from the browser
 
-Arkiv and GAHKFlix send files **straight from the browser to Hetzner** (`arkiv/uploads.py`,
-`gahkflix/uploads.py`) — a 2 GB video cannot go through the app server. So does the photo album,
+GAHKFlix sends files **straight from the browser to Hetzner** (`gahkflix/uploads.py`) — a 2 GB
+video cannot go through the app server. So does the photo album,
 for a ZIP on the import page and for any photo or video of 8 MB or more
 (`photo_album/direct_upload.py`): the proxy cuts an upload that takes more than a minute (§4). They
-share the bucket, so the one rule below covers all three. Those requests are cross-origin, from
+share the bucket, so the one rule below covers both. Those requests are cross-origin, from
 `https://intern.gahk.dk` to `https://<bucket>.<loc>.your-objectstorage.com`, so the bucket has to say the
 origin is allowed or the browser refuses to send them. Without the rule the photo album falls back
 to posting the file through the app as before, which works for anything that goes in within the
-minute; Arkiv and GAHKFlix have no such fallback.
+minute; GAHKFlix has no such fallback.
 
 **Nothing in dev or CI can catch a missing rule**, because the local path never leaves the app: the
 symptom is uploads failing in production only, with a CORS error in the browser console and nothing
@@ -450,7 +452,7 @@ c.put_bucket_cors(Bucket=s.bucket_name, CORSConfiguration={'CORSRules': [
 print(c.get_bucket_cors(Bucket=s.bucket_name)['CORSRules'])"
 ```
 
-`POST` for Arkiv's presigned policy and for the photo album's multipart uploads, which Uppy
+`POST` for GAHKFlix's presigned policy and for the photo album's multipart uploads, which Uppy
 (`@uppy/aws-s3`) starts and completes itself; `PUT` for their parts; `DELETE` to abort one that
 failed or was cancelled. The server signs each of those requests for the one key it chose
 (`photo_album/direct_upload.py`). `ETag` must be exposed: Uppy reads each part's ETag to complete
@@ -459,19 +461,15 @@ CORS** — a download is a top-level navigation to a redirect, not a `fetch`. Wi
 `AllowedMethods` to `GET` or `AllowedOrigins` to `*` would let any page on the internet script
 requests against the bucket with a stolen presigned URL; there is no reason to.
 
-#### `arkiv-zip/` needs a lifecycle rule
+#### The bucket's lifecycle rules
 
-"Hent valgte" builds the zip **into the bucket** and then redirects to it, like every other download
-in Arkiv. So the prefix fills up with archives that are, by construction, disposable: every one can
-be rebuilt from the rows, and `selection_key` names each after the selection it holds, so a rebuilt
-one lands under the same key.
-
-Nothing deletes them, so they need a rule — and **the bucket is versioned, which changes what a
-rule means.** On a versioned bucket `Expiration` does not delete anything: it writes a delete marker
-and the object becomes a *noncurrent version*, which lives until a `NoncurrentVersionExpiration`
-rule covering that prefix removes it. An expiry rule on its own therefore frees nothing and is worth
-exactly the storage it does not reclaim. That was the state `media/` had been in since the bucket
-was created.
+A photo album ZIP download is built **into the bucket** (`photo-album-zips/`) and then redirected
+to. Those archives are disposable by construction, and a worker outage can leave one behind, so the
+prefix needs a rule — and **the bucket is versioned, which changes what a rule means.** On a
+versioned bucket `Expiration` does not delete anything: it writes a delete marker and the object
+becomes a *noncurrent version*, which lives until a `NoncurrentVersionExpiration` rule covering that
+prefix removes it. An expiry rule on its own therefore frees nothing and is worth exactly the
+storage it does not reclaim. That was the state `media/` had been in since the bucket was created.
 
 The whole rule set is declared in `core/management/commands/sync_bucket_lifecycle.py` and applied by
 running it. **Do not hand-edit the configuration in a console.**
@@ -484,34 +482,29 @@ docker exec <web> python manage.py sync_bucket_lifecycle
 Idempotent, and it **merges**: any rule whose ID the command does not declare is carried through
 untouched, because `put_bucket_lifecycle_configuration` replaces the *entire* configuration and the
 naive call silently drops every rule it does not mention. That trap is why this is a command rather
-than a snippet somebody pastes into a shell.
+than a snippet somebody pastes into a shell. The one exception is `RETIRED`: IDs the command used to
+declare, which it removes, because otherwise a rule taken out of the file would stay on the bucket
+for ever as if somebody had added it by hand.
 
 | ID | Prefix | What it does |
 | --- | --- | --- |
 | `abort-incomplete-uploads` | (all) | aborts stalled multipart uploads after 7 days — including an import archive the Dropbox script stopped sending halfway |
-| `expire-noncurrent-arkiv` | `arkiv/` | purged originals actually go, 30 days later |
-| `expire-noncurrent-arkiv-thumb` | `arkiv-thumb/` | derived, so 1 day |
-| `expire-noncurrent-arkiv-preview` | `arkiv-preview/` | derived, so 1 day |
-| `expire-built-zips` | `arkiv-zip/` | marks built zips at 7 days, purges the version a day later |
-| `expire-built-zip-markers` | `arkiv-zip/` | clears the delete markers that leaves |
+| `expire-photo-album-zips` | `photo-album-zips/` | marks built zips at 7 days, purges the version a day later |
+| `expire-photo-album-zip-markers` | `photo-album-zips/` | clears the delete markers that leaves |
 | `expire-noncurrent-versions` | `media/` | 30 days |
+| `retire-arkiv`, `retire-arkiv-thumb`, `retire-arkiv-preview`, `retire-arkiv-zip` | `arkiv/`, `arkiv-thumb/`, `arkiv-preview/`, `arkiv-zip/` | temporary: empties what Arkiv left, see below |
+| `retire-arkiv-markers`, `retire-arkiv-thumb-markers`, … | the same | clears the delete markers that leaves |
 | `expire-noncurrent-backups` | `data/` | makes Coolify's own deletions free the bytes, after 7 days |
 | `expire-backup-markers` | `data/` | clears those delete markers |
 
-Prefixes are matched literally, so `arkiv/` does not cover `arkiv-thumb/`; a bare `arkiv` prefix
-would cover all four and overlap, and providers differ on how overlapping rules resolve. One rule
-per prefix, spelled out. `Days` and `ExpiredObjectDeleteMarker` cannot share one `Expiration` block
+Prefixes are matched literally, so `photo-album/` does not cover `photo-album-zips/`; a bare prefix
+would overlap other rules, and providers differ on how overlapping rules resolve. One rule per
+prefix, spelled out. `Days` and `ExpiredObjectDeleteMarker` cannot share one `Expiration` block
 — S3 rejects it — which is why the marker cleanups are separate rules on the same prefix.
 
 **Nothing expires a backup on a clock**, deliberately. Coolify decides which dumps to keep, per
 resource, in its own UI; a rule here would be a second authority deleting backups on a different
 schedule, and if the two disagreed the bucket would win silently.
-
-**`NoncurrentDays: 30` on `arkiv/` is the retention behind "Slet permanent".** The button destroys
-the row and calls `delete_object`; versioning turns that into a delete marker, so the bytes are
-recoverable by version id for another month and are billed for that long. That is a deliberate net
-against an operator mistake, not an accident — but it does mean "permanent" means "within a month",
-and if the kollegium ever needs a real erase-on-request, this number is where it lives.
 
 Seven days for a built zip is arbitrary and safe: the cost of being wrong is one rebuild. The
 `AbortIncompleteMultipartUpload` half matters more than it looks — a worker killed mid-upload leaves
@@ -519,32 +512,26 @@ a part-uploaded archive, and this is what stops those being billed indefinitely.
 *corrupt* object: a multipart upload only becomes visible when it completes, which is what makes the
 "already built?" check trustworthy.)
 
-**`audit_media` and `unreferenced_keys` do not see `arkiv-zip/`**, and must not learn to: the former
-is scoped to `media/`, and the latter asks only about `arkiv/` hashes. A sweep that decided a built
-zip was an orphan would be right, and deleting it would still be pointless churn against a rule that
-already does the job.
-
 **Backups live under `data/coolify/`, not `backups/`** (§4d), and the rule they need is only the
 noncurrent half: Coolify decides which dumps to keep, and versioning is what stops its deletions
 actually freeing anything.
 
-#### What the batch-download caps are for now
+#### Removing Arkiv
 
-`arkiv/views.py` caps a selection at `MAX_SELECTED_BYTES` (500 MB) and `MAX_SELECTED_FILES` (200).
-Since the zip became an object these bound **the build** — reading the members out of the bucket and
-writing the archive back, all inside `fsn1` — plus the temporary file it is assembled in. The
-recipient's connection is no longer involved at all: they are redirected, and Hetzner serves them.
+Arkiv was removed with nothing migrated. The migration that removes it (`core.0020_drop_arkiv_tables`)
+drops its tables and **cannot be undone**: afterwards the folder tree and file names are gone, and the
+objects under `arkiv/` are bare sha256 keys that nothing can match to a file. So, in this order:
 
-That is a real change in what the numbers mean. They used to be at the mercy of a resident's hotel
-wifi, which is unmeasurable; they are now bounded by our own internal bandwidth, which is
-measurable. So raising them is a reasonable conversation — measure a large build first. There is no
-request timeout to raise with them since uvicorn replaced Daphne and its `-t 60`.
-
-**But understand what that now costs, because it is not what it used to cost.** Under gunicorn a
-long request tied up one of three worker *processes* and the other two carried on. uvicorn is a
-single process: a long request holds a thread in it, and every other request in the building is
-sharing that one interpreter. Raising the caps without raising the process count is therefore a
-worse trade than it was, not a comparable one — see §4 on scaling.
+1. Before deploying, confirm nobody still needs anything in Arkiv. It is open to every resident.
+2. Take a Postgres backup by hand in Coolify (*Backup Now* on the gahk database) and check it
+   finished. That backup is the only way back.
+3. Deploy, then run `sync_bucket_lifecycle` (above). It removes Arkiv's old rules
+   (`expire-noncurrent-arkiv*`, `expire-built-zips`, `expire-built-zip-markers`) and adds the
+   `retire-arkiv*` rules, which turn every Arkiv object into a noncurrent version within a day and
+   delete it 30 days after that. Until then, restoring the backup from step 2 still finds its files
+   (by removing the delete markers).
+4. A month and a few days later, when the four prefixes are empty, move the `retire-arkiv*` IDs to
+   `RETIRED` in the command, delete their rules, and run it again.
 
 #### `/media/` is no longer public
 
@@ -849,8 +836,6 @@ old app shows how, `https://intern.gahk.dk/install` has the steps, and phones ge
 - [ ] **Media on the bucket (§4c):** bucket in `fsn1` with a dot-free name; `S3_BUCKET` left UNSET
       for the first deploy; stages 1-3 followed in order; the re-run of `migrate_media_to_s3`
       reporting `0 uploaded, N already present and identical` (the checksum proof).
-- [ ] **Before residents can upload to Arkiv:** the bucket CORS rule set (§4c) and one real upload
-      tried from a browser — a missing rule fails in production only, and silently in the Django log.
 - [ ] **Before opening GAHKFlix's rollout gate** (`gahkflix/access.py`): one real upload from a
       phone, through to playback — it uses the same CORS rule, and its encode runs on `worker-media`.
 - [ ] **Before emptying the `media` volume:** bucket versioning `Enabled` **and** the lifecycle rules
