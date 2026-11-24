@@ -22,9 +22,10 @@ from django.apps import AppConfig, apps
 from django.conf import settings
 from django.db import models
 
-# The kernel. Its helpers act on behalf of whoever calls them, so a write that passes through core
-# is attributed to the app that called core (tests/architecture_guard.py).
-KERNEL = "core"
+# The kernel: core and the audit trail (tach.toml). Their helpers act on behalf of whoever calls
+# them, so a write that passes through the kernel is attributed to the app that called it
+# (tests/architecture_guard.py). The audit trail's own rows are still the audit app's.
+KERNEL = frozenset({"core", "audit"})
 
 
 @dataclass(frozen=True, order=True)
@@ -172,7 +173,7 @@ def storage_findings() -> list[Finding]:
             upload_to = field.upload_to
             if callable(upload_to):
                 code_owner = app_of_module(getattr(upload_to, "__module__", ""))
-                if code_owner not in (owner, KERNEL):
+                if code_owner != owner and code_owner not in KERNEL:
                     findings.append(
                         Finding(
                             "storage-field",
@@ -193,7 +194,7 @@ def storage_findings() -> list[Finding]:
             storage_callable = getattr(field, "_storage_callable", None)
             if storage_callable is not None:
                 code_owner = app_of_module(getattr(storage_callable, "__module__", ""))
-                if code_owner not in (owner, KERNEL, None):
+                if code_owner not in (owner, None) and code_owner not in KERNEL:
                     findings.append(
                         Finding(
                             "storage-field",

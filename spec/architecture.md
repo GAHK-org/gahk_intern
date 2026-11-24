@@ -11,16 +11,17 @@ Imports point down this list, never up.
 
 | Layer | Modules | May import |
 |---|---|---|
-| composition | `config`, `core.context_processors`, `core.middleware`, `core.management`, `core.demo`, `residents.views_admin`, `residents.urls_admin` | anything, including internals. Wiring and operator tooling only, never business rules |
+| composition | `config`, `core.context_processors`, `core.middleware`, `core.management`, `core.demo`, `residents.views_admin`, `residents.urls_admin`, `audit.views`, `audit.demo` | anything, including internals. Wiring and operator tooling only, never business rules |
 | features | `admissions`, `ak`, `arkiv`, `cms`, `den_hurtige`, `events`, `gahkflix`, `oelkaelder`, `opslagstavle`, `photo_album`, `regnskab`, `reparationer`, `rooms`, `stats` | the `api` of the layers below. A sibling feature's `api` only if `tach.toml` lists it in `depends_on`. None are listed yet |
 | platform | `notifications`; `core.admin_summary`, `core.live`, `core.mentions`, `core.push`, `core.rollout`, `core.tasks` | identity's `api`, kernel |
 | identity | `residents` | kernel |
-| kernel | the rest of `core` | nothing above it |
+| kernel | the rest of `core`; `audit` (the audit trail) | nothing above it |
 
 ## The rules
 
 - **Imports:** from another app, import only its `api` module. That holds for `residents` and
-  `notifications` too; their models and permissions are private.
+  `notifications` too; their models and permissions are private. The one exception is `audit`,
+  whose public module is `audit.trail`: every app records its events through it.
 - **Tables:** only the owning app inserts, updates or deletes rows in its tables. Everyone else
   calls a command in the owner's `api`. A cascade (`on_delete`) counts as the declaring app's choice.
 - **Relations:** a ForeignKey, OneToOne or ManyToMany into another app sets `related_name="+"`, so
@@ -28,7 +29,8 @@ Imports point down this list, never up.
 - **Storage:** each app declares the storage-name prefixes it owns (`storage_prefixes` on its
   AppConfig, ending in `/`). Prefixes do not overlap, and only the owner saves or deletes under them.
 - **Raw SQL:** none outside the kernel's infrastructure (health check, Celery's and kombu's tables,
-  locks, sequences). The allow-list is the per-file-ignores in `app/ruff-architecture.toml`.
+  locks, sequences, the audit trail's retention purge). The allow-list is the per-file-ignores in
+  `app/ruff-architecture.toml`.
 
 ## What goes in `api.py`
 

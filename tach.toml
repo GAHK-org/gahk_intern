@@ -33,7 +33,7 @@ layers = [
     "features",     # one module per business domain
     "platform",     # shared services that need to know who the user is
     "identity",     # residents: who somebody is, their room and their roles this month
-    "kernel",       # core: framework-level helpers with no domain knowledge
+    "kernel",       # core and audit: framework-level helpers with no domain knowledge
 ]
 
 [rules]
@@ -53,6 +53,8 @@ paths = [
     "core.demo",                # demo data for seed_demo
     "residents.views_admin",    # the site-admin console: every domain's worker jobs, roles, preview
     "residents.urls_admin",
+    "audit.views",              # /admin/audit: every domain's trail, in the site-admin console
+    "audit.demo",               # demo trail for seed_demo
 ]
 layer = "composition"
 
@@ -91,7 +93,19 @@ path = "core"
 layer = "kernel"
 utility = true
 
+# The audit trail: every app, core and residents included, records what it does through
+# `audit.trail` (each in its own `auditing.py`). It knows no domain, so it sits in the kernel, and
+# `trail` is its public surface (see [[interfaces]]). Its page and demo data are composition.
+[[modules]]
+path = "audit"
+layer = "kernel"
+utility = true
+
 # --- interfaces ---------------------------------------------------------------------------------
+
+[[interfaces]]
+expose = ["trail"]
+from = ["audit"]
 
 [[interfaces]]
 expose = ["api", "api\\..*"]
@@ -106,9 +120,9 @@ expose = [".*"]
 from = [
     "residents", "notifications", "admissions", "ak", "arkiv", "cms", "den_hurtige", "events",
     "gahkflix", "oelkaelder", "opslagstavle", "photo_album", "regnskab", "reparationer", "rooms",
-    "stats",
+    "stats", "audit",
 ]
 visibility = [
     "config", "core.context_processors", "core.middleware", "core.management", "core.demo",
-    "residents.views_admin", "residents.urls_admin",
+    "residents.views_admin", "residents.urls_admin", "audit.views", "audit.demo",
 ]

@@ -7,10 +7,10 @@ Each Django app under `app/` owns its data and its rules. The full rules are in
 
 1. **Import another app only through its `api.py`.** Never through its `models`, `services`,
    `views`, `forms`, `permissions` or private helpers. That includes `residents` and
-   `notifications`.
+   `notifications`. The audit trail is the exception: record events through `audit.trail`.
 2. **Imports point down the layers:** composition → features → platform (`notifications`) →
-   identity (`residents`) → kernel (`core`). `core` never imports an app above it. A feature never
-   imports another feature unless `tach.toml` declares that link.
+   identity (`residents`) → kernel (`core`, `audit`). `core` never imports an app above it. A
+   feature never imports another feature unless `tach.toml` declares that link.
 3. **Write only your own app's tables.** To change another app's data, call a command in its
    `api.py`. If none exists, add one there, in the same PR. Do not `.save()`, `.update()` or
    `.delete()` an instance or queryset of another app's model, and do not write through a reverse

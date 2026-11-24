@@ -10,8 +10,8 @@ storage save/delete while the suite runs, and reports:
   raw-sql        SQL that did not come from the ORM, outside ruff-architecture.toml's allow-list
 
 Who did it is read off the call stack: the innermost frame of a project app, with two kinds of
-frame skipped because they act on behalf of their caller — the kernel (`core`) and any app's
-`models` module (a `save()` override runs for whoever called it). Test code, demo seeds and
+frame skipped because they act on behalf of their caller — the kernel (`core`, `audit`) and any
+app's `models` module (a `save()` override runs for whoever called it). Test code, demo seeds and
 migrations are exempt. A cascade issued by Django's deletion collector is judged by the model whose
 `delete()` started it: the app that declared `on_delete` agreed to it.
 
@@ -89,7 +89,7 @@ def _writer(frame: FrameType | None, owner: str | None) -> tuple[str, FrameType]
         if app is not None and not (module == f"{app}.models" or module.startswith(f"{app}.models.")):
             if app == owner:
                 return None
-            if app != architecture.KERNEL:
+            if app not in architecture.KERNEL:
                 return app, frame
         frame = frame.f_back
     return None

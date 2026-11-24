@@ -21,6 +21,7 @@ select = ["TID251"]
 [lint.per-file-ignores]
 "tests/*" = ["TID251"]
 "*/migrations/*" = ["TID251"]
+"audit/tasks.py" = ["TID251"]                            # the trail's retention purge
 "core/admin_summary.py" = ["TID251"]                     # Celery's task-result table
 "core/health.py" = ["TID251"]                            # SELECT 1
 "core/heartbeat.py" = ["TID251"]                         # closes its thread's connection
