@@ -153,7 +153,7 @@ def test_the_page_requires_the_regnskab_role(make_resident: Callable, method: st
 def _anna_in_august(make_resident: Callable, number: int) -> Resident:
     anna = _anna(make_resident, number)
     room = Room.objects.create(legacy_index=1, number=1, floor="stuen", side="mod gaden")
-    Residency.objects.create(resident=anna, room=room, year=2026, month=8)
+    Residency.objects.create(resident=anna.person, room=room, year=2026, month=8)
     return anna
 
 

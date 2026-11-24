@@ -45,10 +45,13 @@ from django.utils import timezone
 
 from access.api import holding
 from access.models import Grant
-from residents.models import AdminAccessGrant, Residency, Resident, Role
+from residents.models import AdminAccessGrant, Person, Residency, Resident, Role
 
 from . import trail
 from .models import AuditEvent
+
+# What the demo's edits set on a person rather than an account.
+PERSON_FACTS = frozenset({"birthday", "move_in_date", "move_out_date", "study", "sponsor", "fylgje_raw"})
 
 # How far back the history goes.
 WEEKS = 5
@@ -153,8 +156,8 @@ def _cast(residents: list[Resident], now: datetime) -> _Cast | None:
     if len(by_email) < len(LOGINS):
         return None
     today = timezone.localtime(now).date()
-    leaver = Resident.objects.filter(move_out_date__isnull=False).order_by("pk").first()
-    newcomer = Resident.objects.filter(move_in_date=today.replace(day=1)).order_by("pk").first()
+    leaver = Resident.objects.filter(person__move_out_date__isnull=False).order_by("pk").first()
+    newcomer = Resident.objects.filter(person__move_in_date=today.replace(day=1)).order_by("pk").first()
     skip = {*LOGINS, getattr(leaver, "email", ""), getattr(newcomer, "email", "")}
     others = sorted((r for r in residents if r.email not in skip), key=lambda r: r.pk)
     if len(others) < 3:
@@ -426,11 +429,14 @@ def _save_resident(
     action: str, by: Resident, resident: Resident, fields: Mapping[str, object]
 ) -> Callable[[], None]:
     def play() -> None:
-        fresh = Resident.objects.get(pk=resident.pk)
+        fresh = Resident.objects.select_related("person").get(pk=resident.pk)
         for name, value in fields.items():
-            setattr(fresh, name, value)
+            # A fact about the human is the person's; the rest is the account's.
+            setattr(fresh.person if name in PERSON_FACTS and fresh.person else fresh, name, value)
         with trail.event(action, actor=by, subject=fresh, only_if_changed=True):
             fresh.save()
+            if fresh.person is not None:
+                fresh.person.save()
 
     return play
 
@@ -442,8 +448,9 @@ def _resident_edits(cast: _Cast, spare: list[Resident], now: datetime) -> list[M
     # Indstilling corrects a phone number and a study: the seeded ones, after made-up earlier ones.
     corrected = spare[8]
     seeded = {"phone": corrected.phone, "study": corrected.study}
-    Resident.objects.filter(pk=corrected.pk).update(
-        phone="+45 20 11 22 33", study="Fysik, KU" if corrected.study != "Fysik, KU" else "Jura, KU"
+    Resident.objects.filter(pk=corrected.pk).update(phone="+45 20 11 22 33")
+    Person.objects.filter(account=corrected).update(
+        study="Fysik, KU" if corrected.study != "Fysik, KU" else "Jura, KU"
     )
     moments.append(
         Moment(
@@ -451,7 +458,7 @@ def _resident_edits(cast: _Cast, spare: list[Resident], now: datetime) -> list[M
             _save_resident("residents.resident.updated", indstilling, corrected, seeded),
             indstilling,
             HOUSE,
-            reverse("edit_resident", args=[corrected.pk]),
+            reverse("edit_resident", args=[corrected.person_id]),
         )
     )
 
@@ -514,7 +521,7 @@ def _month_list(cast: _Cast, spare: list[Resident], now: datetime) -> list[Momen
     moments = []
 
     # Saved: one resident's cleaning moved, from a made-up one to the seeded one.
-    residency = Residency.objects.filter(resident=spare[10], year=cast.year, month=cast.month).first()
+    residency = Residency.objects.filter(resident=spare[10].person, year=cast.year, month=cast.month).first()
     if residency is not None and residency.cleaning is not None:
         cleaning = residency.cleaning
         other = Residency.objects.exclude(cleaning=cleaning).exclude(cleaning=None).first()
@@ -531,11 +538,17 @@ def _month_list(cast: _Cast, spare: list[Resident], now: datetime) -> list[Momen
 
     # Added in the leaver's place ("Erstatter"): the newcomer's seeded row, which was the leaver's.
     leaver, newcomer = cast.leaver, cast.newcomer
-    place = Residency.objects.filter(resident=newcomer, year=cast.year, month=cast.month).first()
-    if leaver is not None and newcomer is not None and place is not None:
+    leaving = leaver.person if leaver is not None else None
+    coming = newcomer.person if newcomer is not None else None
+    place = (
+        Residency.objects.filter(resident=coming, year=cast.year, month=cast.month).first()
+        if coming
+        else None
+    )
+    if leaver is not None and newcomer is not None and leaving and coming and place is not None:
         values = {"room": place.room, "workgroup": place.workgroup, "cleaning": place.cleaning}
         place.delete()
-        Residency.objects.create(resident=leaver, year=cast.year, month=cast.month, **values)
+        Residency.objects.create(resident=leaving, year=cast.year, month=cast.month, **values)
 
         def added() -> None:
             with trail.event(
@@ -545,8 +558,8 @@ def _month_list(cast: _Cast, spare: list[Resident], now: datetime) -> list[Momen
                 details={"period": period},
                 involve=[(leaver, "replaced")],
             ):
-                Residency.objects.filter(resident=leaver, year=cast.year, month=cast.month).delete()
-                Residency.objects.create(resident=newcomer, year=cast.year, month=cast.month, **values)
+                Residency.objects.filter(resident=leaving, year=cast.year, month=cast.month).delete()
+                Residency.objects.create(resident=coming, year=cast.year, month=cast.month, **values)
 
         moments.append(Moment(ago(now, days_before + 9, 19, 50), added, indstilling, HOUSE, page))
     return moments
@@ -560,8 +573,10 @@ def _room_round(cast: _Cast, movers: list[Resident], now: datetime) -> list[Mome
     previous = (month_start - timedelta(days=1)).date()
     moves = []
     for mover in movers:
-        now_in = Residency.objects.filter(resident=mover, year=cast.year, month=cast.month).first()
-        before = Residency.objects.filter(resident=mover, year=previous.year, month=previous.month).first()
+        now_in = Residency.objects.filter(resident=mover.person, year=cast.year, month=cast.month).first()
+        before = Residency.objects.filter(
+            resident=mover.person, year=previous.year, month=previous.month
+        ).first()
         if now_in is not None:
             moves.append(
                 {
@@ -620,10 +635,10 @@ def _unclaimed(cast: _Cast, spare: list[Resident], now: datetime) -> list[Moment
     in_admin = spare[11]
     birthday = in_admin.birthday
     if birthday is not None:
-        Resident.objects.filter(pk=in_admin.pk).update(birthday=_year_earlier(birthday))
+        Person.objects.filter(account=in_admin).update(birthday=_year_earlier(birthday))
 
     def admin_edit() -> None:
-        fresh = Resident.objects.get(pk=in_admin.pk)
+        fresh = Person.objects.get(account=in_admin)
         fresh.birthday = birthday
         fresh.save()
 

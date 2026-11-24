@@ -139,21 +139,28 @@ erDiagram
         datetime created_at
     }
 
-    residents_Resident {
+    residents_Person {
         int id PK
-        string password
-        datetime last_login
-        bool is_superuser
-        string email
         string first_name
         string last_name
-        string phone
         date birthday
         date move_in_date
         date move_out_date
         string study
         int sponsor_id FK
         string fylgje_raw
+    }
+
+    residents_Resident {
+        int id PK
+        string password
+        datetime last_login
+        bool is_superuser
+        string email
+        int person_id FK
+        string first_name
+        string last_name
+        string phone
         int economic_account_number
         string profile_picture
         string profile_thumbnail
@@ -1028,8 +1035,9 @@ erDiagram
     core_PushSubscription }o--|| residents_Resident : "user"
     access_Grant }o--|| residents_Resident : "resident"
     access_Grant }o--|o residents_Resident : "granted_by"
-    residents_Resident }o--|o residents_Resident : "sponsor"
-    residents_Residency }o--|| residents_Resident : "resident"
+    residents_Person }o--|o residents_Person : "sponsor"
+    residents_Resident ||--|o residents_Person : "person"
+    residents_Residency }o--|| residents_Person : "resident"
     residents_Residency }o--|| core_Room : "room"
     residents_Residency }o--|o core_Workgroup : "workgroup"
     residents_Residency }o--|o core_Cleaning : "cleaning"
@@ -2272,21 +2280,28 @@ erDiagram
 
 ```mermaid
 erDiagram
-    residents_Resident {
+    residents_Person {
         int id PK
-        string password
-        datetime last_login
-        bool is_superuser
-        string email
         string first_name
         string last_name
-        string phone
         date birthday
         date move_in_date
         date move_out_date
         string study
         int sponsor_id FK
         string fylgje_raw
+    }
+
+    residents_Resident {
+        int id PK
+        string password
+        datetime last_login
+        bool is_superuser
+        string email
+        int person_id FK
+        string first_name
+        string last_name
+        string phone
         int economic_account_number
         string profile_picture
         string profile_thumbnail
@@ -2324,8 +2339,9 @@ erDiagram
 
     core_Workgroup { }
 
-    residents_Resident }o--|o residents_Resident : "sponsor"
-    residents_Residency }o--|| residents_Resident : "resident"
+    residents_Person }o--|o residents_Person : "sponsor"
+    residents_Resident ||--|o residents_Person : "person"
+    residents_Residency }o--|| residents_Person : "resident"
     residents_Residency }o--|| core_Room : "room"
     residents_Residency }o--|o core_Workgroup : "workgroup"
     residents_Residency }o--|o core_Cleaning : "cleaning"

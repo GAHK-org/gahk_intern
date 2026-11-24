@@ -2,7 +2,7 @@
 
 from audit import trail
 
-from .models import AdminAccessGrant, Residency, Resident
+from .models import AdminAccessGrant, Person, Residency, Resident
 
 trail.register(
     Resident,
@@ -15,15 +15,10 @@ trail.register(
     redact={"password"},
     labels={
         "email": "E-mail",
+        "person": "Person",
         "first_name": "Fornavn",
         "last_name": "Efternavn",
         "phone": "Telefon",
-        "birthday": "Fødselsdag",
-        "move_in_date": "Indflytning",
-        "move_out_date": "Udflytning",
-        "study": "Studie",
-        "sponsor": "Fylgje",
-        "fylgje_raw": "Fylgje (fritekst)",
         "economic_account_number": "E-conomic kontonr.",
         "profile_picture": "Profilbillede",
         "bio": "Om mig",
@@ -34,12 +29,28 @@ trail.register(
     },
 )
 trail.register(
+    Person,
+    "residents.person",
+    name=lambda p: p.full_name,
+    label="Person",
+    labels={
+        "first_name": "Fornavn",
+        "last_name": "Efternavn",
+        "birthday": "Fødselsdag",
+        "move_in_date": "Indflytning",
+        "move_out_date": "Udflytning",
+        "study": "Studie",
+        "sponsor": "Fylgje",
+        "fylgje_raw": "Fylgje (fritekst)",
+    },
+)
+trail.register(
     Residency,
     "residents.residency",
     name=lambda r: f"{r.resident.full_name} {r.year}-{r.month:02d}",
     label="Plads på alumnelisten",
     labels={
-        "resident": "Beboer",
+        "resident": "Person",
         "room": "Værelse",
         "workgroup": "Embedsgruppe",
         "cleaning": "Rengøring",

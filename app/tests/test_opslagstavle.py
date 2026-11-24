@@ -113,7 +113,7 @@ def give_embedsgruppe(resident: Resident, name: str, room_number: int) -> None:
     """Put `resident` in the `name` embedsgruppe for the active month — the pill's only source."""
     year, month = active_period()
     Residency.objects.create(
-        resident=resident,
+        resident=resident.person,
         room=Room.objects.create(
             legacy_index=room_number, number=room_number, floor="stuen", side="mod gaden"
         ),
@@ -726,7 +726,7 @@ def test_a_byline_keeps_the_embedsgruppe_the_author_had_when_they_posted(
     give_embedsgruppe(beboer, "Køkkengruppen", room_number=204)
     make_notice(beboer)
 
-    Residency.objects.filter(resident=beboer).update(
+    Residency.objects.filter(resident=beboer.person).update(
         workgroup=Workgroup.objects.get_or_create(name="Repperne")[0]
     )
     client.force_login(beboer)
@@ -741,7 +741,7 @@ def test_editing_a_post_does_not_restamp_its_embedsgruppe(client: Client, beboer
     Fixing a typo must not silently reattribute a post to the author's current group."""
     give_embedsgruppe(beboer, "Køkkengruppen", room_number=205)
     notice = make_notice(beboer)
-    Residency.objects.filter(resident=beboer).update(
+    Residency.objects.filter(resident=beboer.person).update(
         workgroup=Workgroup.objects.get_or_create(name="Repperne")[0]
     )
     client.force_login(beboer)
@@ -812,7 +812,7 @@ def test_the_backfill_reads_the_month_each_post_was_actually_written_in(
     then = (year - 1, month)
     give_embedsgruppe(beboer, "Repperne", room_number=206)  # their group now
     Residency.objects.create(
-        resident=beboer,
+        resident=beboer.person,
         room=Room.objects.create(legacy_index=207, number=207, floor="stuen", side="mod gaden"),
         workgroup=Workgroup.objects.get_or_create(name="Køkkengruppen")[0],
         year=then[0],
@@ -1322,7 +1322,7 @@ def make_living(resident: Resident, room_number: int = 101) -> Resident:
     notifications.services.everyone()."""
     year, month = active_period()
     Residency.objects.create(
-        resident=resident,
+        resident=resident.person,
         room=Room.objects.create(
             legacy_index=room_number, number=room_number, floor="stuen", side="mod gaden"
         ),

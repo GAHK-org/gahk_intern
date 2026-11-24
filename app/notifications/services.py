@@ -84,7 +84,7 @@ def everyone() -> QuerySet[Resident]:
     # Not the kitchen staff: a push device would otherwise put them in every feature's audience.
     return (
         Resident.objects.filter(is_active=True)
-        .filter(Q(pk__in=living) | Q(pk__in=roles) | Q(pk__in=devices) | Q(is_superuser=True))
+        .filter(Q(person_id__in=living) | Q(pk__in=roles) | Q(pk__in=devices) | Q(is_superuser=True))
         .exclude(pk__in=kitchen().values("pk"))
     )
 

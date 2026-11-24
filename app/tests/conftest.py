@@ -5,7 +5,11 @@ from pathlib import Path
 
 import pytest
 
-from residents.models import Resident, active_period
+from residents.models import Person, Resident, active_period
+
+# What make_resident puts on the person rather than the account.
+PERSON_FACTS = ("birthday", "move_in_date", "move_out_date", "study", "sponsor", "fylgje_raw")
+_MISSING = object()
 
 
 def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
@@ -134,12 +138,17 @@ def make_resident(db: None) -> Callable[[str, str, bool, tuple], Resident]:
     ) -> Resident:
         # One of the kitchen staff: an account holding the kitchen role by a grant.
         kitchen = bool(extra.pop("is_kitchen", False))
-        r = Resident(
-            email=email,
-            first_name=extra.pop("first_name", "Test"),
-            last_name=extra.pop("last_name", "Beboer"),
-            **extra,
-        )
+        first_name, last_name = extra.pop("first_name", "Test"), extra.pop("last_name", "Beboer")
+        # The human behind the account (residents.Person), with the facts about them; `person=None`
+        # makes an account with no person, as the photo import script's is.
+        person = extra.pop("person", _MISSING)
+        if person is _MISSING:
+            facts = {key: extra.pop(key) for key in PERSON_FACTS if key in extra}
+            sponsor = facts.get("sponsor")
+            if isinstance(sponsor, Resident):  # a test names a fylgje by their account
+                facts["sponsor"] = sponsor.person
+            person = Person.objects.create(first_name=first_name, last_name=last_name, **facts)
+        r = Resident(email=email, first_name=first_name, last_name=last_name, person=person, **extra)
         if legacy:
             r.password = "gahk_sha256$$" + hashlib.sha256(password.encode()).hexdigest()
         else:

@@ -40,7 +40,7 @@ from core.markdown import plain_text
 from core.mentions import notify_mentions, to_plain
 from notifications import categories
 from notifications import services as notifications
-from residents.models import Residency, Resident, active_period
+from residents.models import Resident, active_period
 
 from . import access
 from .models import Answer, Event, EventComment, EventInvite, Rsvp, Visibility
@@ -406,7 +406,11 @@ def deadline_reminder_audience(event: Event) -> QuerySet[Resident]:
         eligible = set(event.invites.values_list("resident_id", flat=True))
     else:
         year, month = active_period()
-        eligible = set(Residency.objects.filter(year=year, month=month).values_list("resident_id", flat=True))
+        eligible = set(
+            Resident.objects.filter(
+                person__residencies__year=year, person__residencies__month=month
+            ).values_list("pk", flat=True)
+        )
 
     answered = set(event.rsvps.values_list("resident_id", flat=True))
     hosts = {event.organiser_id, *event.co_organisers.values_list("pk", flat=True)}

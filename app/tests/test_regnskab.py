@@ -11,7 +11,7 @@ from ak.models import AkEntry
 from core.models import Room, Workgroup
 from oelkaelder.models import Deposit, Shopper
 from regnskab import alumneregning, economic, tasks
-from residents.models import Residency, Resident, prev_period
+from residents.models import Person, Residency, Resident, prev_period
 
 
 @pytest.fixture(autouse=True)
@@ -29,7 +29,7 @@ def _setup_leaver_and_stayer(make_resident: Callable) -> None:
 
     stayer = make_resident(email="stay@gahk.dk", first_name="Sta", last_name="Yer")
     Residency.objects.create(
-        resident=stayer,
+        resident=stayer.person,
         year=cy,
         month=cm,
         room=Room.objects.create(legacy_index=2, number=4, floor="stuen", side="mod gården"),
@@ -37,7 +37,7 @@ def _setup_leaver_and_stayer(make_resident: Callable) -> None:
 
     leaver = make_resident(email="leaver@gahk.dk", first_name="Lea", last_name="Ver")
     Residency.objects.create(
-        resident=leaver,
+        resident=leaver.person,
         year=py,
         month=pm,
         room=Room.objects.create(legacy_index=1, number=3, floor="stuen", side="mod gaden"),
@@ -160,7 +160,7 @@ def test_send_alumneregninger_queues_the_task_and_the_status_page_shows_the_resu
         email="alumne@gahk.dk", economic_account_number=1101, first_name="Alu", last_name="Mne"
     )
     Residency.objects.create(
-        resident=alumne,
+        resident=alumne.person,
         year=2026,
         month=8,
         room=Room.objects.create(legacy_index=1, number=1, floor="stuen", side="mod gaden"),
@@ -192,7 +192,7 @@ def test_send_alumneregninger_auth_error_does_not_crash_the_request(
     just queues and redirects; the status page simply shows nobody processed yet."""
     alumne = make_resident(email="alumne@gahk.dk", economic_account_number=1101)
     Residency.objects.create(
-        resident=alumne,
+        resident=alumne.person,
         year=2026,
         month=8,
         room=Room.objects.create(legacy_index=1, number=1, floor="stuen", side="mod gaden"),
@@ -272,7 +272,7 @@ def test_preview_renders_rows_and_pdf_link(monkeypatch: pytest.MonkeyPatch, make
         email="alumne@gahk.dk", economic_account_number=1101, first_name="Alu", last_name="Mne"
     )
     Residency.objects.create(
-        resident=alumne,
+        resident=alumne.person,
         year=2026,
         month=8,
         room=Room.objects.create(legacy_index=1, number=1, floor="stuen", side="mod gaden"),
@@ -399,7 +399,7 @@ def test_regnskab_workgroup_grants_role(make_resident: Callable) -> None:
     r = make_resident(email="d@gahk.dk")
     wg, _ = Workgroup.objects.get_or_create(name="Regnskabsgruppen")  # created by migration core.0003
     room = Room.objects.create(legacy_index=95, number=95, floor="stuen", side="mod gaden")
-    Residency.objects.create(resident=r, room=room, workgroup=wg, year=2026, month=8)
+    Residency.objects.create(resident=r.person, room=room, workgroup=wg, year=2026, month=8)
 
     assert r.has_role("regnskab", (2026, 8))
     assert not r.has_role("regnskab", (2026, 9))
@@ -407,10 +407,13 @@ def test_regnskab_workgroup_grants_role(make_resident: Callable) -> None:
 
 def _alumne_in_august(email: str, number: int | None, room: int) -> Resident:
     alumne = Resident.objects.create(
-        email=email, first_name=email.partition("@")[0], economic_account_number=number
+        email=email,
+        first_name=email.partition("@")[0],
+        economic_account_number=number,
+        person=Person.objects.create(first_name=email.partition("@")[0]),
     )
     Residency.objects.create(
-        resident=alumne,
+        resident=alumne.person,
         year=2026,
         month=8,
         room=Room.objects.create(legacy_index=room, number=room, floor="stuen", side="mod gaden"),

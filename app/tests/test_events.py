@@ -1590,7 +1590,7 @@ def _residency(resident: Resident) -> None:
     n = next(_room_seq)
     room = Room.objects.create(legacy_index=n, number=n, floor="stuen", side="mod gaden")
     year, month = active_period()
-    Residency.objects.get_or_create(resident=resident, room=room, year=year, month=month)
+    Residency.objects.get_or_create(resident=resident.person, room=room, year=year, month=month)
 
 
 def test_an_invite_only_event_needs_four_invitees(
@@ -1927,7 +1927,7 @@ def test_the_calendar_flags_exactly_the_people_on_the_active_alumneliste(
     make_resident(email="aldrig@gahk.dk", first_name="Aldrig", birthday=born)
     gone = _celebrant(make_resident, born, first_name="Fraflyttet", last_name="Person")
     year, month = active_period()
-    Residency.objects.filter(resident=gone).update(year=year - 1)
+    Residency.objects.filter(resident=gone.person).update(year=year - 1)
 
     client.force_login(beboer)
     response = client.get(f"{EVENTS}kalender?maaned=2026-09&dag=2026-09-12")
@@ -1938,13 +1938,15 @@ def test_the_calendar_flags_exactly_the_people_on_the_active_alumneliste(
         for row in on_the_list
         if row.resident.birthday and (row.resident.birthday.month, row.resident.birthday.day) == (9, 12)
     }
-    assert {b.resident.pk for b in response.context["chosen_birthdays"]} == expected == {here.pk}
+    assert (
+        {b.resident.person_id for b in response.context["chosen_birthdays"]} == expected == {here.person_id}
+    )
 
     body = response.content.decode()
     assert "Aldrig" not in body
     assert "Fraflyttet" not in body
     # Not deleted — merely off this month's list, and still on the one they were on.
-    assert Residency.objects.filter(resident=gone, year=year - 1).exists()
+    assert Residency.objects.filter(resident=gone.person, year=year - 1).exists()
 
 
 def test_a_resident_without_a_birthday_is_simply_absent(

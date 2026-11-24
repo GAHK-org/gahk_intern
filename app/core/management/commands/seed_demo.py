@@ -75,6 +75,7 @@ from photo_album.models import Album, Media
 from regnskab.models import AlumneregningSend, EconomicLedgerEntry
 from residents.models import (
     WORKGROUP_ROLE,
+    Person,
     Residency,
     Resident,
     Role,
@@ -350,16 +351,15 @@ class Command(BaseCommand):
         # Lineage: give most residents a sponsor (fylgje) picked from someone created earlier.
         for i, r in enumerate(residents):
             if i > 4 and self.rng.random() < 0.8:
-                r.sponsor = residents[self.rng.randint(0, i - 1)]
-                r.save(update_fields=["sponsor"])
+                Person.objects.filter(account=r).update(
+                    sponsor_id=residents[self.rng.randint(0, i - 1)].person_id
+                )
         return residents
 
     def _make_resident(self, email: str, first: str, last: str, **extra) -> Resident:  # noqa: ANN003
-        r = Resident(
-            email=email,
+        person = Person.objects.create(
             first_name=first,
             last_name=last,
-            phone=self.fake.phone_number(),
             birthday=self.fake.date_between(start_date="-30y", end_date="-19y"),
             move_in_date=self.fake.date_between(start_date="-6y", end_date="-3m"),
             study=self.rng.choice(
@@ -374,6 +374,13 @@ class Command(BaseCommand):
                     "Matematik, DTU",
                 ]
             ),
+        )
+        r = Resident(
+            email=email,
+            first_name=first,
+            last_name=last,
+            phone=self.fake.phone_number(),
+            person=person,
             **extra,
         )
         r.set_password(DEMO_PASSWORD)
@@ -433,7 +440,7 @@ class Command(BaseCommand):
                 wg_counts[wg.name] += 1
 
                 Residency.objects.update_or_create(
-                    resident=resident,
+                    resident=resident.person,
                     year=y,
                     month=m,
                     defaults={
@@ -445,9 +452,9 @@ class Command(BaseCommand):
 
         if residents:
             leaver = residents[-1]
-            Residency.objects.filter(resident=leaver, year=self.year, month=self.month).delete()
-            leaver.move_out_date = date(self.year, self.month, 1)  # moved out on the 1st of this month
-            leaver.save(update_fields=["move_out_date"])
+            Residency.objects.filter(resident=leaver.person, year=self.year, month=self.month).delete()
+            # Moved out on the 1st of this month.
+            Person.objects.filter(account=leaver).update(move_out_date=date(self.year, self.month, 1))
             self._seed_successor(residents, rooms, workgroups, cleanings, len(residents))
         return residents
 
@@ -475,14 +482,19 @@ class Command(BaseCommand):
             n += 1
             email = f"{base}{n}@gahk.dk"
 
+        person = Person.objects.create(
+            first_name=first,
+            last_name=last,
+            birthday=self.fake.date_between(start_date="-30y", end_date="-19y"),
+            move_in_date=date(self.year, self.month, 1),  # arrived the day the leaver left
+            study=self.rng.choice([r.study for r in residents if r.study] or [""]),
+        )
         newcomer = Resident(
             email=email,
             first_name=first,
             last_name=last,
             phone=self.fake.phone_number(),
-            birthday=self.fake.date_between(start_date="-30y", end_date="-19y"),
-            move_in_date=date(self.year, self.month, 1),  # arrived the day the leaver left
-            study=self.rng.choice([r.study for r in residents if r.study] or [""]),
+            person=person,
             economic_account_number=4201 + account_number,
         )
         newcomer.set_password(DEMO_PASSWORD)
@@ -497,7 +509,7 @@ class Command(BaseCommand):
         short = [w for w in workgroups if w.size > 0 and counts.get(w.id, 0) < w.size]
         workgroup = self.rng.choice(short) if short else self.rng.choice(workgroups)
         Residency.objects.update_or_create(
-            resident=newcomer,
+            resident=person,
             year=self.year,
             month=self.month,
             defaults={

@@ -3,6 +3,19 @@
 Who may open which pages and do what on the intranet. One table decides it; the rest of the site
 only asks for a permission by name.
 
+## People and accounts
+
+- A person is a human the house knows: name, birthday, move-in and move-out, studie, fylgje. An
+  account is a login: e-mail, password, phone and the profile on the site.
+- A person may have no account: an alumne from before the intranet, a fylgje who never had an
+  e-mail on file, someone added to the list without an e-mail. They are on the alumneliste, in
+  Stamtræ and pickable as a fylgje, but cannot log in.
+- An account may have no person: the photo import script's. It is never on a list.
+- The alumneliste and the fylgje name people; posts, krydser, bills and roles belong to accounts.
+  An account's stage and embedsgruppe come from its person's months.
+- The resident edit page edits the person, and the login's e-mail and phone when there is one. The
+  account keeps a copy of the person's name for display.
+
 ## Features and grades
 
 The site is cut into features: Den Hurtige, Opslagstavlen, Begivenheder, Reparationer, Fotoalbum,
@@ -152,6 +165,9 @@ audience narrows who; the roles still decide what.
   the channel list, so a channel is still added by a deploy; who reads it is a line of data.
 - **Audiences are role sets, not lists of people.** They follow the alumneliste by themselves: a
   post for those living here stops reaching someone the month they move out.
+- **Person and account apart, with the same ids at the start.** Every account became a person with
+  its own id, so the months on the list needed no rewriting; from then on the two are numbered
+  apart.
 - **Grants add, never take away.** An exception the Indstilling makes is one more role; nobody's
   access is cut by hand.
 

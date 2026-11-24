@@ -29,7 +29,7 @@ def _on_list(resident: Resident, *offsets: int, workgroup: str | None = None) ->
         room = Room.objects.create(legacy_index=n, number=n, floor="stuen", side="mod gaden")
         index = today.year * 12 + today.month - 1 + offset
         Residency.objects.create(
-            resident=resident, room=room, workgroup=group, year=index // 12, month=index % 12 + 1
+            resident=resident.person, room=room, workgroup=group, year=index // 12, month=index % 12 + 1
         )
     return resident
 

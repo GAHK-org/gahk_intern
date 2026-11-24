@@ -12,7 +12,7 @@ from django.core.files.uploadedfile import UploadedFile
 from core import mail as outbox
 from core.uploads import validate_image_upload
 
-from .models import Resident
+from .models import Person, Resident
 
 
 class LocalDateInput(forms.DateInput):
@@ -52,17 +52,15 @@ class EmailAuthenticationForm(AuthenticationForm):
         )
 
 
-class ResidentEditForm(forms.ModelForm):
-    """Indstilling edits a resident's core data (everything in the alumneliste that is not per-month:
-    room/embedsgruppe/rengøring live on the monthly Residency and are edited on the next-month list)."""
+class PersonForm(forms.ModelForm):
+    """Indstilling edits a person's facts (everything in the alumneliste that is not per-month: room,
+    embedsgruppe and rengøring live on the monthly Residency and are edited on the next-month list)."""
 
     class Meta:
-        model = Resident
+        model = Person
         fields = [
             "first_name",
             "last_name",
-            "email",
-            "phone",
             "birthday",
             "study",
             "move_in_date",
@@ -73,8 +71,6 @@ class ResidentEditForm(forms.ModelForm):
         labels = {
             "first_name": "Fornavn",
             "last_name": "Efternavn",
-            "email": "E-mail",
-            "phone": "Telefon",
             "birthday": "Fødselsdag",
             "study": "Studie",
             "move_in_date": "Indflyttet",
@@ -90,13 +86,20 @@ class ResidentEditForm(forms.ModelForm):
 
     def __init__(self, *args, **kwargs) -> None:  # noqa: ANN002, ANN003
         super().__init__(*args, **kwargs)
-        # Fylgje picker: any other resident, by name; not required.
+        # Fylgje picker: any other person, with a login or not, by name; not required.
         sponsor = self.fields["sponsor"]
         if isinstance(sponsor, forms.ModelChoiceField):
-            sponsor.queryset = Resident.objects.exclude(pk=self.instance.pk).order_by(
-                "first_name", "last_name"
-            )
+            sponsor.queryset = Person.objects.exclude(pk=self.instance.pk).order_by("first_name", "last_name")
         sponsor.required = False
+
+
+class ContactForm(forms.ModelForm):
+    """The login and contact details of a person's account, edited beside the person."""
+
+    class Meta:
+        model = Resident
+        fields = ["email", "phone"]
+        labels = {"email": "E-mail", "phone": "Telefon"}
 
 
 class ProfileEditForm(forms.ModelForm):

@@ -103,7 +103,7 @@ def test_end_round_assigns_winner_to_room_and_clears(make_resident: Callable) ->
     c.force_login(ind)
     c.post(reverse("soegvaerelse:end_round"))
 
-    assert Residency.objects.filter(resident=winner, room=room, year=ny, month=nm).exists()
+    assert Residency.objects.filter(resident=winner.person, room=room, year=ny, month=nm).exists()
     assert not RoomOffer.objects.exists()  # round cleared
     assert not KvotientApplication.objects.exists()
 
@@ -120,8 +120,10 @@ def test_end_round_carries_non_participants_forward(make_resident: Callable) -> 
     r1 = Room.objects.create(legacy_index=30, number=30, floor="stuen", side="mod gaden")
     r2 = Room.objects.create(legacy_index=31, number=31, floor="stuen", side="mod gaden")
     bystander = make_resident(email="bystander@gahk.dk")
-    Residency.objects.create(resident=bystander, room=r1, year=cy, month=cm)
-    Residency.objects.create(resident=make_resident(email="leaver@gahk.dk"), room=r2, year=cy, month=cm)
+    Residency.objects.create(resident=bystander.person, room=r1, year=cy, month=cm)
+    Residency.objects.create(
+        resident=(make_resident(email="leaver@gahk.dk")).person, room=r2, year=cy, month=cm
+    )
 
     ny, nm = next_period((cy, cm))
     m = month_index(ny, nm)
@@ -136,9 +138,9 @@ def test_end_round_carries_non_participants_forward(make_resident: Callable) -> 
     c.post(reverse("soegvaerelse:end_round"))
 
     # the bystander (not in the round) is carried forward — the bug was that they disappeared
-    assert Residency.objects.filter(resident=bystander, room=r1, year=ny, month=nm).exists()
+    assert Residency.objects.filter(resident=bystander.person, room=r1, year=ny, month=nm).exists()
     # the winner is placed into the offered room on the target month
-    assert Residency.objects.filter(resident=winner, room=r2, year=ny, month=nm).exists()
+    assert Residency.objects.filter(resident=winner.person, room=r2, year=ny, month=nm).exists()
 
 
 @pytest.mark.django_db
@@ -154,7 +156,7 @@ def test_end_round_winner_keeps_embedsgruppe_and_cleaning(make_resident: Callabl
     wg = Workgroup.objects.create(name="Haven")
     cl = Cleaning.objects.create(name="Trappe")
     winner = make_resident(email="w@gahk.dk")
-    Residency.objects.create(resident=winner, room=old, workgroup=wg, cleaning=cl, year=cy, month=cm)
+    Residency.objects.create(resident=winner.person, room=old, workgroup=wg, cleaning=cl, year=cy, month=cm)
 
     ny, nm = next_period((cy, cm))
     m = month_index(ny, nm)
@@ -167,7 +169,7 @@ def test_end_round_winner_keeps_embedsgruppe_and_cleaning(make_resident: Callabl
     c.force_login(ind)
     c.post(reverse("soegvaerelse:end_round"))
 
-    res = Residency.objects.get(resident=winner, year=ny, month=nm)
+    res = Residency.objects.get(resident=winner.person, year=ny, month=nm)
     assert res.room_id == won.id  # moved into the won room
     assert res.workgroup_id == wg.id  # embedsgruppe preserved
     assert res.cleaning_id == cl.id  # rengøring preserved
@@ -316,7 +318,7 @@ def test_end_round_leaves_contested_rooms_for_resolution(make_resident: Callable
     c.force_login(ind)
     c.post(reverse("soegvaerelse:end_round"))
 
-    assert Residency.objects.filter(resident=solo.resident, room=settled, year=ny, month=nm).exists()
+    assert Residency.objects.filter(resident=solo.resident.person, room=settled, year=ny, month=nm).exists()
     assert not RoomOffer.objects.filter(room=settled).exists()  # settled offer cleared
     assert RoomOffer.objects.filter(room=tied).exists()  # contested offer kept
     assert KvotientApplication.objects.filter(id__in=[x.id, y.id]).count() == 2  # tied apps kept
@@ -352,7 +354,7 @@ def test_dev_clock_shifts_active_period(make_resident: Callable) -> None:
     from residents.models import active_period
 
     r = Room.objects.create(legacy_index=80, number=80, floor="stuen", side="mod gaden")
-    Residency.objects.create(resident=make_resident(email="ap@gahk.dk"), room=r, year=2030, month=5)
+    Residency.objects.create(resident=(make_resident(email="ap@gahk.dk")).person, room=r, year=2030, month=5)
     DevClock.objects.update_or_create(pk=1, defaults={"simulated_date": datetime.date(2030, 6, 1)})
     with override_settings(DEBUG=True):
         assert active_period() == (2030, 5)  # the May list is the latest that has started by June
@@ -384,7 +386,7 @@ def test_end_round_evicts_departing_occupant_no_clash(make_resident: Callable) -
     ak, _ = Workgroup.objects.get_or_create(name="AK-gruppen")
 
     leaver = make_resident(email="leaver2@gahk.dk")
-    Residency.objects.create(resident=leaver, room=room, year=cy, month=cm, workgroup=ak)  # in 090, AK
+    Residency.objects.create(resident=leaver.person, room=room, year=cy, month=cm, workgroup=ak)  # in 090, AK
 
     winner = make_resident(email="winner3@gahk.dk")
     app = _application(winner, m, k=9.0)
@@ -399,8 +401,8 @@ def test_end_round_evicts_departing_occupant_no_clash(make_resident: Callable) -
     occupants = list(
         Residency.objects.filter(room=room, year=ny, month=nm).values_list("resident_id", flat=True)
     )
-    assert occupants == [winner.id]  # exactly one — the winner, not the leaver
-    assert not Residency.objects.filter(resident=leaver, year=ny, month=nm).exists()  # leaver evicted
+    assert occupants == [winner.person_id]  # exactly one — the winner, not the leaver
+    assert not Residency.objects.filter(resident=leaver.person, year=ny, month=nm).exists()  # leaver evicted
     # and so is the role the leaver's embedsgruppe would have given them that month
     assert not held(leaver, (ny, nm))
 
@@ -422,11 +424,11 @@ def test_end_round_cascade_relocating_winner_keeps_room_and_roles(make_resident:
     b = Room.objects.create(legacy_index=101, number=101, floor="stuen", side="mod gaden")
 
     leaver = make_resident(email="leave3@gahk.dk")
-    Residency.objects.create(resident=leaver, room=a, year=cy, month=cm)  # A freed by leaver
+    Residency.objects.create(resident=leaver.person, room=a, year=cy, month=cm)  # A freed by leaver
     w = make_resident(email="w4@gahk.dk")  # currently in B, wins A -> frees B
-    Residency.objects.create(resident=w, room=b, year=cy, month=cm, workgroup=ak)
+    Residency.objects.create(resident=w.person, room=b, year=cy, month=cm, workgroup=ak)
     w2 = make_resident(email="w5@gahk.dk")  # newcomer-ish, wins B (w's freed room)
-    Residency.objects.create(resident=w2, room=a, year=cy, month=cm)  # placeholder current room
+    Residency.objects.create(resident=w2.person, room=a, year=cy, month=cm)  # placeholder current room
 
     app_w = _application(w, m, k=9.0)
     KvotientPriority.objects.create(application=app_w, room=a, priority=1, month=m)
@@ -441,11 +443,11 @@ def test_end_round_cascade_relocating_winner_keeps_room_and_roles(make_resident:
     c.post(reverse("soegvaerelse:end_round"))
 
     # w relocated B->A and is intact, with roles preserved (never caught by the eviction)
-    assert Residency.objects.get(resident=w, year=ny, month=nm).room_id == a.id
+    assert Residency.objects.get(resident=w.person, year=ny, month=nm).room_id == a.id
     assert "ak" in held(w, (ny, nm))
-    assert Residency.objects.get(resident=w2, year=ny, month=nm).room_id == b.id
+    assert Residency.objects.get(resident=w2.person, year=ny, month=nm).room_id == b.id
     assert not Residency.objects.filter(
-        resident=leaver, year=ny, month=nm
+        resident=leaver.person, year=ny, month=nm
     ).exists()  # only the leaver removed
     # no clashes anywhere in the target month
     from residents.views import _clash_rooms
@@ -556,9 +558,9 @@ def test_end_round_shows_move_overview_on_admin(make_resident: Callable) -> None
     b = Room.objects.create(legacy_index=121, number=121, floor="stuen", side="mod gaden")
 
     mover = make_resident(email="mover@gahk.dk", first_name="Mette", last_name="Mover")
-    Residency.objects.create(resident=mover, room=b, year=cy, month=cm)  # in 121, wins 120
+    Residency.objects.create(resident=mover.person, room=b, year=cy, month=cm)  # in 121, wins 120
     leaver = make_resident(email="leaver9@gahk.dk", first_name="Lars", last_name="Leaver")
-    Residency.objects.create(resident=leaver, room=a, year=cy, month=cm)  # in 120, leaving
+    Residency.objects.create(resident=leaver.person, room=a, year=cy, month=cm)  # in 120, leaving
     app = _application(mover, m, k=9.0)
     KvotientPriority.objects.create(application=app, room=a, priority=1, month=m)
     RoomOffer.objects.create(room=a, month=m)
@@ -672,7 +674,7 @@ def test_computed_orlov_counts_months_off_the_list(make_resident: Callable) -> N
     rooms = [Room.objects.create(legacy_index=900 + i, number=900 + i, floor="s", side="x") for i in range(3)]
     # On the list Aug, Oct, Dec 2024 — gaps in Sep and Nov (the newest, Dec 2024, becomes active).
     for (yy, mm), rm in zip([(2024, 8), (2024, 10), (2024, 12)], rooms, strict=False):
-        Residency.objects.create(resident=r, room=rm, year=yy, month=mm)
+        Residency.objects.create(resident=r.person, room=rm, year=yy, month=mm)
 
     y, m = active_period()
     window = (month_index(y, m) - month_index(2024, 8)) + 1
@@ -685,7 +687,7 @@ def test_apply_form_prefills_computed_orlov(make_resident: Callable) -> None:
     r = make_resident(email="orlovform@gahk.dk", move_in_date=date(2024, 8, 1))
     for (yy, mm), i in zip([(2024, 8), (2024, 12)], range(2), strict=False):
         room = Room.objects.create(legacy_index=920 + i, number=920 + i, floor="s", side="x")
-        Residency.objects.create(resident=r, room=room, year=yy, month=mm)
+        Residency.objects.create(resident=r.person, room=room, year=yy, month=mm)
     c = Client()
     c.force_login(r)
     html = c.get(reverse("soegvaerelse:soeg")).content.decode()
@@ -701,7 +703,7 @@ def test_detail_shows_suggested_vs_submitted_orlov_to_indstilling(make_resident:
     resident = make_resident(email="applicant@gahk.dk", move_in_date=date(2024, 8, 1))
     for (yy, mm), i in zip([(2024, 8), (2024, 12)], range(2), strict=False):  # suggestion = 3 (Sep–Nov)
         room = Room.objects.create(legacy_index=940 + i, number=940 + i, floor="s", side="x")
-        Residency.objects.create(resident=resident, room=room, year=yy, month=mm)
+        Residency.objects.create(resident=resident.person, room=room, year=yy, month=mm)
     target = month_index(*next_period())
     app = KvotientApplication.objects.create(
         resident=resident,
