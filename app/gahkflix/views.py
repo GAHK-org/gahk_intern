@@ -32,7 +32,7 @@ from django.utils import timezone
 from django.utils.http import urlencode
 from django.views.decorators.http import require_GET, require_POST
 
-from arkiv.storage import content_disposition
+from core.downloads import content_disposition
 from core.media import REDIRECT_CACHE_CONTROL
 from residents.models import Resident
 from residents.permissions import current_resident
