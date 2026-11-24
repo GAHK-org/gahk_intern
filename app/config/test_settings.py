@@ -15,3 +15,9 @@ PASSWORD_HASHERS = [
 
 CELERY_TASK_ALWAYS_EAGER = True
 CELERY_TASK_EAGER_PROPAGATES = True
+
+# A registered model written by a request or a job with no audit event open is a missing
+# trail.event() — an error here, a logged warning in production. Writes from the tests' own setup
+# (outside any request or job) are not recorded at all.
+AUDIT_STRICT = True
+AUDIT_FALLBACK = False
