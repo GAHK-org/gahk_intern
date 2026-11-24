@@ -63,8 +63,8 @@ layer = "composition"
 
 [[modules]]
 paths = [
-    "admissions", "ak", "arkiv", "cms", "den_hurtige", "events", "gahkflix", "oelkaelder",
-    "opslagstavle", "photo_album", "regnskab", "reparationer", "rooms", "stats",
+    "admissions", "ak", "cms", "den_hurtige", "events", "gahkflix", "oelkaelder", "opslagstavle",
+    "photo_album", "regnskab", "reparationer", "rooms", "stats",
 ]
 layer = "features"
 depends_on = []
@@ -110,17 +110,16 @@ from = ["audit"]
 [[interfaces]]
 expose = ["api", "api\\..*"]
 from = [
-    "residents", "notifications", "admissions", "ak", "arkiv", "cms", "den_hurtige", "events",
-    "gahkflix", "oelkaelder", "opslagstavle", "photo_album", "regnskab", "reparationer", "rooms",
-    "stats",
+    "residents", "notifications", "admissions", "ak", "cms", "den_hurtige", "events", "gahkflix",
+    "oelkaelder", "opslagstavle", "photo_album", "regnskab", "reparationer", "rooms", "stats",
 ]
 
 [[interfaces]]
 expose = [".*"]
 from = [
-    "residents", "notifications", "admissions", "ak", "arkiv", "cms", "den_hurtige", "events",
-    "gahkflix", "oelkaelder", "opslagstavle", "photo_album", "regnskab", "reparationer", "rooms",
-    "stats", "audit",
+    "residents", "notifications", "admissions", "ak", "cms", "den_hurtige", "events", "gahkflix",
+    "oelkaelder", "opslagstavle", "photo_album", "regnskab", "reparationer", "rooms", "stats",
+    "audit",
 ]
 visibility = [
     "config", "core.context_processors", "core.middleware", "core.management", "core.demo",

@@ -12,7 +12,7 @@ Imports point down this list, never up.
 | Layer | Modules | May import |
 |---|---|---|
 | composition | `config`, `core.context_processors`, `core.middleware`, `core.management`, `core.demo`, `residents.views_admin`, `residents.urls_admin`, `audit.views`, `audit.demo` | anything, including internals. Wiring and operator tooling only, never business rules |
-| features | `admissions`, `ak`, `arkiv`, `cms`, `den_hurtige`, `events`, `gahkflix`, `oelkaelder`, `opslagstavle`, `photo_album`, `regnskab`, `reparationer`, `rooms`, `stats` | the `api` of the layers below. A sibling feature's `api` only if `tach.toml` lists it in `depends_on`. None are listed yet |
+| features | `admissions`, `ak`, `cms`, `den_hurtige`, `events`, `gahkflix`, `oelkaelder`, `opslagstavle`, `photo_album`, `regnskab`, `reparationer`, `rooms`, `stats` | the `api` of the layers below. A sibling feature's `api` only if `tach.toml` lists it in `depends_on`. None are listed yet |
 | platform | `notifications`; `core.admin_summary`, `core.live`, `core.mentions`, `core.push`, `core.rollout`, `core.tasks` | identity's `api`, kernel |
 | identity | `residents` | kernel |
 | kernel | the rest of `core`; `audit` (the audit trail) | nothing above it |
