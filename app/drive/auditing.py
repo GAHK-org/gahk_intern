@@ -2,7 +2,7 @@
 
 from audit import trail
 
-from .models import File, FileVersion, Folder
+from .models import Event, File, FileVersion, Folder, LastDownload
 
 
 def _folder_path(folder: Folder) -> str:
@@ -29,6 +29,8 @@ trail.register(
         "period_start": "Periode",
         "created_by": "Oprettet af",
         "created_at": "Oprettet",
+        "deleted_at": "Lagt i papirkurven",
+        "deleted_by": "Lagt i papirkurven af",
     },
 )
 trail.register(
@@ -45,6 +47,8 @@ trail.register(
         "content_type": "Filtype",
         "created_by": "Oprettet af",
         "created_at": "Oprettet",
+        "deleted_at": "Lagt i papirkurven",
+        "deleted_by": "Lagt i papirkurven af",
     },
 )
 trail.register(
@@ -60,7 +64,18 @@ trail.register(
         "content_type": "Filtype",
         "created_by": "Lagt op af",
         "created_at": "Lagt op",
+        "restored_from": "Gendannet fra version",
     },
+)
+
+trail.exempt(
+    LastDownload,
+    "the version a resident last downloaded, kept for the warning when they upload over a newer one; "
+    "downloading changes nothing",
+)
+trail.exempt(
+    Event,
+    "Drive's own history lines, written beside the trail's events for the history and activity pages",
 )
 
 trail.actions(
@@ -69,5 +84,13 @@ trail.actions(
         "drive.file.uploaded": "Lagde fil op",
         "drive.file.version_uploaded": "Lagde ny version op",
         "drive.structure.ensured": "Oprettede Drives faste mapper",
+        "drive.file.renamed": "Omdøbte fil",
+        "drive.folder.renamed": "Omdøbte mappe",
+        "drive.items.moved": "Flyttede filer og mapper",
+        "drive.items.copied": "Kopierede filer og mapper",
+        "drive.items.deleted": "Lagde i papirkurven",
+        "drive.file.restored": "Gendannede fra papirkurven",
+        "drive.file.version_restored": "Gendannede en tidligere version",
+        "drive.bin.emptied": "Tømte papirkurven",
     }
 )
