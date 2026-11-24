@@ -34,6 +34,7 @@ from kombu.exceptions import DecodeError
 from access.api import (
     KITCHEN,
     NO_STAGE,
+    PREVIEW_PERSON,
     PREVIEW_SESSION_KEY,
     STAGE_LABELS,
     STAGES,
@@ -1304,6 +1305,13 @@ def preview_set(request: HttpRequest) -> HttpResponseRedirect:
         request.session[PREVIEW_SESSION_KEY] = [Role.ADMINISTRATOR]
     elif mode == "kitchen":
         request.session[PREVIEW_SESSION_KEY] = [KITCHEN]
+    elif mode == "person":
+        person = Account.objects.filter(
+            pk=int(raw) if (raw := request.POST.get("person", "")).isdigit() else 0
+        ).first()
+        if person is None:
+            return redirect("siteadmin:preview")
+        request.session[PREVIEW_SESSION_KEY] = [f"{PREVIEW_PERSON}{person.pk}"]
     elif mode == "stage":
         stage = request.POST.get("stage")
         request.session[PREVIEW_SESSION_KEY] = [stage] if stage in STAGES else [NO_STAGE]
