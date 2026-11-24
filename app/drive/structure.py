@@ -9,8 +9,8 @@ not back-filled: Drive starts empty, and a folder for a period nobody filed anyt
 from datetime import date
 
 from django.core.cache import cache
-from django.db import transaction
 
+from audit import trail
 from core.clock import current_date
 from core.models import Workgroup
 
@@ -35,9 +35,14 @@ def _child(parent: Folder | None, name: str, kind: str, **fields: object) -> Fol
     return folder
 
 
-@transaction.atomic
 def ensure_structure(day: date | None = None) -> None:
-    day = day or current_date()
+    # The system's doing, also when a visit is what set it off; nothing is written on the days
+    # there is nothing to make.
+    with trail.event("drive.structure.ensured", actor=None, only_if_changed=True):
+        _ensure_structure(day or current_date())
+
+
+def _ensure_structure(day: date) -> None:
     common = _child(None, "Fælles", Folder.Kind.COMMON_ROOT, space=Space.COMMON)
     _child(common, COMMON_TIMELESS, Folder.Kind.TIMELESS, space=Space.COMMON)
     for year in years_with_folders(day):

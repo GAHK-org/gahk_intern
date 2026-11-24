@@ -11,6 +11,7 @@ import pytest
 from django.test import Client
 from django.urls import reverse
 
+from audit.models import AuditChange, AuditEvent
 from core.models import Room, Workgroup
 from drive import services
 from drive.access import Level, Viewer
@@ -318,6 +319,36 @@ def test_the_same_name_asks_then_replaces_or_keeps_both(member: Client, group: W
 
     kept = _upload(member, winter, "Budget.xlsx", b"four", services.KEEP_BOTH)
     assert kept["name"] == "Budget (2).xlsx"
+
+
+def test_every_change_is_in_the_audit_trail(member: Client, group: Workgroup) -> None:
+    winter = _period_folder(group, WINTER)
+    made = AuditEvent.objects.filter(action="drive.structure.ensured").get()
+    assert made.actor_id is None and made.entities.filter(kind="drive.folder", operation="created").exists()
+    ensure_structure(TODAY)  # nothing new to make: nothing written
+    assert AuditEvent.objects.filter(action="drive.structure.ensured").count() == 1
+
+    member.post(reverse("drive:create_folder", args=[winter.uuid]), {"name": "Budget"})
+    _upload(member, winter, "a.txt", b"one")
+    _upload(member, winter, "a.txt", b"three", services.REPLACE)
+    changes = AuditEvent.objects.filter(action__startswith="drive.").exclude(action="drive.structure.ensured")
+    created, uploaded, replaced = changes.order_by("id")
+    assert [created.action, uploaded.action, replaced.action] == [
+        "drive.folder.created",
+        "drive.file.uploaded",
+        "drive.file.version_uploaded",
+    ]
+    assert created.actor_id is not None
+    assert (
+        created.entities.get(role="subject").name == f"Embedsgrupper / {group.name} / 2026-27 Vinter / Budget"
+    )
+    assert set(uploaded.entities.values_list("kind", "operation")) == {
+        ("drive.file", "created"),
+        ("drive.file_version", "created"),
+        ("drive.folder", "involved"),
+    }
+    size = AuditChange.objects.get(entity__event=replaced, entity__kind="drive.file", field="size")
+    assert (size.before, size.after) == (3, 5)
 
 
 def test_uploads_need_write_access(

@@ -18,6 +18,7 @@ from django.db import IntegrityError, transaction
 from django.db.models import Count, Sum
 from django.utils import timezone
 
+from audit import trail
 from photo_album.storage import get_photo_album_storage
 from residents.models import Resident
 
@@ -83,7 +84,9 @@ def create_folder(viewer: Viewer, parent: Folder, name: str, resident: Resident)
         created_by=resident,
     )
     try:
-        with transaction.atomic():
+        with trail.event(
+            "drive.folder.created", subject=folder, actor=resident, involve=[(parent, "parent")]
+        ):
             folder.save()
     except IntegrityError as exc:
         raise ValidationError(f"Der er allerede noget, der hedder „{name}“, i mappen.") from exc
@@ -195,18 +198,26 @@ def add_upload(
         raise PermissionDenied
     if existing is not None and on_conflict == REPLACE:
         number = (existing.versions.order_by("-number").values_list("number", flat=True).first() or 0) + 1
-        FileVersion.objects.create(
-            file=existing, number=number, key=key, size=size, content_type=content_type, created_by=resident
-        )
-        existing.size, existing.content_type = size, content_type
-        existing.changed_by, existing.changed_at = resident, now
-        existing.save()
-        history.record(Event.Action.VERSION, actor=resident, file=existing, name=existing.name, number=number)
+        with trail.event("drive.file.version_uploaded", subject=existing, actor=resident):
+            FileVersion.objects.create(
+                file=existing,
+                number=number,
+                key=key,
+                size=size,
+                content_type=content_type,
+                created_by=resident,
+            )
+            existing.size, existing.content_type = size, content_type
+            existing.changed_by, existing.changed_at = resident, now
+            existing.save()
+            history.record(
+                Event.Action.VERSION, actor=resident, file=existing, name=existing.name, number=number
+            )
         return Added(existing, replaced=True)
     if existing is not None:
         # Keep both - also when the other file appeared while this one was uploading.
         name = free_name(folder, name)
-    file = File.objects.create(
+    file = File(
         folder=folder,
         name=name,
         size=size,
@@ -215,10 +226,12 @@ def add_upload(
         changed_by=resident,
         changed_at=now,
     )
-    FileVersion.objects.create(
-        file=file, number=1, key=key, size=size, content_type=content_type, created_by=resident
-    )
-    history.record(Event.Action.CREATED, actor=resident, file=file, name=file.name)
+    with trail.event("drive.file.uploaded", subject=file, actor=resident, involve=[(folder, "folder")]):
+        file.save()
+        FileVersion.objects.create(
+            file=file, number=1, key=key, size=size, content_type=content_type, created_by=resident
+        )
+        history.record(Event.Action.CREATED, actor=resident, file=file, name=file.name)
     return Added(file, replaced=False)
 
 

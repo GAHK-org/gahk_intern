@@ -13,6 +13,7 @@ from typing import Any
 from django.core.management.base import BaseCommand
 from django.db import transaction
 
+from audit import trail
 from cms.models import NewsItem, Page, PylonEvent
 from cms.sanitize import clean_html, plain_text_from_html
 from core.etl import epoch_to_dt, fetch_all
@@ -49,6 +50,11 @@ class Command(BaseCommand):
     help = "Migrate CMS pages, news and pylon events from the legacy DB."
 
     @transaction.atomic
+    def execute(self, *args: object, **options: object) -> str | None:
+        # Loading old data (or demo data) is nobody's action: not one audit event per row.
+        with trail.unaudited():
+            return super().execute(*args, **options)
+
     def handle(self, *args, **opts) -> None:  # noqa: ANN002, ANN003
         pages = fetch_all("SELECT * FROM gahk_page")
         for p in pages:
