@@ -7,6 +7,7 @@ import pytest
 from django.test import Client
 from django.utils import timezone
 
+from audit.models import AuditEvent
 from calendars.models import CalendarSubscription, EventChoice
 from calendars.views import STALE_AFTER
 from events import services
@@ -373,3 +374,77 @@ def test_the_kitchen_account_may_not_open_the_settings_page(make_resident: Calla
     assert not kitchen_may_open(SETTINGS)
     assert kitchen_may_open("/calendar/feed/abc.ics")
     assert not kitchen_may_open("/calendar/")
+
+
+# --- the audit trail -------------------------------------------------------------------------------
+
+
+def _calendar_events(after: int = 0) -> list[AuditEvent]:
+    """The calendar's events, those after `after` (an id from _last_event_id) when given."""
+    events = AuditEvent.objects.filter(action__startswith="calendars.", id__gt=after)
+    return list(events.order_by("id"))
+
+
+def _last_event_id() -> int:
+    return AuditEvent.objects.order_by("-id").values_list("id", flat=True).first() or 0
+
+
+def _changes(event: AuditEvent) -> dict[str, tuple[object, object, bool]]:
+    entity = event.entities.get(kind="calendars.subscription")
+    return {c.field: (c.before, c.after, c.redacted) for c in entity.changes.all()}
+
+
+def test_the_first_visit_makes_the_subscription_once_and_says_so(client: Client, beboer: Resident) -> None:
+    client.force_login(beboer)
+
+    client.get(SETTINGS)
+    client.get(SETTINGS)
+
+    [made] = _calendar_events()
+    assert (made.action, made.actor, made.unclaimed) == ("calendars.subscription.created", beboer, False)
+    subject = made.entities.get(role="subject")
+    assert (subject.operation, subject.name) == ("created", "Anton Storgaard")
+    assert _changes(made)["token"] == (None, None, True), "the address itself is never kept"
+
+
+def test_saving_the_settings_records_what_changed_and_saving_them_unchanged_nothing(
+    client: Client, beboer: Resident
+) -> None:
+    CalendarSubscription.for_resident(beboer)
+    client.force_login(beboer)
+    set_up = _last_event_id()
+
+    client.post(SETTINGS, {"events": EventChoice.ACCEPTED})  # birthdays unticked too
+    client.post(SETTINGS, {"events": EventChoice.ACCEPTED})
+
+    [saved] = _calendar_events(after=set_up)
+    assert saved.action == "calendars.subscription.updated"
+    assert _changes(saved) == {
+        "events": ("all", "accepted", False),
+        "include_birthdays": (True, False, False),
+    }
+
+
+def test_a_new_address_is_recorded_without_either_address(client: Client, beboer: Resident) -> None:
+    subscription = CalendarSubscription.for_resident(beboer)
+    subscription.record_fetch()
+    client.force_login(beboer)
+    set_up = _last_event_id()
+
+    client.post("/calendar/settings/new-link")
+
+    [rotated] = _calendar_events(after=set_up)
+    assert rotated.action == "calendars.subscription.rotated"
+    changes = _changes(rotated)
+    assert changes["token"] == (None, None, True)
+    assert set(changes) == {"token", "rotated_at"}, "the fetch bookkeeping it resets is not an action"
+
+
+def test_a_calendar_app_fetching_the_feed_leaves_no_trail(beboer: Resident) -> None:
+    feed_url = _feed_url(beboer)
+    set_up = _last_event_id()
+
+    Client().get(feed_url)
+
+    assert _calendar_events(after=set_up) == []
+    assert CalendarSubscription.objects.get(resident=beboer).fetch_count == 1

@@ -9,6 +9,7 @@ from django.shortcuts import redirect, render
 from django.urls import reverse
 from django.views.decorators.http import require_GET, require_POST
 
+from audit import trail
 from core.clock import current_datetime
 from residents.permissions import current_resident
 
@@ -28,7 +29,8 @@ def settings_page(request: HttpRequest) -> HttpResponse:
     if request.method == "POST":
         form = SubscriptionForm(request.POST, instance=subscription)
         if form.is_valid():
-            form.save()
+            with trail.event("calendars.subscription.updated", subject=subscription, only_if_changed=True):
+                form.save()
             messages.success(request, "Gemt. Din kalender henter ændringen næste gang den opdaterer.")
             return redirect("calendars:settings")
     else:
@@ -53,7 +55,9 @@ def settings_page(request: HttpRequest) -> HttpResponse:
 @require_POST
 @login_required
 def rotate_token(request: HttpRequest) -> HttpResponseRedirect:
-    CalendarSubscription.for_resident(current_resident(request)).rotate()
+    subscription = CalendarSubscription.for_resident(current_resident(request))
+    with trail.event("calendars.subscription.rotated", subject=subscription):
+        subscription.rotate()
     messages.success(
         request,
         "Din kalenderadresse er skiftet. Husk at tilføje den nye i din kalender — "

@@ -15,6 +15,7 @@ from django.conf import settings
 from django.db import models
 from django.db.models import F
 
+from audit import trail
 from core.clock import current_datetime
 
 
@@ -80,7 +81,11 @@ class CalendarSubscription(models.Model):
         sixty things to leak for people who may never open the feature, and — worse — would bake a
         non-deterministic data step into the migration history.
         """
-        subscription, _ = cls.objects.get_or_create(resident=resident)
+        # An event only when one is made: opening the page again writes nothing.
+        with trail.event("calendars.subscription.created", only_if_changed=True) as event:
+            subscription, created = cls.objects.get_or_create(resident=resident)
+            if created:
+                event.involve(subscription, "subject")
         return subscription
 
     def rotate(self) -> str:

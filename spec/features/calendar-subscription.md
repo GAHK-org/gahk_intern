@@ -43,6 +43,13 @@ user menu, the month calendar and every event page.
 - Most subscriptions still point at `gahk.dk/kalender/<token>.ics`; gahk.dk passes them through to
   intern, which counts them as fetches like any other.
 
+## Audit trail
+
+- Recorded: a subscription made on the first visit (*Fik en kalenderadresse*), settings saved with
+  a change (*Rettede sit kalenderabonnement*) and a new address (*Lavede en ny kalenderadresse*).
+- The address itself is redacted: the trail says it changed, never what it was or became.
+- A calendar app fetching the feed records nothing; the fetch count and last fetch are bookkeeping.
+
 ## Decisions
 
 - **Its own app (`calendars`)**, not part of begivenheder: the calendar gathers several features,
