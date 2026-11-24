@@ -17,6 +17,7 @@ from typing import Any
 from django.core.management.base import BaseCommand, CommandError
 from django.db import transaction
 
+from audit import trail
 from core.etl import decode_month_number, fetch_all
 from core.models import Cleaning, Room, Workgroup
 from residents.models import Residency, Resident, Role, RoleAssignment
@@ -40,6 +41,11 @@ class Command(BaseCommand):
     help = "Migrate residents, monthly roles and residency from the legacy DB."
 
     @transaction.atomic
+    def execute(self, *args: object, **options: object) -> str | None:
+        # Loading old data (or demo data) is nobody's action: not one audit event per row.
+        with trail.unaudited():
+            return super().execute(*args, **options)
+
     def handle(self, *args, **opts) -> None:  # noqa: ANN002, ANN003
         if not Room.objects.exists():
             self.stderr.write("No rooms — run `manage.py seed_rooms` first.")

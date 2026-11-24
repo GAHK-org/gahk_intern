@@ -7,6 +7,38 @@
 
 ```mermaid
 erDiagram
+    audit_AuditEvent {
+        int id PK
+        datetime at
+        string action
+        int actor_id FK
+        string actor_name
+        string source
+        string correlation_id
+        string ip
+        json details
+        bool unclaimed
+    }
+
+    audit_AuditEntity {
+        int id PK
+        int event_id FK
+        string kind
+        int entity_id
+        string name
+        string operation
+        string role
+    }
+
+    audit_AuditChange {
+        int id PK
+        int entity_id FK
+        string field
+        json before
+        json after
+        bool redacted
+    }
+
     core_Room {
         int id PK
         int legacy_index
@@ -1017,6 +1049,9 @@ erDiagram
         int mail_id FK
     }
 
+    audit_AuditEvent }o--|o residents_Resident : "actor"
+    audit_AuditEntity }o--|| audit_AuditEvent : "event"
+    audit_AuditChange }o--|| audit_AuditEntity : "entity"
     core_PushSubscription }o--|| residents_Resident : "user"
     residents_Resident }o--|o residents_Resident : "sponsor"
     residents_Residency }o--|| residents_Resident : "resident"
@@ -1256,6 +1291,49 @@ erDiagram
     arkiv_ArchiveFile }o--|| arkiv_ArchiveFolder : "folder"
     arkiv_ArchiveFile }o--|o residents_Resident : "uploaded_by"
     arkiv_ArchiveFile }o--|o residents_Resident : "deleted_by"
+```
+
+## audit
+
+```mermaid
+erDiagram
+    audit_AuditEvent {
+        int id PK
+        datetime at
+        string action
+        int actor_id FK
+        string actor_name
+        string source
+        string correlation_id
+        string ip
+        json details
+        bool unclaimed
+    }
+
+    audit_AuditEntity {
+        int id PK
+        int event_id FK
+        string kind
+        int entity_id
+        string name
+        string operation
+        string role
+    }
+
+    audit_AuditChange {
+        int id PK
+        int entity_id FK
+        string field
+        json before
+        json after
+        bool redacted
+    }
+
+    residents_Resident { }
+
+    audit_AuditEvent }o--|o residents_Resident : "actor"
+    audit_AuditEntity }o--|| audit_AuditEvent : "event"
+    audit_AuditChange }o--|| audit_AuditEntity : "entity"
 ```
 
 ## cms
