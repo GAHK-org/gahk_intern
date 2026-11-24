@@ -5,7 +5,7 @@ from django.db import migrations, models
 
 class Migration(migrations.Migration):
     dependencies = [
-        ("core", "0019_merge_outgoingmail_and_workerjoblog_progress"),
+        ("core", "0020_drop_arkiv_tables"),
     ]
 
     operations = [
