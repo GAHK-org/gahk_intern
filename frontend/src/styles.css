@@ -2880,3 +2880,16 @@
   .install-done { margin:16px 0; padding:10px 14px; border:1px solid var(--green-100); border-radius:10px;
     background:var(--green-050); color:var(--green-700); font-weight:600; }
 }
+
+/* ---- Postkasser tags (categories on sager): a fixed palette, each a light background with a dark ink
+   of its own, so a tag reads the same wherever it sits. Values match postkasser.models.TagColor. ---- */
+@layer components {
+  .chip-tag-graa { background:#ECEBE6; color:#464B46; border-color:#D6D4CB; }
+  .chip-tag-roed { background:#F6E7E5; color:#8E2B2B; border-color:#E7C7C3; }
+  .chip-tag-orange { background:#FBE9D7; color:#82440B; border-color:#EBCDA9; }
+  .chip-tag-gul { background:#F5EEDD; color:#6E5410; border-color:#E7D8B0; }
+  .chip-tag-groen { background:#E1F0E5; color:#1B5A35; border-color:#BFDCC8; }
+  .chip-tag-blaa { background:#E1ECF7; color:#1F4E80; border-color:#BDD3EA; }
+  .chip-tag-lilla { background:#ECE5F5; color:#5A3A86; border-color:#D3C5E6; }
+  .chip-tag-pink { background:#F8E4EE; color:#8A2A5B; border-color:#EBC2D7; }
+}
