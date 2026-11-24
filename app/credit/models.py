@@ -1,0 +1,213 @@
+"""GAHK-konto: an append-only ledger of accounts that stand for real kroner.
+
+  Holder         who an account belongs to: a person or an embedsgruppe, never a login.
+  Book           ("kontofører") one keeper's pool of real money: the accounts whose money sits in its
+                 bank account(s), managed by the book's holder. Every book always sums to 0.
+  CreditAccount  an account: in one book for good, held by one holder, with an optional credit limit.
+  Transfer       one movement of money, written once, never changed; exactly two Postings.
+  Posting        one account's side of a transfer: a signed amount, the balance after it, the text
+                 shown on that account's statement, and a link in the account's hash chain.
+
+The rules (credit.ledger writes every row; nothing else may):
+
+  * Amounts are whole øre. + is money into an account, − out of it.
+  * A transfer has exactly two postings, one − and one +, summing to 0 (a trigger checks it).
+  * Nothing is changed or deleted (core.append_only, and the triggers in migration 0001). A mistake
+    is undone by a reversing transfer.
+  * A transfer between two books gets a companion between the books' mellemregning accounts, so each
+    book still sums to 0 and the mellemregning shows what one book owes the other.
+  * Each account's postings form a SHA-256 hash chain (credit.chain), so a changed or removed row
+    shows when the chain is recomputed and compared with anchors kept outside the database.
+"""
+
+from django.conf import settings
+from django.db import models
+from django.db.models import F, Q
+from django.utils import timezone
+
+from core.append_only import AppendOnly
+
+
+class Holder(AppendOnly):
+    """Who accounts belong to: exactly one person or one embedsgruppe. Made the first time one of
+    theirs is opened, never changed or removed: a ledger row must always find its holder."""
+
+    person = models.OneToOneField(
+        "residents.Person", null=True, blank=True, on_delete=models.PROTECT, related_name="+"
+    )
+    workgroup = models.OneToOneField(
+        "core.Workgroup", null=True, blank=True, on_delete=models.PROTECT, related_name="+"
+    )
+
+    class Meta:
+        constraints = [
+            models.CheckConstraint(
+                condition=(Q(person__isnull=False) & Q(workgroup__isnull=True))
+                | (Q(person__isnull=True) & Q(workgroup__isnull=False)),
+                name="credit_holder_exactly_one",
+            )
+        ]
+
+    def __str__(self) -> str:
+        return self.name
+
+    @property
+    def name(self) -> str:
+        if self.person is not None:
+            return self.person.full_name
+        return self.workgroup.name if self.workgroup is not None else f"#{self.pk}"
+
+
+class Book(models.Model):
+    """A keeper's pool of real money ("kontofører"). Its holder's members manage it: they open its
+    accounts, set their limits, charge them, record money in and out of its bank account(s), and
+    settle with other books. Made deliberately by an administrator, never on its own."""
+
+    name = models.CharField(max_length=100, unique=True)
+    holder = models.ForeignKey(Holder, on_delete=models.PROTECT, related_name="books")
+    # The limit an account opened in this book starts with; 0 = no credit. Its managers may change any
+    # account's own limit afterwards.
+    default_credit_limit_ore = models.BigIntegerField(default=0)
+    # The book where every person with a login gets a general account. One at most.
+    is_main = models.BooleanField(default=False)
+    created_at = models.DateTimeField(default=timezone.now)
+
+    class Meta:
+        ordering = ["name"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["is_main"], condition=Q(is_main=True), name="credit_one_main_book"
+            ),
+            models.CheckConstraint(
+                condition=Q(default_credit_limit_ore__lte=0), name="credit_book_default_limit_not_positive"
+            ),
+        ]
+
+    def __str__(self) -> str:
+        return self.name
+
+
+class CreditAccount(models.Model):
+    """A GAHK-konto. Generic on purpose: nothing about beer, interest or parties lives here, only
+    what any account has. Its book and holder never change (a trigger refuses it); its name, limit
+    and closing may."""
+
+    book = models.ForeignKey(Book, on_delete=models.PROTECT, related_name="accounts")
+    holder = models.ForeignKey(Holder, on_delete=models.PROTECT, related_name="accounts")
+    name = models.CharField(max_length=100)
+    # The lowest balance the account may reach paying inside its book; None = no limit (an account
+    # standing for real money, a mellemregning). To another book it may only go down to 0.
+    credit_limit_ore = models.BigIntegerField(null=True, blank=True, default=0)
+    # Set on the account that stands for a real bank account: "reg.nr. kontonr.", unique.
+    bank_reference = models.CharField(max_length=40, blank=True)
+    # Set on a mellemregning: this book's account with that book.
+    counterpart_book = models.ForeignKey(
+        Book, null=True, blank=True, on_delete=models.PROTECT, related_name="+"
+    )
+    created_at = models.DateTimeField(default=timezone.now)
+    closed_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ["book__name", "name", "pk"]
+        constraints = [
+            models.CheckConstraint(
+                condition=Q(credit_limit_ore__isnull=True) | Q(credit_limit_ore__lte=0),
+                name="credit_account_limit_not_positive",
+            ),
+            models.UniqueConstraint(
+                fields=["bank_reference"], condition=~Q(bank_reference=""), name="credit_one_account_per_bank"
+            ),
+            models.UniqueConstraint(
+                fields=["book", "counterpart_book"],
+                condition=Q(counterpart_book__isnull=False),
+                name="credit_one_mellemregning_per_pair",
+            ),
+            models.CheckConstraint(
+                condition=~Q(counterpart_book=F("book")), name="credit_mellemregning_with_another_book"
+            ),
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.holder.name} · {self.name}"
+
+    @property
+    def is_open(self) -> bool:
+        return self.closed_at is None
+
+    @property
+    def is_mellemregning(self) -> bool:
+        return self.counterpart_book_id is not None
+
+    @property
+    def stands_for_bank(self) -> bool:
+        return bool(self.bank_reference)
+
+
+class Transfer(AppendOnly):
+    """One movement of money between two accounts, with exactly two postings."""
+
+    class Kind(models.TextChoices):
+        TRANSFER = "transfer", "Overførsel"  # a holder sends from their own account
+        CHARGE = "charge", "Opkrævning"  # a book's managers take from an account in their book
+        REVERSAL = "reversal", "Tilbageførsel"  # undoes `reverses`
+        COMPANION = "companion", "Mellemregning"  # mirrors a transfer between two books
+
+    kind = models.CharField(max_length=20, choices=Kind.choices)
+    created_at = models.DateTimeField(default=timezone.now)
+    # The login that made it; None for a job the system runs.
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.PROTECT, related_name="+"
+    )
+    # What wrote it, for tracing ("credit.transfer_form", later "oelkaelder.basket:4711"). Never shown.
+    source = models.CharField(max_length=80, blank=True)
+    # The send's identity: the same token twice is the same transfer, made once.
+    dedupe_token = models.UUIDField(unique=True)
+    reverses = models.OneToOneField(
+        "self", null=True, blank=True, on_delete=models.PROTECT, related_name="reversed_by"
+    )
+    companion_of = models.OneToOneField(
+        "self", null=True, blank=True, on_delete=models.PROTECT, related_name="companion"
+    )
+
+    class Meta:
+        ordering = ["-id"]
+        constraints = [
+            models.CheckConstraint(
+                condition=Q(kind="reversal", reverses__isnull=False)
+                | (~Q(kind="reversal") & Q(reverses__isnull=True)),
+                name="credit_reversal_names_what_it_reverses",
+            ),
+            models.CheckConstraint(
+                condition=Q(kind="companion", companion_of__isnull=False)
+                | (~Q(kind="companion") & Q(companion_of__isnull=True)),
+                name="credit_companion_names_its_transfer",
+            ),
+        ]
+
+    def __str__(self) -> str:
+        return f"Overførsel #{self.pk}"
+
+
+class Posting(AppendOnly):
+    """One account's side of a transfer."""
+
+    transfer = models.ForeignKey(Transfer, on_delete=models.PROTECT, related_name="postings")
+    account = models.ForeignKey(CreditAccount, on_delete=models.PROTECT, related_name="postings")
+    amount_ore = models.BigIntegerField()
+    balance_after = models.BigIntegerField()
+    text = models.CharField(max_length=140)
+    # The account's hash chain (credit.chain): the previous posting's row_hash (zeros for the first)
+    # and this posting's own.
+    prev_hash = models.BinaryField(max_length=32)
+    row_hash = models.BinaryField(max_length=32)
+
+    class Meta:
+        ordering = ["-id"]
+        constraints = [
+            models.CheckConstraint(condition=~Q(amount_ore=0), name="credit_posting_not_zero"),
+            models.UniqueConstraint(fields=["transfer", "account"], name="credit_one_side_per_account"),
+        ]
+        indexes = [models.Index(fields=["account", "-id"], name="credit_posting_account_id")]
+
+    def __str__(self) -> str:
+        return f"{self.account}: {self.amount_ore} øre"

@@ -6,7 +6,7 @@ only asks for a permission by name.
 ## Features and grades
 
 The site is cut into features: Den Hurtige, Opslagstavlen, Begivenheder, Reparationer, Fotoalbum,
-GAHKFlix, AK, Ølkælder, Værelsestjek, Søg værelse, Alumneliste, profiles, Stamtræ, Statistik,
+GAHKFlix, AK, Ølkælder, GAHK-konto, Værelsestjek, Søg værelse, Alumneliste, profiles, Stamtræ, Statistik,
 notifications, the wiki, and the group tools (Optagelse, Hjemmeside, Regnskab, Site-admin, Django
 admin). Every page is in exactly one feature.
 

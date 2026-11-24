@@ -83,10 +83,12 @@ POLICY: dict[str, Entry] = {
             Feature.PHOTO_ALBUM,
             Feature.NOTIFICATIONS,
             Feature.MENTIONS,
+            Feature.CREDIT,
         },
         Grade.USE,
     ),
-    Stage.MOVED_OUT_OVER_A_YEAR: _all({Feature.FILES, Feature.STAMTREE}, Grade.USE),
+    # GAHK-konto stays open for good: someone who left may still owe money, or be owed it.
+    Stage.MOVED_OUT_OVER_A_YEAR: _all({Feature.FILES, Feature.STAMTREE, Feature.CREDIT}, Grade.USE),
     # ---- the rest ----
     # Den Hurtige's Køkkenet channel and their own opslag only: the features narrow it further inside.
     KITCHEN: _all(
@@ -96,6 +98,7 @@ POLICY: dict[str, Entry] = {
             Feature.OPSLAGSTAVLE,
             Feature.REPARATIONER,
             Feature.NOTIFICATIONS,
+            Feature.CREDIT,
         },
         Grade.USE,
     ),

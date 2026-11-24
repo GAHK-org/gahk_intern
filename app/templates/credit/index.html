@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+{% load credit_extras ui_extras %}
+{% block title %}GAHK-konto - GAHK Intern{% endblock %}
+{% block content %}
+  <div class="flex flex-wrap items-center gap-2 mb-4" style="justify-content:space-between">
+    <h1>GAHK-konto</h1>
+    <a class="btn" href="{% url 'credit:transfer' %}">Overfør penge</a>
+  </div>
+  <p class="muted mb-4">Dine konti hos huset og dets kontoførere. Et negativt beløb er hvad du skylder.</p>
+
+  {% for holder, accounts in mine %}
+    <h2>{{ holder.name }}</h2>
+    <div class="card overflow-x-auto mb-4">
+      <table cellpadding="6" style="width:100%; border-collapse:collapse">
+        <thead><tr style="text-align:left; border-bottom:1px solid var(--border-strong)">
+          <th>Konto</th><th>Kontofører</th><th style="text-align:right">Saldo</th></tr></thead>
+        <tbody>
+        {% for account in accounts %}
+          <tr style="border-bottom:1px solid var(--border)">
+            <td><a href="{% url 'credit:account' account.pk %}">{{ account.name }}</a>{% if account.closed_at %} <span class="muted">(lukket)</span>{% endif %}</td>
+            <td>{{ account.book.name }}</td>
+            <td class="text-right whitespace-nowrap {{ account.balance|sign_class }}">{{ account.balance|kr }}</td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  {% empty %}
+    <p class="muted">Du har ingen GAHK-konto endnu.</p>
+  {% endfor %}
+
+  {% if books %}
+    <h2 class="mt-6">Kontoførere, du er ansvarlig for</h2>
+    <ul class="mb-4">
+      {% for book in books %}<li><a href="{% url 'credit:book' book.pk %}">{{ book.name }}</a></li>{% endfor %}
+    </ul>
+  {% endif %}
+  {% if perms.access.credit_administer %}
+    <p class="mt-6"><a href="{% url 'credit:books' %}">Alle kontoførere</a></p>
+  {% endif %}
+{% endblock %}

@@ -35,6 +35,7 @@ urlpatterns = [
     path("gahkflix/", in_feature(Feature.GAHKFLIX, include("gahkflix.urls"))),
     path("ak/", in_feature(Feature.AK, include("ak.urls"))),
     path("oelkaelder/", in_feature(Feature.OELKAELDER, include("oelkaelder.urls"))),
+    path("credit/", in_feature(Feature.CREDIT, include("credit.urls"))),
     path("statistik/", in_feature(Feature.STATS, include("stats.urls"))),
     path("vaerelsestjek/", in_feature(Feature.VAERELSESTJEK, include("rooms.urls_vaerelsestjek"))),
     path("soegvaerelse/", in_feature(Feature.SOEGVAERELSE, include("rooms.urls_soegvaerelse"))),

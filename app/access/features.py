@@ -50,6 +50,9 @@ class Feature(StrEnum):
     GAHKFLIX = "gahkflix"  # manage: publishing films
     AK = "ak"  # use: one's own AK page; manage: the AK-gruppe's overview
     OELKAELDER = "oelkaelder"  # use: one's own balance; manage: the till and the accounts
+    # GAHK-konto. use: one's own accounts and sending from them. Managing a book follows its holder
+    # (credit.holders), not a role; administer: making books.
+    CREDIT = "credit"
     VAERELSESTJEK = "vaerelsestjek"  # manage: the AK-gruppe's overview
     SOEGVAERELSE = "soegvaerelse"  # manage: the Indstilling's offers
     # The wiki, a site of its own whose accounts follow the intranet's: no view here.

@@ -1,0 +1,85 @@
+{% extends "base.html" %}
+{% load credit_extras ui_extras %}
+{% block title %}{{ book.name }} - GAHK-konto{% endblock %}
+{% block content %}
+  <p class="muted"><a href="{% url 'credit:index' %}">GAHK-konto</a></p>
+  <h1>Kontofører: {{ book.name }}</h1>
+  <p class="muted mb-4">Ansvarlige: {{ book.holder.name }}.
+    {% if total != 0 %}<strong class="text-neg">Bogen går ikke i nul ({{ total|kr }}) — kontakt en administrator.</strong>{% endif %}</p>
+
+  <h2>Kontoførerens egne konti</h2>
+  <p class="muted text-sm mb-2">En bankkonto står for rigtige penge: et negativt beløb er hvad der står i banken.
+    Indbetalinger og udbetalinger registreres som overførsler fra og til den.</p>
+  <div class="card overflow-x-auto mb-6">
+    <table cellpadding="6" style="width:100%; border-collapse:collapse">
+      <tbody>
+      {% for account in own %}
+        <tr style="border-bottom:1px solid var(--border)">
+          <td><a href="{% url 'credit:account' account.pk %}">{{ account.name }}</a>{% if account.bank_reference %} <span class="muted">({{ account.bank_reference }})</span>{% endif %}</td>
+          <td class="text-right whitespace-nowrap {{ account.balance|sign_class }}">{{ account.balance|kr }}</td>
+          <td class="text-right"><a href="{% url 'credit:transfer' %}?from={{ account.pk }}">Overfør herfra</a></td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  {% if settlements %}
+    <h2>Mellemregning med andre kontoførere</h2>
+    <p class="muted text-sm mb-2">Plus: {{ book.name }} skylder den anden kontofører. Minus: den anden skylder {{ book.name }}.
+      Afregning registreres af hver kontofører i sin egen bog: mellemregning ↔ bank, når pengene er flyttet.</p>
+    <div class="card overflow-x-auto mb-6">
+      <table cellpadding="6" style="width:100%; border-collapse:collapse">
+        <tbody>
+        {% for account, mirror in settlements %}
+          <tr style="border-bottom:1px solid var(--border)">
+            <td><a href="{% url 'credit:account' account.pk %}">{{ account.name }}</a></td>
+            <td class="text-right whitespace-nowrap">{{ account.balance|kr }}</td>
+            <td>{% if account.balance|default:0 == 0 %}Afstemt{% elif account.balance|default:0|add:mirror == 0 %}{% if account.balance > 0 %}{{ book.name }} skylder {{ account.balance|kr }}{% else %}Har {{ account.balance|kr }} til gode{% endif %}{% else %}<strong>Halvt registreret afregning: den anden bog står på {{ mirror|kr }}</strong>{% endif %}</td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  {% endif %}
+
+  <h2>Konti</h2>
+  <div class="card overflow-x-auto mb-6">
+    <table cellpadding="6" class="text-sm" style="width:100%; border-collapse:collapse">
+      <thead><tr style="text-align:left; border-bottom:1px solid var(--border-strong)">
+        <th>Kontohaver</th><th>Konto</th><th style="text-align:right">Kreditgrænse</th><th style="text-align:right">Saldo</th></tr></thead>
+      <tbody>
+      {% for account in others %}
+        <tr style="border-bottom:1px solid var(--border)">
+          <td>{{ account.holder.name }}</td>
+          <td><a href="{% url 'credit:account' account.pk %}">{{ account.name }}</a>{% if account.closed_at %} <span class="muted">(lukket)</span>{% endif %}</td>
+          <td class="text-right whitespace-nowrap">{% if account.credit_limit_ore is None %}ingen{% else %}{{ account.credit_limit_ore|kr }}{% endif %}</td>
+          <td class="text-right whitespace-nowrap {{ account.balance|sign_class }}">{{ account.balance|kr }}</td>
+        </tr>
+      {% empty %}
+        <tr><td colspan="4" class="muted">Ingen konti endnu.</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  <div class="flex flex-wrap gap-4">
+    <form method="post" action="{% url 'credit:charge' book.pk %}" class="card" style="flex:1; min-width:18rem">
+      {% csrf_token %}{{ charge_form.token }}
+      <h2>Opkræv</h2>
+      <p class="muted text-sm mb-2">Går igennem uanset kreditgrænsen.</p>
+      {% for field in charge_form.visible_fields %}
+        <p class="mb-2"><label for="{{ field.id_for_label }}">{{ field.label }}</label><br>{{ field }}</p>
+      {% endfor %}
+      <button type="submit" class="btn">Opkræv</button>
+    </form>
+    <form method="post" action="{% url 'credit:open_account' book.pk %}" class="card" style="flex:1; min-width:18rem">
+      {% csrf_token %}
+      <h2>Opret konto</h2>
+      {% for field in open_form %}
+        <p class="mb-2"><label for="{{ field.id_for_label }}">{{ field.label }}</label><br>{{ field }}</p>
+      {% endfor %}
+      <button type="submit" class="btn">Opret</button>
+    </form>
+  </div>
+{% endblock %}

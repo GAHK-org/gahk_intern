@@ -9,39 +9,13 @@ snapshotted when it was written.
 Rows are written by audit.trail only — never by hand.
 """
 
-from typing import Any, NoReturn
-
 from django.conf import settings
 from django.db import models
 from django.utils import timezone
 
+from core.append_only import AppendOnly, AppendOnlyError, AppendOnlyQuerySet
 
-class AppendOnlyError(Exception):
-    """An audit row was about to be changed or deleted."""
-
-
-class AppendOnlyQuerySet(models.QuerySet):
-    def update(self, **kwargs: Any) -> NoReturn:  # noqa: ANN401
-        raise AppendOnlyError("Audit rows are never changed.")
-
-    def delete(self) -> NoReturn:
-        raise AppendOnlyError("Audit rows are never deleted.")
-
-
-class AppendOnly(models.Model):
-    objects = AppendOnlyQuerySet.as_manager()
-
-    class Meta:
-        abstract = True
-
-    def save(self, *args: Any, **kwargs: Any) -> None:  # noqa: ANN401
-        if not self._state.adding:
-            raise AppendOnlyError("Audit rows are never changed.")
-        kwargs["force_insert"] = True
-        super().save(*args, **kwargs)
-
-    def delete(self, *args: Any, **kwargs: Any) -> NoReturn:  # noqa: ANN401
-        raise AppendOnlyError("Audit rows are never deleted.")
+__all__ = ["AppendOnly", "AppendOnlyError", "AppendOnlyQuerySet", "AuditChange", "AuditEntity", "AuditEvent"]
 
 
 class AuditEvent(AppendOnly):

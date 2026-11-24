@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+{% load credit_extras ui_extras %}
+{% block title %}Overfør penge - GAHK-konto{% endblock %}
+{% block content %}
+  <p class="muted"><a href="{% url 'credit:index' %}">GAHK-konto</a></p>
+  <h1>Overfør penge</h1>
+  {% if not senders %}
+    <p class="muted">Du har ingen åben konto at overføre fra.</p>
+  {% else %}
+    <form method="post" class="card" style="max-width:36rem">
+      {% csrf_token %}{{ form.token }}
+      {% if form.non_field_errors %}<p class="text-neg mb-2">{{ form.non_field_errors|join:" " }}</p>{% endif %}
+      {% for field in form.visible_fields %}
+        <p class="mb-3">
+          <label for="{{ field.id_for_label }}" class="font-semibold">{{ field.label }}</label><br>
+          {{ field }}
+          {% if field.errors %}<br><span class="text-neg text-sm">{{ field.errors|join:" " }}</span>{% endif %}
+        </p>
+      {% endfor %}
+      <p class="muted text-sm mb-3">
+        Din tekst står på dit kontoudtog, modtagerens tekst på modtagerens. Tomme felter bliver til "Til …" og "Fra …".
+        Til en anden kontofører kan du kun overføre penge, der står på kontoen; kredit bruges kun hos kontoens egen kontofører.
+      </p>
+      <p class="muted text-sm mb-3">
+        {% for account in senders %}{{ account.holder.name }} · {{ account.name }}: {{ balances|dict_get:account.pk|kr }}{% if not forloop.last %} · {% endif %}{% endfor %}
+      </p>
+      <button type="submit" class="btn">Overfør</button>
+    </form>
+  {% endif %}
+{% endblock %}

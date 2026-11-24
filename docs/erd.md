@@ -1037,6 +1037,55 @@ erDiagram
         int mail_id FK
     }
 
+    credit_Holder {
+        int id PK
+        int person_id FK
+        int workgroup_id FK
+    }
+
+    credit_Book {
+        int id PK
+        string name
+        int holder_id FK
+        int default_credit_limit_ore
+        bool is_main
+        datetime created_at
+    }
+
+    credit_CreditAccount {
+        int id PK
+        int book_id FK
+        int holder_id FK
+        string name
+        int credit_limit_ore
+        string bank_reference
+        int counterpart_book_id FK
+        datetime created_at
+        datetime closed_at
+    }
+
+    credit_Transfer {
+        int id PK
+        string kind
+        datetime created_at
+        int created_by_id FK
+        string source
+        string dedupe_token
+        int reverses_id FK
+        int companion_of_id FK
+    }
+
+    credit_Posting {
+        int id PK
+        int transfer_id FK
+        int account_id FK
+        int amount_ore
+        int balance_after
+        string text
+        string prev_hash
+        string row_hash
+    }
+
     audit_AuditEvent }o--|o residents_Account : "actor"
     audit_AuditEntity }o--|| audit_AuditEvent : "event"
     audit_AuditChange }o--|| audit_AuditEntity : "entity"
@@ -1160,6 +1209,17 @@ erDiagram
     regnskab_EconomicLedgerEntry }o--|| residents_Account : "resident"
     regnskab_AlumneregningSend }o--|| residents_Account : "resident"
     regnskab_AlumneregningSend }o--|o core_OutgoingMail : "mail"
+    credit_Holder ||--|o residents_Person : "person"
+    credit_Holder ||--|o core_Workgroup : "workgroup"
+    credit_Book }o--|| credit_Holder : "holder"
+    credit_CreditAccount }o--|| credit_Book : "book"
+    credit_CreditAccount }o--|| credit_Holder : "holder"
+    credit_CreditAccount }o--|o credit_Book : "counterpart_book"
+    credit_Transfer }o--|o residents_Account : "created_by"
+    credit_Transfer ||--|o credit_Transfer : "reverses"
+    credit_Transfer ||--|o credit_Transfer : "companion_of"
+    credit_Posting }o--|| credit_Transfer : "transfer"
+    credit_Posting }o--|| credit_CreditAccount : "account"
 ```
 
 ## access
@@ -1530,6 +1590,78 @@ erDiagram
     residents_Account { }
 
     core_PushSubscription }o--|| residents_Account : "user"
+```
+
+## credit
+
+```mermaid
+erDiagram
+    credit_Holder {
+        int id PK
+        int person_id FK
+        int workgroup_id FK
+    }
+
+    credit_Book {
+        int id PK
+        string name
+        int holder_id FK
+        int default_credit_limit_ore
+        bool is_main
+        datetime created_at
+    }
+
+    credit_CreditAccount {
+        int id PK
+        int book_id FK
+        int holder_id FK
+        string name
+        int credit_limit_ore
+        string bank_reference
+        int counterpart_book_id FK
+        datetime created_at
+        datetime closed_at
+    }
+
+    credit_Transfer {
+        int id PK
+        string kind
+        datetime created_at
+        int created_by_id FK
+        string source
+        string dedupe_token
+        int reverses_id FK
+        int companion_of_id FK
+    }
+
+    credit_Posting {
+        int id PK
+        int transfer_id FK
+        int account_id FK
+        int amount_ore
+        int balance_after
+        string text
+        string prev_hash
+        string row_hash
+    }
+
+    core_Workgroup { }
+
+    residents_Account { }
+
+    residents_Person { }
+
+    credit_Holder ||--|o residents_Person : "person"
+    credit_Holder ||--|o core_Workgroup : "workgroup"
+    credit_Book }o--|| credit_Holder : "holder"
+    credit_CreditAccount }o--|| credit_Book : "book"
+    credit_CreditAccount }o--|| credit_Holder : "holder"
+    credit_CreditAccount }o--|o credit_Book : "counterpart_book"
+    credit_Transfer }o--|o residents_Account : "created_by"
+    credit_Transfer ||--|o credit_Transfer : "reverses"
+    credit_Transfer ||--|o credit_Transfer : "companion_of"
+    credit_Posting }o--|| credit_Transfer : "transfer"
+    credit_Posting }o--|| credit_CreditAccount : "account"
 ```
 
 ## den_hurtige

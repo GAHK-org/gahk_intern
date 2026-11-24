@@ -337,3 +337,25 @@ def test_seed_demo_gives_gahkflix_premieres_partial_dates_and_drafts_in_every_st
     trip = drafts.get(title="Rusturen")
     assert trip.draft_since is not None and trip.draft_since > trip.created_at + timedelta(days=60)
     assert trip.events.filter(kind=VideoEvent.Kind.UNPUBLISHED).exists()
+
+
+@pytest.mark.django_db
+def test_seed_demo_writes_a_gahk_konto_ledger_that_passes_the_check() -> None:
+    from credit import checks, ledger
+    from credit.models import Book, CreditAccount, Transfer
+
+    call_command("seed_demo", "--fresh", "--force", "--residents", "12", verbosity=0)
+    assert set(Book.objects.values_list("name", flat=True)) == {"GAHK", "Ølkælder"}
+    report = checks.run()
+    assert report.ok, report.faults
+    # The book page's states: a reversal, a charge, a closed account, and a settlement only one book
+    # has recorded so far.
+    assert Transfer.objects.filter(kind=Transfer.Kind.REVERSAL).exists()
+    assert Transfer.objects.filter(kind=Transfer.Kind.CHARGE).exists()
+    assert CreditAccount.objects.filter(closed_at__isnull=False).exists()
+    assert report.in_transit
+    cellar = Book.objects.get(name="Ølkælder")
+    assert ledger.book_total(cellar) == 0
+    # A second --fresh empties the append-only ledger and writes it again.
+    call_command("seed_demo", "--fresh", "--force", "--residents", "12", verbosity=0)
+    assert Book.objects.count() == 2
