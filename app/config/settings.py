@@ -80,7 +80,6 @@ INSTALLED_APPS = [
     "events",
     "calendars",
     "reparationer",
-    "arkiv",
     "photo_album",
     "notifications",
     "gahkflix",
