@@ -2,7 +2,7 @@
 and the broadcast form.
 
 Mounted under /admin/ in the siteadmin namespace (residents/urls_admin.py) next to the rest of the
-administrator tools, and gated the same way: @role_required("administrator").
+administrator tools, and gated the same way: the site_admin feature (access.policy).
 """
 
 import datetime
@@ -16,7 +16,6 @@ from django.views.decorators.http import require_POST
 
 from core.clock import current_datetime
 from core.models import PushDeliveryDay, PushSubscription
-from residents.permissions import role_required
 
 from . import categories, services
 from .categories import IMPORTANCE_CHOICES, Importance
@@ -95,7 +94,6 @@ def _stats() -> dict[str, object]:
     }
 
 
-@role_required("administrator")
 def notifications(request: HttpRequest) -> HttpResponse:
     form = BroadcastForm(request.POST or None)
     if request.method == "POST" and form.is_valid():
@@ -125,7 +123,6 @@ def notifications(request: HttpRequest) -> HttpResponse:
 
 
 @require_POST
-@role_required("administrator")
 def cancel_device(request: HttpRequest, pk: int) -> HttpResponseRedirect:
     """Delete one push subscription. The device stops getting pushes at once; its owner can
     subscribe it again from the settings page, which will show it as not subscribed."""

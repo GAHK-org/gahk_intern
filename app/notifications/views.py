@@ -16,9 +16,10 @@ from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
 from django.views.decorators.http import require_POST
 
+from access.api import fragment, is_kitchen
 from core import push
 from gahkflix import access as gahkflix_access
-from residents.permissions import current_resident, is_kitchen
+from residents.permissions import current_resident
 
 from . import categories, services
 from .categories import IMPORTANCE_CHOICES, Importance
@@ -74,6 +75,7 @@ def dropdown(request: HttpRequest) -> HttpResponse:
     return render(request, "notifications/_dropdown.html", {"rows": rows})
 
 
+@fragment
 def badge(request: HttpRequest) -> HttpResponse:
     """Just the bell's badge, for a live signal (notifications.live) to re-read.
 

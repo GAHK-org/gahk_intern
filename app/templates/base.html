@@ -75,7 +75,7 @@
   {% if preview_active %}
     <div class="banner banner-preview">
       <span>Forhåndsvisning: du ser siden som
-        <strong>{% if effective_roles %}{{ effective_roles|join:", " }}{% else %}beboer (ingen rolle){% endif %}</strong>.</span>
+        <strong>{{ preview_label }}</strong>.</span>
       <form method="post" action="{% url 'siteadmin:preview_set' %}">
         {% csrf_token %}<input type="hidden" name="mode" value="clear">
         <button type="submit">Afslut visning</button>
@@ -94,7 +94,7 @@
   {% endif %}
 
   {% block install_banner %}
-    {% if user.is_authenticated and "koekken" not in effective_roles %}
+    {% if access.dashboard.view %}
       {% comment %}
         Points phones and tablets at /install (the app has to be installed again from intern.gahk.dk).
         Hidden here and shown by frontend/src/install.ts only on a phone or tablet that is not already
@@ -119,7 +119,7 @@
 
     <header class="topbar">
       <button class="hamburger" @click="sidebar = !sidebar" aria-label="Menu">☰</button>
-      {% if user.is_authenticated and "koekken" not in effective_roles %}{# searches the alumneliste: not for the kitchen account, nor before logging in #}
+      {% if access.directory.view %}{# searches the alumneliste: only for those who may open it #}
         <form class="topsearch" method="get" action="{% url 'directory' %}" role="search">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
           <input type="search" name="q" placeholder="Søg beboer, studie, e-mail…" aria-label="Søg beboer">
@@ -149,7 +149,7 @@
               <span class="sr-only">Min konto</span>
             </button>
             <div id="user-menu-panel" class="user-menu-panel" role="menu" x-show="open" x-cloak>
-              {% if "koekken" not in effective_roles %}{# the kitchen account has no profile page #}
+              {% if access.profiles.view %}
                 <a role="menuitem" href="{% url 'resident_profile' user.pk %}">Min profil</a>
               {% endif %}
               <a role="menuitem" href="{% url 'notifications:preferences' %}">Notifikationsindstillinger</a>

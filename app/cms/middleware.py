@@ -3,8 +3,8 @@
 gahk_web's protocol ("The edit link", docs/protocol.md there) fixes the cookie: `gahk_editor=1`
 on the parent domain (EDITOR_HINT_COOKIE_DOMAIN, ".gahk.dk" in production), Path=/, Secure,
 SameSite=Lax, and NOT HttpOnly, because gahk.dk's static pages read it from a script. intern sets it
-for a user who is a superuser or holds one of CMS_EDITOR_ROLES as a REAL role (a role preview neither
-grants nor removes it), at login and on any later response that finds it missing, and deletes it
+for a user whose own roles give website.manage (access.policy; a role preview neither grants nor
+removes it), at login and on any later response that finds it missing, and deletes it
 (same name, domain and path) at logout and on the first response after the user stops qualifying.
 
 It is a hint, not a permission: the link leads to /hjemmeside/…, which checks the roles itself. So
@@ -19,14 +19,14 @@ from django.conf import settings
 from django.http import HttpRequest
 from django.http.response import HttpResponseBase
 
-from residents.permissions import CMS_EDITOR_ROLES, real_roles
+from access.api import user_can
 
 EDITOR_HINT_COOKIE = "gahk_editor"
 
 
 def is_cms_editor(request: HttpRequest) -> bool:
-    """Whether the signed-in user may edit gahk.dk, by real roles only (superuser: every role)."""
-    return not real_roles(request.user).isdisjoint(CMS_EDITOR_ROLES)
+    """Whether the signed-in user may edit gahk.dk, by their own roles only (never a preview)."""
+    return user_can(request.user, "website.manage")
 
 
 def _path_prefix(url: str) -> str | None:

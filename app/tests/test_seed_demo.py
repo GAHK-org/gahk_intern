@@ -6,12 +6,12 @@ from typing import Any
 import pytest
 from django.core.management import call_command
 
+from access.api import real_roles
 from audit import trail
 from audit.models import AuditEvent
 from den_hurtige.models import QuickPost
 from oelkaelder.models import Shopper
 from residents.models import Resident, active_period
-from residents.permissions import real_roles
 
 
 @pytest.mark.django_db

@@ -18,7 +18,7 @@ from django.shortcuts import get_object_or_404, redirect, render
 from django.utils import timezone
 from django.views.decorators.http import require_POST
 
-from residents.permissions import current_resident, role_required
+from residents.permissions import current_resident
 
 from .models import Application
 
@@ -147,7 +147,6 @@ def _list_filters(request: HttpRequest) -> dict:
     }
 
 
-@role_required("indstilling")
 def list_applications(request: HttpRequest) -> HttpResponse:
     f = _list_filters(request)
     qs = _admission_queryset(
@@ -179,13 +178,11 @@ def list_applications(request: HttpRequest) -> HttpResponse:
     )
 
 
-@role_required("indstilling")
 def show_application(request: HttpRequest, pk: int) -> HttpResponse:
     app = get_object_or_404(Application, pk=pk)
     return render(request, "optagelse/detail.html", {"app": app})
 
 
-@role_required("indstilling")
 def export_applications(request: HttpRequest) -> HttpResponse:
     """Export the applications as CSV or Excel (?format=csv|xlsx). Honours the same filters as the list
     (search, sort, kasserede, afventende) plus an optional ?from=&to= date range, so Indstillingen can
@@ -234,7 +231,6 @@ def export_applications(request: HttpRequest) -> HttpResponse:
 
 
 @require_POST
-@role_required("indstilling")
 def mark_received(request: HttpRequest, pk: int) -> HttpResponseRedirect:
     app = get_object_or_404(Application, pk=pk)
     if not app.received_by_id:
@@ -245,7 +241,6 @@ def mark_received(request: HttpRequest, pk: int) -> HttpResponseRedirect:
 
 
 @require_POST
-@role_required("indstilling")
 def toggle_discarded(request: HttpRequest, pk: int) -> HttpResponseRedirect:
     """Discard an application ("Kasseret"), or undo it. Toggling keeps it reversible; a discarded
     application is hidden from the list/search unless the "vis kasserede" toggle is on."""

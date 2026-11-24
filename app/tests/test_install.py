@@ -95,14 +95,10 @@ def test_the_install_page_for_a_resident(client: Client, make_resident: Callable
 
 
 def test_the_kitchen_account_may_read_the_install_page(make_resident: Callable[..., Resident]) -> None:
-    """The page is public; the kitchen gate guards residents' data, and the kitchen tablet may carry the
-    old app itself."""
-    from core.middleware import kitchen_may_open
-
+    """The page is public (access.features.PUBLIC), and the kitchen tablet may carry the old app itself."""
     client = Client()
     client.force_login(make_resident(email="koekken@gahk.dk", is_kitchen=True))
     assert client.get(INSTALL_URL).status_code == 200
-    assert not kitchen_may_open(INSTALL_URL + "x")
 
 
 # --- the banner ----------------------------------------------------------------------------------

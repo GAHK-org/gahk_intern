@@ -25,11 +25,12 @@ from django.shortcuts import get_object_or_404, redirect, render
 from django.utils import timezone
 from django.views.decorators.http import require_POST
 
+from access.api import fragment, is_kitchen
 from core.emoji import EMOJI_SHORTLIST
 from core.markdown import embed_references, image_sources, render_markdown
 from core.reactions import CREATED, apply_toggle, reaction_rows
 from core.uploads import attached_image, validate_image_upload
-from residents.permissions import current_resident, is_kitchen
+from residents.permissions import current_resident
 
 from . import embeds, live, search, services
 from .access import (
@@ -178,8 +179,7 @@ def events_allowed(request: HttpRequest) -> bool:
     """
     from events.access import request_allowed
 
-    # Begivenheder is closed to the kitchen account by core.middleware, which the gate cannot see.
-    return request_allowed(request) and not is_kitchen(request)
+    return request_allowed(request)
 
 
 @access_required
@@ -226,6 +226,7 @@ MAX_LIVE_CARDS = MAX_PINNED + PAGE_SIZE
 MAX_NEW_SINCE = 99
 
 
+@fragment
 def live_cards(request: HttpRequest) -> HttpResponse:
     """The cards for `?id=…&id=…`, drawn exactly as the board draws them.
 
@@ -264,6 +265,7 @@ def live_cards(request: HttpRequest) -> HttpResponse:
     )
 
 
+@fragment
 def live_detail(request: HttpRequest, pk: int) -> HttpResponse:
     """The detail page's live region: the post and its comments. 404 once the post is gone, which
     the page answers by saying so (opslagstavle-live.ts)."""

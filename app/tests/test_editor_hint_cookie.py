@@ -14,9 +14,9 @@ from django.test import Client, RequestFactory
 from django.urls import reverse
 from django.utils.functional import SimpleLazyObject
 
+from access.api import PREVIEW_SESSION_KEY
 from cms.middleware import EDITOR_HINT_COOKIE, EditorHintCookie
 from residents.models import Resident, RoleAssignment
-from residents.permissions import PREVIEW_SESSION_KEY
 
 PASSWORD = "hemmelig"
 

@@ -23,7 +23,7 @@ wording, which is the first symptom of the thing the extraction prevents.
 
 Every check below reads *effective* roles, so an administrator using the preview tool to view the
 site as a beboer is locked out too — which is exactly the rollout being simulated. That real/
-effective split is the security boundary in this codebase (see residents.permissions).
+effective split is the security boundary in this codebase (see access.roles).
 """
 
 from collections.abc import Collection
@@ -31,8 +31,9 @@ from collections.abc import Collection
 from django.db.models import QuerySet
 from django.http import HttpRequest
 
+from access.api import Feature, can
 from core.rollout import Gate
-from residents.permissions import MODERATION_ROLES, View, request_has_role
+from residents.permissions import View
 
 from .models import Notice, NoticeComment
 
@@ -48,7 +49,7 @@ ACCESS_ROLES: tuple[str, ...] | None = None
 
 # Read through a lambda, never passed by value: this module global is what tests rebind and what a
 # future edit flips to None, and a Gate holding the value would freeze at import. See core.rollout.
-_GATE = Gate(lambda: ACCESS_ROLES)
+_GATE = Gate(lambda: ACCESS_ROLES, Feature.OPSLAGSTAVLE)
 
 # The gate's surface, re-exported under the names this app has always used so no caller changed when
 # the mechanism moved to core.
@@ -76,12 +77,8 @@ def allowed_residents(qs: QuerySet) -> QuerySet:
 
 
 def can_moderate(request: HttpRequest) -> bool:
-    """Whether this request may delete other people's content and pin/unpin.
-
-    Inspektionen keep the kollegium's house rules, so they moderate the board the same way they do
-    everything else; administrator is included because it implies every role.
-    """
-    return request.user.is_authenticated and request_has_role(request, *MODERATION_ROLES)
+    """Whether this request may delete other people's content and pin/unpin (opslagstavle.manage)."""
+    return can(request, "opslagstavle.manage")
 
 
 def can_pin(request: HttpRequest) -> bool:

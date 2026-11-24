@@ -13,8 +13,6 @@ from django.urls import reverse
 from django.utils import timezone
 from django.views.decorators.http import require_POST
 
-from residents.permissions import role_required
-
 from . import dashboard
 from .models import PURGE_AFTER, Media, StorageReport
 from .tasks import measure_photo_album_storage, retry_derivatives, retryable_derivatives
@@ -84,7 +82,6 @@ def _latest_report() -> StorageReport | None:
     return StorageReport.objects.first()
 
 
-@role_required("administrator")
 def photo_album_dashboard(request: HttpRequest) -> HttpResponse:
     report = _latest_report()
     view = dashboard.overview(report)
@@ -101,7 +98,6 @@ def photo_album_dashboard(request: HttpRequest) -> HttpResponse:
     )
 
 
-@role_required("administrator")
 def photo_album_dates(request: HttpRequest) -> HttpResponse:
     """How the album is dated, in detail: by tier, year, folder and album, and the items to look at."""
     view = dashboard.overview()
@@ -145,7 +141,6 @@ def photo_album_dates(request: HttpRequest) -> HttpResponse:
     )
 
 
-@role_required("administrator")
 def photo_album_list(request: HttpRequest, kind: str) -> HttpResponse:
     """The items behind one of the overview's counts, each with everything known about it — or the
     files no item points at, from the latest storage measurement."""
@@ -204,7 +199,6 @@ def photo_album_list(request: HttpRequest, kind: str) -> HttpResponse:
 
 
 @require_POST
-@role_required("administrator")
 def photo_album_retry(request: HttpRequest, kind: str) -> HttpResponseRedirect:
     """Convert again now, with three fresh attempts, one item (`media` in the form) or every item in
     the list that is not already being converted or waiting in the queue."""
@@ -228,7 +222,6 @@ def photo_album_retry(request: HttpRequest, kind: str) -> HttpResponseRedirect:
 
 
 @require_POST
-@role_required("administrator")
 def photo_album_measure(request: HttpRequest) -> HttpResponseRedirect:
     """Measure the storage now rather than tonight."""
     measure_photo_album_storage.delay()

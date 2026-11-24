@@ -70,10 +70,10 @@ class LiveConsumer(AsyncJsonWebsocketConsumer):
         return [topic for topic in topics if live.may_subscribe(request, topic)]
 
     def _request(self) -> HttpRequest:
-        """The socket as residents.permissions sees a request: a user and a session.
+        """The socket as access.api sees a request: a user and a session.
 
         A real HttpRequest rather than a look-alike, so the authorizers can call the very functions
-        the views call (effective_roles, the rollout gates) and stay in step with them — including
+        the views call (access.api, the rollout gates) and stay in step with them — including
         an administrator previewing as a beboer, which lives in the session.
         """
         request = HttpRequest()
