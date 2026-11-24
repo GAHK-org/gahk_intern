@@ -75,14 +75,6 @@ def test_seed_demo_populates_and_is_idempotent() -> None:
     newcomer = Resident.objects.get(move_in_date=date(year, month, 1))
     assert this_month.filter(resident=newcomer).exists()
 
-    from arkiv.models import ArchiveFile, ArchiveFolder
-
-    shared = ArchiveFolder.objects.get(parent=None, name="Fælles dokumenter")
-    billeder = ArchiveFolder.objects.get(parent=shared, name="Billeder")
-    summer = ArchiveFolder.objects.get(parent=billeder, name="Sommerfest 2026")
-    assert ArchiveFile.objects.filter(folder=summer, name="gruppebillede.jpg").exists()
-    assert not ArchiveFolder.objects.filter(parent=None, name="Billeder").exists()
-
 
 @pytest.mark.django_db
 def test_seed_demo_fills_the_board_including_the_two_awkward_cases() -> None:

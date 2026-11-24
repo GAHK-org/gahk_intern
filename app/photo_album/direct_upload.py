@@ -5,7 +5,7 @@ body takes longer than a minute to arrive: the Dropbox album "Bornholm med GAHK 
 was dropped six times in a row while every album under 540 MB went through. A resident's video on
 dorm wifi meets the same minute. Even with the proxy out of the way, one uvicorn process would
 receive the gigabytes, spool them to disk twice and copy them to the bucket before answering.
-Arkiv went direct for the same reason (arkiv/uploads.py).
+GAHKFlix goes direct for the same reason (gahkflix/uploads.py).
 
 So the file goes to the bucket as an S3 multipart upload, in parts of PART_SIZE, each tried again
 on its own; then it is submitted with the ticket the upload was given, and handled as if it had
