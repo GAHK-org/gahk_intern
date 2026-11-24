@@ -39,6 +39,7 @@ from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_GET, require_POST
 
 from arkiv.storage import content_disposition
+from audit import trail
 from core.media import REDIRECT_CACHE_CONTROL
 from residents.models import Resident
 from residents.permissions import current_resident
@@ -117,13 +118,17 @@ def _token_import_resident(request: HttpRequest) -> Resident | None:
     authorization = request.headers.get("Authorization", "")
     if not token or not compare_digest(authorization, f"Bearer {token}"):
         return None
-    resident, created = Resident.objects.get_or_create(
-        email=settings.PHOTO_ALBUM_SYSTEM_IMPORT_EMAIL,
-        defaults={"first_name": "System", "last_name": "", "is_active": True},
-    )
-    if created:
-        resident.set_unusable_password()
-        resident.save(update_fields=["password"])
+    # The import script's own account, made the first time it calls in.
+    with trail.event("residents.resident.created", actor=None, only_if_changed=True) as event:
+        resident, created = Resident.objects.get_or_create(
+            email=settings.PHOTO_ALBUM_SYSTEM_IMPORT_EMAIL,
+            defaults={"first_name": "System", "last_name": "", "is_active": True},
+        )
+        if created:
+            resident.set_unusable_password()
+            resident.save(update_fields=["password"])
+            event.involve(resident, "subject")
+            event.details["account"] = "photo album import"
     return resident
 
 

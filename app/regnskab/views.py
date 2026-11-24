@@ -19,6 +19,7 @@ from django.urls import reverse
 from django.utils.http import url_has_allowed_host_and_scheme
 
 from ak.models import AkEntry
+from audit import trail
 from core.models import OutgoingMail
 from residents.models import Residency, Resident, Role, prev_period
 from residents.permissions import current_resident, effective_roles, role_required
@@ -123,7 +124,12 @@ def edit_economic_account_number(request: HttpRequest, pk: int) -> HttpResponse:
                 ):
                     lookup_error = alumneregning.mismatch_message(resident, number, account_name)
             if not lookup_error:
-                form.save()
+                with trail.event(
+                    "regnskab.account_number.updated",
+                    subject=resident,
+                    details={"account_name": account_name},
+                ):
+                    form.save()
                 messages.success(request, f"E-conomic kontonr. for {resident.full_name} er gemt.")
                 return redirect(nxt or "regnskab:overview")
     else:
@@ -246,7 +252,12 @@ def send_alumneregninger_view(request: HttpRequest) -> HttpResponse:
     date_from, date_to = period
     _warn_missing_account_numbers(request, date_from, date_to)
 
-    tasks.send_alumneregninger_task.delay(date_from.isoformat(), date_to.isoformat())
+    # Recorded only once the job is queued: an event block that raises writes nothing.
+    with trail.event(
+        "regnskab.alumneregninger.sent",
+        details={"date_from": date_from.isoformat(), "date_to": date_to.isoformat()},
+    ):
+        tasks.send_alumneregninger_task.delay(date_from.isoformat(), date_to.isoformat())
     messages.success(
         request,
         f"Alumneregninger for {date_from.isoformat()} til {date_to.isoformat()} er sat i kø og sendes i "
@@ -307,10 +318,19 @@ def alumneregning_not_received_view(request: HttpRequest, pk: int) -> HttpRespon
     failed) — alumneregning.mark_not_received."""
     if request.method != "POST":
         return HttpResponseNotAllowed(["POST"])
-    send = get_object_or_404(AlumneregningSend.objects.select_related("resident"), pk=pk)
+    send = get_object_or_404(AlumneregningSend.objects.select_related("resident", "mail"), pk=pk)
     date_from, date_to = send.date_from.isoformat(), send.date_to.isoformat()
     status_url = f"{reverse('regnskab:alumneregninger_status')}?fra={date_from}&til={date_to}"
-    if not alumneregning.mark_not_received(send, by=current_resident(request).full_name):
+    with trail.event(
+        "regnskab.alumneregning.not_received",
+        subject=send.resident,
+        details={"date_from": date_from, "date_to": date_to},
+    ) as event:
+        if send.mail is not None:
+            event.involve_kind("core.mail", send.mail.pk, f"{send.mail.subject} → {send.mail.recipients}")
+        if not alumneregning.mark_not_received(send, by=current_resident(request).full_name):
+            event.cancel()
+    if event.cancelled:
         messages.info(request, f"Der er ikke noget at sende igen for {send.resident.full_name}.")
         return redirect(status_url)
     tasks.send_alumneregninger_task.delay(date_from, date_to)

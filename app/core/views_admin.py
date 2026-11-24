@@ -19,6 +19,7 @@ from django.http import HttpRequest, HttpResponse, HttpResponseNotAllowed, Query
 from django.shortcuts import get_object_or_404, redirect, render
 from django.utils import timezone
 
+from audit import trail
 from residents.models import Role
 from residents.permissions import effective_roles, role_required
 
@@ -189,7 +190,13 @@ def mail_send_again(request: HttpRequest, pk: int) -> HttpResponse:
     if request.method != "POST":
         return HttpResponseNotAllowed(["POST"])
     mail = get_object_or_404(OutgoingMail, pk=pk)
-    if outbox.send_again([mail]):
+    # A person sending a mail again is an audit event (core.auditing); the outbox's own rows are not.
+    with trail.event("core.mail.sent_again") as event:
+        event.involve_kind("core.mail", mail.pk, f"{mail.subject} → {mail.recipients}")
+        event.details["count"] = outbox.send_again([mail])
+        if not event.details["count"]:
+            event.cancel()
+    if not event.cancelled:
         messages.success(request, f"Mailen til {mail.recipients} er sat i kø igen.")
     else:
         messages.error(
