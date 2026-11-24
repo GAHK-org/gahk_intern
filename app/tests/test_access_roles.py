@@ -88,6 +88,7 @@ def test_the_role_page_shows_a_list_role_it_cannot_remove(make_resident: Callabl
     _place(finn, active_period(), "AK-gruppen", 804)
     html = client.get("/admin/roles").content.decode()
     assert 'title="Fra alumnelisten">ak<' in html
+    assert html.count("<h1>Roller / embedsgrupper</h1>") == 1 and "<html" in html
     client.post("/admin/roles", {"resident": finn.pk, "role": Role.AK, "action": "remove"})
     assert Role.AK in real_roles(Resident.objects.get(pk=finn.pk))
 
