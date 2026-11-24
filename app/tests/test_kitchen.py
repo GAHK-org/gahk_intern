@@ -1,4 +1,4 @@
-"""The kitchen-staff account (Account.is_kitchen): Den Hurtige's køkken channel, Reparationer and its
+"""A kitchen-staff account (the kitchen role, by a grant): Den Hurtige's køkken channel, Reparationer and its
 own opslag, nothing else. Also as an administrator previewing it ("Se side som")."""
 
 from collections.abc import Callable

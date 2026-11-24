@@ -56,7 +56,6 @@ def mentionable(**residency: object) -> QuerySet[Account]:
     # One filter() call: chained filters on a multi-valued relation may each match a different row.
     return Account.objects.filter(
         is_active=True,
-        is_kitchen=False,
         person__resident__residencies__year=year,
         person__resident__residencies__month=month,
         **{f"person__resident__residencies__{key}": value for key, value in residency.items()},

@@ -81,16 +81,18 @@ def everyone() -> QuerySet[Account]:
     living = Residency.objects.filter(year=year, month=month).values("resident_id")
     roles = holding(ROLE_CODES - STAGES - {KITCHEN}).values("pk")
     devices = PushSubscription.objects.values("user_id")
-    # Not the kitchen account: its push device would otherwise put it in every feature's audience.
-    return Account.objects.filter(is_active=True, is_kitchen=False).filter(
-        Q(person__resident__in=living) | Q(pk__in=roles) | Q(pk__in=devices) | Q(is_superuser=True)
+    # Not the kitchen staff: a push device would otherwise put them in every feature's audience.
+    return (
+        Account.objects.filter(is_active=True)
+        .filter(Q(person__resident__in=living) | Q(pk__in=roles) | Q(pk__in=devices) | Q(is_superuser=True))
+        .exclude(pk__in=kitchen().values("pk"))
     )
 
 
 def kitchen() -> QuerySet[Account]:
-    """The kitchen account, which everyone() leaves out. Added back by the audiences it can open:
-    its Den Hurtige channel and the admin broadcast."""
-    return Account.objects.filter(is_active=True, is_kitchen=True)
+    """The kitchen staff, whom everyone() leaves out. Added back by the audiences they can open:
+    their Den Hurtige channel and the admin broadcast."""
+    return holding({KITCHEN})
 
 
 @dataclass(frozen=True)

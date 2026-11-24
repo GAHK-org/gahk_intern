@@ -94,6 +94,8 @@ def _nav_intern(request: HttpRequest, roles: frozenset[str], user_pk: int) -> li
     administration: list[NavItem] = []
     if opens(Feature.ADMISSIONS):
         administration.append((reverse("admissions:list"), "Ansøgninger", "inbox"))
+    if opens(Feature.ACCESS):
+        administration.append((reverse("access:index"), "Adgang", "users"))
     if opens(Feature.WEBSITE):
         administration.append((reverse("cms:overview"), "Hjemmeside", "globe"))
     if opens(Feature.SITE_ADMIN):

@@ -59,6 +59,9 @@ class Feature(StrEnum):
     WEBSITE = "website"  # Hjemmeside, gahk.dk's editor
     ACCOUNTING = "accounting"  # Regnskab
     SITE_ADMIN = "site_admin"  # /admin/: worker jobs, roles, the audit trail, "Se side som"
+    # Adgang (/access/): the kitchen staff's accounts (extra "kitchen_staff": Køkkengruppen), and the
+    # roles given by hand.
+    ACCESS = "access"
     DJANGO_ADMIN = "django_admin"
 
 
@@ -76,6 +79,8 @@ GRADE_ACTIONS = {"view": Grade.VIEW, "use": Grade.USE, "manage": Grade.MANAGE, "
 EXTRAS: dict[Feature, frozenset[str]] = {
     # Viceværterne triage repairs: move a ticket on, or hand it to the Repperne.
     Feature.REPARATIONER: frozenset({"move"}),
+    # Køkkengruppen add and end the kitchen staff's accounts.
+    Feature.ACCESS: frozenset({"kitchen_staff"}),
 }
 
 # Where an account without the dashboard lands (access.middleware): its first of these it may open.

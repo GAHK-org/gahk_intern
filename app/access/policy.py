@@ -43,6 +43,7 @@ _GROUP_TOOLS = frozenset(
         Feature.ACCOUNTING,
         Feature.SITE_ADMIN,
         Feature.DJANGO_ADMIN,
+        Feature.ACCESS,
     }
 )
 _RESIDENT_FEATURES = frozenset(Feature) - ALWAYS - _GROUP_TOOLS
@@ -100,6 +101,7 @@ POLICY: dict[str, Entry] = {
         Grade.USE,
     ),
     Role.INDSTILLING: {
+        Feature.ACCESS: Grade.MANAGE,
         Feature.ADMISSIONS: Grade.MANAGE,
         Feature.DIRECTORY: Grade.MANAGE,
         Feature.SOEGVAERELSE: Grade.MANAGE,
@@ -111,7 +113,7 @@ POLICY: dict[str, Entry] = {
         Feature.REPARATIONER: Grade.MANAGE,
         Feature.WEBSITE: Grade.MANAGE,
     },
-    Role.KOKKENGRUPPE: {},  # no tool of its own yet
+    Role.KOKKENGRUPPE: {Feature.ACCESS: "kitchen_staff"},
     Role.AK: {Feature.AK: Grade.MANAGE, Feature.VAERELSESTJEK: Grade.MANAGE},
     Role.OELKAELDER: {Feature.OELKAELDER: Grade.MANAGE},
     Role.REGNSKAB: {Feature.ACCOUNTING: Grade.MANAGE},

@@ -13,7 +13,7 @@ from access import permissions as access_permissions
 from access.api import ADMINISTRATOR, KITCHEN, RESIDENT, Feature, check, feature_of, holders
 from access.permissions import codenames_of, names_of
 from access.policy import POLICY, roles_with
-from access.roles import sync, sync_group_permissions
+from access.roles import sync_group_permissions
 from residents.models import Account, Role
 
 APP = Path(__file__).resolve().parent.parent
@@ -133,9 +133,10 @@ def test_an_accounts_groups_follow_its_roles(make_resident: Callable[..., Accoun
     assert set(anna.groups.values_list("name", flat=True)) == {RESIDENT, Role.AK}
     anna.grants.all().delete()
     assert set(Account.objects.get(pk=anna.pk).groups.values_list("name", flat=True)) == {RESIDENT}
-    Account.objects.filter(pk=anna.pk).update(is_kitchen=True)
-    sync([anna.pk])
-    assert set(anna.groups.values_list("name", flat=True)) == {KITCHEN}
+    kok = make_resident(email="kok@gahk.dk", is_kitchen=True)
+    assert set(kok.groups.values_list("name", flat=True)) == {KITCHEN}
+    kok.grants.all().delete()
+    assert not Account.objects.get(pk=kok.pk).groups.filter(name=KITCHEN).exists()
 
 
 # ---- the gate --------------------------------------------------------------------------------------

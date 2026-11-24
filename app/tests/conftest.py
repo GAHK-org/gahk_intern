@@ -138,6 +138,8 @@ def make_resident(db: None) -> Callable[[str, str, bool, tuple], Account]:
         **extra: object,
     ) -> Account:
         first_name, last_name = extra.pop("first_name", "Test"), extra.pop("last_name", "Beboer")
+        # One of the kitchen staff: a person with no resident, holding the kitchen role by a grant.
+        kitchen = bool(extra.pop("is_kitchen", False))
         # The human behind the account (residents.Person) and, unless it is the kitchen's, their
         # membership of the house (residents.Resident), with the facts about each. `person=None`
         # makes an account with no person, as the photo import script's is.
@@ -149,7 +151,7 @@ def make_resident(db: None) -> Callable[[str, str, bool, tuple], Account]:
             if isinstance(sponsor, Account):  # a test names a fylgje by their account
                 resident_facts["sponsor"] = sponsor.house
             person = Person.objects.create(first_name=first_name, last_name=last_name, **person_facts)
-            if not extra.get("is_kitchen"):
+            if not kitchen:
                 Resident.objects.create(person=person, **resident_facts)
         r = Account(email=email, first_name=first_name, last_name=last_name, person=person, **extra)
         if legacy:
@@ -164,7 +166,7 @@ def make_resident(db: None) -> Callable[[str, str, bool, tuple], Account]:
 
         year, month = active_period()
         since = min(datetime.date(year, month, 1), current_date())
-        for role in roles:
+        for role in (*roles, *(["kitchen"] if kitchen else [])):
             Grant.objects.create(account=r, role=role, reason="Test", starts_on=since)
         if roles:  # as the role page's accounts were: Django admin lets staff in
             Account.objects.filter(id=r.id).update(is_staff=True)
