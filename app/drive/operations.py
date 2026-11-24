@@ -89,7 +89,7 @@ def rename_file(viewer: Viewer, file: File, name: str, actor: Resident) -> None:
     old = file.name
     file.name = name
     try:
-        with trail.event("drive.file.renamed", subject=file):
+        with trail.event("drive.file.renamed", subject=file, actor=actor):
             file.save(update_fields=["name", "name_key"])
     except IntegrityError as exc:
         raise _clash(file.folder, name) from exc
@@ -112,7 +112,7 @@ def rename_folder(viewer: Viewer, folder: Folder, name: str, actor: Resident) ->
     old = folder.name
     folder.name = name
     try:
-        with trail.event("drive.folder.renamed", subject=folder):
+        with trail.event("drive.folder.renamed", subject=folder, actor=actor):
             folder.save()
     except IntegrityError as exc:
         raise _clash(parent, name) from exc
@@ -171,7 +171,7 @@ def check_move(viewer: Viewer, selection: Selection, destination: Folder) -> Non
 
 def move(viewer: Viewer, selection: Selection, destination: Folder, actor: Resident) -> None:
     involve = [(selection.source, "from"), (destination, "to")]
-    with trail.event("drive.items.moved", involve=involve):
+    with trail.event("drive.items.moved", actor=actor, involve=involve):
         _move(viewer, selection, destination, actor)
 
 
@@ -266,7 +266,9 @@ def _copy_folder(folder: Folder, destination: Folder, actor: Resident, now: date
 
 def copy(viewer: Viewer, selection: Selection, destination: Folder, actor: Resident) -> int:
     """Returns how many files were copied."""
-    with trail.event("drive.items.copied", involve=[(selection.source, "from"), (destination, "to")]):
+    with trail.event(
+        "drive.items.copied", actor=actor, involve=[(selection.source, "from"), (destination, "to")]
+    ):
         return _copy(viewer, selection, destination, actor)
 
 
@@ -293,7 +295,7 @@ def _has_contents(folder: Folder) -> bool:
 
 
 def delete(viewer: Viewer, selection: Selection, actor: Resident) -> None:
-    with trail.event("drive.items.deleted", involve=[(selection.source, "folder")]):
+    with trail.event("drive.items.deleted", actor=actor, involve=[(selection.source, "folder")]):
         _delete(viewer, selection, actor)
 
 
@@ -359,7 +361,7 @@ def bin_count(viewer: Viewer, folder: Folder) -> int:
 def restore(viewer: Viewer, file: File, actor: Resident) -> File:
     """Out of the bin, into its folder - and the folder, and any above it, out of the bin too. A
     name taken meanwhile gets a number: `Budget (2).xlsx`."""
-    with trail.event("drive.file.restored", subject=file, only_if_changed=True):
+    with trail.event("drive.file.restored", subject=file, actor=actor, only_if_changed=True):
         return _restore(viewer, file, actor)
 
 
@@ -420,7 +422,7 @@ def empty_bin(now: datetime | None = None) -> tuple[int, int]:
 
 def restore_version(viewer: Viewer, file: File, number: int, actor: Resident) -> FileVersion:
     """An old version becomes the newest, on top: nothing in between is lost."""
-    with trail.event("drive.file.version_restored", subject=file, details={"number": number}):
+    with trail.event("drive.file.version_restored", subject=file, actor=actor, details={"number": number}):
         return _restore_version(viewer, file, number, actor)
 
 
