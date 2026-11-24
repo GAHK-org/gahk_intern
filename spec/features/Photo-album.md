@@ -165,6 +165,14 @@ The photo album stores and presents photos and videos. Hereafter, "media" means 
 - Below it, `På denne dag` shows up to six photos captured on this calendar day in earlier years, spread across the years, newest year first.
 - The section is hidden when there is nothing to show.
 
+## Audit trail
+
+- Everything people do to the album goes into intern's audit trail (audit-trail.md): albums created, renamed, locked, unlocked and deleted; tags added and removed; uploads; media approved, rejected, binned, withdrawn by their uploader, restored and deleted for good; conversions retried; ZIP imports and album merges asked for; and the import script's renames and sidecar dates, by its System resident.
+- One upload, one selection or one import is one event, however many files it holds, with every item in it.
+- What the workers do on someone's behalf is theirs, by nobody: an import stored (with every album and item it made), refused, failed or given up, and a merge carried out (every item moved, merged or deleted), refused or failed. Who asked is in the request's own event.
+- The nightly purge of what waited or lay in the bin for 30 days is one event with how many, and so are the server commands `delete_photo_album` and `check_photo_album_originals --delete`.
+- Left out, as nobody's decision: a file's copies, hash, size, type, metadata and conversion, every date the album works out for ordering, and a job's progress and state (its outcome is an event of its own). Also downloads and view counts (reading, not changing), the dashboard's pictures of the day and the storage measurements.
+
 ## Development seed data
 
 The photo-album seed generator creates albums in year folders and `Uden årstal`, including three sub-album trees three levels deep, tags on albums at every level of those trees and on single media (some with several), thumbnail-ready media, an album large enough to page, and lifecycle examples for recent/old uploads, binned media, and an automatically locked album.

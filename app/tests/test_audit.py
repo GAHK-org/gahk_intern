@@ -35,7 +35,6 @@ PENDING_APPS = {
     "notifications",
     "oelkaelder",
     "opslagstavle",
-    "photo_album",
     "regnskab",
     "reparationer",
     "rooms",

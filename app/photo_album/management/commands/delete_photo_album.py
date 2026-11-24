@@ -18,12 +18,12 @@ from typing import Any
 from django.conf import settings
 from django.core.files.storage import Storage
 from django.core.management.base import BaseCommand, CommandError, CommandParser
-from django.db import transaction
 from django.db.models import QuerySet
 from django.utils import timezone
 from storages.backends.s3 import S3Storage
 from storages.utils import clean_name
 
+from audit import trail
 from photo_album.cache import HIGH_DEFINITION, THUMBNAIL
 from photo_album.models import Album, AlbumDownload, Media, normalize_name
 from photo_album.storage import get_photo_album_storage
@@ -123,7 +123,13 @@ class Command(BaseCommand):
             raise CommandError("The code did not match. Nothing was deleted.")
 
         storage = get_photo_album_storage()
-        with transaction.atomic():
+        # One event in the audit trail, by nobody (whoever runs it on the server is not known here),
+        # with every album and item it deletes. The download ZIPs are not in the trail.
+        with trail.event(
+            "photo_album.album.deleted_with_contents",
+            actor=None,
+            details={"scope": description, "albums": len(plan.album_ids), "media": len(plan.media_ids)},
+        ):
             # Locking the rows also holds off uploads into them: inserting a media row needs a share
             # lock on its album. Whatever arrived while the prompt waited stops the delete.
             list(Album.objects.select_for_update().filter(pk__in=plan.album_ids).values_list("pk", flat=True))
