@@ -30,6 +30,7 @@ from django.utils import timezone
 
 from core import push
 from core.models import PushSubscription, Room
+from gahkflix import access as gahkflix_access
 from notifications import categories, services, tasks
 from notifications.categories import Importance
 from notifications.models import Notification, NotificationPreference, NotificationSettings
@@ -895,9 +896,6 @@ def test_preferences_page_renders_every_category_and_room_anchor(
     assert response.status_code == 200
     html = response.content.decode()
     for category in categories.CATEGORIES:
-        if category.group == "gahkflix":  # behind its rollout gate; see the next test
-            assert f'name="{category.key}__push"' not in html
-            continue
         assert f'name="{category.key}__push"' in html
         optional = category.in_app and category.in_app_optional
         assert (f'name="{category.key}__in_app"' in html) is optional
@@ -905,14 +903,18 @@ def test_preferences_page_renders_every_category_and_room_anchor(
 
 
 def test_gahkflix_settings_follow_its_rollout_gate(
-    client: Client, make_resident: Callable[..., Resident]
+    client: Client, make_resident: Callable[..., Resident], monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    """Open to everyone today; re-gated, a resident outside the gate is not offered GAHKFlix's group."""
+    monkeypatch.setattr(gahkflix_access, "ACCESS_ROLES", (Role.ADMINISTRATOR, Role.FOTO))
+    client.force_login(make_resident(email="beboer@gahk.dk"))
+    outside = client.get(reverse("notifications:preferences")).content.decode()
     client.force_login(make_resident(email="foto@gahk.dk", roles=("foto",)))
-
     html = client.get(reverse("notifications:preferences")).content.decode()
 
     for category in categories.CATEGORIES:
         if category.group == "gahkflix":
+            assert f'name="{category.key}__push"' not in outside
             assert f'name="{category.key}__push"' in html  # push can always be switched off
             # In-app, only "new videos" and "credited" can; the rest always show.
             assert (f'name="{category.key}__in_app"' in html) is category.in_app_optional

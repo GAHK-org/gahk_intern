@@ -51,7 +51,7 @@ def other(make_resident: Callable[..., Resident]) -> Resident:
 
 @pytest.fixture
 def member(make_resident: Callable[..., Resident]) -> Resident:
-    """Fotogruppen: inside GAHKFlix's rollout gate, and one of its administrators."""
+    """Fotogruppen: one of GAHKFlix's administrators."""
     return make_resident(email="foto@gahk.dk", roles=(Role.FOTO,), first_name="Dorte")
 
 
@@ -59,6 +59,13 @@ def member(make_resident: Callable[..., Resident]) -> Resident:
 def videos_open(monkeypatch: pytest.MonkeyPatch) -> None:
     """Lift GAHKFlix's rollout gate: these tests are about the widget. The ones about the gate say so."""
     monkeypatch.setattr(gahkflix_access, "ACCESS_ROLES", None)
+
+
+@pytest.fixture
+def videos_gated(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Turn GAHKFlix's rollout gate back on, as it was during the trial: GAHKFlix is open to every
+    resident now, and these tests are about a reader the gate would keep out."""
+    monkeypatch.setattr(gahkflix_access, "ACCESS_ROLES", (Role.ADMINISTRATOR, Role.FOTO))
 
 
 def client_for(resident: Resident) -> Client:
@@ -359,7 +366,9 @@ def test_a_draft_or_binned_film_is_drawn_only_for_those_who_may_see_it(
     assert '<span class="flix-state is-binned">I papirkurven</span>' in administrator
 
 
-def test_no_film_widget_for_a_reader_gahkflix_keeps_out(beboer: Resident, member: Resident) -> None:
+def test_no_film_widget_for_a_reader_gahkflix_keeps_out(
+    videos_gated: None, beboer: Resident, member: Resident
+) -> None:
     """GAHKFlix's own rollout gate: its widget would be a play button that answers 403."""
     film = make_video(member, title="Revy")
     notice = post(member, f"{embed(film)}\n\n{embed(album())}")
@@ -514,7 +523,9 @@ def test_a_draft_cannot_be_shared(beboer: Resident, videos_open: None) -> None:
     assert textarea(html)[1].strip() == ""
 
 
-def test_the_composer_offers_what_the_reader_may_embed(beboer: Resident, member: Resident) -> None:
+def test_the_composer_offers_what_the_reader_may_embed(
+    videos_gated: None, beboer: Resident, member: Resident
+) -> None:
     plain = client_for(beboer).get(BOARD + "opret").content.decode()
     fotogruppen = client_for(member).get(BOARD + "opret").content.decode()
 
@@ -560,7 +571,9 @@ def test_the_film_picker_lists_published_films_only(beboer: Resident, videos_ope
     assert f"(gahkflix:{film.pk})" in by_series
 
 
-def test_no_film_picker_for_a_reader_gahkflix_keeps_out(beboer: Resident, member: Resident) -> None:
+def test_no_film_picker_for_a_reader_gahkflix_keeps_out(
+    videos_gated: None, beboer: Resident, member: Resident
+) -> None:
     make_video(member, title="Revy")
 
     assert "Revy" not in client_for(beboer).get(BOARD + "indlejr/gahkflix").content.decode()

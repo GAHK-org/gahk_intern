@@ -6,10 +6,9 @@ intern site's sidebar and top bar; its own header links back to the intern site.
 
 ## Access
 
-- While it is under test, only administrators and Fotogruppen can open GAHKFlix. The sidebar entry,
-  every page, its notifications and the profile strip follow the same gate, and the header shows
-  `Under test`. Opening it to every resident is one setting. In local development (DEBUG) every
-  resident is let in, so the view of a non-administrator can be tried.
+- Every resident can open GAHKFlix. It was tried out by administrators and Fotogruppen first; the
+  rollout gate stays, so limiting it again is one setting, and the sidebar entry, every page, its
+  notifications and the profile strip follow it together, with `Under test` in the header.
 - In GAHKFlix, "administrators" means the administrator role and Fotogruppen.
 
 ## Browsing

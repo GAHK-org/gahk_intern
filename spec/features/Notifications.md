@@ -122,7 +122,7 @@ they would get a 403 on opening. Acting on your own content never notifies you.
   Fotogruppen, except the one asking. Unpublished drafts more than a week old: every Monday each
   uploader gets one `gahkflix.uploads` about theirs and the administrators one `gahkflix.drafts`
   overview; the day before a draft is deleted, its uploader (Høj) and the administrators (Høj) are
-  warned once. While GAHKFlix is behind its rollout gate, its group is hidden
+  warned once. If GAHKFlix is put behind its rollout gate again, its group is hidden
   on the settings page for residents outside it, and none of them are notified.
 - **@mentions** (`mentions`, Høj) → a resident named with `@` in a post, comment, Den Hurtige message
   or reply, event description or comment, repair or repair note, if they are on this month's alumneliste and can open the thing.
