@@ -14,10 +14,8 @@ name: Architecture
 # Both run twice, on the PR and on its base, each with that checkout's own tooling. A base from
 # before these checks existed has none, and then everything counts as new.
 #
-# Temporary until January 2027 (#484): `--fail-on new` below, so the job fails only when a PR adds a
-# finding, and it is not a required check. Then the report goes back to `--fail-on any` (with an
-# agreed list of exceptions) and "architecture" joins the required checks of the dev and main
-# rulesets.
+# `--fail-on any` below: the job fails while the code has any finding. "architecture" is a required
+# check of the dev and main rulesets (#484).
 
 on:
   pull_request:
@@ -122,7 +120,7 @@ jobs:
       - name: Compare with the base
         run: |
           status=0
-          python3 scripts/architecture_report.py "$RUNNER_TEMP/head" "$RUNNER_TEMP/base" --fail-on new \
+          python3 scripts/architecture_report.py "$RUNNER_TEMP/head" "$RUNNER_TEMP/base" --fail-on any \
             > "$RUNNER_TEMP/report.md" || status=$?
           cat "$RUNNER_TEMP/report.md" >> "$GITHUB_STEP_SUMMARY"
           cat "$RUNNER_TEMP/report.md"
