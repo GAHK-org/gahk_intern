@@ -10,6 +10,7 @@ class CoreConfig(AppConfig):
         # VAPID validation lives here because the keys are shared by every feature that pushes; the
         # check IDs are core.E001-E006 (they were den_hurtige.E00x before push moved to core).
         from .checks import (
+            check_mail_outbox,
             check_media_storage_prefix,
             check_media_storage_url,
             check_media_url,
@@ -23,6 +24,8 @@ class CoreConfig(AppConfig):
         register(check_media_url)
         register(check_media_storage_url)
         register(check_media_storage_prefix)
+        # Something replacing EMAIL_BACKEND would send every mail past the outbox (core.mail).
+        register(check_mail_outbox)
 
         # Connects the Celery signals that keep each task's log for the worker-jobs page, and the
         # worker/beat signals that start the heartbeats /health reads.

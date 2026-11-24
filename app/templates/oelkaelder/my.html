@@ -23,11 +23,11 @@
     <h2 class="mt-6">Kontoudtog</h2>
     <div class="card overflow-x-auto">
       <table cellpadding="6" style="width:100%; border-collapse:collapse">
-        <thead><tr style="text-align:left; border-bottom:1px solid #e6e8ec">
+        <thead><tr style="text-align:left; border-bottom:1px solid var(--border-strong)">
           <th>Dato</th><th>Tekst</th><th style="text-align:right">Beløb</th></tr></thead>
         <tbody>
         {% for e in entries %}
-          <tr style="border-bottom:1px solid #f0f1f4">
+          <tr style="border-bottom:1px solid var(--border)">
             <td class="whitespace-nowrap">{{ e.created_at|date:"Y-m-d H:i" }}</td>
             <td>{{ e.text }}</td>
             <td class="text-right {{ e.amount_ore|sign_class }}">{{ e.amount_ore|kr }}</td>

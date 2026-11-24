@@ -58,7 +58,8 @@ GAHK_WEB_KEY=<64 random chars>                     # = [sync] key in gahk.dk's c
 # EDITOR_HINT_COOKIE_DOMAIN=.gahk.dk                # default; the "gahk_editor" hint cookie for gahk.dk's "Rediger siden"
 DATABASE_URL=postgres://gahk:<pw>@postgres:5432/gahk
 SMTP_HOST=send.one.com  SMTP_USER=…  SMTP_PASSWORD=…  SMTP_PORT=587
-EMAIL_BACKEND=django.core.mail.backends.smtp.EmailBackend
+EMAIL_BACKEND=django.core.mail.backends.smtp.EmailBackend   # what core.mail's queue delivers through — see below
+MAIL_RATE_LIMIT=10                                # optional: bulk (alumneregninger, ølkælder) mails per 5 minutes; other mail is never held; one.com blocks at ~25
 DEFAULT_FROM_EMAIL=autosvar@gahk.dk               # ⚠ must be an alias of SMTP_USER — see below
 OELKAELDER_FROM_EMAIL=bierkeller@gahk.dk          # ⚠ second sender, same requirement
 WIFI_PASSWORD=…  GOOGLE_CALENDAR_USER=…  GOOGLE_CALENDAR_PASSWORD=…
@@ -103,13 +104,14 @@ From address that account is not itself or an alias of:
 inside the running container — this is the only way to confirm, since MX stays on one.com (§7) and
 the app relays through their smarthost, so existing SPF/DKIM for gahk.dk covers it with no new DNS:
 ```
-python manage.py sendtestemail you@example.com                       # exercises DEFAULT_FROM_EMAIL
-DEFAULT_FROM_EMAIL=$OELKAELDER_FROM_EMAIL python manage.py sendtestemail you@example.com
+python manage.py check_mail_server you@example.com                              # DEFAULT_FROM_EMAIL
+python manage.py check_mail_server you@example.com --from "$OELKAELDER_FROM_EMAIL"
 ```
-Exit 0 = delivered. A failure here is otherwise near-invisible in the UI: the mails are best-effort
-so the app keeps working, and only the server log records the rejection. The one exception is
-password reset — Django's built-in view does not suppress errors, so a bad `DEFAULT_FROM_EMAIL`
-turns "glemt kodeord" into a 500 for the resident.
+`check_mail_server` sends straight through the real backend, past the app's mail queue, and fails with
+the server's answer; no error = the server accepted it. (`sendtestemail` would only queue the mail:
+every mail goes through `core.mail`'s outbox.) In running use, a refused mail fails the
+`core.tasks.deliver_mail` job on the worker-jobs page and is listed under "Outgoing mails" in Django
+admin, where it can be sent again once the cause is fixed.
 
 ## 3. CI (GitHub Actions — `.github/workflows/ci.yml`) **[you: create the repo]**
 Fresh repo (do **not** import the legacy history — it contains plaintext secrets, scope §5). Jobs:
@@ -829,6 +831,13 @@ albums in real use are never at risk. Run it with `docker exec -it` — it needs
   logins pass, nobody is signed out, nobody gets admin rights. The first deploy signs everyone out
   of the wiki once; their next login links their account. No `update.php` is needed.
 - The wiki image only works at wiki.gahk.dk (`$wgScriptPath` is `""`).
+- Health checks, the same pair as the intranet's (§4e), in `wiki-deploy/health.php`, neither of
+  which loads MediaWiki (the wiki is private, so its pages answer a probe with the login redirect):
+  **`/healthz`** is liveness only, Apache and PHP answering, and the image's Docker `HEALTHCHECK`
+  probes it, so Coolify shows the wiki as healthy or unhealthy rather than *unknown*.
+  **`/health`** is for the uptime monitor: 503 if MediaWiki's MariaDB or the intranet's PostgreSQL
+  (which every login reads) is unreachable, with the failing check named in the JSON body and the
+  reason in the container's log.
 
 ## 7. DNS (.dk via Punktum dk) **[you]**
 Records: **`intern.gahk.dk` and `wiki.gahk.dk` A → the Coolify VM** (no AAAA: gahk.dk has never had
@@ -871,7 +880,8 @@ old app shows how, `https://intern.gahk.dk/install` has the steps, and phones ge
 - [ ] `intern.gahk.dk` live in Coolify and bucket CORS updated; gahk.dk on Hetzner Webhosting with
       `GAHK_WEB_KEY` set here (§4f, §7); `https://gahk.dk/intern/` → `https://intern.gahk.dk/`;
       MX kept on one.com.
-- [ ] Uptime monitor on `https://intern.gahk.dk/health`; till, kitchen and Dropbox-script URLs updated.
+- [ ] Uptime monitors on `https://intern.gahk.dk/health` and `https://wiki.gahk.dk/health`; till,
+      kitchen and Dropbox-script URLs updated.
 
 ## 9. Notes
 - Python: **dev is 3.14, prod image pins 3.13** (Django 5.2's supported range; psycopg wheels).

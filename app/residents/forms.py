@@ -1,11 +1,15 @@
+import contextlib
 import unicodedata
 from collections.abc import Iterator
+from datetime import timedelta
+from typing import Any
 
 from django import forms
 from django.conf import settings
 from django.contrib.auth.forms import AuthenticationForm, PasswordResetForm
 from django.core.files.uploadedfile import UploadedFile
 
+from core import mail as outbox
 from core.uploads import validate_image_upload
 
 from .models import Resident
@@ -126,6 +130,15 @@ class ProfileEditForm(forms.ModelForm):
         return upload
 
 
+def password_link_mail() -> contextlib.AbstractContextManager[None]:
+    """Mail queued inside this carries a set-your-password link, and someone is waiting for it: it is
+    sent at once (core.mail's interactive kind), and given up on after half the link's lifetime —
+    arriving later, it would leave the resident too little time to use it."""
+    return outbox.kind(
+        outbox.Kind.INTERACTIVE, lifetime=timedelta(seconds=settings.PASSWORD_RESET_TIMEOUT) / 2
+    )
+
+
 class ResidentPasswordResetForm(PasswordResetForm):
     """Glemt-kodeord that also works for a resident who has never set one (F-014).
 
@@ -152,3 +165,22 @@ class ResidentPasswordResetForm(PasswordResetForm):
             if unicodedata.normalize("NFKC", email).casefold()
             == unicodedata.normalize("NFKC", getattr(u, field)).casefold()
         )
+
+    def send_mail(
+        self,
+        subject_template_name: str,
+        email_template_name: str,
+        context: dict[str, Any],
+        from_email: str | None,
+        to_email: str,
+        html_email_template_name: str | None = None,
+    ) -> None:
+        with password_link_mail():
+            super().send_mail(
+                subject_template_name,
+                email_template_name,
+                context,
+                from_email,
+                to_email,
+                html_email_template_name,
+            )

@@ -4,6 +4,7 @@ Schema/decisions: see ../02-schema-etl.md. Target DB is PostgreSQL (via DATABASE
 """
 
 import os
+from datetime import timedelta
 from pathlib import Path
 
 import dj_database_url
@@ -65,6 +66,7 @@ INSTALLED_APPS = [
     "django.contrib.staticfiles",
     "django_celery_beat",
     # GAHK domains
+    "audit",
     "core",
     "residents",
     "admissions",
@@ -93,6 +95,8 @@ MIDDLEWARE = [
     "django.middleware.common.CommonMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
     "django.contrib.auth.middleware.AuthenticationMiddleware",
+    # Each request is one source of audit events: its resident, its address (audit.trail).
+    "audit.middleware.AuditContext",
     # The "gahk_editor" hint cookie for gahk.dk's "Rediger siden" (EDITOR_HINT_COOKIE_DOMAIN).
     # Needs the user; set or deleted only when its state changes, never on static files or media.
     "cms.middleware.EditorHintCookie",
@@ -189,6 +193,12 @@ AUTH_PASSWORD_VALIDATORS = [
 # Password-reset links expire after 2 hours (F-014 decision, 2026-06).
 PASSWORD_RESET_TIMEOUT = 7200
 
+# The audit trail (audit.trail). A registered model written outside trail.event() is recorded as an
+# "unclaimed" event; from a request or a job that is a missing event(), logged as a warning — except
+# under these paths, where unclaimed is how writes are recorded: the Django admin has no events of its
+# own, so each of its saves becomes "<kind>.updated" with the admin's resident and every field.
+AUDIT_UNCLAIMED_PATHS = ("/django-admin/",)
+
 LANGUAGE_CODE = "da"
 TIME_ZONE = "Europe/Copenhagen"
 USE_I18N = True
@@ -225,7 +235,7 @@ CELERY_RESULT_EXPIRES = None
 CELERY_WORKER_REDIRECT_STDOUTS_LEVEL = "INFO"
 # The default ceiling for a scheduled job: generous for a sweep, and short enough that a wedged one
 # does not hold a worker slot all night. The two photo-album jobs legitimately run longer and set
-# their own limits at the task — see photo_album/tasks.py::MEDIA_TASK_TIME_LIMIT.
+# their own limits at the task — see photo_album/tasks.py::ENCODE_TASK_TIME_LIMIT.
 #
 # Redelivery from the two settings above does NOT re-run a lost download or import: by then its row
 # is BUILDING under the message's own task id, which the task takes as its worker having died and
@@ -342,6 +352,13 @@ CELERY_BEAT_SCHEDULE = {
         "task": "ak.tasks.apply_monthly_assessment",
         "schedule": crontab(minute=10, hour=4, day_of_month=1),
     },
+    # Each mail queues its own delivery, and a run the rate limit stops schedules the next; this
+    # only sends what is left if one of those messages was lost (core.mail), and gives up on mail
+    # whose lifetime has run out.
+    "deliver-mail": {
+        "task": "core.tasks.deliver_mail",
+        "schedule": crontab(minute="*/5"),
+    },
     # Every quarter of an hour, matching JOB_STALLED_AFTER: what it clears is a download the
     # resident is still watching a spinner for, so the gap between "the worker died" and "the page
     # says so" is the thing being minimised. Off the hour, like everything else here.
@@ -364,6 +381,14 @@ CELERY_BEAT_SCHEDULE = {
         "task": "gahkflix.tasks.recover_stalled",
         "schedule": crontab(minute="13-59/15"),
     },
+    # Lines up each GAHKFlix premiere of the next 20 minutes to be announced on its minute, and
+    # announces any that came out unannounced (gahkflix.services.announce_premieres). Not every
+    # minute: that is 1440 jobs a day on the worker-jobs page for a handful of premieres a year.
+    # Free quarter-hour minutes, off the */15 sweeps above and the 2-minute gahk.dk sync.
+    "gahkflix-announce-premieres": {
+        "task": "gahkflix.tasks.announce_premieres",
+        "schedule": crontab(minute="3-59/15"),
+    },
     # GAHKFlix's bin and expired requests after 30 days, unpublished drafts after 90, and stored files
     # nothing refers to (gahkflix.services.sweep_orphans).
     "gahkflix-housekeeping": {
@@ -379,6 +404,12 @@ CELERY_BEAT_SCHEDULE = {
     "gahkflix-warn-expiring-drafts": {
         "task": "gahkflix.tasks.warn_expiring_drafts",
         "schedule": crontab(minute=15, hour=10),
+    },
+    # Daily, after the draft warnings: a draft with a premiere ahead is not published yet, and will
+    # have no premiere unless it is (gahkflix.services.warn_unpublished_premieres).
+    "gahkflix-warn-unpublished-premieres": {
+        "task": "gahkflix.tasks.warn_unpublished_premieres",
+        "schedule": crontab(minute=20, hour=10),
     },
     "purge-worker-job-logs": {
         "task": "core.tasks.purge_worker_job_logs",
@@ -406,6 +437,16 @@ CELERY_BEAT_SCHEDULE = {
     "purge-delivered-broker-messages": {
         "task": "core.tasks.purge_delivered_broker_messages",
         "schedule": crontab(minute=50, hour=4),
+    },
+    # 03:10: the audit trail's retention, a year for logins and reset requests and five years for the
+    # rest (audit migration 0002).
+    "purge-expired-audit-events": {
+        "task": "audit.tasks.purge_expired",
+        "schedule": crontab(minute=10, hour=3),
+    },
+    "purge-outgoing-mail": {
+        "task": "core.tasks.purge_outgoing_mail",
+        "schedule": crontab(minute=55, hour=4),
     },
     "process-photo-album-media": {
         "task": "photo_album.tasks.process_pending_media",
@@ -570,8 +611,22 @@ CSRF_FAILURE_VIEW = "residents.auth.csrf_failure"
 LOGIN_REDIRECT_URL = "dashboard"
 LOGOUT_REDIRECT_URL = "login"
 
-# Email — defaults to the console backend in dev (prints instead of sending). SMTP from env in prod.
-EMAIL_BACKEND = os.environ.get("EMAIL_BACKEND", "django.core.mail.backends.console.EmailBackend")
+# Email (core.mail, #397). Two backends, and the names are on purpose:
+#   * the SETTING EMAIL_BACKEND is the outbox, always: every send_mail, ours or a third-party app's, is
+#     stored as an OutgoingMail and sent from there. core.checks warns if anything replaces it.
+#   * the ENV VAR EMAIL_BACKEND keeps meaning what it says to whoever sets it — where mail actually
+#     goes — and becomes MAIL_DELIVERY_BACKEND, what the outbox sends through. Unset (dev), that is
+#     the console backend, which prints each mail in the log of the process that sends it.
+EMAIL_BACKEND = "core.mail.OutboxBackend"
+MAIL_DELIVERY_BACKEND = os.environ.get("EMAIL_BACKEND", "django.core.mail.backends.console.EmailBackend")
+# one.com refuses the account after ~25 mails in 5 minutes. Only bulk mail (core.mail.Kind.BULK:
+# alumneregninger, ølkælder overviews) is held to this, counting every mail sent in the window; a
+# password reset or a welcome mail goes out at once, in the room this leaves below one.com's limit.
+MAIL_RATE_LIMIT = int(os.environ.get("MAIL_RATE_LIMIT", "10"))
+MAIL_RATE_WINDOW = timedelta(minutes=5)
+# Seconds before a send gives up on a mail server that does not answer. Django's default is to wait
+# for ever, and a hung send holds the outbox's lock: every mail would wait for the job's time limit.
+EMAIL_TIMEOUT = 30
 EMAIL_HOST = os.environ.get("SMTP_HOST", "")
 EMAIL_HOST_USER = os.environ.get("SMTP_USER", "")
 EMAIL_HOST_PASSWORD = os.environ.get("SMTP_PASSWORD", "")

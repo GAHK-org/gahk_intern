@@ -9,7 +9,8 @@ Usage:
     python manage.py seed_demo --fresh --residents 40
 
 Safety: refuses to run when DEBUG is off unless --force is given, so it can never wipe a prod DB
-by accident. --fresh deletes the demo-managed tables (everything below) inside one transaction.
+by accident. --fresh deletes the demo-managed tables (everything below) inside one transaction, and
+empties the audit trail, whose made-up history (audit.demo) is written last.
 
 Deterministic logins (all password `demo1234`):
     admin@gahk.dk      superuser (all access)
@@ -29,7 +30,7 @@ from io import BytesIO
 from django.conf import settings
 from django.core.files.base import ContentFile
 from django.core.management.base import BaseCommand, CommandError
-from django.db import models, transaction
+from django.db import connection, models, transaction
 from django.utils import timezone
 
 from admissions.models import Application
@@ -37,12 +38,16 @@ from ak.models import AkEntry, AkMonthlyCharge
 from ak.services import apply_monthly_charge
 from arkiv.demo import seed as seed_arkiv
 from arkiv.models import ArchiveFile, ArchiveFolder
+from audit import trail
+from audit.demo import seed as seed_audit_trail
+from audit.models import AuditChange, AuditEntity, AuditEvent
 from cms.models import ContentChange, NewsItem, Page, PageVersion, PylonEvent
 
 # CmsEvent, never Event: the internal events app has one of the same name, and both are seeded
 # here. See events.models on the three-way collision.
 from cms.models import Event as CmsEvent
-from core.models import Cleaning, Room, Workgroup
+from core.demo import seed as seed_mail
+from core.models import Cleaning, OutgoingMail, Room, Workgroup
 from den_hurtige.demo import seed as seed_den_hurtige
 from den_hurtige.models import QuickComment, QuickPost, QuickReaction
 from events.demo import seed as seed_events
@@ -174,6 +179,8 @@ WIPE_ORDER: list[type[models.Model]] = [
     # Resident row was deleted.
     EconomicLedgerEntry,
     AlumneregningSend,
+    # The demo outbox (core.demo). After AlumneregningSend, whose mail it would otherwise only null.
+    OutgoingMail,
     Resident,
     # Before Workgroup: ArchiveFolder references it with PROTECT (a SET_NULL would silently turn a
     # gated folder into a world-readable one), so the archive has to go first or --fresh cannot run.
@@ -218,35 +225,45 @@ class Command(BaseCommand):
         self.year, self.month = today.year, today.month
 
         with transaction.atomic():
-            if opts["fresh"]:
-                self._wipe()
-            rooms = self._seed_rooms()
-            workgroups, cleanings = self._seed_lookups(opts["residents"])
-            residents = self._seed_residents(opts["residents"])
-            # Returns the list plus the newcomer who took over the leaver's room, so the new resident
-            # takes part in the seeding below like everyone else (roles, AK, ølkælder, posts, ...).
-            residents = self._seed_residencies(residents, rooms, workgroups, cleanings)
-            self._seed_roles(residents)
-            self._seed_profile_pictures(residents)
-            self._seed_ak(residents)
-            self._seed_oelkaelder(residents)
-            self._seed_admissions(residents)
-            self._seed_cms()
-            self._seed_room_conditions(rooms, residents)
-            self._seed_kvotient(residents, rooms)
-            self._seed_stats()
-            seed_opslagstavle(residents, self.now, self.rng)
-            seed_events(residents, self.now, self.rng)
-            seed_arkiv(residents, self.now, self.rng)
-            seed_photo_album(residents, self.now, self.rng)
-            seed_gahkflix(residents, self.now, self.rng)
-            # After both: these posts embed an album and a film seeded just above.
-            seed_opslagstavle_embeds(residents, self.now)
-            seed_den_hurtige(residents, self.now, self.rng)
-            # Last: its rows link to the events, opslag and Den Hurtige posts seeded above.
-            seed_notifications(residents, self.now, self.rng)
+            # Loading demo data is nobody's action: not one audit event per row.
+            with trail.unaudited():
+                residents = self._seed_data(opts)
+            # Then, on purpose and audited, the weeks of history before today, for the audit page.
+            seed_audit_trail(residents, self.now, self.rng)
 
         self._report(residents)
+
+    def _seed_data(self, opts: dict) -> list[Resident]:
+        if opts["fresh"]:
+            self._wipe()
+        rooms = self._seed_rooms()
+        workgroups, cleanings = self._seed_lookups(opts["residents"])
+        residents = self._seed_residents(opts["residents"])
+        # Returns the list plus the newcomer who took over the leaver's room, so the new resident
+        # takes part in the seeding below like everyone else (roles, AK, ølkælder, posts, ...).
+        residents = self._seed_residencies(residents, rooms, workgroups, cleanings)
+        self._seed_roles(residents)
+        self._seed_profile_pictures(residents)
+        self._seed_ak(residents)
+        self._seed_oelkaelder(residents)
+        self._seed_admissions(residents)
+        self._seed_cms()
+        self._seed_room_conditions(rooms, residents)
+        self._seed_kvotient(residents, rooms)
+        self._seed_stats()
+        seed_opslagstavle(residents, self.now, self.rng)
+        seed_events(residents, self.now, self.rng)
+        seed_arkiv(residents, self.now, self.rng)
+        seed_photo_album(residents, self.now, self.rng)
+        seed_gahkflix(residents, self.now, self.rng)
+        # After both: these posts embed an album and a film seeded just above.
+        seed_opslagstavle_embeds(residents, self.now)
+        seed_den_hurtige(residents, self.now, self.rng)
+        # Last: its rows link to the events, opslag and Den Hurtige posts seeded above.
+        seed_notifications(residents, self.now, self.rng)
+        # After the ølkælder and admissions: its mails are theirs (core.demo).
+        seed_mail(residents, self.now, self.rng)
+        return residents
 
     # ---------------------------------------------------------------- wipe
     def _wipe(self) -> None:
@@ -257,6 +274,17 @@ class Command(BaseCommand):
                     Album.objects.filter(depth=depth).delete()
                 continue
             model._default_manager.all().delete()
+        # The trail is append-only: its rows refuse DELETE, in the models and in the database. A demo
+        # database starts its history again, so its tables are emptied the one way they allow, by
+        # their owner (the same TRUNCATE the test suite's flush uses). Postgres refuses to truncate a
+        # table with foreign-key checks still pending in this transaction (a second seed in one test),
+        # so those run first.
+        with connection.cursor() as cursor:
+            cursor.execute("SET CONSTRAINTS ALL IMMEDIATE")
+            cursor.execute(
+                f"TRUNCATE {', '.join(m._meta.db_table for m in (AuditChange, AuditEntity, AuditEvent))}"
+            )
+            cursor.execute("SET CONSTRAINTS ALL DEFERRED")
         self.stdout.write("  wiped existing demo data")
 
     # ------------------------------------------------------------- lookups
@@ -771,7 +799,9 @@ class Command(BaseCommand):
                 f"\nSeeded demo data: {len(residents)} residents, "
                 f"{Residency.objects.count()} residencies, {AkEntry.objects.count()} AK entries, "
                 f"{Event.objects.count()} begivenheder, {Notification.objects.count()} notifikationer, "
-                f"{Transaction.objects.count()} ølkælder purchases, {Application.objects.count()} applications."
+                f"{Transaction.objects.count()} ølkælder purchases, {Application.objects.count()} applications, "
+                f"{OutgoingMail.objects.count()} mails in the outbox, "
+                f"{AuditEvent.objects.count()} audit events."
             )
         )
         self.stdout.write(f"\nDev logins (password: {DEMO_PASSWORD}):")

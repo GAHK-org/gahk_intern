@@ -9,7 +9,6 @@ from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.contrib.auth.tokens import default_token_generator
 from django.core.mail import send_mail
-from django.db import transaction
 from django.db.models import Count, Q, QuerySet
 from django.http import HttpRequest, HttpResponse, HttpResponseRedirect, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
@@ -18,11 +17,12 @@ from django.utils import timezone
 from django.utils.encoding import force_bytes
 from django.utils.http import url_has_allowed_host_and_scheme, urlsafe_base64_encode
 
+from audit import trail
 from core.danish import MONTHS
 from core.mentions import mentionable
 from core.models import Cleaning, Room, Workgroup
 
-from .forms import ProfileEditForm, ResidentEditForm
+from .forms import ProfileEditForm, ResidentEditForm, password_link_mail
 from .models import (
     WORKGROUP_ROLE,
     WORKGROUP_ROLE_VALUES,
@@ -266,7 +266,8 @@ def edit_resident(request: HttpRequest, pk: int) -> HttpResponse | HttpResponseR
     if request.method == "POST":
         form = ResidentEditForm(request.POST, instance=resident)
         if form.is_valid():
-            form.save()
+            with trail.event("residents.resident.updated", subject=resident, only_if_changed=True):
+                form.save()
             messages.success(request, f"{resident.full_name} er opdateret.")
             nxt = request.GET.get("next", "")
             if nxt and url_has_allowed_host_and_scheme(nxt, allowed_hosts={request.get_host()}):
@@ -372,12 +373,14 @@ def stamtree(request: HttpRequest) -> HttpResponse:
 def _sync_month_roles(
     resident_id: int, workgroup: Workgroup | None, year: int, month: int, is_admin: bool
 ) -> None:
-    """Privileged-workgroup roles are derived from the chosen embedsgruppe: clear then re-add. The
-    `administrator` role is not a workgroup, so it is preserved/carried separately."""
+    """Privileged-workgroup roles are derived from the chosen embedsgruppe: drop the others, add this
+    one. The `administrator` role is not a workgroup, so it is preserved/carried separately. A role
+    that stays is left alone rather than deleted and made again, so the audit trail shows only real
+    changes."""
+    role = WORKGROUP_ROLE.get(workgroup.name) if workgroup else None
     RoleAssignment.objects.filter(
         resident_id=resident_id, year=year, month=month, role__in=WORKGROUP_ROLE_VALUES
-    ).delete()
-    role = WORKGROUP_ROLE.get(workgroup.name) if workgroup else None
+    ).exclude(role=role or "").delete()
     if role:
         RoleAssignment.objects.get_or_create(resident_id=resident_id, role=role, year=year, month=month)
     if is_admin:
@@ -421,7 +424,8 @@ def _send_welcome_email(request: HttpRequest, resident: Resident) -> bool:
     """Welcome a newly created resident with a link to set their password (F-014). Best-effort — a
     mail failure must not undo the creation — but it is logged and reported, never swallowed: the
     caller reports delivery to the user, and a wrong DEFAULT_FROM_EMAIL (one.com refuses senders the
-    SMTP account is not an alias of) must not look like success. Returns whether the mail went out."""
+    SMTP account is not an alias of) must not look like success. Returns whether the mail was queued:
+    core.mail sends it at once (password_link_mail), and a refusal then shows on the worker-jobs page."""
     uid = urlsafe_base64_encode(force_bytes(resident.pk))
     token = default_token_generator.make_token(resident)
     set_link = request.build_absolute_uri(
@@ -429,18 +433,19 @@ def _send_welcome_email(request: HttpRequest, resident: Resident) -> bool:
     )
     reset_link = request.build_absolute_uri(reverse("password_reset"))
     try:
-        send_mail(
-            "Velkommen til GAHK Intern",
-            (
-                f"Kære {resident.first_name}\n\n"
-                f"Du er blevet oprettet på GAHKs interne netværk med e-mailen {resident.email}.\n\n"
-                f"Sæt dit kodeord her:\n{set_link}\n\n"
-                f"Hvis linket er udløbet, kan du anmode om et nyt på:\n{reset_link}\n\n"
-                f"Mvh. Indstillingen"
-            ),
-            settings.DEFAULT_FROM_EMAIL,
-            [resident.email],
-        )
+        with password_link_mail():
+            send_mail(
+                "Velkommen til GAHK Intern",
+                (
+                    f"Kære {resident.first_name}\n\n"
+                    f"Du er blevet oprettet på GAHKs interne netværk med e-mailen {resident.email}.\n\n"
+                    f"Sæt dit kodeord her:\n{set_link}\n\n"
+                    f"Hvis linket er udløbet, kan du anmode om et nyt på:\n{reset_link}\n\n"
+                    f"Mvh. Indstillingen"
+                ),
+                settings.DEFAULT_FROM_EMAIL,
+                [resident.email],
+            )
     except Exception:
         logger.exception("Failed sending welcome email to resident %s", resident.pk)
         return False
@@ -541,7 +546,7 @@ def next_month_list(request: HttpRequest) -> HttpResponse | HttpResponseRedirect
         cl_by_id = {c.id: c for c in cleanings}
 
         if action == "copy":  # seed next month from the current list
-            with transaction.atomic():
+            with trail.event("residents.month_list.copied", details={"period": f"{ny}-{nm:02d}"}):
                 for res in Residency.objects.filter(year=cy, month=cm).select_related("workgroup"):
                     Residency.objects.update_or_create(
                         resident_id=res.resident_id,
@@ -633,13 +638,15 @@ def next_month_list(request: HttpRequest) -> HttpResponse | HttpResponseRedirect
 
                     next_rows.append(res)
             else:
-                with transaction.atomic():
+                with trail.event("residents.month_list.saved", details={"period": f"{ny}-{nm:02d}"}):
                     RoleAssignment.objects.filter(resident_id__in=removed, year=ny, month=nm).delete()
                     Residency.objects.filter(resident_id__in=removed, year=ny, month=nm).delete()
-                    for rid, (room, wg, cl) in intended.items():
-                        Residency.objects.filter(resident_id=rid, year=ny, month=nm).update(
-                            room=room, workgroup=wg, cleaning=cl
-                        )
+                    # Row by row rather than one UPDATE each, so the trail sees what moved.
+                    for residency in Residency.objects.filter(resident_id__in=intended, year=ny, month=nm):
+                        room, wg, cl = intended[residency.resident_id]
+                        residency.room, residency.workgroup, residency.cleaning = room, wg, cl
+                        residency.save(update_fields=["room", "workgroup", "cleaning"])
+                    for rid, (_room, wg, _cl) in intended.items():
                         _sync_month_roles(rid, wg, ny, nm, rid in admins)
                 messages.success(request, "Ændringer gemt.")
                 return redirect(
@@ -664,7 +671,12 @@ def next_month_list(request: HttpRequest) -> HttpResponse | HttpResponseRedirect
                 existing_draft = _add_form_draft(request, "add_existing")
             else:
                 wg = _place(wg_by_id, request.POST.get("workgroup"), replaced.workgroup if replaced else None)
-                with transaction.atomic():
+                with trail.event(
+                    "residents.month_list.added",
+                    subject=resident,
+                    details={"period": f"{ny}-{nm:02d}"},
+                    involve=[(replaced.resident if replaced else None, "replaced")],
+                ):
                     if replaced:
                         _drop_from_month(replaced)
                     Residency.objects.update_or_create(
@@ -721,17 +733,22 @@ def next_month_list(request: HttpRequest) -> HttpResponse | HttpResponseRedirect
                 # knows who introduced them right then, and a separate trip through the edit form is
                 # exactly the step that gets skipped, leaving holes in the stamtræ (F-011).
                 sponsor = _pick({r.id: r for r in Resident.objects.all()}, request.POST.get("sponsor", ""))
-                with transaction.atomic():
+                r = Resident(
+                    email=email,
+                    first_name=first,
+                    last_name=last,
+                    phone=phone,
+                    birthday=birthday,
+                    sponsor=sponsor,
+                )
+                with trail.event(
+                    "residents.resident.created",
+                    subject=r,
+                    details={"period": f"{ny}-{nm:02d}"},
+                    involve=[(replaced.resident if replaced else None, "replaced")],
+                ):
                     if replaced:
                         _drop_from_month(replaced)
-                    r = Resident(
-                        email=email,
-                        first_name=first,
-                        last_name=last,
-                        phone=phone,
-                        birthday=birthday,
-                        sponsor=sponsor,
-                    )
                     r.set_unusable_password()  # they set one via the welcome/password-reset link (F-014)
                     r.save()
                     Residency.objects.create(
@@ -747,7 +764,9 @@ def next_month_list(request: HttpRequest) -> HttpResponse | HttpResponseRedirect
                     _sync_month_roles(r.id, wg, ny, nm, False)
                 sent = _send_welcome_email(request, r)
                 base = f"{first} {last} oprettet. " + _added_message(f"{first} {last}", replaced, ny, nm)
-                messages.success(request, f"{base} Velkomstmail sendt." if sent else base)
+                messages.success(
+                    request, f"{base} Velkomstmailen er sat i kø og sendes om lidt." if sent else base
+                )
                 if not sent:
                     messages.warning(
                         request,
@@ -852,7 +871,8 @@ def edit_profile(request: HttpRequest) -> HttpResponse | HttpResponseRedirect:
     if request.method == "POST":
         form = ProfileEditForm(request.POST, request.FILES, instance=resident)
         if form.is_valid():
-            form.save()
+            with trail.event("residents.profile.updated", subject=form.instance, only_if_changed=True):
+                form.save()
             messages.success(request, "Din profil er opdateret.")
             return redirect("resident_profile", pk=resident.pk)
         messages.error(request, "Ret fejlene og prøv igen.")

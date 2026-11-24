@@ -2,7 +2,7 @@
 {% block title %}{{ app.full_name }} - Ansøgning{% endblock %}
 {% block content %}
   <h1>{{ app.full_name }}
-    {% if app.discarded_by %}<span class="inline-block rounded-full bg-red-100 text-red-800 text-sm px-2 py-0.5 align-middle">Kasseret</span>{% endif %}
+    {% if app.discarded_by %}<span class="chip chip-neg align-middle">Kasseret</span>{% endif %}
   </h1>
   <p class="muted">{{ app.get_type_display }} · {{ app.submitted_at|date:"Y-m-d H:i" }}</p>
   <div class="card">

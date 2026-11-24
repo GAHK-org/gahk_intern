@@ -27,6 +27,7 @@ from django.views.decorators.http import require_POST
 from django_celery_beat.models import PeriodicTask
 from kombu.exceptions import DecodeError
 
+from audit import trail
 from config.celery import app as celery_app
 from core.models import WorkerJobLog
 from core.tasks import task_time_limit
@@ -179,6 +180,10 @@ class Job(_TaskName):
     # Set on a running job: how long it has run, and how long it may.
     elapsed: datetime.timedelta | None = None
     time_limit: datetime.timedelta | None = None
+    # From the worker's record, for a job that reports how far it has got (core/job_progress.py).
+    progress: float | None = None
+    progress_step: str = ""
+    progressed_at: datetime.datetime | None = None
 
     @property
     def state_label(self) -> str:
@@ -217,6 +222,15 @@ class Job(_TaskName):
         return bool(self.elapsed and self.time_limit and self.elapsed > self.time_limit)
 
     @property
+    def progress_percent(self) -> int | None:
+        return None if self.progress is None else min(100, int(self.progress * 100))
+
+    @property
+    def watched(self) -> bool:
+        """A running job the watchdog holds to its pace: one that reports its progress."""
+        return self.status == "STARTED" and self.progress is not None
+
+    @property
     def limit_used(self) -> int:
         """How much of its time limit a running job has used, in percent (at most 100)."""
         if not (self.elapsed and self.time_limit):
@@ -240,6 +254,9 @@ class Job(_TaskName):
         self.parent_id = record.parent_id or self.parent_id
         self.arguments = record.arguments or self.arguments
         self.keyword_arguments = record.keyword_arguments or self.keyword_arguments
+        self.progress = record.progress
+        self.progress_step = record.progress_step
+        self.progressed_at = record.progressed_at
 
 
 class _ResultUnpickler(pickle.Unpickler):
@@ -1170,18 +1187,27 @@ def roles(request: HttpRequest) -> HttpResponse:
         rid = request.POST.get("resident")
         role = request.POST.get("role")
         action = request.POST.get("action")
-        if rid and role in Role.values:
+        resident = Resident.objects.filter(pk=rid or 0).first() if (rid or "").isdecimal() else None
+        if resident is not None and role in Role.values:
+            details = {"role": role, "period": f"{year}-{month:02d}"}
             if action == "add":
-                RoleAssignment.objects.get_or_create(resident_id=rid, role=role, year=year, month=month)
-                Resident.objects.filter(id=rid).update(is_staff=True)
-                # Stamp the granter so they cannot also be the approver (residents.admin_access).
-                # The grant itself is opened by the signal, which covers the other three doors.
-                if role == Role.ADMINISTRATOR:
-                    AdminAccessGrant.objects.filter(
-                        resident_id=rid, status=AdminAccessGrant.Status.PENDING, requested_by=None
-                    ).update(requested_by=current_resident(request))
+                with trail.event("residents.role.added", subject=resident, details=details):
+                    RoleAssignment.objects.get_or_create(resident=resident, role=role, year=year, month=month)
+                    Resident.objects.filter(id=resident.pk).update(is_staff=True)
+                    # Stamp the granter so they cannot also be the approver (residents.admin_access).
+                    # The grant itself is opened by the signal, which covers the other three doors.
+                    if role == Role.ADMINISTRATOR:
+                        grant = AdminAccessGrant.objects.filter(
+                            resident=resident, status=AdminAccessGrant.Status.PENDING, requested_by=None
+                        ).first()
+                        if grant is not None:
+                            grant.requested_by = current_resident(request)
+                            grant.save(update_fields=["requested_by"])
             elif action == "remove":
-                RoleAssignment.objects.filter(resident_id=rid, role=role, year=year, month=month).delete()
+                with trail.event("residents.role.removed", subject=resident, details=details):
+                    RoleAssignment.objects.filter(
+                        resident=resident, role=role, year=year, month=month
+                    ).delete()
         return redirect("siteadmin:roles")
 
     residents = (
@@ -1217,7 +1243,9 @@ def preview_set(request: HttpRequest) -> HttpResponseRedirect:
     mode = request.POST.get("mode")
     if mode == "clear":
         request.session.pop(PREVIEW_SESSION_KEY, None)
-    elif mode == "resident":
+        trail.record("residents.preview.cleared")
+        return redirect("dashboard")
+    if mode == "resident":
         request.session[PREVIEW_SESSION_KEY] = []
     elif mode == "admin":
         request.session[PREVIEW_SESSION_KEY] = [Role.ADMINISTRATOR]
@@ -1226,6 +1254,8 @@ def preview_set(request: HttpRequest) -> HttpResponseRedirect:
     else:  # mode == "role"
         role = request.POST.get("role")
         request.session[PREVIEW_SESSION_KEY] = [role] if role in Role.values else []
+    # Seeing the site as someone else is an administrator's power over what others see: worth a line.
+    trail.record("residents.preview.set", details={"roles": request.session[PREVIEW_SESSION_KEY]})
     return redirect("dashboard")
 
 
