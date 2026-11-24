@@ -129,6 +129,7 @@ Drive
 - Each space has an activity page for its members. A Delt mappe's page also shows member and role changes.
 - Admins and Inspektionen have a page of pending unlock and purge requests, and of past decisions, showing names and paths only.
 - History outlives what it describes: a purged version leaves its entry ("Version 3 slettet permanent af Mette, godkendt af Jonas").
+- Every change is also in the general audit trail (audit-trail.md), with each changed field before and after, including the folders the system makes.
 
 ## Preview and live editing
 
