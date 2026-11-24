@@ -27,7 +27,6 @@ LOGIN = "/admin/login"
 PENDING_APPS = {
     "admissions",
     "ak",
-    "arkiv",
     "core",
     "den_hurtige",
     "events",
