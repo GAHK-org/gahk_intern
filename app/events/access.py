@@ -31,7 +31,8 @@ from collections.abc import Collection
 from django.db.models import Q, QuerySet
 from django.http import HttpRequest
 
-from access.api import Feature
+from access import audiences
+from access.api import Feature, real_roles
 from core.rollout import Gate
 from residents.models import Resident
 from residents.permissions import View, current_resident
@@ -98,7 +99,7 @@ def visible_to(resident: Resident) -> EventQuerySet:
     incantation a later reader has to know to keep.
     """
     return Event.objects.filter(
-        Q(visibility=Visibility.AABENT)
+        (Q(visibility=Visibility.AABENT) & audiences.visible("audience", real_roles(resident)))
         | Q(organiser=resident)
         | Q(pk__in=Event.co_organisers.through.objects.filter(resident_id=resident.pk).values("event_id"))
         | Q(pk__in=EventInvite.objects.filter(resident=resident).values("event_id"))

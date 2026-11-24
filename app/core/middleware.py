@@ -11,13 +11,6 @@ from django.http.response import HttpResponseBase
 from .storage import request_host
 
 
-def kitchen_home() -> str:
-    """Den Hurtige's kitchen channel — where the kitchen account lands."""
-    from den_hurtige import channels
-
-    return channels.BY_SLUG[channels.KITCHEN_CHANNEL].url
-
-
 class PresignForRequestHost:
     """In DEBUG, let presigned URLs follow the host the page was opened on (core.storage.presigning_endpoint).
 
