@@ -1,0 +1,44 @@
+{% comment %}A resident's access, on their edit page (person_context in the access app's views).{% endcomment %}
+<div class="card" style="max-width:640px">
+  <h2>Adgang</h2>
+  <p><strong>Lige nu:</strong>
+    {% for label in access_roles %}<span class="chip">{{ label }}</span>{% empty %}<span class="muted">Ingen adgang</span>{% endfor %}
+  </p>
+  {% if access_grants %}
+    <table class="w-full border-collapse mt-2">
+      <tbody>
+      {% for grant, label, current in access_grants %}
+        <tr class="border-b border-line{% if not current %} muted{% endif %}">
+          <td class="p-2">{{ label }}</td>
+          <td class="p-2">{{ grant.reason }}</td>
+          <td class="p-2">{{ grant.starts_on|date:"j. M Y" }} – {% if grant.ends_on %}{{ grant.ends_on|date:"j. M Y" }}{% else %}indtil videre{% endif %}</td>
+          <td class="p-2 text-right">
+            {% if current and grant_form %}
+              <form method="post" action="{% url 'access:grant_end' grant.pk %}">{% csrf_token %}
+                <input type="hidden" name="next" value="{{ request.get_full_path }}">
+                <button type="submit" class="btn btn-secondary">Afslut</button>
+              </form>
+            {% endif %}
+          </td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  {% endif %}
+  {% if grant_form %}
+    <form method="post" action="{% url 'access:grant_add' resident.pk %}" class="mt-4">
+      {% csrf_token %}
+      <input type="hidden" name="next" value="{{ request.get_full_path }}">
+      <h3>Giv en rolle</h3>
+      <p class="muted">Til en, alumnelisten ikke beskriver: en, der er flyttet, men stadig gør et regnskab færdigt, eller en gæst. Det lægges til, hvad listen giver.</p>
+      {% for field in grant_form %}
+        <div class="mb-3">
+          <label for="{{ field.id_for_label }}" class="font-semibold block mb-1">{{ field.label }}</label>
+          {{ field }}
+          {% if field.help_text %}<p class="muted text-sm">{{ field.help_text }}</p>{% endif %}
+        </div>
+      {% endfor %}
+      <button type="submit" class="btn">Giv</button>
+    </form>
+  {% endif %}
+</div>

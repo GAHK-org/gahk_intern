@@ -4,7 +4,7 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from functools import cache
 
-from .features import EXTRAS, GRADE_ACTIONS, Feature, Grade, parse
+from .features import EXTRAS, GRADE_ACTIONS, HOME_FEATURES, Feature, Grade, parse
 from .policy import POLICY
 
 SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
@@ -31,6 +31,15 @@ class Permissions:
         needed = Grade.VIEW if method in SAFE_METHODS else Grade.USE
         return self.grade(feature) >= needed
 
+    def opens(self, feature: Feature | None) -> bool:
+        """Whether a link to a page of `feature` leads somewhere for these roles. The front page does
+        for anyone with a home to be sent on to; a link that is no page of ours refuses nobody."""
+        if feature is None:
+            return True
+        if feature == Feature.DASHBOARD:
+            return any(self.grade(f) >= Grade.VIEW for f in (Feature.DASHBOARD, *HOME_FEATURES))
+        return self.grade(feature) >= Grade.VIEW
+
     def features(self, grade: Grade = Grade.VIEW) -> frozenset[Feature]:
         return frozenset(f for f, g in self.grades.items() if g >= grade)
 
@@ -43,6 +52,7 @@ def _of(roles: frozenset[str]) -> Permissions:
         for feature, value in POLICY.get(role, {}).items():
             if isinstance(value, str):
                 extras.add(f"{feature}.{value}")
+                grades[feature] = max(grades.get(feature, Grade.NONE), Grade.USE)
             elif value > grades.get(feature, Grade.NONE):
                 grades[feature] = value
     for feature, names in EXTRAS.items():

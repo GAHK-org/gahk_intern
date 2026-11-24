@@ -9,10 +9,8 @@
     <p class="mb-2"><strong>Nuværende visning:</strong>
       {% if current is None %}
         Ingen — du ser siden som dig selv.
-      {% elif current %}
-        {{ current|join:", " }}
       {% else %}
-        beboer (ingen rolle)
+        {{ preview_label }}
       {% endif %}
     </p>
   </div>
@@ -37,6 +35,27 @@
         {% csrf_token %}
         <input type="hidden" name="mode" value="kitchen">
         <button type="submit" class="btn w-full">Køkkenet (ikke beboer)</button>
+      </form>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Vælg tid på kollegiet</h2>
+    <p class="muted">Som en, der ikke bor her nu, og som ingen rolle har.</p>
+    <div class="grid gap-2 sm:grid-cols-3 mt-2">
+      {% for value, label in stages %}
+        <form method="post" action="{% url 'siteadmin:preview_set' %}">
+          {% csrf_token %}
+          <input type="hidden" name="mode" value="stage">
+          <input type="hidden" name="stage" value="{{ value }}">
+          <button type="submit" class="btn w-full">{{ label }}</button>
+        </form>
+      {% endfor %}
+      <form method="post" action="{% url 'siteadmin:preview_set' %}">
+        {% csrf_token %}
+        <input type="hidden" name="mode" value="stage">
+        <input type="hidden" name="stage" value="">
+        <button type="submit" class="btn w-full">Aldrig på alumnelisten</button>
       </form>
     </div>
   </div>

@@ -31,7 +31,18 @@ from django.views.decorators.http import require_POST
 from django_celery_beat.models import PeriodicTask
 from kombu.exceptions import DecodeError
 
-from access.api import KITCHEN, PREVIEW_SESSION_KEY, can, can_preview, fragment
+from access.api import (
+    KITCHEN,
+    NO_STAGE,
+    PREVIEW_SESSION_KEY,
+    STAGE_LABELS,
+    STAGES,
+    Stage,
+    can,
+    can_preview,
+    fragment,
+    previewed_roles,
+)
 from audit import trail
 from config.celery import app as celery_app
 from core.models import WorkerJobLog
@@ -1243,7 +1254,13 @@ def preview(request: HttpRequest) -> HttpResponse:
     return render(
         request,
         "siteadmin/preview.html",
-        {"all_roles": Role.choices, "current": request.session.get(PREVIEW_SESSION_KEY)},
+        {
+            "all_roles": Role.choices,
+            "stages": [
+                (stage.value, label) for stage, label in STAGE_LABELS.items() if stage != Stage.RESIDENT
+            ],
+            "current": previewed_roles(request),
+        },
     )
 
 
@@ -1261,6 +1278,9 @@ def preview_set(request: HttpRequest) -> HttpResponseRedirect:
         request.session[PREVIEW_SESSION_KEY] = [Role.ADMINISTRATOR]
     elif mode == "kitchen":
         request.session[PREVIEW_SESSION_KEY] = [KITCHEN]
+    elif mode == "stage":
+        stage = request.POST.get("stage")
+        request.session[PREVIEW_SESSION_KEY] = [stage] if stage in STAGES else [NO_STAGE]
     else:  # mode == "role"
         role = request.POST.get("role")
         request.session[PREVIEW_SESSION_KEY] = [role] if role in Role.values else []

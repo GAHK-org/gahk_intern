@@ -23,7 +23,7 @@ from django.urls import reverse
 from django.utils import timezone
 from django.views.decorators.http import require_GET, require_POST
 
-from access.api import fragment
+from access.api import fragment, user_can
 from core.clock import current_date, current_datetime
 from core.danish import MONTHS, WEEKDAYS_SHORT
 from core.uploads import attached_image
@@ -638,6 +638,10 @@ def calendar_feed(request: HttpRequest, token: str) -> HttpResponse:
         .order_by("starts_at")
         .distinct()
     )
+    # Someone whose roles have lost Begivenheder (moved out over a year ago) gets the same empty
+    # calendar as anyone with no answers: their client empties it rather than showing an error.
+    if not user_can(resident, "events.view"):
+        mine = mine.none()
     entries = [(event, _my_state(event, resident) == "venteliste") for event in mine]
 
     body = icalendar.feed(entries, name="GAHK – mine begivenheder")

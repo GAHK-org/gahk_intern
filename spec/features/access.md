@@ -8,7 +8,7 @@ only asks for a permission by name.
 The site is cut into features: Den Hurtige, Opslagstavlen, Begivenheder, Reparationer, Fotoalbum,
 GAHKFlix, AK, Ølkælder, Værelsestjek, Søg værelse, Alumneliste, profiles, Stamtræ, Statistik,
 notifications, the wiki, and the group tools (Optagelse, Hjemmeside, Regnskab, Site-admin, Django
-admin). Every page is in exactly one feature.
+admin, Adgang). Every page is in exactly one feature.
 
 Access to a feature is one of these grades, each including the ones before it:
 
@@ -26,18 +26,42 @@ repair (`reparationer.move`) without managing the board.
 
 An account holds a set of roles:
 
-- **Beboer**: every account except the kitchen staff's.
+- **Its stage**, from the alumneliste (the month in effect is the newest published list that has
+  started):
+
+  | Stage | Who |
+  |---|---|
+  | Flytter ind | On a coming month's list, not the one in effect (also someone moving back in) |
+  | Beboer | On the list in effect |
+  | Fraflyttet < 1 måned | Last on the list the month before the one in effect |
+  | Fraflyttet 1–3 måneder | Last on the list 2–3 months before |
+  | Fraflyttet 3–12 måneder | Last on the list 4–12 months before |
+  | Fraflyttet > 1 år | Last on the list more than 12 months before |
+
+  Never on any list: no stage.
 - **Each embedsgruppe held in the month in effect**: Indstillingen, Inspektionen, AK, Ølkælderen,
-  Regnskab, PR, Repperne, Viceværterne, Fotogruppen, Køkkengruppen.
-- **Administrator**: Netværksgruppen, and every superuser.
-- **Køkkenet**: the kitchen staff, and nothing else.
+  Regnskab, PR, Repperne, Viceværterne, Fotogruppen, Køkkengruppen. Holding one makes someone
+  Beboer, whatever their months say.
+- **Administrator**: Netværksgruppen, and every superuser (who is also Beboer).
+- **Grants**: a role given by hand, from a first day through a last one (or until ended).
+  Køkkenet is only ever a grant.
+
+An account with no role at all has no access: the front page says so and offers to log out.
 
 ## What each role gives
 
 - **Beboer**: use of every feature except the group tools.
+- **Flytter ind**: everything Beboer has except Fotoalbum and GAHKFlix.
+- **Fraflyttet < 1 måned**: everything except Søg værelse.
+- **Fraflyttet 1–3 måneder**: everything except Søg værelse, Værelsestjek and Reparationer. AK and
+  Ølkælder are view only: their AK page and Ølkælder balance, but no new krydser.
+- **Fraflyttet 3–12 måneder**: Den Hurtige, Opslagstavlen, Begivenheder and Fotoalbum, with their
+  notifications and the @-picker.
+- **Fraflyttet > 1 år**: Stamtræ.
 - **Køkkenet**: use of Den Hurtige, Opslagstavlen, Reparationer and notifications. Inside them the
   kitchen sees only the Køkkenet channel and its own opslag.
-- **Indstillingen**: manages Optagelse, Alumneliste, Søg værelse and Hjemmeside.
+- **Indstillingen**: manages Optagelse, Alumneliste, Søg værelse, Hjemmeside and Adgang.
+- **Køkkengruppen**: adds and ends the kitchen staff's accounts on Adgang.
 - **Inspektionen**: manages Den Hurtige, Opslagstavlen, Reparationer and Hjemmeside.
 - **AK**: manages AK and Værelsestjek.
 - **Ølkælderen**: manages Ølkælder. **Regnskab**: manages Regnskab. **PR**: manages Hjemmeside.
@@ -46,6 +70,18 @@ An account holds a set of roles:
 - **Administrator**: administers everything.
 
 Someone with several roles gets the highest grade any of them gives. No role takes anything away.
+
+## Grants and the kitchen staff
+
+- Each of the kitchen staff has an account of their own, made on the Adgang page by Køkkengruppen or
+  the Indstilling: name and e-mail, and the account gets a mail to set its password. Ending their
+  access there ends the grant; the account stays, with no access.
+- The old shared kitchen login became a grant when this shipped, and keeps working until somebody
+  ends it on Adgang.
+- The Indstilling gives any other role by hand on a resident's edit page, with a reason and a
+  period: someone who moved out but finishes their group's accounts, a guest. Administrator cannot
+  be given this way. The edit page shows the roles the account has now.
+- Ending a grant makes it hold through yesterday; one that has not begun is removed.
 
 ## Behaviour
 
@@ -57,9 +93,21 @@ Someone with several roles gets the highest grade any of them gives. No role tak
 - The front page sends an account without the dashboard to its first feature: Den Hurtige, then
   Opslagstavlen, Begivenheder, Fotoalbum, Stamtræ. The kitchen lands on its channel.
 - The sidebar, the search box and live updates offer only what the account's roles open.
-- Administrators can see the site as any role, as plain Beboer or as Køkkenet ("Se side som").
+- Nobody is notified about a page they cannot open, whatever the notification's audience.
+- A calendar feed is empty once its owner has no Begivenheder.
+- Everything follows the date: a list made ahead takes effect on the 1st, the moved-out stages
+  pass with the months and a grant ends after its last day, with nothing to run.
+- Administrators can see the site as any role, any stage, as never listed or as Køkkenet ("Se side
+  som").
 
 ## Decisions
+
+- **Months on the list, not the move-out date.** The list is kept every month and already decides
+  who lives here everywhere else.
+- **Worked out when asked, not stored.** One query reads an account's months, groups and grants, and
+  the same rule runs in SQL for audiences, so no signal or nightly job keeps a stored copy current.
+- **Grants add, never take away.** An exception the Indstilling makes is one more role; nobody's
+  access is cut by hand.
 
 - **Permissions, not roles, in the code.** A view asks "may this request manage Ølkælder?", never
   "is this person in Ølkælderen?". Who may is a row in the table, so changing it is one edit.
