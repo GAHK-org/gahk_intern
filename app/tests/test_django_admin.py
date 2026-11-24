@@ -35,8 +35,6 @@ EXCEPTIONS = {
 ACTIONS = {
     "core.outgoingmail": {"send_again"},  # until /admin/mails can send a failed mail again
 }
-# Arkiv keeps its own role-gated admin (its root folders have no other screen) until Drive replaces it.
-UNCHANGED_APPS = {"arkiv"}
 
 
 @pytest.fixture
@@ -57,8 +55,6 @@ def test_only_the_listed_models_can_be_changed(superuser: Resident) -> None:
     request.user = superuser
     seen = set()
     for model, model_admin in admin.site._registry.items():
-        if model._meta.app_label in UNCHANGED_APPS:
-            continue
         key = model._meta.label_lower
         seen.add(key)
         rights = (
@@ -79,8 +75,6 @@ def test_every_inline_is_read_only(superuser: Resident) -> None:
     request = RequestFactory().get("/django-admin/")
     request.user = superuser
     for model, model_admin in admin.site._registry.items():
-        if model._meta.app_label in UNCHANGED_APPS:
-            continue
         for inline in model_admin.get_inline_instances(request):
             assert not inline.has_add_permission(request, None), inline
             assert not inline.has_change_permission(request, None), inline
@@ -97,7 +91,7 @@ def test_every_admin_page_opens(superuser: Resident, administrator: Resident) ->
             opts = model._meta
             base = f"/django-admin/{opts.app_label}/{opts.model_name}/"
             assert c.get(base).status_code == 200, base
-            expected_add = EXCEPTIONS.get(opts.label_lower, (False,))[0] or opts.app_label in UNCHANGED_APPS
+            expected_add = EXCEPTIONS.get(opts.label_lower, (False,))[0]
             assert c.get(f"{base}add/").status_code == (200 if expected_add else 403), base
 
 

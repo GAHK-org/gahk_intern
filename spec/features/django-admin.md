@@ -30,8 +30,6 @@ Opslag, comments and reactions; repairs; GAHKFlix videos, series and requests; a
 notifications and their settings; push devices; the monthly list and roles; schedules; groups. The
 feature's own pages are where these change.
 
-Arkiv keeps its own admin (root folders have no other screen) until Drive replaces it.
-
 ## Decisions
 
 - **Read-only unless nothing else can do it.** An edit here skips what the feature does around it:
