@@ -27,9 +27,9 @@ from .models import Resident, Role, active_period
 #
 # HttpResponseBase rather than HttpResponse, because FileResponse and StreamingHttpResponse are NOT
 # HttpResponse subclasses - they descend from HttpResponseBase directly. Without this, any view that
-# hands back a file (arkiv's download, and anything like core.media.serve_media that ever wants
-# gating) cannot be decorated with role_required or a rollout Gate, which is the one place the
-# decorator is most worth having. Widening a return type is safe for every existing caller.
+# hands back a file (a download, or anything like core.media.serve_media that ever wants gating)
+# cannot be decorated with role_required or a rollout Gate, which is the one place the decorator is
+# most worth having. Widening a return type is safe for every existing caller.
 View = Callable[..., HttpResponseBase]
 # What request.user is statically typed as: django-stubs can't know it is always a Resident here.
 AnyUser = AbstractBaseUser | AnonymousUser

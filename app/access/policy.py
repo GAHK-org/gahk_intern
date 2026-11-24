@@ -77,7 +77,6 @@ class Feature(StrEnum):
     OPSLAGSTAVLE = "opslagstavle"
     EVENTS = "events"  # Begivenheder
     REPARATIONER = "reparationer"
-    ARKIV = "arkiv"
     PHOTO_ALBUM = "photo_album"
     GAHKFLIX = "gahkflix"
     AK = "ak"

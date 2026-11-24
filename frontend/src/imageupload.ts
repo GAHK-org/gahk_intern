@@ -6,18 +6,6 @@
 // by redrawing the image through a canvas, and a canvas has no way to keep more than one frame.
 const MAX_DIM = 1600; // longest edge, px
 const QUALITY = 0.82; // JPEG quality
-// Arkiv grid previews. 320px covers a 2x display at the ~160px the listing renders them at, and
-// a lower quality is invisible at that size while roughly halving the bytes again.
-const THUMB_DIM = 320;
-const THUMB_QUALITY = 0.7;
-// Arkiv's viewer size. Deliberately the same 1600/0.82 as MAX_DIM/QUALITY above - a photograph
-// large enough to fill any screen in the building and small enough that paging through a folder of
-// them is not somebody's mobile data. Mirrors PREVIEW_DIM/PREVIEW_QUALITY in
-// arkiv/management/commands/make_arkiv_thumbnails.py, which makes the same size server-side for
-// the imported backlog: if one changes, change both, or a folder shows previews at two sizes
-// depending on how its files happened to arrive.
-const PREVIEW_DIM = 1600;
-const PREVIEW_QUALITY = 0.82;
 
 /** Downscale one image to MAX_DIM/QUALITY, returning the original if there is nothing to gain.
  *
@@ -25,9 +13,8 @@ const PREVIEW_QUALITY = 0.82;
  * hookImageForms below — and a second canvas downscaler with its own parameters is exactly the
  * drift worth avoiding. */
 async function redraw(file: File, maxDim: number, quality: number): Promise<Blob | null> {
-  // The shared canvas step. Extracted when Arkiv wanted a second size: one downscaler with a
-  // parameter, rather than two with their own quirks, is exactly the drift the note above warns
-  // about. Returns null when the image cannot be decoded or the canvas is unavailable.
+  // The shared canvas step. Returns null when the image cannot be decoded or the canvas is
+  // unavailable.
   let bmp: ImageBitmap;
   try {
     bmp = await createImageBitmap(file);
@@ -105,31 +92,6 @@ export async function downscaleImage(file: File): Promise<File> {
   return new File([blob], file.name.replace(/\.[^.]+$/, "") + ".jpg", { type: "image/jpeg" });
 }
 
-/** A grid-sized preview, or null when the file is not a decodable image.
- *
- * ALWAYS returns the small version when it can, unlike downscaleImage: a thumbnail that falls back
- * to the original would defeat its own purpose, which is that opening a folder of 200 party
- * photographs costs a few hundred KB rather than a gigabyte of someone's mobile data. */
-export async function thumbnailImage(file: File): Promise<Blob | null> {
-  if (!file.type.startsWith("image/")) return null;
-  return redraw(file, THUMB_DIM, THUMB_QUALITY);
-}
-
-/** The viewer-sized version, or null when the file is not a decodable image.
- *
- * Made here rather than on the server for the same reason the thumbnail is: the preview exists the
- * moment the photo does. A job on the Celery worker would leave a window in which the newest
- * photograph is the one that has no preview, and the person who just uploaded it is the one about to
- * go and look at it.
- *
- * Unlike downscaleImage this never falls back to the original: a preview that is the original is
- * not a preview. The caller treats null as "no preview", which the server then confirms by asking
- * the store rather than believing the browser. */
-export async function previewImage(file: File): Promise<Blob | null> {
-  if (!file.type.startsWith("image/")) return null;
-  return redraw(file, PREVIEW_DIM, PREVIEW_QUALITY);
-}
-
 // ONE delegated listener on the document, in the CAPTURE phase. Both halves of that matter.
 //
 // Capture, because htmx also listens for `submit` — on the form itself — as soon as a form carries
@@ -151,8 +113,8 @@ document.addEventListener(
     // OPT-OUT, not opt-in. Every image upload in the building wants downscaling — the one
     // exception is the photo album, which keeps the original at full resolution on purpose and
     // derives its own sizes server-side. Gating this on an opt-in attribute instead silently
-    // un-downscaled every other form (opslagstavlen, Den Hurtige, profiles, events, ølkælder,
-    // Arkiv), where the 5 MB server cap then drops a normal phone photo with only a warning.
+    // un-downscaled every other form (opslagstavlen, Den Hurtige, profiles, events, ølkælder),
+    // where the 5 MB server cap then drops a normal phone photo with only a warning.
     if (form.hasAttribute("data-no-downscale-images")) return;
     if (form.dataset.imgReady === "1") {
       // Second pass, after the downscale. Clear the flag rather than leaving it set: a form that

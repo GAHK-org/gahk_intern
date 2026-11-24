@@ -33,7 +33,6 @@ urlpatterns = [
     path("opslagstavle/", in_feature(Feature.OPSLAGSTAVLE, include("opslagstavle.urls"))),
     path("begivenheder/", in_feature(Feature.EVENTS, include("events.urls"))),
     path("reparationer/", in_feature(Feature.REPARATIONER, include("reparationer.urls"))),
-    path("arkiv/", in_feature(Feature.ARKIV, include("arkiv.urls"))),
     path("fotoalbum/", in_feature(Feature.PHOTO_ALBUM, include("photo_album.urls"))),
     path("gahkflix/", in_feature(Feature.GAHKFLIX, include("gahkflix.urls"))),
     path("ak/", in_feature(Feature.AK, include("ak.urls"))),
