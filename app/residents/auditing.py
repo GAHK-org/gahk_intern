@@ -9,9 +9,10 @@ trail.register(
     "residents.resident",
     name=lambda r: r.full_name or r.email,
     label="Beboer",
-    # last_login moves at every login, which is its own event; is_staff follows the roles and the
-    # thumbnail follows the picture, both kept by code rather than by anyone's choice.
-    ignore={"last_login", "is_staff", "profile_thumbnail", "groups", "user_permissions"},
+    # last_login moves at every login, which is its own event; is_staff follows the roles, the
+    # thumbnail follows the picture and access_level follows the alumneliste and the date (access.levels),
+    # all kept by code rather than by anyone's choice.
+    ignore={"last_login", "is_staff", "profile_thumbnail", "access_level", "groups", "user_permissions"},
     redact={"password"},
     labels={
         "email": "E-mail",
@@ -31,6 +32,8 @@ trail.register(
         "instagram_handle": "Instagram",
         "is_active": "Aktiv",
         "is_kitchen": "Køkkenkonto",
+        "access_level_override": "Adgang (undtagelse)",
+        "access_level_override_until": "Undtagelsen gælder til og med",
         "date_joined": "Oprettet",
     },
 )
@@ -81,6 +84,8 @@ trail.actions(
         "auth.access.denied": "Blev nægtet adgang",
         "residents.resident.created": "Oprettede beboer",
         "residents.resident.updated": "Rettede beboer",
+        "residents.resident.access_level_overridden": "Gav beboer en undtagelse for adgang",
+        "residents.resident.access_level_override_expired": "Adgangsundtagelsen udløb",
         "residents.profile.updated": "Rettede sin profil",
         "residents.month_list.copied": "Kopierede alumnelisten",
         "residents.month_list.saved": "Gemte alumnelisten",
@@ -89,7 +94,7 @@ trail.actions(
         "residents.role.removed": "Fjernede rolle",
         "residents.admin_access.approved": "Godkendte admin-adgang",
         "residents.admin_access.denied": "Afviste admin-adgang",
-        "residents.preview.set": "Viste siden som rolle",
+        "residents.preview.set": "Viste siden som rolle eller adgangsniveau",
         "residents.preview.cleared": "Stoppede visning som rolle",
         "rooms.round.ended": "Afsluttede værelsesrunden",
     }

@@ -16,6 +16,7 @@ from collections.abc import Iterable
 
 from django.http import HttpRequest
 
+from access.policy import Feature
 from core import live
 
 FEATURE = "notifikationer"
@@ -36,4 +37,4 @@ def inbox_changed(resident_ids: Iterable[int]) -> None:
 
 
 def register() -> None:
-    live.register(FEATURE, may_listen)
+    live.register(FEATURE, may_listen, Feature.NOTIFICATIONS)

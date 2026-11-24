@@ -42,10 +42,12 @@ from django.template.loader import render_to_string
 from django.urls import reverse
 from django.utils.safestring import SafeString
 
+from access.levels import has_feature
+from access.policy import Feature
 from core import embeds as embed_syntax
 from core.embeds import Embed
 from core.markdown import embed_references
-from residents.permissions import current_resident, effective_roles, is_kitchen
+from residents.permissions import current_resident, effective_roles
 
 from .models import Notice
 
@@ -263,9 +265,11 @@ def _key(name: str, value: str) -> int | None:
 
 
 def albums_allowed(request: HttpRequest) -> bool:
+    """A reader whose access level has no photo album (the kitchen, some former residents) gets no
+    album widget: its pictures would answer 403."""
     from photo_album import access
 
-    return not is_kitchen(request) and access.roles_allowed(effective_roles(request))
+    return has_feature(request, Feature.PHOTO_ALBUM) and access.roles_allowed(effective_roles(request))
 
 
 def _album_widgets(request: HttpRequest, wanted: set[Embed]) -> dict[Embed, object]:
@@ -472,11 +476,11 @@ def _pictures(media: Iterable["Media"]) -> list[Picture]:
 
 
 def videos_allowed(request: HttpRequest) -> bool:
-    """GAHKFlix has its own rollout gate, and a widget for a reader it keeps out would be a play
-    button that answers 403."""
+    """GAHKFlix has its own rollout gate, which also asks the reader's access level, and a widget for
+    a reader it keeps out would be a play button that answers 403."""
     from gahkflix import access
 
-    return not is_kitchen(request) and access.request_allowed(request)
+    return access.request_allowed(request)
 
 
 def _video_widgets(request: HttpRequest, wanted: set[Embed]) -> dict[Embed, object]:

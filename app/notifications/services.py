@@ -30,6 +30,8 @@ from django.db.models import Q, QuerySet
 from django.urls import reverse
 from django.utils.http import url_has_allowed_host_and_scheme
 
+from access import levels as access_levels
+from access.policy import AccessLevel, may_open
 from core import push
 from core.clock import current_datetime
 from core.models import PushSubscription
@@ -135,6 +137,21 @@ def _ids(recipients: Recipients) -> list[int]:
     return list(dict.fromkeys(recipients))
 
 
+def _who_may_open(ids: list[int], url: str) -> list[int]:
+    """Those of `ids` whose access level may open `url` (access.policy).
+
+    Nobody is told about a page they cannot open: a former resident who once commented on a post in
+    a feature they have since lost still gets no reply notifications from it, and a push device does
+    not put anyone in an audience their level is not in. Residents, nearly everyone notified, cost
+    the same two queries as anyone else.
+    """
+    if not ids:
+        return ids
+    levels = access_levels.levels_of(ids)
+    opens = {level: may_open(level, url) for level in set(levels.values())}
+    return [rid for rid in ids if opens.get(levels.get(rid, AccessLevel.NO_ACCESS), False)]
+
+
 def _with_devices(ids: Iterable[int]) -> set[int]:
     """The recipients a push could reach at all. Empty when push is not configured (dev), which
     makes push-only categories quietly produce nothing there rather than unreachable rows."""
@@ -193,7 +210,7 @@ def notify(
     expires_at = expires_at or _default_expiry(now)
     if expires_at <= now:
         return 0
-    ids = [rid for rid in _ids(recipients) if rid != exclude]
+    ids = _who_may_open([rid for rid in _ids(recipients) if rid != exclude], url)
     if not ids:
         return 0
 
@@ -288,6 +305,8 @@ def notify_grouped(
     if expires_at <= now:
         return None
 
+    if not _who_may_open([recipient_id], url):
+        return None
     decision = _decisions([recipient_id], cat, level)[recipient_id]
     pushed = decision.push and recipient_id in _with_devices([recipient_id])
     if not (decision.in_app or pushed):

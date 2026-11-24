@@ -17,6 +17,7 @@ from django.utils import timezone
 from django.utils.encoding import force_bytes
 from django.utils.http import url_has_allowed_host_and_scheme, urlsafe_base64_encode
 
+from access.levels import refreshed_once
 from audit import trail
 from core.danish import MONTHS
 from core.mentions import mentionable
@@ -266,7 +267,12 @@ def edit_resident(request: HttpRequest, pk: int) -> HttpResponse | HttpResponseR
     if request.method == "POST":
         form = ResidentEditForm(request.POST, instance=resident)
         if form.is_valid():
-            with trail.event("residents.resident.updated", subject=resident, only_if_changed=True):
+            # Giving someone a level the alumneliste does not is its own act, named as such.
+            overridden = {"access_level_override", "access_level_override_until"} & set(form.changed_data)
+            action = (
+                "residents.resident.access_level_overridden" if overridden else "residents.resident.updated"
+            )
+            with trail.event(action, subject=resident, only_if_changed=True):
                 form.save()
             messages.success(request, f"{resident.full_name} er opdateret.")
             nxt = request.GET.get("next", "")
@@ -502,6 +508,7 @@ def _target_period(request: HttpRequest, current: tuple[int, int]) -> tuple[int,
 
 
 @role_required("indstilling")  # administrator/superuser pass via all-access
+@refreshed_once()  # a whole month's rows: work the access levels out once, at the end
 def next_month_list(request: HttpRequest) -> HttpResponse | HttpResponseRedirect:
     """Indstilling (and admin) edit an alumneliste: copy the list forward, then set each resident's
     room, embedsgruppe (workgroup) and cleaning, and add/remove people. A privileged embedsgruppe

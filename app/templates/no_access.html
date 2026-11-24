@@ -1,0 +1,18 @@
+{% extends "auth_base.html" %}
+{% comment %}
+  What an account with no access level (access.policy.AccessLevel.NO_ACCESS) gets for the
+  dashboard: it has never been on the alumneliste and is not the kitchen. A page with a way out rather
+  than a bare 403, which reads like a broken site.
+{% endcomment %}
+{% block title %}Ingen adgang - GAHK{% endblock %}
+{% block content %}
+  <h1>Ingen adgang</h1>
+  <div class="card" style="max-width:520px">
+    <p>Din konto har ikke adgang til GAHK Intern, fordi den ikke står på alumnelisten.</p>
+    <p>Mener du, at det er en fejl, så kontakt Indstillingen.</p>
+    <form method="post" action="{% url 'logout' %}">
+      {% csrf_token %}
+      <button type="submit" class="btn">Log ud</button>
+    </form>
+  </div>
+{% endblock %}

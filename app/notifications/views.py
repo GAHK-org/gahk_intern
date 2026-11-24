@@ -16,6 +16,8 @@ from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
 from django.views.decorators.http import require_POST
 
+from access.levels import has_feature
+from access.policy import Feature
 from core import push
 from gahkflix import access as gahkflix_access
 from residents.permissions import current_resident, is_kitchen
@@ -28,6 +30,16 @@ from .models import Notification, NotificationPreference, NotificationSettings
 DROPDOWN_SIZE = 10
 
 VIEWS = (("kronologisk", "Kronologisk"), ("kategori", "Efter kategori"))
+
+# The feature each settings group's notifications open (access.policy): a level without it
+# is never sent them, so the page leaves the group out.
+GROUP_FEATURES = {
+    "chat": Feature.DEN_HURTIGE,
+    "posts": Feature.OPSLAGSTAVLE,
+    "events": Feature.EVENTS,
+    "repairs": Feature.REPARATIONER,
+    "gahkflix": Feature.GAHKFLIX,
+}
 
 
 def _safe(url: str) -> str:
@@ -162,6 +174,10 @@ def preferences(request: HttpRequest) -> HttpResponse:
     for key, name, leaves in categories.grouped():
         # GAHKFlix is still behind its rollout gate; nobody outside it can get these.
         if key == "gahkflix" and not gahkflix_access.request_allowed(request):
+            continue
+        # Nor a group for a feature this access level does not have: it is never sent one.
+        group_feature = GROUP_FEATURES.get(key)
+        if group_feature is not None and not has_feature(request, group_feature):
             continue
         rows = []
         for category in filter(shown, leaves):

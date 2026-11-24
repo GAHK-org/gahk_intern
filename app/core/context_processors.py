@@ -6,6 +6,8 @@ from django.conf import settings
 from django.http import HttpRequest
 from django.urls import reverse
 
+from access.levels import PREVIEW_LEVEL_SESSION_KEY, request_level
+from access.policy import LEVEL_LABELS, Access, AccessLevel, Feature, access, allows, may_open
 from core.middleware import kitchen_home
 from den_hurtige.access import roles_allowed as den_hurtige_allowed
 from events.access import roles_allowed as events_allowed
@@ -22,7 +24,7 @@ def _nav_intern(roles: Collection[str], user_pk: int) -> list[NavSection]:
     """Internal menu grouped into sidebar sections, built from the *effective* role set: base items for
     every resident plus each embedsgruppe's admin tools. Each item is (url, label, icon); empty sections
     are dropped. Honors the preview override (roles come from effective_roles)."""
-    if KITCHEN in roles:  # the kitchen account sees only what core.middleware.KitchenAccountGate lets through
+    if KITCHEN in roles:  # the kitchen account: its own labels and home (access.middleware.AccessLevelGate)
         return [
             (
                 "Køkkenet",
@@ -141,12 +143,39 @@ def _active_nav_url(sections: list[NavSection], path: str) -> str:
     return best
 
 
+def _for_level(sections: list[NavSection], level: AccessLevel) -> list[NavSection]:
+    """Only the links `level` can open, asked of the same table the gate reads, so the sidebar never
+    offers a page that answers 403. The wiki is a site of its own, with a feature of its own."""
+    kept: list[NavSection] = []
+    for section, items in sections:
+        shown = [
+            item
+            for item in items
+            if (
+                allows(level, Feature.WIKI)
+                if item[0] == settings.WIKI_URL
+                else "://" in item[0] or may_open(level, item[0])
+            )
+        ]
+        if shown:
+            kept.append((section, shown))
+    return kept
+
+
 def navigation(request: HttpRequest) -> dict[str, object]:
     authed = request.user.is_authenticated
     roles = effective_roles(request) if authed else set()
     previewer = can_preview(request.user) if authed else False
-    nav_intern = _nav_intern(roles, request.user.pk or 0) if authed else []
+    level = request_level(request) if authed else AccessLevel.NO_ACCESS
+    nav_intern = _for_level(_nav_intern(roles, request.user.pk or 0), level) if authed else []
     ctx: dict[str, object] = {
+        "access_level": level,
+        # What the topbar asks: which features this level may use, and which of them only to read.
+        "features": {f.value for f in Feature if allows(level, f)},
+        "read_only_features": {f.value for f in Feature if access(level, f) == Access.READ},
+        "preview_level": LEVEL_LABELS.get(request.session.get(PREVIEW_LEVEL_SESSION_KEY, ""))
+        if previewer
+        else None,
         "public_site_url": settings.PUBLIC_SITE_URL,
         "nav_intern": nav_intern,
         "active_nav_url": _active_nav_url(nav_intern, request.path),

@@ -3,6 +3,7 @@
 {% block content %}
   <h1>Rediger beboer</h1>
   <p class="muted mb-4">{{ resident.full_name }} - værelse, embedsgruppe og rengøring ændres pr. måned på <a href="{% url 'next_month_list' %}">næste måneds liste</a>.</p>
+  <p class="mb-4">Adgang nu: <strong>{{ resident.get_access_level_display }}</strong></p>
 
   <form method="post" class="card" style="max-width:640px">
     {% csrf_token %}
@@ -10,6 +11,7 @@
       <div class="mb-3">
         <label for="{{ field.id_for_label }}" class="font-semibold block mb-1">{{ field.label }}</label>
         {{ field }}
+        {% if field.help_text %}<p class="muted text-sm mt-1">{{ field.help_text }}</p>{% endif %}
         {% if field.errors %}<p class="text-neg text-sm mt-1">{{ field.errors|striptags }}</p>{% endif %}
       </div>
     {% endfor %}

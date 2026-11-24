@@ -17,6 +17,7 @@ from django.shortcuts import get_object_or_404, redirect, render
 from django.utils import timezone
 from django.views.decorators.http import require_POST
 
+from access.levels import refreshed_once
 from audit import trail
 from core.models import Room
 from residents.models import Residency, Resident, RoleAssignment, active_period, next_period, prev_period
@@ -393,6 +394,7 @@ def _carry_roster_forward(sy: int, sm: int, ty: int, tm: int) -> None:
 
 @require_POST
 @role_required("indstilling")
+@refreshed_once()  # a whole month's rows: work the access levels out once, at the end
 def end_round(request: HttpRequest) -> HttpResponseRedirect:
     """Finish the round: carry the current roster forward to each offered month, then move every
     winner (highest-K, global greedy) into their won room, then clear the round.

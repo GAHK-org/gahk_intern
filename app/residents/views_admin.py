@@ -27,6 +27,8 @@ from django.views.decorators.http import require_POST
 from django_celery_beat.models import PeriodicTask
 from kombu.exceptions import DecodeError
 
+from access.levels import PREVIEW_LEVEL_SESSION_KEY
+from access.policy import AccessLevel
 from audit import trail
 from config.celery import app as celery_app
 from core.models import WorkerJobLog
@@ -1230,10 +1232,17 @@ def roles(request: HttpRequest) -> HttpResponse:
 # admin previewing "beboer" can still end the preview. ----
 @require_can_preview
 def preview(request: HttpRequest) -> HttpResponse:
+    level = request.session.get(PREVIEW_LEVEL_SESSION_KEY)
     return render(
         request,
         "siteadmin/preview.html",
-        {"all_roles": Role.choices, "current": request.session.get(PREVIEW_SESSION_KEY)},
+        {
+            "all_roles": Role.choices,
+            "current": request.session.get(PREVIEW_SESSION_KEY),
+            "current_level": AccessLevel(level).label if level in {lv.value for lv in AccessLevel} else None,
+            # The resident and the kitchen are picked above, as "Ingen rolle" and "Køkkenet".
+            "levels": [lv for lv in AccessLevel if lv not in (AccessLevel.RESIDENT, AccessLevel.KITCHEN)],
+        },
     )
 
 
@@ -1241,9 +1250,17 @@ def preview(request: HttpRequest) -> HttpResponse:
 @require_can_preview
 def preview_set(request: HttpRequest) -> HttpResponseRedirect:
     mode = request.POST.get("mode")
+    request.session.pop(PREVIEW_LEVEL_SESSION_KEY, None)
     if mode == "clear":
         request.session.pop(PREVIEW_SESSION_KEY, None)
         trail.record("residents.preview.cleared")
+        return redirect("dashboard")
+    level = request.POST.get("level")
+    if mode == "level" and level in {lv.value for lv in AccessLevel}:
+        # A level other than a resident's holds no role: its roles are previewed as none.
+        request.session[PREVIEW_SESSION_KEY] = []
+        request.session[PREVIEW_LEVEL_SESSION_KEY] = level
+        trail.record("residents.preview.set", details={"roles": [], "level": level})
         return redirect("dashboard")
     if mode == "resident":
         request.session[PREVIEW_SESSION_KEY] = []

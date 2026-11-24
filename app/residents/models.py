@@ -16,6 +16,7 @@ from django.db.models.signals import post_delete
 from django.dispatch import receiver
 from django.utils import timezone
 
+from access.policy import LEVEL_CHOICES, OVERRIDE_CHOICES, AccessLevel
 from core.files import delete_attached_files, delete_files_after_commit
 
 
@@ -133,8 +134,19 @@ class Resident(AbstractBaseUser, PermissionsMixin):
         default=False
     )  # = holds any role in the active period (set by ETL/signals)
     # The shared kitchen-staff login: not a resident, sees only Den Hurtige's køkken channel,
-    # Reparationer and its own opslag (core.middleware.KitchenAccountGate).
+    # Reparationer and its own opslag (access.policy).
     is_kitchen = models.BooleanField(default=False)
+    # Which parts of the intranet exist for this account (access.policy). Worked out from the
+    # alumneliste, roles and the fields here by access.levels, and kept current by its signals and a
+    # nightly run: never set by hand. NO_ACCESS until first worked out, which saving does.
+    access_level = models.CharField(
+        max_length=32, choices=LEVEL_CHOICES, default=AccessLevel.NO_ACCESS, editable=False
+    )
+    # An exception the Indstilling makes, for someone the alumneliste does not describe: a level
+    # instead of the list's, through its last day (none: until removed). Roles, superusers and the
+    # kitchen still come first.
+    access_level_override = models.CharField(max_length=32, choices=OVERRIDE_CHOICES, blank=True)
+    access_level_override_until = models.DateField(null=True, blank=True)
     date_joined = models.DateTimeField(default=timezone.now)
 
     objects = ResidentManager()

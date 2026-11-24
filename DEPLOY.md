@@ -253,6 +253,7 @@ idempotent, so a retry or an overlapping run is harmless.
 | Celery task | Schedule | Why |
 | --- | --- | --- |
 | `cms.tasks.sync_gahk_web` | Every 2 min | Compares gahk.dk's content revision with intern's and publishes again on a mismatch, then pulls gahk.dk's outbox (optagelse applications, visit counts) and acknowledges it. See §4f. |
+| `access.tasks.refresh_access_levels` | Daily 00:01 | Works every account's access level (`Resident.access_level`) out again and clears overrides past their last day. Time alone moves levels: a list made ahead takes effect on the 1st, and the moved-out limits pass with the months. Writes to the lists, roles and accounts update levels at once; every `migrate` also works them all out, so a deploy that changes the rule needs no step. |
 | `cms.tasks.rebuild_gahk_web` | Daily 00:05 | gahk.dk renders its pages again, so "kommende begivenheder" drops yesterday's. |
 | `cms.tasks.nudge_gahk_web_update` | Every 15 min, from :01 | Asks the webhost to update its code from GitHub's production release. Its **only** update trigger — there is no cron job on the webhost. |
 | `admissions.tasks.purge_expired_applications` | Daily 03:20 | Enforces the one-year application retention policy. |

@@ -65,8 +65,8 @@ def test_the_rest_of_the_site_is_closed(kitchen: Resident, path: str) -> None:
     assert _client(kitchen).get(path).status_code == 403
 
 
-# With the intranet at the root of intern.gahk.dk the gate is an allowlist: these are what the
-# kitchen's own pages need beside them. None may answer 403 — a 404 for a missing file is fine.
+# What the kitchen's own pages need beside them (access.policy: the account pages, files
+# and the public ones). None may answer 403 — a 404 for a missing file is fine.
 @pytest.mark.parametrize(
     "path",
     [
@@ -82,22 +82,10 @@ def test_what_its_pages_need_is_not_gated(kitchen: Resident, path: str) -> None:
     assert _client(kitchen).get(path).status_code != 403
 
 
-@pytest.mark.parametrize("path", ["/intern/den-hurtige/koekken/", "/nyintern/", "/intern", "/nyintern"])
-def test_the_old_prefixes_are_gated_like_any_other_path(kitchen: Resident, path: str) -> None:
-    """No special case for the old prefixes: they are not on the allowlist, so the kitchen account
-    gets the gate's 403 there, as on any other path outside it."""
-    from core.middleware import kitchen_may_open
-
-    assert not kitchen_may_open(path)
-    assert _client(kitchen).get(path).status_code == 403
-
-
-def test_a_prefix_that_merely_starts_like_an_allowed_path_is_gated() -> None:
-    from core.middleware import kitchen_may_open
-
-    assert kitchen_may_open("/sw.js") and kitchen_may_open("/health")
-    assert not kitchen_may_open("/sw.jsx") and not kitchen_may_open("/healthcheck")
-    assert not kitchen_may_open("/admin/roles") and not kitchen_may_open("/admin/worker-jobs")
+@pytest.mark.parametrize("path", ["/intern/den-hurtige/koekken/", "/nyintern/", "/admin/login", "/x"])
+def test_a_path_that_is_no_page_is_a_404_as_for_anyone(kitchen: Resident, path: str) -> None:
+    """The gate decides on the view a path resolves to; one that resolves to nothing never reaches it."""
+    assert _client(kitchen).get(path).status_code == 404
 
 
 def test_its_own_profile_is_closed(kitchen: Resident) -> None:
