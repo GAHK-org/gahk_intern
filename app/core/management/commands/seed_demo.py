@@ -266,7 +266,8 @@ class Command(BaseCommand):
                 for depth in sorted(set(Album.objects.values_list("depth", flat=True)), reverse=True):
                     Album.objects.filter(depth=depth).delete()
                 continue
-            model._default_manager.all().delete()
+            # The base manager: a default one may leave rows out (the Hjemmeside's bin).
+            model._base_manager.all().delete()
         # The trail is append-only: its rows refuse DELETE, in the models and in the database. A demo
         # database starts its history again, so its tables are emptied the one way they allow, by
         # their owner (the same TRUNCATE the test suite's flush uses). Postgres refuses to truncate a

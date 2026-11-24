@@ -7,6 +7,8 @@ versions, records an audit event (audit.trail) and publishes after the commit; n
 runtime (the Django admin no longer registers these models, so it cannot become an unaudited
 second write path).
 
+Nothing the editors made is deleted outright: "Slet" puts it in the bin (Binnable, cms.bin).
+
 Plain text and HTML are kept apart: titles, headers and labels are PLAIN TEXT and every renderer
 escapes them; bodies are HTML that cms.sanitize cleaned on the way in.
 """
@@ -17,6 +19,7 @@ from typing import Any
 from django.conf import settings
 from django.core.management.color import no_style
 from django.db import connections, models, router
+from django.db.models import Q
 from django.db.models.signals import post_delete
 from django.dispatch import receiver
 from django.utils import timezone
@@ -30,7 +33,44 @@ from .paths import validate_page_path
 FRONT_PAGE_ID = 1
 
 
-class Page(models.Model):  # gahk_page
+class LiveManager(models.Manager):
+    """Rows that are not in the bin. The default manager of every Binnable model."""
+
+    def get_queryset(self) -> models.QuerySet:
+        return super().get_queryset().filter(binned_at__isnull=True)
+
+
+class Binnable(models.Model):
+    """Content the editor never deletes outright: "Slet" puts it in the bin (cms.bin), where it can be
+    restored, and only after cms.bin.KEEP_FOR can it be deleted for good, one item at a time.
+
+    `objects` leaves binned rows out, so everything that lists, publishes or looks up content treats
+    a binned row as gone without having to remember to; `all_objects` sees them too (the bin, the
+    seed's wipe). Django's base manager (related lookups, refresh_from_db, the audit trail's "before")
+    is a plain one and sees every row.
+    """
+
+    binned_at = models.DateTimeField(
+        null=True, blank=True, db_index=True, editable=False, verbose_name="Lagt i papirkurven"
+    )
+    binned_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="+",
+        editable=False,
+        verbose_name="Lagt i papirkurven af",
+    )
+
+    objects = LiveManager()
+    all_objects = models.Manager()  # noqa: DJ012 - a manager, which ruff takes for a field
+
+    class Meta:
+        abstract = True
+
+
+class Page(Binnable):  # gahk_page
     # Legacy menuCat. Nothing reads it — the menu is MenuItem and sub-pages are found by slug
     # prefix — but the ETL writes it on every run and the values are the only surviving record of
     # the legacy menu grouping, so the column stays. `editable=False` keeps it out of every ModelForm: it is an unlabelled number
@@ -46,9 +86,11 @@ class Page(models.Model):  # gahk_page
     # independently of the model field, so a SlugField could never accept the `/` the router needs.
     # NOTE: naming `validate_page_path` here pins that import path for migration 0004 — changing the
     # rules inside the function is free, changing this list is not.
-    slug = models.CharField(
+    #
+    # Unique among the pages outside the bin (Meta.constraints): a binned page must not keep its
+    # address from a new page for a month. Restoring it gives it back only if it is still free.
+    slug = models.CharField(  # noqa: DJ001 - NULL is "no address", of which there may be many
         max_length=80,
-        unique=True,
         blank=True,
         null=True,
         validators=[validate_page_path],
@@ -82,6 +124,11 @@ class Page(models.Model):  # gahk_page
     class Meta:
         verbose_name = "Side"
         verbose_name_plural = "Sider"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["slug"], condition=Q(binned_at__isnull=True), name="cms_page_slug_unique_live"
+            )
+        ]
 
     def __str__(self) -> str:
         return self.slug or self.header
@@ -111,7 +158,7 @@ class Page(models.Model):  # gahk_page
         return page
 
 
-class NewsItem(models.Model):  # gahk_news; shown on gahk.dk's front page and /begivenheder/
+class NewsItem(Binnable):  # gahk_news; shown on gahk.dk's front page and /begivenheder/
     title = models.CharField(max_length=255, verbose_name="Titel")  # plain text
     body = models.TextField(blank=True, verbose_name="Tekst")  # HTML
     published_at = models.DateTimeField(verbose_name="Udgivet")
@@ -141,9 +188,7 @@ class PylonEvent(models.Model):  # gahk_pylon_calendar — likely retired; migra
         return f"{self.starts_on}: {self.title}"
 
 
-class Event(
-    models.Model
-):  # NEW — replaces the hard-coded array in legacy begivenheder.php (developer-edited)
+class Event(Binnable):  # NEW — replaces the hard-coded array in legacy begivenheder.php (developer-edited)
     title = models.CharField(max_length=255, verbose_name="Titel")  # plain text
     description = models.TextField(blank=True, verbose_name="Beskrivelse")  # HTML
     starts_on = models.DateField(verbose_name="Dato")
@@ -160,7 +205,7 @@ class Event(
         return f"{self.starts_on}: {self.title}"
 
 
-class CmsImage(models.Model):
+class CmsImage(Binnable):
     """An image in the website's library, for use in page/news/event HTML and as a background.
 
     ALL of gahk.dk's content images live here (in S3), including the ones the old site kept in
@@ -220,11 +265,12 @@ class CmsImage(models.Model):
 @receiver(post_delete, sender=CmsImage)
 def _delete_cms_image_file(sender: type[CmsImage], instance: CmsImage, **kwargs: Any) -> None:  # noqa: ANN401
     """Drop the file from storage with the row — Django has not done this since 1.3, and an orphaned
-    upload is invisible: nothing lists it and nothing ever cleans it up. See core.files."""
+    upload is invisible: nothing lists it and nothing ever cleans it up. See core.files. An image in
+    the bin keeps its row, so its file stays until it is deleted for good."""
     delete_attached_files(instance)
 
 
-class PageRedirect(models.Model):
+class PageRedirect(Binnable):
     """A page's former address, so renaming a page never breaks a link, a bookmark or a search result.
 
     Points at the **page**, not at a replacement path string. That one choice removes chain-following
@@ -232,13 +278,14 @@ class PageRedirect(models.Model):
     as of now, so renaming `a → b → c` leaves both `a` and `b` resolving to `c` in a single hop, and
     a rename back to `a` cannot produce a redirect that points at itself (cms.services deletes it).
 
-    CASCADE, unlike PageVersion: a redirect whose page is gone has nowhere to send anyone, and
-    dropping the row also frees `old_path` for reuse.
+    CASCADE, unlike PageVersion: a redirect whose page is gone has nowhere to send anyone. A page put
+    in the bin takes its redirects with it (binned at the same moment, restored with it), and only a
+    page deleted for good from the bin takes them for good.
     """
 
+    # Unique outside the bin, like Page.slug.
     old_path = models.CharField(
         max_length=80,
-        unique=True,
         validators=[validate_page_path],
         verbose_name="Gammel adresse",
     )
@@ -256,6 +303,13 @@ class PageRedirect(models.Model):
         ordering = ["old_path"]
         verbose_name = "Gammel adresse"
         verbose_name_plural = "Gamle adresser"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["old_path"],
+                condition=Q(binned_at__isnull=True),
+                name="cms_pageredirect_old_path_unique_live",
+            )
+        ]
 
     def __str__(self) -> str:
         return f"/{self.old_path} → /{self.page.slug or ''}"
@@ -302,7 +356,7 @@ class PageVersion(models.Model):
         return f"{self.header} ({self.created_at:%d-%m-%Y %H:%M})"
 
 
-class MenuItem(models.Model):
+class MenuItem(Binnable):
     """One entry in gahk.dk's main menu, in `order`. Seeded from the old hard-coded menu."""
 
     label = models.CharField(max_length=60, verbose_name="Tekst")

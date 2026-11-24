@@ -207,6 +207,8 @@ erDiagram
 
     cms_Page {
         int id PK
+        datetime binned_at
+        int binned_by_id FK
         int menu_category
         string slug
         string header
@@ -219,6 +221,8 @@ erDiagram
 
     cms_NewsItem {
         int id PK
+        datetime binned_at
+        int binned_by_id FK
         string title
         text body
         datetime published_at
@@ -233,6 +237,8 @@ erDiagram
 
     cms_Event {
         int id PK
+        datetime binned_at
+        int binned_by_id FK
         string title
         text description
         date starts_on
@@ -240,6 +246,8 @@ erDiagram
 
     cms_CmsImage {
         int id PK
+        datetime binned_at
+        int binned_by_id FK
         string file
         string caption
         datetime uploaded_at
@@ -252,6 +260,8 @@ erDiagram
 
     cms_PageRedirect {
         int id PK
+        datetime binned_at
+        int binned_by_id FK
         string old_path
         int page_id FK
         datetime created_at
@@ -273,6 +283,8 @@ erDiagram
 
     cms_MenuItem {
         int id PK
+        datetime binned_at
+        int binned_by_id FK
         string label
         string url
         int order
@@ -1021,12 +1033,18 @@ erDiagram
     residents_AdminAccessGrant }o--|o residents_Resident : "decided_by"
     admissions_Application }o--|o residents_Resident : "received_by"
     admissions_Application }o--|o residents_Resident : "discarded_by"
+    cms_Page }o--|o residents_Resident : "binned_by"
     cms_Page }o--|o residents_Resident : "updated_by"
+    cms_NewsItem }o--|o residents_Resident : "binned_by"
+    cms_Event }o--|o residents_Resident : "binned_by"
+    cms_CmsImage }o--|o residents_Resident : "binned_by"
     cms_CmsImage }o--|o residents_Resident : "uploaded_by"
+    cms_PageRedirect }o--|o residents_Resident : "binned_by"
     cms_PageRedirect }o--|| cms_Page : "page"
     cms_PageRedirect }o--|o residents_Resident : "created_by"
     cms_PageVersion }o--|o cms_Page : "page"
     cms_PageVersion }o--|o residents_Resident : "created_by"
+    cms_MenuItem }o--|o residents_Resident : "binned_by"
     cms_Publication }o--|o residents_Resident : "triggered_by"
     ak_AkEntry }o--|| residents_Resident : "resident"
     ak_AkEntry }o--|o residents_Resident : "created_by"
@@ -1246,6 +1264,8 @@ erDiagram
 erDiagram
     cms_Page {
         int id PK
+        datetime binned_at
+        int binned_by_id FK
         int menu_category
         string slug
         string header
@@ -1258,6 +1278,8 @@ erDiagram
 
     cms_NewsItem {
         int id PK
+        datetime binned_at
+        int binned_by_id FK
         string title
         text body
         datetime published_at
@@ -1272,6 +1294,8 @@ erDiagram
 
     cms_Event {
         int id PK
+        datetime binned_at
+        int binned_by_id FK
         string title
         text description
         date starts_on
@@ -1279,6 +1303,8 @@ erDiagram
 
     cms_CmsImage {
         int id PK
+        datetime binned_at
+        int binned_by_id FK
         string file
         string caption
         datetime uploaded_at
@@ -1291,6 +1317,8 @@ erDiagram
 
     cms_PageRedirect {
         int id PK
+        datetime binned_at
+        int binned_by_id FK
         string old_path
         int page_id FK
         datetime created_at
@@ -1312,6 +1340,8 @@ erDiagram
 
     cms_MenuItem {
         int id PK
+        datetime binned_at
+        int binned_by_id FK
         string label
         string url
         int order
@@ -1352,12 +1382,18 @@ erDiagram
 
     residents_Resident { }
 
+    cms_Page }o--|o residents_Resident : "binned_by"
     cms_Page }o--|o residents_Resident : "updated_by"
+    cms_NewsItem }o--|o residents_Resident : "binned_by"
+    cms_Event }o--|o residents_Resident : "binned_by"
+    cms_CmsImage }o--|o residents_Resident : "binned_by"
     cms_CmsImage }o--|o residents_Resident : "uploaded_by"
+    cms_PageRedirect }o--|o residents_Resident : "binned_by"
     cms_PageRedirect }o--|| cms_Page : "page"
     cms_PageRedirect }o--|o residents_Resident : "created_by"
     cms_PageVersion }o--|o cms_Page : "page"
     cms_PageVersion }o--|o residents_Resident : "created_by"
+    cms_MenuItem }o--|o residents_Resident : "binned_by"
     cms_Publication }o--|o residents_Resident : "triggered_by"
 ```
 

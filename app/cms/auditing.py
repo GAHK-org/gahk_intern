@@ -6,6 +6,7 @@ the fields. The Hjemmeside's own change log reads the same events back (cms.view
 
 from audit import trail
 
+from . import bin as cms_bin
 from .models import (
     CmsImage,
     Event,
@@ -38,7 +39,7 @@ trail.register(
     label="Side",
     # Who saved it last and when: the event says so already. The menu category is the old site's,
     # kept for the record and never edited.
-    ignore={"updated_at", "updated_by", "menu_category"},
+    ignore={"updated_at", "updated_by", "menu_category", "binned_by"},
     labels={
         "slug": "Adresse",
         "header": "Titel",
@@ -52,6 +53,7 @@ trail.register(
     "cms.news",
     name=lambda item: item.title,
     label="Nyhed",
+    ignore={"binned_by"},
     labels={"title": "Titel", "body": "Tekst", "published_at": "Udgivet"},
 )
 trail.register(
@@ -59,6 +61,7 @@ trail.register(
     "cms.event",
     name=lambda item: item.title,
     label="Forsidebegivenhed",
+    ignore={"binned_by"},
     labels={"title": "Titel", "description": "Beskrivelse", "starts_on": "Dato"},
 )
 trail.register(
@@ -67,7 +70,7 @@ trail.register(
     name=str,
     label="Billede",
     # Facts about the file, worked out from it.
-    ignore={"uploaded_at", "sha256", "content_type", "size", "legacy_path"},
+    ignore={"uploaded_at", "sha256", "content_type", "size", "legacy_path", "binned_by"},
     labels={"file": "Fil", "caption": "Beskrivelse", "uploaded_by": "Uploadet af"},
 )
 trail.register(
@@ -75,16 +78,18 @@ trail.register(
     "cms.redirect",
     name=lambda redirect: f"/{redirect.old_path}",
     label="Omdirigering",
-    ignore={"created_at", "created_by"},
+    ignore={"created_at", "created_by", "binned_by"},
     labels={"old_path": "Gammel adresse", "page": "Side"},
 )
 # The editor replaces the whole menu at once and records it as one change of "cms.menu" (the list
-# before and after); a single item is recorded only when changed some other way (the Django admin).
+# before and after); a single item is recorded when it is restored from the bin or deleted for good
+# there, or changed some other way (the Django admin).
 trail.register(
     MenuItem,
     "cms.menu_item",
     name=lambda item: item.label,
     label="Menupunkt",
+    ignore={"binned_by"},
     labels={"label": "Tekst", "url": "Link", "order": "Rækkefølge"},
 )
 trail.register(
@@ -105,23 +110,20 @@ trail.actions(
     {
         "cms.page.created": "Oprettede siden",
         "cms.page.updated": "Rettede siden",
-        "cms.page.deleted": "Slettede siden",
         "cms.page.restored": "Gendannede siden",
         "cms.news.created": "Oprettede nyheden",
         "cms.news.updated": "Rettede nyheden",
-        "cms.news.deleted": "Slettede nyheden",
         "cms.event.created": "Oprettede forsidebegivenheden",
         "cms.event.updated": "Rettede forsidebegivenheden",
-        "cms.event.deleted": "Slettede forsidebegivenheden",
         "cms.image.uploaded": "Uploadede billedet",
         "cms.image.updated": "Rettede billedet",
-        "cms.image.deleted": "Slettede billedet",
         "cms.menu.updated": "Ændrede menuen",
         "cms.redirect.created": "Oprettede omdirigeringen",
         "cms.redirect.updated": "Rettede omdirigeringen",
-        "cms.redirect.deleted": "Slettede omdirigeringen",
         "cms.settings.updated": "Ændrede indstillingerne",
         "cms.site.published": "Bad om at udgive gahk.dk",
         "cms.site.update_requested": "Bad gahk.dk om at opdatere sin kode",
+        # Into the bin, back out of it, and deleted for good ("cms.page.deleted" before the bin, too).
+        **cms_bin.action_labels(),
     }
 )

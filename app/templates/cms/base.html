@@ -21,6 +21,7 @@
         <a href="{% url 'cms:menu' %}"{% if name == "menu" or name == "site_settings" %} aria-current="page"{% endif %}>Menu</a>
         <a href="{% url 'cms:redirect_list' %}"{% if "redirect" in name %} aria-current="page"{% endif %}>Omdirigeringer</a>
         <a href="{% url 'cms:change_log' %}"{% if name == "change_log" %} aria-current="page"{% endif %}>Ændringslog</a>
+        <a href="{% url 'cms:bin' %}"{% if name == "bin" %} aria-current="page"{% endif %}>Papirkurv</a>
       </nav>
     {% endwith %}
     {% block cms_content %}{% endblock %}

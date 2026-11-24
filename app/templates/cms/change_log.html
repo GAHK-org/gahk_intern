@@ -34,7 +34,7 @@
               <span class="cms-log-what"><b>{{ row.event.actor_name|default:"System" }}</b> · {{ row.what }}{% if row.label %}: {{ row.label }}{% endif %}{% if row.event.unclaimed %} <span class="chip chip-brass">Uden for editoren</span>{% endif %}</span>
             </summary>
             <div class="cms-log-body">
-              {% if row.link %}<p><a href="{% url row.link row.object_id %}">Åbn {{ row.kind_label|lower }}</a></p>{% endif %}
+              {% if row.href %}<p><a href="{{ row.href }}">{% if row.in_bin %}Se {{ row.kind_label|lower }} i papirkurven{% else %}Åbn {{ row.kind_label|lower }}{% endif %}</a></p>{% endif %}
               {% for item in row.fields %}
                 <div class="cms-log-field">
                   <p class="cms-label">{{ item.label }}</p>

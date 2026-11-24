@@ -1,5 +1,6 @@
-"""Every write to the website's content, in one place: the Hjemmeside editor calls these and nothing
-else writes content at runtime.
+"""Every write to the website's content, in one place: the Hjemmeside editor calls these (and cms.bin,
+which puts things in the bin, restores them and deletes them for good) and nothing else writes
+content at runtime. Nothing here deletes what an editor made: see cms.bin.
 
 Each write does the same four things, in one transaction:
 
@@ -16,7 +17,7 @@ no named action ("Uden handling"); the first edit afterwards still snapshots the
 before it changes anything, so what an editor overwrites can always be got back.
 
 Permissions are the caller's business (the views check CMS_EDITOR_ROLES, and administrator for
-deleting a page); these functions trust `by`.
+putting a page in the bin); these functions trust `by`.
 """
 
 import datetime
@@ -234,8 +235,11 @@ def record_slug_change(page: Page, old_slug: str | None, author: Resident | None
         return
 
     # The page has been renamed *back* onto a path that previously redirected away. Left alone, that
-    # row would now send the new address to itself.
-    PageRedirect.objects.filter(old_path=page.slug).delete()
+    # row would now send the new address to itself, so it goes in the bin (cms.bin).
+    for stale in PageRedirect.objects.filter(old_path=page.slug):
+        stale.binned_at = timezone.now()
+        stale.binned_by = author
+        stale.save(update_fields=["binned_at", "binned_by"])
 
     # update_or_create, not create: an address may have been abandoned by another page earlier, and
     # the most recent claimant is the one that should own the redirect.
@@ -281,16 +285,6 @@ def save_page(page: Page | None, data: Mapping[str, Any], by: Resident | None) -
         event.involve(page, "subject")
         publish_on_commit("save", by)
     return page
-
-
-def delete_page(page: Page, by: Resident | None) -> None:
-    """Delete a page. Its versions stay (PageVersion.page is SET_NULL), so it can be recreated."""
-    if page.pk == FRONT_PAGE_ID:
-        raise ValidationError("Forsiden kan ikke slettes.")
-    with trail.event("cms.page.deleted", actor=by, subject=page):
-        snapshot_page(page, by, note="Før sletning")
-        page.delete()
-        publish_on_commit("save", by)
 
 
 @dataclass
@@ -411,12 +405,6 @@ def save_news(item: NewsItem | None, data: Mapping[str, Any], by: Resident | Non
     return item
 
 
-def delete_news(item: NewsItem, by: Resident | None) -> None:
-    with trail.event("cms.news.deleted", actor=by, subject=item):
-        item.delete()
-        publish_on_commit("save", by)
-
-
 def save_event(item: Event | None, data: Mapping[str, Any], by: Resident | None) -> Event:
     """Create or update a "Forsidebegivenhed" (the public event list, not the residents' events)."""
     creating = item is None or item.pk is None
@@ -434,12 +422,6 @@ def save_event(item: Event | None, data: Mapping[str, Any], by: Resident | None)
         item.save()
         publish_on_commit("save", by)
     return item
-
-
-def delete_event(item: Event, by: Resident | None) -> None:
-    with trail.event("cms.event.deleted", actor=by, subject=item):
-        item.delete()
-        publish_on_commit("save", by)
 
 
 # --------------------------------------------------------------------------------------- images
@@ -495,8 +477,10 @@ def update_image(image: CmsImage, caption: str, by: Resident | None) -> CmsImage
     return image
 
 
-def usage_map(images: Iterable[CmsImage]) -> dict[int, list[str]]:
+def usage_map(images: Iterable[CmsImage], *, include_binned: bool = False) -> dict[int, list[str]]:
     """Where each image is used, as Danish labels — so deleting one does not silently break a page.
+
+    `include_binned` counts content in the bin too, labelled so (cms.bin, before deleting for good).
 
     Five queries for any number of images. A body uses an image when it holds its URL as
     Storage.url() writes it, or when the snapshot would publish it (cms.snapshot.media_names): a name
@@ -505,17 +489,23 @@ def usage_map(images: Iterable[CmsImage]) -> dict[int, list[str]]:
     the library, so it is always the URL exactly.
     """
     site = SiteSettings.load()
+    manager = "all_objects" if include_binned else "objects"
+
+    def binned(row: Page | NewsItem | Event) -> str:
+        return " (i papirkurven)" if row.binned_at else ""
+
     bodies: list[tuple[str, str, set[str]]] = []
     backgrounds: list[tuple[str, str]] = []
-    for page in Page.objects.only("header", "body", "background_image"):
-        bodies.append((f"Side: {page.header}", page.body, media_names(page.body)))
-        backgrounds.append((f"Baggrund: {page.header}", page.background_image))
+    for page in getattr(Page, manager).only("header", "body", "background_image", "binned_at"):
+        bodies.append((f"Side: {page.header}{binned(page)}", page.body, media_names(page.body)))
+        backgrounds.append((f"Baggrund: {page.header}{binned(page)}", page.background_image))
     bodies += [
-        (f"Nyhed: {n.title}", n.body, media_names(n.body)) for n in NewsItem.objects.only("title", "body")
+        (f"Nyhed: {n.title}{binned(n)}", n.body, media_names(n.body))
+        for n in getattr(NewsItem, manager).only("title", "body", "binned_at")
     ]
     bodies += [
-        (f"Begivenhed: {e.title}", e.description, media_names(e.description))
-        for e in Event.objects.only("title", "description")
+        (f"Begivenhed: {e.title}{binned(e)}", e.description, media_names(e.description))
+        for e in getattr(Event, manager).only("title", "description", "binned_at")
     ]
     backgrounds.append(("Standardbaggrund", site.default_background))
     usage: dict[int, list[str]] = {}
@@ -532,17 +522,6 @@ def usage_map(images: Iterable[CmsImage]) -> dict[int, list[str]]:
 def image_usage(image: CmsImage) -> list[str]:
     """Where the image is used, as Danish labels (see usage_map)."""
     return usage_map([image])[image.pk]
-
-
-def delete_image(image: CmsImage, by: Resident | None) -> None:
-    """Delete an image and its file. Content still pointing at it shows no picture there.
-
-    For an image from the old site, gahk.dk drops the redirect from its old address too, at the next
-    publish.
-    """
-    with trail.event("cms.image.deleted", actor=by, subject=image):
-        image.delete()
-        publish_on_commit("save", by)
 
 
 # ----------------------------------------------------------------------------------------- menu
@@ -564,15 +543,19 @@ def menu_state() -> list[dict[str, str]]:
 
 
 def save_menu(items: Sequence[Mapping[str, Any]], by: Resident | None) -> list[MenuItem]:
-    """Replace the whole menu with `items` ({"label", "url"}), in that order.
+    """Make the menu `items` ({"label", "url"}, and "id" for an entry that is already there), in that
+    order.
 
-    One call covers adding, renaming, reordering and removing entries. Raises
-    ValidationError({"items": [...]}) naming each bad entry by its position.
+    One call covers adding, renaming, reordering and removing entries: an entry with the id of a menu
+    item keeps that row (one without, a row with its text and link), any other entry becomes a new
+    row, and a menu item no entry kept goes in the bin (cms.bin). Raises ValidationError({"items": [...]}) naming each bad entry by its
+    position.
     """
     if len(items) > MAX_MENU_ITEMS:
         raise ValidationError({"items": f"Menuen kan højst have {MAX_MENU_ITEMS} punkter."})
     errors: list[str] = []
     cleaned: list[dict[str, str]] = []
+    ids: list[int | None] = []
     for number, entry in enumerate(items, start=1):
         label = plain_text(entry.get("label"))
         try:
@@ -586,6 +569,8 @@ def save_menu(items: Sequence[Mapping[str, Any]], by: Resident | None) -> list[M
             errors.append(f"Punkt {number}: teksten må højst være 60 tegn.")
         else:
             cleaned.append({"label": label, "url": url})
+            raw_id = str(entry.get("id") or "")
+            ids.append(int(raw_id) if raw_id.isdigit() else None)
     if errors:
         raise ValidationError({"items": errors})
 
@@ -594,24 +579,36 @@ def save_menu(items: Sequence[Mapping[str, Any]], by: Resident | None) -> list[M
         if before == cleaned:
             return list(MenuItem.objects.all())
         # The menu is one thing to the editor: one change, the list before and after, rather than a
-        # deleted and a created row for every entry.
+        # line for every row written. The entries removed are named, so each one's own history shows
+        # when it went in the bin.
+        removed = {item.pk: item for item in MenuItem.objects.select_for_update()}
+        # Rows by id first; an entry without one (a caller that knows no ids) takes an unclaimed row
+        # with its text and link, so only what really left the menu goes in the bin.
+        rows: list[MenuItem | None] = [removed.pop(pk, None) if pk is not None else None for pk in ids]
+        for index, entry in enumerate(cleaned):
+            if rows[index] is None:
+                same = next(
+                    (i for i in removed.values() if (i.label, i.url) == (entry["label"], entry["url"])), None
+                )
+                rows[index] = removed.pop(same.pk) if same is not None else None
+        now = timezone.now()
         with trail.unaudited():
-            MenuItem.objects.all().delete()
-            MenuItem.objects.bulk_create(
-                [
-                    MenuItem(label=e["label"], url=e["url"], order=index * 10)
-                    for index, e in enumerate(cleaned)
-                ]
-            )
+            for index, (entry, item) in enumerate(zip(cleaned, rows, strict=True)):
+                if item is None:
+                    MenuItem.objects.create(label=entry["label"], url=entry["url"], order=index * 10)
+                    continue
+                item.label, item.url, item.order = entry["label"], entry["url"], index * 10
+                item.save(update_fields=["label", "url", "order"])
+            for item in removed.values():
+                item.binned_at = now
+                item.binned_by = by
+                item.save(update_fields=["binned_at", "binned_by"])
+        # The menu first: it is what the change log names the event after.
         event.change_kind("cms.menu", None, "Menu", "menu", before, cleaned)
+        for item in removed.values():
+            event.involve(item, "binned")
         publish_on_commit("save", by)
     return list(MenuItem.objects.all())
-
-
-def delete_menu_item(item: MenuItem, by: Resident | None) -> None:
-    """Remove one entry from the menu (the rest keep their order)."""
-    remaining = [{"label": m.label, "url": m.url} for m in MenuItem.objects.exclude(pk=item.pk)]
-    save_menu(remaining, by)
 
 
 def menu_paths() -> set[str]:
@@ -688,12 +685,6 @@ def save_redirect(
         redirect.save()
         publish_on_commit("save", by)
     return redirect
-
-
-def delete_redirect(redirect: PageRedirect, by: Resident | None) -> None:
-    with trail.event("cms.redirect.deleted", actor=by, subject=redirect):
-        redirect.delete()
-        publish_on_commit("save", by)
 
 
 # -------------------------------------------------------------------------------------- preview

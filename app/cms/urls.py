@@ -36,4 +36,7 @@ urlpatterns = [
     path("omdirigeringer/", views.redirect_list, name="redirect_list"),
     path("omdirigeringer/<int:pk>/slet/", views.redirect_delete, name="redirect_delete"),
     path("aendringer/", views.change_log, name="change_log"),
+    path("bin/", views.bin_list, name="bin"),
+    path("bin/<str:kind>/<int:pk>/restore/", views.bin_restore, name="bin_restore"),
+    path("bin/<str:kind>/<int:pk>/delete/", views.bin_delete, name="bin_delete"),
 ]

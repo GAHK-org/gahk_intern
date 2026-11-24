@@ -99,6 +99,7 @@ GET_URLS = [
     ("cms:menu", []),
     ("cms:redirect_list", []),
     ("cms:change_log", []),
+    ("cms:bin", []),
 ]
 POST_URLS = [
     ("cms:publish_now", []),
@@ -174,7 +175,7 @@ def test_the_sidebar_links_editors_to_the_cms(editor: Resident, resident: Reside
 
 
 @pytest.mark.django_db
-def test_only_an_administrator_may_delete_a_page(
+def test_only_an_administrator_may_put_a_page_in_the_bin(
     editor: Resident, admin: Resident, objects: dict[str, int], published: list[dict[str, Any]]
 ) -> None:
     url = reverse("cms:page_delete", args=[objects["page"]])
@@ -191,7 +192,11 @@ def test_only_an_administrator_may_delete_a_page(
     assert response.status_code == 302
     assert not Page.objects.filter(pk=objects["page"]).exists()
     assert not PageRedirect.objects.filter(old_path="vision").exists()
-    assert events("cms.page.deleted", kind="cms.page", entity_id=objects["page"], actor=admin).exists()
+    assert (
+        PageRedirect.all_objects.get(old_path="vision").binned_at
+        == Page.all_objects.get(pk=objects["page"]).binned_at
+    )
+    assert events("cms.page.binned", kind="cms.page", entity_id=objects["page"], actor=admin).exists()
 
 
 @pytest.mark.django_db
@@ -460,8 +465,8 @@ def test_news_are_created_edited_and_deleted_through_the_services(editor: Reside
     client.post(reverse("cms:news_edit", args=[item.pk]), {"title": "Julefrokost!", "body": "<p>Kom</p>"})
     client.post(reverse("cms:news_delete", args=[item.pk]))
 
-    assert not NewsItem.objects.exists()
-    assert actions("cms.news.") == ["cms.news.created", "cms.news.updated", "cms.news.deleted"]
+    assert not NewsItem.objects.exists() and NewsItem.all_objects.get().binned_by == editor
+    assert actions("cms.news.") == ["cms.news.created", "cms.news.updated", "cms.news.binned"]
 
 
 @pytest.mark.django_db
@@ -499,8 +504,8 @@ def test_events_need_a_date_and_are_deleted_through_the_services(editor: Residen
     event = Event.objects.get()
     client.post(reverse("cms:event_delete", args=[event.pk]))
 
-    assert not Event.objects.exists()
-    assert events("cms.event.deleted").exists()
+    assert not Event.objects.exists() and Event.all_objects.exists()
+    assert events("cms.event.binned").exists()
 
 
 # ----------------------------------------------------------------------------------------- images
@@ -542,7 +547,7 @@ def test_the_editor_s_picker_lists_and_uploads_as_json(editor: Resident) -> None
 
 
 @pytest.mark.django_db
-def test_an_image_in_use_cannot_be_deleted(editor: Resident, objects: dict[str, int]) -> None:
+def test_an_image_in_use_cannot_go_in_the_bin(editor: Resident, objects: dict[str, int]) -> None:
     image = CmsImage.objects.get(pk=objects["image"])
     page = Page.objects.get(pk=objects["page"])
     services.save_page(page, {"body": f'<p><img src="{image.url}" alt=""></p>'}, editor)
@@ -557,7 +562,8 @@ def test_an_image_in_use_cannot_be_deleted(editor: Resident, objects: dict[str, 
     services.save_page(page, {"body": "<p>uden</p>"}, editor)
     client_for(editor).post(reverse("cms:image_delete", args=[image.pk]))
     assert not CmsImage.objects.filter(pk=image.pk).exists()
-    assert events("cms.image.deleted", kind="cms.image", entity_id=image.pk).exists()
+    assert CmsImage.all_objects.filter(pk=image.pk, binned_at__isnull=False).exists()
+    assert events("cms.image.binned", kind="cms.image", entity_id=image.pk).exists()
 
 
 @pytest.mark.django_db
@@ -591,6 +597,11 @@ def test_the_menu_is_reordered_extended_and_trimmed(editor: Resident) -> None:
 
     assert list(MenuItem.objects.values_list("label", flat=True)) == ["Kontakt", "Vision", "Legater"]
     assert events("cms.menu.").count() == 3
+    # The entry removed went in the bin; the others kept their rows through the reordering.
+    assert list(MenuItem.all_objects.filter(binned_at__isnull=False).values_list("label", flat=True)) == [
+        "Hjem"
+    ]
+    assert MenuItem.all_objects.count() == 4
 
 
 @pytest.mark.django_db
@@ -613,7 +624,7 @@ def test_the_default_background_is_picked_from_the_library(editor: Resident, obj
 
 # -------------------------------------------------------------------------------------- redirects
 @pytest.mark.django_db
-def test_redirects_are_created_and_deleted_through_the_services(
+def test_redirects_are_created_and_binned_through_the_services(
     editor: Resident, objects: dict[str, int]
 ) -> None:
     client = client_for(editor)
@@ -623,7 +634,7 @@ def test_redirects_are_created_and_deleted_through_the_services(
     client.post(reverse("cms:redirect_delete", args=[created.pk]))
 
     assert not PageRedirect.objects.filter(pk=created.pk).exists()
-    assert actions("cms.redirect.") == ["cms.redirect.created", "cms.redirect.deleted"]
+    assert actions("cms.redirect.") == ["cms.redirect.created", "cms.redirect.binned"]
 
 
 # ------------------------------------------------------------------------------------ overview

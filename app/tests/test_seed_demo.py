@@ -248,10 +248,10 @@ def test_seed_demo_gives_the_hjemmeside_change_log_weeks_of_edits(settings: Any)
         "cms.page.updated",
         "cms.page.restored",
         "cms.news.created",
-        "cms.news.deleted",
+        "cms.news.binned",
         "cms.event.created",
         "cms.event.updated",
-        "cms.event.deleted",
+        "cms.event.binned",
         "cms.image.uploaded",
         "cms.image.updated",
         "cms.menu.updated",
@@ -281,6 +281,17 @@ def test_seed_demo_gives_the_hjemmeside_change_log_weeks_of_edits(settings: Any)
     assert "Gendannede siden" in page and "Uden for editoren" in page
     assert "Ændrede menuen" in client.get(f"{log}?type=menu").content.decode()
     assert "Rettede nyheden" in client.get(f"{log}?person=system").content.decode()
+
+    # The bin: one of each kind, all restorable, and only the month-old page deletable for good.
+    from cms import bin as cms_bin
+
+    entries = cms_bin.entries()
+    assert {entry.kind.key for entry in entries} == set(cms_bin.KINDS)
+    assert [entry.name for entry in entries if entry.may_delete_now] == ["Sommerfest 2026"]
+    [summer] = [entry for entry in entries if entry.kind.key == "page"]
+    assert summer.redirects == ["/sommerfest"]
+    html = client.get(reverse("cms:bin")).content.decode()
+    assert "Slet permanent" in html and "Kan slettes permanent fra" in html
 
 
 @pytest.mark.django_db

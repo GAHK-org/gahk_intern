@@ -5,8 +5,11 @@ audit event and publishes to gahk.dk after the commit. The views only check who 
 the forms' input into the services' `data`, and show the result.
 
 Who: CMS_EDITOR_ROLES (administrator, indstilling, inspektion, pr) and superusers, through the same
-role check as the rest of the intranet (so "vis siden som rolle" applies here too). Deleting a page
-and asking gahk.dk to update its code are for administrators only.
+role check as the rest of the intranet (so "vis siden som rolle" applies here too). Putting a page
+in the bin (and deleting one for good from it) and asking gahk.dk to update its code are for
+administrators only.
+
+Nothing is deleted outright: every "Slet" puts the thing in the bin (cms.bin, /hjemmeside/bin/).
 
 gahk.dk's "Rediger siden" links here (/hjemmeside/sider/<id>/ and /hjemmeside/), shown to browsers
 that carry the `gahk_editor` hint cookie, which cms.middleware keeps for editors. It grants
@@ -26,10 +29,11 @@ from django.core.exceptions import PermissionDenied, ValidationError
 from django.core.paginator import Paginator
 from django.db.models import Q
 from django.forms import Form
-from django.http import HttpRequest, HttpResponse, HttpResponseBadRequest, JsonResponse
+from django.http import Http404, HttpRequest, HttpResponse, HttpResponseBadRequest, JsonResponse
 from django.http.response import HttpResponseBase
 from django.shortcuts import get_object_or_404, redirect, render
 from django.template.loader import render_to_string
+from django.urls import reverse
 from django.utils import timezone
 from django.utils.dateparse import parse_datetime
 from django.views.decorators.http import require_POST
@@ -39,6 +43,7 @@ from audit.models import AuditEntity, AuditEvent
 from residents.models import Resident, Role
 from residents.permissions import CMS_EDITOR_ROLES, current_resident, request_has_role, role_required
 
+from . import bin as cms_bin
 from . import services
 from .auditing import PUBLISHED_KINDS
 from .diff import DiffRow, html_diff
@@ -372,8 +377,13 @@ def page_edit(request: HttpRequest, pk: int | None = None) -> HttpResponse:
     )
 
 
+def _binned_message(request: HttpRequest, what: str) -> None:
+    messages.success(request, f"{what} er lagt i papirkurven. Du kan gendanne det derfra.")
+
+
 @editor_view
 def page_delete(request: HttpRequest, pk: int) -> HttpResponse:
+    """ "Slet siden": puts the page in the bin, after a page saying what that means."""
     _require_administrator(request)
     page = get_object_or_404(Page, pk=pk)
     if page.pk == FRONT_PAGE_ID:
@@ -381,18 +391,22 @@ def page_delete(request: HttpRequest, pk: int) -> HttpResponse:
         return redirect("cms:page_edit", page.pk)
     redirects = list(page.redirects.all())
     if request.method == "POST":
-        header = page.header
         try:
-            services.delete_page(page, current_resident(request))
+            cms_bin.put_in_bin(page, current_resident(request))
         except ValidationError as exc:
             messages.error(request, " ".join(exc.messages))
             return redirect("cms:page_edit", pk)
-        messages.success(request, f"Siden “{header}” er slettet.")
+        _binned_message(request, f"Siden “{page.header}”")
         return redirect("cms:page_list")
     return render(
         request,
         "cms/page_delete.html",
-        {"page": page, "redirects": redirects, "in_menu": page.slug in services.menu_paths()},
+        {
+            "page": page,
+            "redirects": redirects,
+            "in_menu": page.slug in services.menu_paths(),
+            "keep_days": cms_bin.KEEP_FOR.days,
+        },
     )
 
 
@@ -581,8 +595,8 @@ def news_edit(request: HttpRequest, pk: int | None = None) -> HttpResponse:
 @require_POST
 def news_delete(request: HttpRequest, pk: int) -> HttpResponse:
     item = get_object_or_404(NewsItem, pk=pk)
-    services.delete_news(item, current_resident(request))
-    messages.success(request, f"Nyheden “{item.title}” er slettet.")
+    cms_bin.put_in_bin(item, current_resident(request))
+    _binned_message(request, f"Nyheden “{item.title}”")
     return redirect("cms:news_list")
 
 
@@ -619,8 +633,8 @@ def event_edit(request: HttpRequest, pk: int | None = None) -> HttpResponse:
 @require_POST
 def event_delete(request: HttpRequest, pk: int) -> HttpResponse:
     item = get_object_or_404(Event, pk=pk)
-    services.delete_event(item, current_resident(request))
-    messages.success(request, f"Begivenheden “{item.title}” er slettet.")
+    cms_bin.put_in_bin(item, current_resident(request))
+    _binned_message(request, f"Begivenheden “{item.title}”")
     return redirect("cms:event_list")
 
 
@@ -704,11 +718,12 @@ def image_detail(request: HttpRequest, pk: int) -> HttpResponse:
 @require_POST
 def image_delete(request: HttpRequest, pk: int) -> HttpResponse:
     image = get_object_or_404(CmsImage, pk=pk)
-    if usage := services.image_usage(image):
-        messages.error(request, f"Billedet bruges stadig ({', '.join(usage)}), så det kan ikke slettes.")
+    try:
+        cms_bin.put_in_bin(image, current_resident(request))
+    except ValidationError as exc:
+        messages.error(request, " ".join(exc.messages))
         return redirect("cms:image_detail", image.pk)
-    services.delete_image(image, current_resident(request))
-    messages.success(request, "Billedet er slettet.")
+    _binned_message(request, "Billedet")
     return redirect("cms:image_list")
 
 
@@ -734,14 +749,15 @@ def image_upload_json(request: HttpRequest) -> JsonResponse:
 
 # ----------------------------------------------------------------------------------------- menu
 def _posted_menu(request: HttpRequest) -> list[dict[str, str]]:
-    """The menu rows as posted (label_<n>/url_<n>), in order; a row left blank is dropped."""
+    """The menu rows as posted (label_<n>/url_<n>, and id_<n> for an entry already saved), in order;
+    a row left blank is dropped."""
     raw_count = request.POST.get("rows", "")
     count = min(int(raw_count), services.MAX_MENU_ITEMS + 1) if raw_count.isdigit() else 0
     rows = []
     for index in range(count):
         label = request.POST.get(f"label_{index}", "").strip()
         url = request.POST.get(f"url_{index}", "").strip()
-        rows.append({"label": label, "url": url})
+        rows.append({"label": label, "url": url, "id": request.POST.get(f"id_{index}", "").strip()})
     return rows
 
 
@@ -775,7 +791,9 @@ def _menu_targets() -> list[str]:
 def menu_edit(request: HttpRequest) -> HttpResponse:
     errors: list[str] = []
     if request.method == "POST":
-        rows = apply_menu_action(_posted_menu(request), request.POST.get("action", "save"))
+        posted = _posted_menu(request)
+        action = request.POST.get("action", "save")
+        rows = apply_menu_action(posted, action)
         try:
             services.save_menu(rows, current_resident(request))
         except ValidationError as exc:
@@ -783,10 +801,18 @@ def menu_edit(request: HttpRequest) -> HttpResponse:
                 exc.message_dict.get("items", exc.messages) if hasattr(exc, "error_dict") else exc.messages
             )
         else:
-            messages.success(request, "Menuen er gemt.")
+            removed = [row for row in posted if row not in rows and row["id"]]
+            if action.startswith("remove-") and removed:
+                messages.success(
+                    request,
+                    f"“{removed[0]['label']}” er fjernet fra menuen og lagt i papirkurven, "
+                    "hvor du kan gendanne det.",
+                )
+            else:
+                messages.success(request, "Menuen er gemt.")
             return redirect("cms:menu")
     else:
-        rows = [{"label": item.label, "url": item.url} for item in MenuItem.objects.all()]
+        rows = [{"label": item.label, "url": item.url, "id": str(item.pk)} for item in MenuItem.objects.all()]
     site = SiteSettings.load()
     return render(
         request,
@@ -850,9 +876,84 @@ def redirect_list(request: HttpRequest) -> HttpResponse:
 @require_POST
 def redirect_delete(request: HttpRequest, pk: int) -> HttpResponse:
     item = get_object_or_404(PageRedirect, pk=pk)
-    services.delete_redirect(item, current_resident(request))
-    messages.success(request, f"/{item.old_path} sender ikke længere videre.")
+    cms_bin.put_in_bin(item, current_resident(request))
+    messages.success(
+        request,
+        f"/{item.old_path} sender ikke længere videre. Omdirigeringen er lagt i papirkurven, "
+        "hvor du kan gendanne den.",
+    )
     return redirect("cms:redirect_list")
+
+
+# ------------------------------------------------------------------------------------------ the bin
+# Where an item restored from the bin is shown afterwards.
+RESTORED_URLS: dict[str, Callable[[Any], str]] = {
+    "page": lambda obj: reverse("cms:page_edit", args=[obj.pk]),
+    "news": lambda obj: reverse("cms:news_edit", args=[obj.pk]),
+    "event": lambda obj: reverse("cms:event_edit", args=[obj.pk]),
+    "image": lambda obj: reverse("cms:image_detail", args=[obj.pk]),
+    "redirect": lambda _obj: reverse("cms:redirect_list"),
+    "menu_item": lambda _obj: reverse("cms:menu"),
+}
+
+
+@editor_view
+def bin_list(request: HttpRequest) -> HttpResponse:
+    """Everything put in the bin: restore it, or, once it has been there long enough, delete it for
+    good. Nothing empties the bin by itself."""
+    return render(
+        request,
+        "cms/bin.html",
+        {
+            "entries": cms_bin.entries(),
+            "is_admin": is_administrator(request),
+            "keep_days": cms_bin.KEEP_FOR.days,
+        },
+    )
+
+
+def _binned_item(kind: str, pk: int) -> Any:  # noqa: ANN401 - a Binnable
+    item = cms_bin.find(kind, pk)
+    if item is None:
+        raise Http404
+    return item
+
+
+def _bin_name(item: Any) -> str:  # noqa: ANN401 - a Binnable
+    registration = trail.registration(type(item))
+    return registration.describe(item) if registration else str(item)
+
+
+@editor_view
+@require_POST
+def bin_restore(request: HttpRequest, kind: str, pk: int) -> HttpResponse:
+    item = _binned_item(kind, pk)
+    try:
+        warnings = cms_bin.restore(item, current_resident(request))
+    except ValidationError as exc:
+        messages.error(request, f"“{_bin_name(item)}” kan ikke gendannes: {' '.join(exc.messages)}")
+        return redirect("cms:bin")
+    messages.success(request, f"{cms_bin.KINDS[kind].label} “{_bin_name(item)}” er gendannet.")
+    for warning in warnings:
+        messages.warning(request, warning)
+    return redirect(RESTORED_URLS[kind](item))
+
+
+@editor_view
+@require_POST
+def bin_delete(request: HttpRequest, kind: str, pk: int) -> HttpResponse:
+    """Delete one binned item for good: only after cms.bin.KEEP_FOR, which cms.bin checks."""
+    item = _binned_item(kind, pk)
+    if cms_bin.KINDS[kind].administrators_only:
+        _require_administrator(request)
+    name = _bin_name(item)
+    try:
+        cms_bin.delete_for_good(item, current_resident(request))
+    except ValidationError as exc:
+        messages.error(request, f"“{name}” kan ikke slettes permanent: {' '.join(exc.messages)}")
+    else:
+        messages.success(request, f"{cms_bin.KINDS[kind].label} “{name}” er slettet permanent.")
+    return redirect("cms:bin")
 
 
 # -------------------------------------------------------------------------------------- the log
@@ -899,6 +1000,9 @@ class LogRow:
     link: str = ""
     object_id: int | None = None
     fields: list[ChangeField] = field(default_factory=list)
+    # Where "Åbn" goes: the editor of what is still there, or its place in the bin.
+    href: str = ""
+    in_bin: bool = False
 
 
 def _cms_events(kinds: Iterable[str] = ()) -> Any:  # noqa: ANN401 - a QuerySet[AuditEvent]
@@ -959,12 +1063,28 @@ def _log_rows(events: list[AuditEvent], *, with_fields: bool = True) -> list[Log
                     ChangeField("Version", "–", f"versionen fra {event.details['version_from']}")
                 )
         rows.append(row)
-    # Link only to what is still there.
-    for kind, (model, _url) in LINKED_KINDS.items():
-        ids = {r.object_id for r in rows if r.link == LINKED_KINDS[kind][1] and r.object_id}
+    # Link only to what is still there: in the editor, or in the bin.
+    for model, url_name in LINKED_KINDS.values():
+        ids = {r.object_id for r in rows if r.link == url_name and r.object_id}
         alive = set(model.objects.filter(pk__in=ids).values_list("pk", flat=True)) if ids else set()
+        binned = (
+            set(
+                model.all_objects.filter(pk__in=ids - alive, binned_at__isnull=False).values_list(
+                    "pk", flat=True
+                )
+            )
+            if ids - alive
+            else set()
+        )
+        bin_key = next(key for key, bin_kind in cms_bin.KINDS.items() if bin_kind.model is model)
         for r in rows:
-            if r.link == LINKED_KINDS[kind][1] and r.object_id not in alive:
+            if r.link != url_name:
+                continue
+            if r.object_id in alive:
+                r.href = reverse(url_name, args=[r.object_id])
+            elif r.object_id in binned:
+                r.href, r.in_bin = f"{reverse('cms:bin')}#{bin_key}-{r.object_id}", True
+            else:
                 r.link = ""
     return rows
 

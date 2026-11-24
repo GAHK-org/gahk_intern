@@ -20,8 +20,8 @@
 </form>
 {% if item %}
   <form method="post" action="{{ delete_url }}" class="cms-danger-link"
-        onsubmit="return confirm('Slet «{{ item.title|truncatechars:60|escapejs }}»? Den forsvinder fra gahk.dk.')">
+        onsubmit="return confirm('Læg «{{ item.title|truncatechars:60|escapejs }}» i papirkurven? Den forsvinder fra gahk.dk, indtil den gendannes.')">
     {% csrf_token %}
-    <button type="submit" class="btn-link-danger">Slet …</button>
+    <button type="submit" class="btn-link-danger">Læg i papirkurven …</button>
   </form>
 {% endif %}
