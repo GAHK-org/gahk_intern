@@ -35,3 +35,5 @@ trail.register(
 for schedule in (IntervalSchedule, CrontabSchedule, SolarSchedule, ClockedSchedule):
     trail.exempt(schedule, "a job's timing, set from code at each deploy")
 trail.exempt(PeriodicTasks, "the scheduler's change counter")
+
+trail.actions({"audit.expired.purged": "Slettede hændelser, hvis opbevaringstid var udløbet"})

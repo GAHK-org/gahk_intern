@@ -6,6 +6,7 @@ from typing import Any
 import pytest
 from django.core.management import call_command
 
+from audit import trail
 from audit.models import AuditEvent
 from den_hurtige.models import QuickPost
 from oelkaelder.models import Shopper
@@ -195,7 +196,8 @@ def test_seed_demo_writes_weeks_of_audit_history(settings: Any) -> None:  # noqa
     } <= set(events.values_list("action", flat=True))
     failed = events.filter(action="auth.login.failed")
     assert {e.details["reason"] for e in failed} == {"wrong password", "no account"}
-    assert failed.filter(details__email="'form\\xe5nd@gahk.dk'").exists(), "the typed å, as ascii() shows it"
+    typed = failed.get(details__email_hash=trail.address_hash("formånd@gahk.dk"))
+    assert typed.details["email_domain"] == "gahk.dk", "the typed å, kept only as domain and hash"
     # "Uden handling" both ways: the Django admin (whoever was logged in) and a shell (nobody).
     assert events.filter(unclaimed=True, source="web", actor_name="Admin Istrator").exists()
     assert events.filter(unclaimed=True, source="system", actor=None).exists()
