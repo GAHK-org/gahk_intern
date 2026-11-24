@@ -126,7 +126,9 @@ def test_a_restricted_channel_is_refused_like_its_page(
 ) -> None:
     """The channel's own roles stack on the feature gate, exactly as views._channel_or_404 has it —
     a socket must not hear about messages in a channel whose page would 404."""
-    secret = Channel(slug="internt", name="Internt", icon="lock", description="", roles=(Role.INSPEKTION,))
+    secret = Channel(
+        slug="internt", name="Internt", icon="lock", description="", audience=frozenset({Role.INSPEKTION})
+    )
     monkeypatch.setattr(channels, "BY_SLUG", {**channels.BY_SLUG, "internt": secret})
     inspektion = make_resident(email="ins@gahk.dk", roles=(Role.INSPEKTION,))
 
@@ -688,7 +690,9 @@ def test_the_channel_menu_leaves_out_a_channel_this_reader_may_not_open(
     monkeypatch: pytest.MonkeyPatch, client: Client, beboer: Resident
 ) -> None:
     """Its topic would be refused anyway; it must not be asked for, nor its count shown."""
-    secret = Channel(slug="internt", name="Internt", icon="lock", description="", roles=(Role.INSPEKTION,))
+    secret = Channel(
+        slug="internt", name="Internt", icon="lock", description="", audience=frozenset({Role.INSPEKTION})
+    )
     monkeypatch.setattr(channels, "CHANNELS", (*channels.CHANNELS, secret))
     monkeypatch.setattr(channels, "BY_SLUG", {c.slug: c for c in channels.CHANNELS})
     client.force_login(beboer)

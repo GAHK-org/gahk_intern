@@ -24,6 +24,7 @@
           <span class="chip chip-brass" title="Fastgjort af {{ notice.pinned_by.full_name|default:'Inspektionen' }}">📌 Fastgjort</span>
         {% endif %}
         <span class="chip">{{ notice.get_category_display }}</span>
+        {% if notice.audience_label %}<span class="chip chip-quiet">{{ notice.audience_label }}</span>{% endif %}
         {% comment %}
           The link to the begivenhed this post is about. Announce here, sign up there.
 

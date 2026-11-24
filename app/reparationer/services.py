@@ -20,12 +20,13 @@ was on Reppergruppen last year and rotated off should not keep getting paged.
 
 from typing import TYPE_CHECKING
 
-from django.db.models import Q, QuerySet
+from django.db.models import QuerySet
 from django.urls import reverse
 
+from access.api import ADMINISTRATOR, holding
 from core.mentions import notify_mentions
 from notifications import categories, services
-from residents.models import Resident, Role, RoleAssignment, active_period
+from residents.models import Resident, Role
 
 if TYPE_CHECKING:
     from .models import RepairComment, RepairTask
@@ -37,13 +38,8 @@ def task_url(task: "RepairTask") -> str:
 
 def _residents_with_role(role: str) -> QuerySet[Resident]:
     """The members of one crew this month, the people a new repair is addressed to (a group, not a
-    permission). administrator counts too, and a superuser may hold the role with no RoleAssignment
-    row at all."""
-    year, month = active_period()
-    resident_ids = RoleAssignment.objects.filter(
-        year=year, month=month, role__in=[role, Role.ADMINISTRATOR]
-    ).values_list("resident_id", flat=True)
-    return Resident.objects.filter(is_active=True).filter(Q(pk__in=resident_ids) | Q(is_superuser=True))
+    permission), with the administrators (access.roles.holding)."""
+    return holding({role, ADMINISTRATOR})
 
 
 def notify_new_task(task: "RepairTask") -> None:

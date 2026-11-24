@@ -1684,7 +1684,7 @@ def test_a_channel_can_be_restricted_to_a_role(
 ) -> None:
     """The per-channel gate stacks on top of den_hurtige.access. 404 rather than 403 on purpose: a
     403 would confirm the channel exists to someone who may not read it."""
-    secret = Channel("internt", "Internt", "flash", "", roles=(Role.INSPEKTION,))
+    secret = Channel("internt", "Internt", "flash", "", audience=frozenset({Role.INSPEKTION}))
     monkeypatch.setattr(channels, "CHANNELS", (*channels.CHANNELS, secret))
     monkeypatch.setattr(channels, "BY_SLUG", {**channels.BY_SLUG, "internt": secret})
 
@@ -2465,7 +2465,7 @@ def test_a_thread_in_a_restricted_channel_is_404(
     caller may read the CHANNEL it lives in. That mattered less while they were all writes; a
     thread is a READ, so guessing a pk would otherwise hand over a restricted channel's
     contents."""
-    secret = Channel("internt", "Internt", "flash", "", roles=(Role.INSPEKTION,))
+    secret = Channel("internt", "Internt", "flash", "", audience=frozenset({Role.INSPEKTION}))
     monkeypatch.setattr(channels, "CHANNELS", (*channels.CHANNELS, secret))
     monkeypatch.setattr(channels, "BY_SLUG", {c.slug: c for c in channels.CHANNELS})
     author = make_resident(email="a@gahk.dk")
@@ -2675,7 +2675,7 @@ def test_the_archive_of_a_restricted_channel_is_refused(
     """The archive is a READ over every message a channel has ever held, so it is the widest leak
     in the feature if it forgets the per-channel roles. Same answer as every other surface: the
     page 404s rather than 403ing, because a 403 confirms the channel exists."""
-    secret = Channel("internt", "Internt", "flash", "", roles=(Role.INSPEKTION,))
+    secret = Channel("internt", "Internt", "flash", "", audience=frozenset({Role.INSPEKTION}))
     monkeypatch.setattr(channels, "CHANNELS", (*channels.CHANNELS, secret))
     monkeypatch.setattr(channels, "BY_SLUG", {c.slug: c for c in channels.CHANNELS})
     author = make_resident(email="a@gahk.dk")

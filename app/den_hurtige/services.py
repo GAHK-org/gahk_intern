@@ -22,10 +22,9 @@ from typing import TYPE_CHECKING
 
 from django.db.models import QuerySet
 
-from access.api import Feature
+from access import audiences
 from core import push
 from core.mentions import notify_mentions, to_plain
-from core.rollout import Gate
 from notifications import categories, services
 
 from . import access, channels
@@ -51,15 +50,10 @@ def _thread_url(post: "QuickPost") -> str:
 
 
 def _audience(slug: str) -> "QuerySet[Resident]":
-    """Everyone who can open this room: the feature's rollout gate, then the room's own roles. The
-    resident's own toggle for the room is the notifications app's business, not this one's."""
-    channel = _channel(slug)
-    audience = Gate(lambda: channel.roles, Feature.DEN_HURTIGE).allowed_residents(
-        access.allowed_residents(services.everyone())
-    )
-    if channel.slug == channels.KITCHEN_CHANNEL:
-        audience = audience | services.kitchen()
-    return audience
+    """Everyone who can open this room: the room's audience, among those Den Hurtige (and its
+    rollout gate) is open to. The resident's own toggle for the room is the notifications app's
+    business, not this one's."""
+    return access.allowed_residents(audiences.members(_channel(slug).audience))
 
 
 def notify_new_post(post: "QuickPost") -> None:

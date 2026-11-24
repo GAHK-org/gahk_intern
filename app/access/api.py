@@ -59,7 +59,6 @@ __all__ = [
     "holders",
     "holding",
     "in_feature",
-    "is_kitchen",
     "may_open",
     "may_open_many",
     "permission_required",
@@ -89,11 +88,6 @@ def user_permissions(user: object) -> Permissions:
 def user_can(user: object, permission: str) -> bool:
     """Whether the account itself may do `permission`, whatever any preview shows."""
     return user_permissions(user).allows(permission)
-
-
-def is_kitchen(request: HttpRequest) -> bool:
-    """Whether this request is the kitchen staff's, or an administrator looking at the site as it."""
-    return request.user.is_authenticated and KITCHEN in request_roles(request)
 
 
 def may_open(user_or_request: object, url: str) -> bool:

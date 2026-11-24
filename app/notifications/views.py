@@ -16,8 +16,9 @@ from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
 from django.views.decorators.http import require_POST
 
-from access.api import fragment, is_kitchen
+from access.api import Feature, Grade, fragment, request_permissions, request_roles
 from core import push
+from den_hurtige import channels
 from gahkflix import access as gahkflix_access
 from residents.permissions import current_resident
 
@@ -29,6 +30,17 @@ from .models import Notification, NotificationPreference, NotificationSettings
 DROPDOWN_SIZE = 10
 
 VIEWS = (("kronologisk", "Kronologisk"), ("kategori", "Efter kategori"))
+
+# The feature each settings group's notifications open: an account whose roles do not open it is
+# never sent them, so the page leaves them out.
+GROUP_FEATURES = {
+    "chat": Feature.DEN_HURTIGE,
+    "posts": Feature.OPSLAGSTAVLE,
+    "events": Feature.EVENTS,
+    "repairs": Feature.REPARATIONER,
+    "gahkflix": Feature.GAHKFLIX,
+    "mentions": Feature.MENTIONS,
+}
 
 
 def _safe(url: str) -> str:
@@ -127,11 +139,19 @@ def preferences(request: HttpRequest) -> HttpResponse:
         resident=resident
     )
     saved = {p.category: p for p in NotificationPreference.objects.filter(resident=resident)}
-    kitchen = is_kitchen(request)
+    roles = request_roles(request)
+    permissions = request_permissions(request)
 
     def shown(category: categories.Category) -> bool:
-        """The kitchen account only sees the categories it can ever be sent."""
-        return not kitchen or category.key in categories.KITCHEN_CATEGORIES
+        """Only the categories this account can ever be sent: none for a feature its roles do not
+        open, and a Den Hurtige room's only if it is in the room's audience."""
+        feature = GROUP_FEATURES.get(category.group)
+        if feature is not None and permissions.grade(feature) < Grade.VIEW:
+            return False
+        if category.key.startswith(categories.CHAT_ROOM_PREFIX):
+            room = channels.lookup(category.key.removeprefix(categories.CHAT_ROOM_PREFIX))
+            return room is not None and channels.allowed(room, roles)
+        return True
 
     if request.method == "POST":
         with transaction.atomic():

@@ -30,6 +30,7 @@ from django.db.models.signals import post_delete
 from django.dispatch import receiver
 from django.utils import timezone
 
+from access import audiences
 from core.files import delete_attached_files
 from residents.models import Resident, embedsgruppe_of
 
@@ -144,6 +145,9 @@ class AuthoredByResident(models.Model):
 
 class Notice(AuthoredByResident):
     author = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="notices")
+    # Who reads it (access.audiences): the whole house unless the author said otherwise. The author
+    # always reads their own.
+    audience = audiences.field()
     category = models.CharField(
         max_length=20, choices=Category.choices, default=Category.NYT, verbose_name="Kategori"
     )
@@ -219,6 +223,11 @@ class Notice(AuthoredByResident):
         # No title to name a post by any more, so identify it the way the board does: by who wrote
         # it. The pk keeps two posts from one person distinguishable in the admin changelist.
         return f"Opslag #{self.pk} af {self.author.full_name}"
+
+    @property
+    def audience_label(self) -> str:
+        """Who it is for, when that is not the whole house (access.audiences)."""
+        return audiences.narrower_label(self.audience)
 
     @property
     def is_pinned(self) -> bool:

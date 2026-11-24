@@ -59,7 +59,8 @@ An account with no role at all has no access: the front page says so and offers 
   notifications and the @-picker.
 - **Fraflyttet > 1 år**: Stamtræ.
 - **Køkkenet**: use of Den Hurtige, Opslagstavlen, Reparationer and notifications. Inside them the
-  kitchen sees only the Køkkenet channel and its own opslag.
+  kitchen sees only what is addressed to it: the Køkkenet channel, and posts for the house and the
+  kitchen (its own always are).
 - **Indstillingen**: manages Optagelse, Alumneliste, Søg værelse, Hjemmeside and Adgang.
 - **Køkkengruppen**: adds and ends the kitchen staff's accounts on Adgang.
 - **Inspektionen**: manages Den Hurtige, Opslagstavlen, Reparationer and Hjemmeside.
@@ -70,6 +71,28 @@ An account with no role at all has no access: the front page says so and offers 
 - **Administrator**: administers everything.
 
 Someone with several roles gets the highest grade any of them gives. No role takes anything away.
+
+## Audiences
+
+A Den Hurtige channel, an opslag and an open event each say who they are for: a set of roles.
+Someone sees one when any of their roles is in it, and the feature is open to them as well. The
+audience narrows who; the roles still decide what.
+
+| Audience | Roles |
+|---|---|
+| Hele huset | every stage (living here, moving in, moved out) |
+| Kun dem, der bor her nu | Flytter ind, Beboer |
+| Kun tidligere beboere | the moved-out stages |
+| Hele huset og køkkenet | every stage and Køkkenet |
+
+- Every channel is for the whole house except Køkkenet, which is for the house and the kitchen. A
+  channel for former residents or for one embedsgruppe is a channel with that audience.
+- A post or an open event is for the whole house unless its author picks another audience they are
+  in themselves. One that is not for the whole house shows its audience. The author always sees
+  their own.
+- Invite-only events are their invitees', as before.
+- New posts, events and channel messages notify the audience only, and the notification settings
+  list only the channels and features the account can be sent.
 
 ## Grants and the kitchen staff
 
@@ -106,6 +129,10 @@ Someone with several roles gets the highest grade any of them gives. No role tak
   who lives here everywhere else.
 - **Worked out when asked, not stored.** One query reads an account's months, groups and grants, and
   the same rule runs in SQL for audiences, so no signal or nightly job keeps a stored copy current.
+- **Channels stay in code, with their audience beside them.** Notification settings are made from
+  the channel list, so a channel is still added by a deploy; who reads it is a line of data.
+- **Audiences are role sets, not lists of people.** They follow the alumneliste by themselves: a
+  post for those living here stops reaching someone the month they move out.
 - **Grants add, never take away.** An exception the Indstilling makes is one more role; nobody's
   access is cut by hand.
 
