@@ -36,9 +36,9 @@ def task_url(task: "RepairTask") -> str:
 
 
 def _residents_with_role(role: str) -> QuerySet[Account]:
-    """Residents currently holding `role` for the active period. administrator counts too — it
-    implies every role (residents.permissions.real_roles), and a superuser may hold the role with no
-    RoleAssignment row at all."""
+    """The members of one crew this month, the people a new repair is addressed to (a group, not a
+    permission). administrator counts too, and a superuser may hold the role with no RoleAssignment
+    row at all."""
     year, month = active_period()
     resident_ids = RoleAssignment.objects.filter(
         year=year, month=month, role__in=[role, Role.ADMINISTRATOR]

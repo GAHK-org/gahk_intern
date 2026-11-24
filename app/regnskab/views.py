@@ -22,7 +22,7 @@ from ak.models import AkEntry
 from audit import trail
 from core.models import OutgoingMail
 from residents.models import Account, Residency, prev_period
-from residents.permissions import current_resident, role_required
+from residents.permissions import current_resident
 from residents.views import DA_MONTHS, _parse_period, _period_options
 
 from . import alumneregning, economic, tasks
@@ -42,7 +42,6 @@ def _row(resident: Account, room: int | None) -> Row:
     return Row(resident, room, AkEntry.balance_for(resident), oek_ore)
 
 
-@role_required("regnskab")
 def overview(request: HttpRequest) -> HttpResponse:
     # `period` is the month they are GONE from (default: the active period). They are a "leaver" if they
     # held a room the month before but not this month — Residency is per-month, so this is a set diff.
@@ -106,7 +105,6 @@ def _lookup_account_name(account_number: int) -> tuple[str | None, str]:
         return None, f"Kunne ikke slå kontonr. {account_number} op i e-conomic: {exc}"
 
 
-@role_required("regnskab")
 def edit_economic_account_number(request: HttpRequest, pk: int) -> HttpResponse:
     """Regnskab sees a resident's data but can change only their e-conomic kontonr., on its own page
     with a deliberate "Gem" (not inline in a table, where a stray click could change it). A new number
@@ -192,7 +190,6 @@ _AUTH_ERROR_MESSAGE = (
 )
 
 
-@role_required("regnskab")
 def preview_alumneregninger_view(request: HttpRequest) -> HttpResponse:
     """Who would be billed for a chosen period, with a link to each one's statement PDF — a preview,
     sends nothing."""
@@ -216,7 +213,6 @@ def preview_alumneregninger_view(request: HttpRequest) -> HttpResponse:
     )
 
 
-@role_required("regnskab")
 def alumneregning_statement_pdf_view(request: HttpRequest, pk: int) -> HttpResponse:
     """One resident's statement PDF for a period, shown inline."""
     period = _parse_billing_period(request.GET)
@@ -242,7 +238,6 @@ def alumneregning_statement_pdf_view(request: HttpRequest, pk: int) -> HttpRespo
     return response
 
 
-@role_required("regnskab")
 def send_alumneregninger_view(request: HttpRequest) -> HttpResponse:
     """The "one button": queues the actual send as a background task (hundreds of e-conomic calls and
     SMTP sends do not belong inside one HTTP request — see tasks.send_alumneregninger_task) and sends
@@ -278,7 +273,6 @@ def send_alumneregninger_view(request: HttpRequest) -> HttpResponse:
     return redirect(f"{status_url}?fra={date_from.isoformat()}&til={date_to.isoformat()}")
 
 
-@role_required("regnskab")
 def alumneregninger_status_view(request: HttpRequest) -> HttpResponse:
     """Who has (and hasn't yet) been sent their statement for a period — reload to see the background
     send progress."""
@@ -314,7 +308,6 @@ def alumneregninger_status_view(request: HttpRequest) -> HttpResponse:
     )
 
 
-@role_required("regnskab")
 def alumneregning_not_received_view(request: HttpRequest, pk: int) -> HttpResponse:
     """A statement whose mail was cut off mid-send did not arrive, says regnskab: send it again. Marks
     the mail as failed and runs the period's send, which redoes only that alumne (and anyone else left
@@ -341,7 +334,6 @@ def alumneregning_not_received_view(request: HttpRequest, pk: int) -> HttpRespon
     return redirect(status_url)
 
 
-@role_required("regnskab")
 def alumneregning_settings_view(request: HttpRequest) -> HttpResponse:
     """Edit the alumneregning mail body + følgebrev PDF (AlumneregningSettings.get_solo(), F-010)."""
     instance = AlumneregningSettings.get_solo()

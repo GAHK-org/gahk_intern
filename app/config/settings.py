@@ -68,6 +68,7 @@ INSTALLED_APPS = [
     # GAHK domains
     "audit",
     "core",
+    "access",
     "residents",
     "admissions",
     "cms",
@@ -99,7 +100,9 @@ MIDDLEWARE = [
     # The "gahk_editor" hint cookie for gahk.dk's "Rediger siden" (EDITOR_HINT_COOKIE_DOMAIN).
     # Needs the user; set or deleted only when its state changes, never on static files or media.
     "cms.middleware.EditorHintCookie",
-    "core.middleware.KitchenAccountGate",
+    # Every page needs its feature (access.features): view to look, use to change anything.
+    "access.middleware.AccessPreview",
+    "access.middleware.AccessGate",
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
     # No visit counter: gahk.dk counts its own visits, and cms.tasks.sync_gahk_web pulls the totals.
@@ -289,6 +292,12 @@ PHOTO_ALBUM_SYSTEM_IMPORT_EMAIL = os.environ.get("PHOTO_ALBUM_SYSTEM_IMPORT_EMAI
 # (YYYY-MM-DD). Blank means the command's own default, 2026-10-01; a date in the future is refused.
 PHOTO_ALBUM_DELETE_PROTECTED_FROM = os.environ.get("PHOTO_ALBUM_DELETE_PROTECTED_FROM", "")
 CELERY_BEAT_SCHEDULE = {
+    # 00:01: everyone's roles follow the date (access.roles), as a list made ahead takes effect on
+    # the 1st. Every change to the facts syncs at once too; this catches what only time changes.
+    "sync-access-roles": {
+        "task": "access.tasks.sync_roles",
+        "schedule": crontab(hour=0, minute=1),
+    },
     # gahk.dk (cms.tasks): every 2 minutes, compare content revisions (republish on a mismatch) and
     # pull the optagelse applications and visit counts waiting on the webhost. Often, because an
     # application waits there until this runs, and the webhost holds no durable copy of it.

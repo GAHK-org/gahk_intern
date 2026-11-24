@@ -27,9 +27,10 @@ from django.db.models import Q, QuerySet
 from django.http import HttpRequest
 from django.utils import timezone
 
+from access.api import Feature, holders
 from core.rollout import Gate
 from residents.models import Account, Role, RoleAssignment, active_period
-from residents.permissions import current_resident, request_has_role
+from residents.permissions import current_resident
 
 from .models import ChangeRequest, Series, Video
 
@@ -43,10 +44,8 @@ def _access_roles() -> tuple[str, ...] | None:
     return None if settings.DEBUG else ACCESS_ROLES
 
 
-gate = Gate(_access_roles)
+gate = Gate(_access_roles, Feature.GAHKFLIX)
 access_required = gate.required
-
-ADMINISTRATOR_ROLES = (Role.ADMINISTRATOR, Role.FOTO)
 
 
 def roles_allowed(roles: Collection[str]) -> bool:
@@ -59,8 +58,8 @@ def request_allowed(request: HttpRequest) -> bool:
 
 def _with_roles(residents: QuerySet[Account], roles: Collection[str]) -> QuerySet[Account]:
     year, month = active_period()
-    holders = RoleAssignment.objects.filter(role__in=roles, year=year, month=month).values("resident_id")
-    return residents.filter(Q(pk__in=holders) | Q(is_superuser=True)).filter(is_active=True)
+    holding = RoleAssignment.objects.filter(role__in=roles, year=year, month=month).values("resident_id")
+    return residents.filter(Q(pk__in=holding) | Q(is_superuser=True)).filter(is_active=True)
 
 
 def audience(residents: QuerySet[Account]) -> QuerySet[Account]:
@@ -73,11 +72,11 @@ def audience(residents: QuerySet[Account]) -> QuerySet[Account]:
 
 def administrators() -> QuerySet[Account]:
     """Everyone who may approve requests this month, as a notification audience."""
-    return _with_roles(Account.objects.all(), ADMINISTRATOR_ROLES)
+    return holders("access.gahkflix_manage")
 
 
 def is_administrator(request: HttpRequest) -> bool:
-    return request_has_role(request, Role.FOTO)
+    return request.user.has_perm("access.gahkflix_manage")
 
 
 def _now(now: datetime | None) -> datetime:

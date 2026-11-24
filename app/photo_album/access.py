@@ -5,27 +5,24 @@ from django.db.models import QuerySet
 from django.http import HttpRequest
 from django.utils import timezone
 
-from residents.models import Role
-from residents.permissions import current_resident, request_has_role
+from residents.permissions import current_resident
 
 from .models import MANUAL_MAX_ALBUM_DEPTH, Album, Media, MediaStatus
 
 
 def is_photo_group_member(request: HttpRequest) -> bool:
-    """Fotogruppen, as an ordinary role — like repper or vicevaert, not a workgroup name lookup.
+    """photo_album.manage: Fotogruppen and administrators (access.policy).
 
     `Role.FOTO` is granted by WORKGROUP_ROLE the same way every other embedsgruppe role is, so
     indstilling assigning somebody to Fotogruppen for the month is what makes this true, and the
     monthly sync in residents.views._sync_month_roles handles it with no special case here.
-
-    `administrator` needs no mention: real_roles() returns every role for an admin or superuser.
 
     This replaces a Residency query against a workgroup literally named "Fotogruppen" — a row that
     existed in no database, so the check could only ever pass for administrators. It also means the
     answer now comes from the role set already memoised on the request, rather than a database
     query per media item.
     """
-    return request_has_role(request, Role.FOTO)
+    return request.user.has_perm("access.photo_album_manage")
 
 
 def roles_allowed(_roles: Collection[str]) -> bool:
@@ -37,7 +34,7 @@ def can_create_album(request: HttpRequest) -> bool:
 
 
 def is_administrator(request: HttpRequest) -> bool:
-    return request_has_role(request, Role.ADMINISTRATOR)
+    return request.user.has_perm("access.photo_album_administer")
 
 
 def can_upload(request: HttpRequest, album: Album) -> bool:

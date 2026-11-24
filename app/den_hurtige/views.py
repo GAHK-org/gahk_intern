@@ -37,12 +37,13 @@ from django.utils.dateparse import parse_datetime
 from django.utils.formats import date_format
 from django.views.decorators.http import require_POST
 
+from access.api import fragment, request_roles
 from core.clock import current_date, current_datetime
 from core.reactions import CREATED, apply_toggle, reaction_rows
 from core.uploads import attached_image
 from notifications.categories import chat_room_key
 from notifications.models import NotificationPreference
-from residents.permissions import current_resident, effective_roles
+from residents.permissions import current_resident
 
 from . import channels, live, services
 from .access import access_required, can_moderate, is_limited, request_allowed
@@ -183,7 +184,7 @@ def _channel_or_404(request: HttpRequest, slug: str | None) -> Channel:
     would confirm that "inspektion-internt" exists to someone who cannot read it.
     """
     channel = channels.lookup(slug)
-    if channel is None or not channels.allowed(channel, effective_roles(request)):
+    if channel is None or not channels.allowed(channel, request_roles(request)):
         raise Http404("Ingen kanal med det navn.")
     return channel
 
@@ -212,7 +213,7 @@ def _post_or_404(request: HttpRequest, pk: int, *, archived_ok: bool = False) ->
     manager = QuickPost.objects.all() if archived_ok else QuickPost.objects.active()
     post = get_object_or_404(manager, pk=pk)
     channel = channels.lookup(post.channel)
-    if channel is None or not channels.allowed(channel, effective_roles(request)):
+    if channel is None or not channels.allowed(channel, request_roles(request)):
         raise Http404("Ingen besked med det id.")
     return post
 
@@ -248,7 +249,7 @@ def _tabs(request: HttpRequest, channel: Channel) -> list[Tab]:
     counts = channel_counts()
     return [
         Tab(c, counts.get(c.slug, 0), c.slug == channel.slug)
-        for c in channels.visible(effective_roles(request))
+        for c in channels.visible(request_roles(request))
     ]
 
 
@@ -276,7 +277,14 @@ def _requested_thread_pk(request: HttpRequest) -> int | None:
 
 
 @access_required
-def feed(request: HttpRequest, channel: str | None = None) -> HttpResponse:
+def feed(request: HttpRequest, channel: str | None = None) -> HttpResponse | HttpResponseRedirect:
+    if channel is None and not channels.allowed(channels.DEFAULT, request_roles(request)):
+        # The bare address for someone who may not read the default channel (the kitchen staff):
+        # the first channel they may, rather than a 404.
+        first = next(iter(channels.visible(request_roles(request))), None)
+        if first is None:
+            raise Http404("Ingen kanal.")
+        return HttpResponseRedirect(first.url)
     resolved = _channel_or_404(request, channel)
     return render(
         request,
@@ -314,6 +322,7 @@ def feed(request: HttpRequest, channel: str | None = None) -> HttpResponse:
     )
 
 
+@fragment
 def feed_items(request: HttpRequest) -> HttpResponse:
     """Just the post list, for the 20-second poll that keeps the feed live.
 
@@ -329,7 +338,7 @@ def feed_items(request: HttpRequest) -> HttpResponse:
     if not request_allowed(request):
         return HttpResponse(status=204)
     channel = channels.lookup(request.GET.get("kanal"))
-    if channel is None or not channels.allowed(channel, effective_roles(request)):
+    if channel is None or not channels.allowed(channel, request_roles(request)):
         return HttpResponse(status=204)
     return render(
         request,
@@ -343,6 +352,7 @@ def feed_items(request: HttpRequest) -> HttpResponse:
     )
 
 
+@fragment
 def channel_menu(request: HttpRequest) -> HttpResponse:
     """The channel picker's menu alone, with fresh live-post counts.
 
@@ -354,7 +364,7 @@ def channel_menu(request: HttpRequest) -> HttpResponse:
     if not request_allowed(request):
         return HttpResponse(status=204)
     channel = channels.lookup(request.GET.get("kanal"))
-    if channel is None or not channels.allowed(channel, effective_roles(request)):
+    if channel is None or not channels.allowed(channel, request_roles(request)):
         return HttpResponse(status=204)
     return render(
         request, "den_hurtige/_channel_menu.html", {"channel": channel, "tabs": _tabs(request, channel)}
@@ -517,7 +527,7 @@ def archive(request: HttpRequest) -> HttpResponseBase:
         if not request_allowed(request):
             return HttpResponse(status=204)
         channel = channels.lookup(request.GET.get("kanal"))
-        if channel is None or not channels.allowed(channel, effective_roles(request)):
+        if channel is None or not channels.allowed(channel, request_roles(request)):
             return HttpResponse(status=204)
         return render(request, "den_hurtige/_archive_chunk.html", _archive_context(request, channel))
     return _archive_page(request)
@@ -588,7 +598,7 @@ def _render_thread(request: HttpRequest, pk: int, *, fragment: bool) -> HttpResp
         channel = channels.lookup(post.channel)
         # Same answer as "gone" for a channel this resident may not read: never confirm that a
         # restricted channel has a message with this id. Mirrors _post_or_404.
-        if channel is None or not channels.allowed(channel, effective_roles(request)):
+        if channel is None or not channels.allowed(channel, request_roles(request)):
             post = None
 
     if post is None:
@@ -659,7 +669,7 @@ def _posting_channel(request: HttpRequest) -> Channel:
     their message somewhere they did not choose.
     """
     channel = channels.lookup(request.POST.get("kanal")) or channels.DEFAULT
-    if not channels.allowed(channel, effective_roles(request)):
+    if not channels.allowed(channel, request_roles(request)):
         raise PermissionDenied
     return channel
 

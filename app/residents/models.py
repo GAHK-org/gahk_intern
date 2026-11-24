@@ -46,7 +46,7 @@ WORKGROUP_ROLE = {
     "Ølkælderen": Role.OELKAELDER,
     "Regnskabsgruppen": Role.REGNSKAB,  # legacy intern_alumne_workgroup name (id 23)
     "PR-gruppen": Role.PR,  # grants CMS/frontpage editing
-    "Repperne": Role.REPPER,  # manages the Reparationer board (reparationer.views.MANAGE_ROLES)
+    "Repperne": Role.REPPER,  # manages the Reparationer board (reparationer.manage)
     "Vicevært": Role.VICEVAERT,  # triages Reparationer before handing it to Repperne
     "Fotogruppen": Role.FOTO,  # curates the photo album (photo_album.access)
 }
@@ -86,6 +86,17 @@ class AccountManager(BaseUserManager["Account"]):
         extra.setdefault("is_active", True)
         return self.create_user(email, password, **extra)
 
+    def with_perm(
+        self, perm: str, is_active: bool = True, include_superusers: bool = True
+    ) -> "models.QuerySet[Account]":
+        """The accounts holding `perm`, as Django's own UserManager.with_perm asks the backend."""
+        from django.contrib.auth.backends import ModelBackend
+
+        return ModelBackend().with_perm(perm, is_active=is_active, include_superusers=include_superusers)
+
+
+# Where access.middleware puts the roles "Se side som" shows the site as (access.roles).
+PREVIEW_ATTRIBUTE = "_access_preview"
 
 # Attribute `_has_admin_role` memoises its grant lookup under, on the request's user instance.
 _ADMIN_GRANT_MEMO = "_gahk_admin_grant"
@@ -237,7 +248,7 @@ class Account(AbstractBaseUser, PermissionsMixin):
         default=False
     )  # = holds any role in the active period (set by ETL/signals)
     # The shared kitchen-staff login: not a resident, sees only Den Hurtige's køkken channel,
-    # Reparationer and its own opslag (core.middleware.KitchenAccountGate).
+    # Reparationer and its own opslag (access.policy).
     is_kitchen = models.BooleanField(default=False)
     date_joined = models.DateTimeField(default=timezone.now)
 
@@ -400,16 +411,29 @@ class Account(AbstractBaseUser, PermissionsMixin):
         """Netvaerksgruppen (spelled `administrator`) gets every Django admin permission, for exactly
         as long as they hold the role AND a second administrator has accepted the grant. Derived per
         request rather than stored in `is_superuser`: role holding expires with the monthly period,
-        and nothing fires on that rollover."""
+        and nothing fires on that rollover.
+
+        "Se side som" (access.roles): while an administrator looks at the site with other roles,
+        those roles answer instead, a superuser's included, so the preview is what they would see."""
+        preview = getattr(self, PREVIEW_ATTRIBUTE, None)
+        if preview is not None:
+            from access.permissions import names_of  # imported here: access imports this module
+
+            return perm in names_of(preview)
         return super().has_perm(perm, obj) or self._has_admin_role()
 
     def has_module_perms(self, app_label: str) -> bool:
+        preview = getattr(self, PREVIEW_ATTRIBUTE, None)
+        if preview is not None:
+            from access.permissions import names_of
+
+            return any(name.startswith(f"{app_label}.") for name in names_of(preview))
         return super().has_module_perms(app_label) or self._has_admin_role()
 
     def _has_admin_role(self) -> bool:
-        from .permissions import has_active_role  # imported here: permissions imports this module
+        from access.roles import ADMINISTRATOR, real_roles  # imported here: access imports this module
 
-        if not (self.is_active and has_active_role(self, Role.ADMINISTRATOR)):
+        if not (self.is_active and ADMINISTRATOR in real_roles(self)):
             return False
         # Memoised per instance, like real_roles: the admin index asks once per registered model.
         approved = getattr(self, _ADMIN_GRANT_MEMO, None)

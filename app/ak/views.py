@@ -9,8 +9,9 @@ from django.shortcuts import get_object_or_404, redirect, render
 from django.utils import timezone
 from django.views.decorators.http import require_POST
 
+from access.api import permission_required
 from residents.models import Account, active_period, next_period
-from residents.permissions import current_resident, role_required
+from residents.permissions import current_resident
 from residents.views import DA_MONTHS
 
 from .models import AkEntry, AkMonthlyCharge
@@ -78,7 +79,7 @@ def _schedule_rows(active_month: int) -> list[dict]:
     return rows
 
 
-@role_required("ak")
+@permission_required("access.ak_manage")
 def overview(request: HttpRequest) -> HttpResponse:
     ensure_previous_month_charged()  # backstop for the monthly cron job (DEPLOY.md §4b)
     year, month = active_period()
@@ -101,7 +102,7 @@ def overview(request: HttpRequest) -> HttpResponse:
 
 
 @require_POST
-@role_required("ak")
+@permission_required("access.ak_manage")
 def save_monthly_charges(request: HttpRequest) -> HttpResponseRedirect:
     """Persist the per-calendar-month schedule (same amount every year). Nothing is booked here: a month
     is charged once it is over, on the 1st of the next, with the schedule as it stands then. Months
@@ -126,7 +127,7 @@ def save_monthly_charges(request: HttpRequest) -> HttpResponseRedirect:
     return redirect("ak:overview")
 
 
-@role_required("ak")
+@permission_required("access.ak_manage")
 def resident_log(request: HttpRequest, pk: int) -> HttpResponse:
     resident = get_object_or_404(Account, pk=pk)
     return render(
@@ -141,7 +142,7 @@ def resident_log(request: HttpRequest, pk: int) -> HttpResponse:
 
 
 @require_POST
-@role_required("ak")
+@permission_required("access.ak_manage")
 def add_entry(request: HttpRequest, pk: int) -> HttpResponseRedirect:
     resident = get_object_or_404(Account, pk=pk)
     try:
@@ -161,7 +162,7 @@ def add_entry(request: HttpRequest, pk: int) -> HttpResponseRedirect:
 
 
 @require_POST
-@role_required("ak")
+@permission_required("access.ak_manage")
 def delete_entry(request: HttpRequest, pk: int, entry_id: int) -> HttpResponseRedirect:
     AkEntry.objects.filter(id=entry_id, resident_id=pk).delete()
     return redirect("ak:log", pk=pk)

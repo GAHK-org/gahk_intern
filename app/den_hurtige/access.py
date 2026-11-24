@@ -12,7 +12,7 @@ governed individual channels, in either direction: den_hurtige.channels carries 
 a role. This gate is about the feature; that one is about one feed within it.
 
 The module stays rather than being deleted with the trial, as the original plan had it, because two
-things here are still load-bearing: MODERATOR_ROLES, and `roles_allowed` — the function
+things here are still load-bearing: can_moderate, and `roles_allowed` — the function
 den_hurtige.channels.allowed mirrors.
 
 The gate MECHANISM moved to core.rollout when begivenheder became the third feature to want it; see
@@ -25,8 +25,9 @@ from collections.abc import Collection
 from django.db.models import QuerySet
 from django.http import HttpRequest
 
+from access.api import Feature
 from core.rollout import Gate
-from residents.permissions import MODERATION_ROLES, View, effective_roles
+from residents.permissions import View
 
 # None = every logged-in resident. A tuple = only those roles (administrator implies every role, so
 # administrators and superusers are always in).
@@ -39,17 +40,13 @@ ACCESS_ROLES: tuple[str, ...] | None = None
 
 # Read through a lambda, never passed by value: this global is what tests rebind and what the edit
 # above flips, and a Gate holding the value would freeze at import. See core.rollout.
-_GATE = Gate(lambda: ACCESS_ROLES)
-
-# Who may delete somebody else's message. Aliased rather than redefined: the list is shared with
-# opslagstavlen and lives in residents.permissions, which owns every other role grouping.
-MODERATOR_ROLES = MODERATION_ROLES
+_GATE = Gate(lambda: ACCESS_ROLES, Feature.DEN_HURTIGE)
 
 
 def can_moderate(request: HttpRequest) -> bool:
-    """Whether this request may delete other people's messages. Uses *effective* roles, so an
-    administrator previewing as a beboer correctly loses the delete buttons."""
-    return request.user.is_authenticated and not effective_roles(request).isdisjoint(MODERATOR_ROLES)
+    """Whether this request may delete other people's messages (den_hurtige.manage). Honours the
+    preview, so an administrator looking at the site as a beboer loses the delete buttons."""
+    return request.user.has_perm("access.den_hurtige_manage")
 
 
 is_limited = _GATE.is_limited

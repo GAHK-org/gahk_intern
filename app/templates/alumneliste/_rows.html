@@ -13,7 +13,7 @@
         {{ r.resident.full_name }}
         {% for emoji, label in badges|dict_get:r.resident_id %}<span title="{{ label }}">{{ emoji }}</span>{% endfor %}
       {% if account %}</a>{% else %}</span>{% endif %}
-      {% endwith %}{% if "indstilling" in effective_roles %}
+      {% endwith %}{% if perms.access.directory_manage %}
       <a href="{% url 'edit_resident' r.resident_id %}?next={{ request.get_full_path|urlencode }}" title="Rediger beboer" class="no-underline">✎</a>{% endif %}</td>
     <td>{{ r.room.number|stringformat:"03d" }}</td>
     <td>{{ r.workgroup.name|default:"" }}</td>

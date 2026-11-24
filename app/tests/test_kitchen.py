@@ -83,21 +83,9 @@ def test_what_its_pages_need_is_not_gated(kitchen: Account, path: str) -> None:
 
 
 @pytest.mark.parametrize("path", ["/intern/den-hurtige/koekken/", "/nyintern/", "/intern", "/nyintern"])
-def test_the_old_prefixes_are_gated_like_any_other_path(kitchen: Account, path: str) -> None:
-    """No special case for the old prefixes: they are not on the allowlist, so the kitchen account
-    gets the gate's 403 there, as on any other path outside it."""
-    from core.middleware import kitchen_may_open
-
-    assert not kitchen_may_open(path)
-    assert _client(kitchen).get(path).status_code == 403
-
-
-def test_a_prefix_that_merely_starts_like_an_allowed_path_is_gated() -> None:
-    from core.middleware import kitchen_may_open
-
-    assert kitchen_may_open("/sw.js") and kitchen_may_open("/health")
-    assert not kitchen_may_open("/sw.jsx") and not kitchen_may_open("/healthcheck")
-    assert not kitchen_may_open("/admin/roles") and not kitchen_may_open("/admin/worker-jobs")
+def test_the_old_prefixes_are_no_page(kitchen: Account, path: str) -> None:
+    """The gate decides on the page a path resolves to, so a path that is no page is the usual 404."""
+    assert _client(kitchen).get(path).status_code == 404
 
 
 def test_its_own_profile_is_closed(kitchen: Account) -> None:
@@ -111,8 +99,8 @@ def test_its_pages_open(kitchen: Account, path: str) -> None:
 
 @pytest.mark.parametrize("path", ["/", "/den-hurtige/"])
 def test_the_dashboard_and_default_channel_lead_home(kitchen: Account, path: str) -> None:
-    response = _client(kitchen).get(path)
-    assert response.status_code == 302 and response["Location"] == HOME
+    response = _client(kitchen).get(path, follow=True)
+    assert response.status_code == 200 and response.redirect_chain[-1][0] == HOME
 
 
 def test_the_sidebar_lists_only_its_pages(kitchen: Account) -> None:
