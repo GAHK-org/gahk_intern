@@ -78,6 +78,15 @@ EXTRAS: dict[Feature, frozenset[str]] = {
     Feature.REPARATIONER: frozenset({"move"}),
 }
 
+# Where an account without the dashboard lands (access.middleware): its first of these it may open.
+HOME_FEATURES = (
+    Feature.DEN_HURTIGE,
+    Feature.OPSLAGSTAVLE,
+    Feature.EVENTS,
+    Feature.PHOTO_ALBUM,
+    Feature.STAMTREE,
+)
+
 # The features any account reaches, whatever it is: it must be able to log out.
 ALWAYS = frozenset({Feature.ACCOUNT, Feature.PUBLIC})
 # The features nobody logged in reaches. Uploaded files decide for themselves: the till's product

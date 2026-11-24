@@ -14,8 +14,9 @@ Three events, two audiences, matching the two-crew handoff in models.RepairTask:
 Only the crew INHERITING a ticket is told. The crew letting it go contains whoever just pressed the
 button, and paging a group about their own action is how people learn to ignore notifications.
 
-Both audiences are narrowed to the role's CURRENT holders (this month's RoleAssignment): someone who
-was on Reppergruppen last year and rotated off should not keep getting paged.
+Both audiences are narrowed to the role's CURRENT holders (this month's list, or a grant that holds
+today; access.roles.holding): someone who was on Reppergruppen last year and rotated off should not
+keep getting paged.
 """
 
 from typing import TYPE_CHECKING
@@ -23,9 +24,10 @@ from typing import TYPE_CHECKING
 from django.db.models import Q, QuerySet
 from django.urls import reverse
 
+from access.api import holding
 from core.mentions import notify_mentions
 from notifications import categories, services
-from residents.models import Account, Role, RoleAssignment, active_period
+from residents.models import Account, Role
 
 if TYPE_CHECKING:
     from .models import RepairComment, RepairTask
@@ -36,14 +38,10 @@ def task_url(task: "RepairTask") -> str:
 
 
 def _residents_with_role(role: str) -> QuerySet[Account]:
-    """The members of one crew this month, the people a new repair is addressed to (a group, not a
-    permission). administrator counts too, and a superuser may hold the role with no RoleAssignment
-    row at all."""
-    year, month = active_period()
-    resident_ids = RoleAssignment.objects.filter(
-        year=year, month=month, role__in=[role, Role.ADMINISTRATOR]
-    ).values_list("resident_id", flat=True)
-    return Account.objects.filter(is_active=True).filter(Q(pk__in=resident_ids) | Q(is_superuser=True))
+    """The members of one crew now, the people a new repair is addressed to (a group, not a
+    permission). administrator counts too, and so does a superuser."""
+    held = holding({role, Role.ADMINISTRATOR}).values("pk")
+    return Account.objects.filter(is_active=True).filter(Q(pk__in=held) | Q(is_superuser=True))
 
 
 def notify_new_task(task: "RepairTask") -> None:

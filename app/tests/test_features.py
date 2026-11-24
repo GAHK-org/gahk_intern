@@ -409,52 +409,57 @@ def test_django_admin_does_not_edit_website_content() -> None:
 
 @pytest.mark.django_db
 def test_pr_embedsgruppe_grants_cms_access(make_resident: Callable) -> None:
-    """Being on the "PR-gruppen" embedsgruppe next month grants the pr role, hence CMS editing."""
+    """Being on the "PR-gruppen" embedsgruppe on the list in effect gives the pr role, hence CMS
+    editing: read from the list, with nothing written beside it."""
     from core.models import Room, Workgroup
     from residents.models import Residency, active_period
-    from residents.views import _sync_month_roles
 
     pr_group = Workgroup.objects.create(name="PR-gruppen")
     r = make_resident(email="prmember@gahk.dk")
     y, m = active_period()
     room = Room.objects.create(legacy_index=140, number=140, floor="stuen", side="mod gaden")
     Residency.objects.create(resident=r.house, room=room, workgroup=pr_group, year=y, month=m)
-    _sync_month_roles(r.house.pk, pr_group, y, m, admins=set())  # what the next-month editor runs
 
     assert r.has_role("pr", (y, m))
     assert r.has_perm("access.website_manage")
 
 
 @pytest.mark.django_db
-def test_is_staff_synced_with_roles(make_resident: Callable) -> None:
-    from residents.models import RoleAssignment, active_period
+def test_is_staff_follows_administrator_grants(make_resident: Callable) -> None:
+    from access.models import Grant
+    from core.clock import current_date
 
     r = make_resident(email="plain@gahk.dk")  # no roles → not staff
     assert r.is_staff is False
-    y, m = active_period()
-    ra = RoleAssignment.objects.create(resident=r, role=Role.AK, year=y, month=m)
+    Grant.objects.create(account=r, role=Role.AK, reason="x", starts_on=current_date())
     r.refresh_from_db()
-    assert r.is_staff is True  # gained a role → staff
-    ra.delete()
+    assert r.is_staff is False  # another role is no Django admin
+    grant = Grant.objects.create(account=r, role=Role.ADMINISTRATOR, reason="x", starts_on=current_date())
     r.refresh_from_db()
-    assert r.is_staff is False  # lost last role → no longer staff
+    assert r.is_staff is True  # administrator → staff
+    grant.delete()
+    r.refresh_from_db()
+    assert r.is_staff is False  # no administrator grant left → no longer staff
 
     su = make_resident(email="su@gahk.dk", is_superuser=True, is_staff=True)
-    RoleAssignment.objects.create(resident=su, role=Role.AK, year=y, month=m).delete()
+    Grant.objects.create(account=su, role=Role.ADMINISTRATOR, reason="x", starts_on=current_date()).delete()
     su.refresh_from_db()
     assert su.is_staff is True  # superuser stays staff regardless
 
 
 @pytest.mark.django_db
 def test_administrator_has_full_admin_permissions_while_in_role(make_resident: Callable) -> None:
-    """Netvaerksgruppen (= `administrator`) gets superuser-equivalent admin rights, but only for the
-    active period — the role is never mirrored into `is_superuser`, which would outlive it.
+    """Netvaerksgruppen (= `administrator`) gets superuser-equivalent admin rights, but only while
+    its grant holds — the role is never mirrored into `is_superuser`, which would outlive it.
 
     Approval (the two-person rule) is covered in test_admin_access; here it is granted outright so
     this test stays about the *period* half of the condition."""
-    from residents.models import AdminAccessGrant, RoleAssignment, active_period
+    import datetime
 
-    y, m = active_period()
+    from access.models import Grant
+    from core.clock import current_date
+    from residents.models import AdminAccessGrant
+
     admin = make_resident(email="netvaerk@gahk.dk", roles=[Role.ADMINISTRATOR])
     AdminAccessGrant.objects.filter(resident=admin).update(status=AdminAccessGrant.Status.APPROVED)
     admin = Account.objects.get(pk=admin.pk)
@@ -466,13 +471,15 @@ def test_administrator_has_full_admin_permissions_while_in_role(make_resident: C
     assert other.has_perm("residents.delete_resident") is False
     assert other.has_module_perms("oelkaelder") is False
 
-    RoleAssignment.objects.filter(resident=admin, role=Role.ADMINISTRATOR).delete()
+    yesterday = current_date() - datetime.timedelta(days=1)
+    Grant.objects.filter(account=admin, role=Role.ADMINISTRATOR).update(
+        starts_on=yesterday, ends_on=yesterday
+    )
+    Grant.objects.get(account=admin, role=Role.ADMINISTRATOR).save()  # as the nightly sync would see it
     admin = Account.objects.get(pk=admin.pk)  # fresh instance: real_roles memoises per instance
     assert admin.has_perm("residents.delete_resident") is False
 
-    # Held last month only -> expired, even though is_staff (any period) is still True.
-    prev = (y - 1, 12) if m == 1 else (y, m - 1)
-    RoleAssignment.objects.create(resident=admin, role=Role.ADMINISTRATOR, year=prev[0], month=prev[1])
+    # Ended yesterday -> expired, even though is_staff (any administrator grant) is still True.
     admin = Account.objects.get(pk=admin.pk)
     assert admin.is_staff is True
     assert admin.has_perm("residents.delete_resident") is False

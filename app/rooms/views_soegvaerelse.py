@@ -17,10 +17,10 @@ from django.shortcuts import get_object_or_404, redirect, render
 from django.utils import timezone
 from django.views.decorators.http import require_POST
 
-from access.api import permission_required
+from access.api import permission_required, syncing_once
 from audit import trail
 from core.models import Room
-from residents.models import Account, Residency, RoleAssignment, active_period, next_period, prev_period
+from residents.models import Account, Residency, active_period, next_period, prev_period
 from residents.permissions import current_resident
 
 from .kvotient import compute_k, compute_k_parts, month_choices, month_index, month_label
@@ -373,7 +373,7 @@ def resolve_tie(request: HttpRequest, offer_id: int) -> HttpResponseRedirect:
 
 def _carry_roster_forward(sy: int, sm: int, ty: int, tm: int) -> None:
     """Copy every resident on the (sy, sm) list who is not already on (ty, tm) forward — same room,
-    embedsgruppe, rengøring and roles. Non-destructive: residents already on the target list (e.g. an
+    embedsgruppe and rengøring (an embedsgruppe's role comes with it). Non-destructive: residents already on the target list (e.g. an
     already-copied next-month list) are left untouched."""
     existing = set(Residency.objects.filter(year=ty, month=tm).values_list("resident_id", flat=True))
     for r in Residency.objects.filter(year=sy, month=sm):
@@ -387,11 +387,6 @@ def _carry_roster_forward(sy: int, sm: int, ty: int, tm: int) -> None:
             year=ty,
             month=tm,
         )
-        # Roles belong to the resident's account (none without a login).
-        for ra in RoleAssignment.objects.filter(
-            resident__person__resident__id=r.resident_id, year=sy, month=sm
-        ):
-            RoleAssignment.objects.get_or_create(resident_id=ra.resident_id, role=ra.role, year=ty, month=tm)
         existing.add(r.resident_id)
 
 
@@ -412,12 +407,12 @@ def end_round(request: HttpRequest) -> HttpResponseRedirect:
     The carry-forward is essential. An offer's month is (typically) next month; when that month
     becomes current, active_period() switches to it. If end_round wrote *only* the winners, every
     resident who was not in the round would vanish from the list. So we first copy everyone who isn't
-    already on the target list forward (rooms, groups and roles), then place the winners on top.
+    already on the target list forward (rooms and groups), then place the winners on top.
 
     Room rounds are musical chairs (F-004): a room is offered when its occupant leaves; the winner is
     an existing resident who moves in, freeing THEIR room for a further round, and so on until the last
     vacancy goes to a newcomer. So after placing winners, any non-winner still left in a won room is
-    the departing occupant — removed here (with their monthly roles) so the winner doesn't share the
+    the departing occupant — removed here so the winner doesn't share the
     room. Genuinely-tied rooms are left unsettled for indstilling to resolve and re-run."""
     months = set(RoomOffer.objects.values_list("month", flat=True))
     if not months:
@@ -430,7 +425,7 @@ def end_round(request: HttpRequest) -> HttpResponseRedirect:
     left: list[_Leaver] = []  # departing occupants removed from a won room
     unresolved_rooms: list[int] = []  # rooms still tied, left for manual resolution
     assigned = unresolved = evicted = 0
-    with trail.event("rooms.round.ended") as event:
+    with trail.event("rooms.round.ended") as event, syncing_once():
         for month in months:
             year, month0 = divmod(month, 12)  # inverse of month_index -> target (year, month)
             target_month = month0 + 1
@@ -477,9 +472,6 @@ def end_round(request: HttpRequest) -> HttpResponseRedirect:
                     left += [{"name": lr.resident.full_name, "from": lr.room.number} for lr in leaver_rows]
                     leavers = [lr.resident_id for lr in leaver_rows]
                     Residency.objects.filter(resident_id__in=leavers, year=year, month=target_month).delete()
-                    RoleAssignment.objects.filter(
-                        resident__person__resident__id__in=leavers, year=year, month=target_month
-                    ).delete()
                     evicted += len(leaver_rows)
             unresolved += len(alloc.contested)
             unresolved_rooms += [room_num[rid] for rid in alloc.contested]

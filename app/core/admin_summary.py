@@ -18,7 +18,8 @@ from django.urls import reverse
 from django.utils import timezone
 from django.utils.formats import date_format, number_format
 
-from residents.models import Account, AdminAccessGrant, Role, RoleAssignment, active_period
+from access.api import holding
+from residents.models import Account, AdminAccessGrant, Role, active_period
 
 UNKNOWN_TASK = "(ukendt)"
 
@@ -92,14 +93,13 @@ def _job_counts(start: datetime.date, end: datetime.date) -> list[tuple[str | No
 def _access(start: datetime.date, end: datetime.date, month: str) -> list[str]:
     year, period_month = active_period()
     period = date_format(datetime.date(year, period_month, 1), "F Y")
-    holders = (
-        RoleAssignment.objects.filter(year=year, month=period_month, resident__is_active=True)
-        .select_related("resident")
-        .order_by("resident__first_name", "resident__last_name", "resident__pk")
-    )
-    by_role: dict[str, list[Account]] = {}
-    for assignment in holders:
-        by_role.setdefault(assignment.role, []).append(assignment.resident)
+    # Who holds each role, from the list or by hand (access.roles), superusers aside: they are
+    # listed on their own below.
+    by_role: dict[str, list[Account]] = {
+        role: list(holding({role}).exclude(is_superuser=True).order_by("first_name", "last_name", "pk"))
+        for role in Role.values
+    }
+    by_role = {role: people for role, people in by_role.items() if people}
     grants = {
         grant.resident_id: grant.get_status_display().lower()
         for grant in AdminAccessGrant.objects.filter(resident__in=by_role.get(Role.ADMINISTRATOR, []))

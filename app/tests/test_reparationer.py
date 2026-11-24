@@ -25,7 +25,9 @@ from django.core.management import call_command
 from django.test import Client
 from django.utils import timezone
 
+from access.models import Grant
 from core import push
+from core.clock import current_date
 from core.models import PushSubscription
 from notifications import categories
 from notifications.models import Notification
@@ -37,7 +39,7 @@ from reparationer.models import (
     RepairImage,
     RepairTask,
 )
-from residents.models import WORKGROUP_ROLE, Account, Role, RoleAssignment, active_period
+from residents.models import WORKGROUP_ROLE, Account, Role
 
 BOARD = "/reparationer/"
 pytestmark = pytest.mark.django_db
@@ -169,7 +171,7 @@ def test_administrators_and_superusers_hear_about_every_repair(
     client: Client, beboer: Account, vicevaert: Account, make_resident: Callable[..., Account]
 ) -> None:
     """administrator implies every role (residents.permissions.real_roles), and a superuser may hold
-    it with no RoleAssignment at all — so both are part of either crew's audience."""
+    it with no grant at all — so both are part of either crew's audience."""
     admin = make_resident(email="admin@gahk.dk", roles=(Role.ADMINISTRATOR,))
     superuser = make_resident(email="super@gahk.dk", is_superuser=True)
     login(client, beboer)
@@ -184,8 +186,14 @@ def test_only_the_current_role_holders_are_told(
 ) -> None:
     """Someone who was a Vicevært last year and rotated off must not keep getting paged."""
     former = make_resident(email="former@gahk.dk")
-    year, month = active_period()
-    RoleAssignment.objects.create(resident=former, role=Role.VICEVAERT, year=year - 1, month=month)
+    last_year = current_date() - timedelta(days=365)
+    Grant.objects.create(
+        account=former,
+        role=Role.VICEVAERT,
+        reason="x",
+        starts_on=last_year,
+        ends_on=last_year + timedelta(days=30),
+    )
     login(client, beboer)
 
     client.post(f"{BOARD}opret", {"title": "Utæt vandhane", "location": "", "description": ""})
@@ -478,7 +486,7 @@ def test_search_matches_the_fields_a_card_shows(client: Client, beboer: Account)
 def test_the_two_crews_get_their_role_from_their_embedsgruppe() -> None:
     """The rest of this file hands out `repper`/`vicevaert` directly, so it would still pass if no
     real resident could ever hold them. In production a role comes from the month's embedsgruppe
-    (residents.views._sync_month_roles reads WORKGROUP_ROLE), keyed by the Workgroup name the ETL
+    (access.roles reads WORKGROUP_ROLE), keyed by the Workgroup name the ETL
     imported verbatim from intern_alumne_workgroup — 'Repperne' (id 22) and 'Vicevært' (id 20).
     Spelling either differently silently grants nothing, which is exactly the bug this pins."""
     assert WORKGROUP_ROLE["Repperne"] == Role.REPPER
@@ -604,10 +612,6 @@ def test_column_age_follows_the_dev_clock(client: Client, beboer: Account, vicev
     task = make_task(beboer)
     future = timezone.localdate() + timedelta(days=OVERDUE_AFTER_DAYS + 1)
     DevClock.objects.update_or_create(pk=1, defaults={"simulated_date": future})
-    # Roles are per month, so the Vicevært needs one in the simulated month too.
-    RoleAssignment.objects.create(
-        resident=vicevaert, role=Role.VICEVAERT, year=future.year, month=future.month
-    )
     with override_settings(DEBUG=True):
         assert RepairTask.objects.get(pk=task.pk).column_age == "overdue"
         login(client, vicevaert).post(f"{BOARD}{task.pk}/status", {"status": RepairTask.Status.I_GANG})

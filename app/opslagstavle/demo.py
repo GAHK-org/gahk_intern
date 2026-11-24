@@ -21,6 +21,7 @@ same reason. The multi-image post references files already in `static/legacy/` i
 import random
 from datetime import datetime, timedelta
 
+from access.api import holding
 from residents.models import Account, Role
 
 from .models import Category, Notice, NoticeComment, NoticeReaction
@@ -107,7 +108,7 @@ def seed(residents: list[Account], now: datetime, rng: random.Random) -> int:
         created.append(notice)
 
     # Pinned by an actual inspektion member, so the demo shows a real attribution rather than "None".
-    pinner = Account.objects.filter(role_assignments__role=Role.INSPEKTION).first() or residents[0]
+    pinner = holding({Role.INSPEKTION}).exclude(is_superuser=True).order_by("pk").first() or residents[0]
     Notice.objects.filter(pk=created[0].pk).update(pinned_at=now, pinned_by=pinner)
 
     stale = Notice.objects.create(

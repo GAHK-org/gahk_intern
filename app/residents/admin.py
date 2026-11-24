@@ -1,6 +1,6 @@
 from django.contrib import admin
 
-from .models import Account, Person, Residency, Resident, RoleAssignment
+from .models import Account, Person, Residency, Resident
 
 
 @admin.register(Account)
@@ -30,10 +30,3 @@ class PersonAdmin(admin.ModelAdmin):
 class ResidentAdmin(admin.ModelAdmin):
     list_display = ("person", "move_in_date", "move_out_date", "study")
     search_fields = ("person__first_name", "person__last_name", "study")
-
-
-@admin.register(RoleAssignment)
-class RoleAssignmentAdmin(admin.ModelAdmin):
-    list_display = ("resident", "role", "year", "month")
-    list_filter = ("role", "year", "month")
-    search_fields = ("resident__email", "resident__first_name", "resident__last_name")

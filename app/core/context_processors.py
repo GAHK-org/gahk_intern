@@ -154,6 +154,8 @@ def _active_nav_url(sections: list[NavSection], path: str) -> str:
 
 def _preview_label(roles: frozenset[str]) -> str:
     """How the preview banner names what the site is shown as."""
+    if not roles:
+        return "aldrig på alumnelisten (ingen adgang)"
     named = sorted(ROLE_LABELS[role] for role in roles - {RESIDENT})
     return ", ".join(named) if named else "beboer (ingen rolle)"
 

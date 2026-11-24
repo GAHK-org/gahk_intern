@@ -131,7 +131,7 @@ def test_each_roles_group_holds_what_the_table_gives_it() -> None:
 def test_an_accounts_groups_follow_its_roles(make_resident: Callable[..., Account]) -> None:
     anna = make_resident(email="anna@gahk.dk", roles=(Role.AK,))
     assert set(anna.groups.values_list("name", flat=True)) == {RESIDENT, Role.AK}
-    anna.role_assignments.all().delete()
+    anna.grants.all().delete()
     assert set(Account.objects.get(pk=anna.pk).groups.values_list("name", flat=True)) == {RESIDENT}
     Account.objects.filter(pk=anna.pk).update(is_kitchen=True)
     sync([anna.pk])

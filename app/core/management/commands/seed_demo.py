@@ -33,6 +33,7 @@ from django.core.management.base import BaseCommand, CommandError
 from django.db import connection, models, transaction
 from django.utils import timezone
 
+from access.models import Grant
 from admissions.models import Application
 from ak.models import AkEntry, AkMonthlyCharge
 from ak.services import apply_monthly_charge
@@ -78,7 +79,6 @@ from residents.models import (
     Residency,
     Resident,
     Role,
-    RoleAssignment,
 )
 from rooms.models import (
     KvotientApplication,
@@ -151,7 +151,7 @@ WIPE_ORDER: list[type[models.Model]] = [
     RoomOffer,
     AkEntry,
     Application,
-    RoleAssignment,
+    Grant,
     Residency,
     ContentChange,
     PageVersion,
@@ -525,6 +525,15 @@ class Command(BaseCommand):
         return newcomer
 
     # --------------------------------------------------------------- roles
+    def _grant(self, account: Account, role: str) -> None:
+        """`role` by hand from the first of the month (access.models.Grant), beside what the demo
+        list's embedsgrupper give."""
+        Grant.objects.get_or_create(
+            account=account,
+            role=role,
+            defaults={"reason": "Demo", "starts_on": date(self.year, self.month, 1)},
+        )
+
     def _seed_roles(self, residents: list[Account]) -> None:
         by_email = {r.email: r for r in residents}
         # Documented accounts get specific roles.
@@ -537,12 +546,10 @@ class Command(BaseCommand):
         assigned = set()
         for email, roles in fixed.items():
             for role in roles:
-                RoleAssignment.objects.get_or_create(
-                    resident=by_email[email], role=role, year=self.year, month=self.month
-                )
+                self._grant(by_email[email], role)
                 assigned.add(by_email[email].pk)
 
-        # Sprinkle the remaining privileged roles across other residents for the current month.
+        # Sprinkle the remaining privileged roles across other residents.
         pool = [r for r in residents if r.email not in fixed and not r.email.startswith(("admin", "beboer"))]
         for role in [
             Role.INDSTILLING,
@@ -553,7 +560,7 @@ class Command(BaseCommand):
             Role.REGNSKAB,
         ]:
             for r in self.rng.sample(pool, k=min(3, len(pool))):
-                RoleAssignment.objects.get_or_create(resident=r, role=role, year=self.year, month=self.month)
+                self._grant(r, role)
                 assigned.add(r.pk)
 
         Account.objects.filter(pk__in=assigned).update(is_staff=True)

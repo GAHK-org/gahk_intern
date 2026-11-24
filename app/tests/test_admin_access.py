@@ -7,8 +7,10 @@ from django.core import mail
 from django.test import Client
 from django.urls import reverse
 
+from access.models import Grant
+from core.clock import current_date
 from residents.admin_access import can_decide, decide
-from residents.models import Account, AdminAccessGrant, Role, RoleAssignment, active_period
+from residents.models import Account, AdminAccessGrant, Role
 
 
 def _grant(resident: Account) -> AdminAccessGrant:
@@ -75,24 +77,21 @@ def test_approvers_are_mailed_when_a_grant_opens(
 
 
 @pytest.mark.django_db
-def test_monthly_roll_forward_does_not_reopen_an_approved_grant(make_resident: Callable) -> None:
-    """A continuing administrator gets a fresh RoleAssignment every month; re-approving them twelve
-    times a year would train the group to click accept without reading."""
+def test_another_administrator_grant_does_not_reopen_an_approved_one(make_resident: Callable) -> None:
+    """Given administrator again while holding it (a second grant after a pause, or one with a new
+    end date) is no new request: re-approving would train the group to click accept unread."""
     admin = _approved_admin(make_resident, "fortsaetter@gahk.dk")
-    y, m = active_period()
-    ny, nm = (y + 1, 1) if m == 12 else (y, m + 1)
-    RoleAssignment.objects.create(resident=admin, role=Role.ADMINISTRATOR, year=ny, month=nm)
+    Grant.objects.create(account=admin, role=Role.ADMINISTRATOR, reason="Igen", starts_on=current_date())
     assert _grant(admin).status == AdminAccessGrant.Status.APPROVED
 
 
 @pytest.mark.django_db
 def test_leaving_netvaerk_entirely_requires_a_fresh_approval(make_resident: Callable) -> None:
     admin = _approved_admin(make_resident, "forlader@gahk.dk")
-    RoleAssignment.objects.filter(resident=admin, role=Role.ADMINISTRATOR).delete()
+    Grant.objects.filter(account=admin, role=Role.ADMINISTRATOR).delete()
     assert AdminAccessGrant.objects.filter(resident=admin).exists() is False
 
-    y, m = active_period()
-    RoleAssignment.objects.create(resident=admin, role=Role.ADMINISTRATOR, year=y, month=m)
+    Grant.objects.create(account=admin, role=Role.ADMINISTRATOR, reason="Tilbage", starts_on=current_date())
     assert _grant(admin).status == AdminAccessGrant.Status.PENDING
     assert Account.objects.get(pk=admin.pk).has_perm("residents.delete_resident") is False
 

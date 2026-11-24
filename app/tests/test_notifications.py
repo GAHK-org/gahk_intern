@@ -28,12 +28,13 @@ from django.test import Client
 from django.urls import reverse
 from django.utils import timezone
 
+from access.models import Grant
 from core import push
 from core.models import PushSubscription, Room
 from notifications import categories, services, tasks
 from notifications.categories import Importance
 from notifications.models import Notification, NotificationPreference, NotificationSettings
-from residents.models import Account, Residency, Role, RoleAssignment, active_period
+from residents.models import Account, Residency, Role, active_period
 
 pytestmark = pytest.mark.django_db
 
@@ -1206,8 +1207,7 @@ def test_everyone_is_residents_role_holders_device_owners_and_superusers(
     room = Room.objects.create(legacy_index=90, number=90, floor="stuen", side="mod gaden")
     living = make_resident(email="living@gahk.dk")
     Residency.objects.create(resident=living.house, room=room, year=year, month=month)
-    role = make_resident(email="role@gahk.dk")
-    RoleAssignment.objects.create(resident=role, role=Role.AK, year=year, month=month)
+    make_resident(email="role@gahk.dk", roles=(Role.AK,))
     owner = make_resident(email="device@gahk.dk")
     device(owner)
     superuser = make_resident(email="super@gahk.dk", is_superuser=True)
@@ -1220,9 +1220,14 @@ def test_everyone_is_residents_role_holders_device_owners_and_superusers(
         year=prev_year,
         month=prev_month,
     )
-    RoleAssignment.objects.create(resident=moved_out, role=Role.AK, year=prev_year, month=prev_month)
-    deactivated = make_resident(email="inactive@gahk.dk", is_active=False)
-    RoleAssignment.objects.create(resident=deactivated, role=Role.AK, year=year, month=month)
+    Grant.objects.create(
+        account=moved_out,
+        role=Role.AK,
+        reason="x",
+        starts_on=datetime.date(prev_year, prev_month, 1),
+        ends_on=datetime.date(year, month, 1) - datetime.timedelta(days=1),
+    )
+    make_resident(email="inactive@gahk.dk", is_active=False, roles=(Role.AK,))
     make_resident(email="nobody@gahk.dk")
 
     assert active_period() == (year, month)
@@ -1233,7 +1238,7 @@ def test_everyone_is_residents_role_holders_device_owners_and_superusers(
         "super@gahk.dk",
     }
     # And it is a usable audience as-is: no duplicates for a resident matching several rules.
-    RoleAssignment.objects.create(resident=living, role=Role.AK, year=year, month=month)
+    Grant.objects.create(account=living, role=Role.AK, reason="x", starts_on=datetime.date(year, month, 1))
     device(living)
     assert services.everyone().filter(pk=living.pk).count() == 1
     assert {owner.pk, superuser.pk} <= set(services.everyone().values_list("pk", flat=True))

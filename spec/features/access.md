@@ -34,15 +34,40 @@ use and manage permissions.
 Each role is a Django group named by its code, holding exactly the permissions the table gives it.
 An account holds a set of roles:
 
-- **Beboer**: every account except the kitchen staff's.
-- **Each embedsgruppe held in the month in effect**: Indstillingen, Inspektionen, AK, Ølkælderen,
-  Regnskab, PR, Repperne, Viceværterne, Fotogruppen, Køkkengruppen.
-- **Administrator**: Netværksgruppen, and every superuser.
+- **A stage**, from the months its resident is on the alumneliste. The month in effect is the newest
+  published list that has started.
+
+  | Stage | When |
+  |---|---|
+  | Flytter ind | on a coming list only |
+  | Beboer | on the list in effect |
+  | Fraflyttet for under 1 måned siden | the first month off the list |
+  | Fraflyttet for 1–3 måneder siden | months 2–3 off the list |
+  | Fraflyttet for 3–12 måneder siden | months 4–12 off the list |
+  | Fraflyttet for over et år siden | after that |
+
+  An account never on a list has no stage.
+- **Its embedsgruppe's role** on the list in effect: Indstillingen, Inspektionen, AK, Ølkælderen,
+  Regnskab, PR, Repperne, Viceværterne, Fotogruppen, Køkkengruppen. Changed on the list, nowhere
+  else.
+- **Every role given by hand** that holds today: a grant with a first day, a reason and an optional
+  last day. Administrator is always given this way; the others when the list says nothing or the
+  wrong thing (someone finishing their group's accounts after moving out).
+- **Administrator and Beboer** for every superuser.
 - **Køkkenet**: the kitchen staff, and nothing else.
+
+An account with none of these has no access at all; the front page says so.
 
 ## What each role gives
 
 - **Beboer**: use of every feature except the group tools.
+- **Flytter ind**: as Beboer, but no Fotoalbum or GAHKFlix yet.
+- **Under 1 month out**: as Beboer, but no Søg værelse.
+- **1–3 months out**: as that, without Værelsestjek and Reparationer; AK and Ølkælder to look at,
+  but no more krydser.
+- **3–12 months out**: Den Hurtige, Opslagstavlen, Begivenheder, Fotoalbum, notifications and
+  mentions.
+- **Over a year out**: Stamtræ.
 - **Køkkenet**: use of Den Hurtige, Opslagstavlen, Reparationer and notifications. Inside them the
   kitchen sees only the Køkkenet channel and its own opslag.
 - **Indstillingen**: manages Optagelse, Alumneliste, Søg værelse and Hjemmeside.
@@ -65,10 +90,18 @@ Someone with several roles gets the highest grade any of them gives. No role tak
 - The front page sends an account without the dashboard to its first feature: Den Hurtige, then
   Opslagstavlen, Begivenheder, Fotoalbum, Stamtræ. The kitchen lands on its channel.
 - The sidebar, the search box and live updates offer only what the account's roles open.
-- Administrators can see the site as any role, as plain Beboer or as Køkkenet ("Se side som").
-- An account's groups follow the facts: synced when a role is given or taken back, an account is
-  saved or a list makes a newer month the one in effect, just after midnight (a list made ahead takes
-  effect on the 1st), and after every migrate, which also writes each group's permissions.
+- Administrators can see the site as any role, as plain Beboer, as Køkkenet, as any stage or as
+  someone never on a list ("Se side som").
+- Nobody is notified about a page they cannot open. A calendar feed is empty once its owner has no
+  Begivenheder.
+- The role page (/admin/roles) gives a role from today until removed; removing it ends it
+  yesterday. A role from the list shows there but is changed on the list.
+- Django admin lets in superusers and holders of an administrator grant, once a second
+  administrator has approved it.
+- An account's groups follow the facts: synced when a grant is given or ended, an account is saved
+  or its resident's months on the list change, just after midnight (a list made ahead takes
+  effect on the 1st, the months pass, grants start and end), and after every migrate, which also
+  writes each group's permissions.
 
 ## Decisions
 
@@ -87,3 +120,8 @@ Someone with several roles gets the highest grade any of them gives. No role tak
   editor hint ask the account's own permissions.
 - **Group tools rely on the gate.** Their features are given only to their groups, so their views
   need no check of their own; a later read-only role for one of them needs no code change.
+- **Stages from months, not move-out dates.** The list is kept every month and already decides who
+  lives here everywhere else; dates on a resident are often missing or late.
+- **An embedsgruppe's role is read from the list; every other role has dates.** The monthly role
+  rows were mostly copies of the list, and administrator had to be carried forward each month.
+- **A grant is on an account, not a person.** A kiosk or an agent may need a role and is no person.

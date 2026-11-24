@@ -132,6 +132,17 @@ erDiagram
         int id PK
     }
 
+    access_Grant {
+        int id PK
+        int account_id FK
+        string role
+        string reason
+        date starts_on
+        date ends_on
+        int granted_by_id FK
+        datetime created_at
+    }
+
     residents_Person {
         int id PK
         string first_name
@@ -177,14 +188,6 @@ erDiagram
         int room_id FK
         int workgroup_id FK
         int cleaning_id FK
-        int year
-        int month
-    }
-
-    residents_RoleAssignment {
-        int id PK
-        int resident_id FK
-        string role
         int year
         int month
     }
@@ -1038,6 +1041,8 @@ erDiagram
     audit_AuditEntity }o--|| audit_AuditEvent : "event"
     audit_AuditChange }o--|| audit_AuditEntity : "entity"
     core_PushSubscription }o--|| residents_Account : "user"
+    access_Grant }o--|| residents_Account : "account"
+    access_Grant }o--|o residents_Account : "granted_by"
     residents_Resident ||--|| residents_Person : "person"
     residents_Resident }o--|o residents_Resident : "sponsor"
     residents_Account ||--|o residents_Person : "person"
@@ -1045,7 +1050,6 @@ erDiagram
     residents_Residency }o--|| core_Room : "room"
     residents_Residency }o--|o core_Workgroup : "workgroup"
     residents_Residency }o--|o core_Cleaning : "cleaning"
-    residents_RoleAssignment }o--|| residents_Account : "resident"
     residents_AdminAccessGrant ||--|| residents_Account : "resident"
     residents_AdminAccessGrant }o--|o residents_Account : "requested_by"
     residents_AdminAccessGrant }o--|o residents_Account : "decided_by"
@@ -1165,6 +1169,22 @@ erDiagram
     access_AccessRule {
         int id PK
     }
+
+    access_Grant {
+        int id PK
+        int account_id FK
+        string role
+        string reason
+        date starts_on
+        date ends_on
+        int granted_by_id FK
+        datetime created_at
+    }
+
+    residents_Account { }
+
+    access_Grant }o--|| residents_Account : "account"
+    access_Grant }o--|o residents_Account : "granted_by"
 ```
 
 ## admissions
@@ -2320,14 +2340,6 @@ erDiagram
         int month
     }
 
-    residents_RoleAssignment {
-        int id PK
-        int resident_id FK
-        string role
-        int year
-        int month
-    }
-
     residents_AdminAccessGrant {
         int id PK
         int resident_id FK
@@ -2351,7 +2363,6 @@ erDiagram
     residents_Residency }o--|| core_Room : "room"
     residents_Residency }o--|o core_Workgroup : "workgroup"
     residents_Residency }o--|o core_Cleaning : "cleaning"
-    residents_RoleAssignment }o--|| residents_Account : "resident"
     residents_AdminAccessGrant ||--|| residents_Account : "resident"
     residents_AdminAccessGrant }o--|o residents_Account : "requested_by"
     residents_AdminAccessGrant }o--|o residents_Account : "decided_by"
