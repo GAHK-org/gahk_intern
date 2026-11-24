@@ -12,7 +12,7 @@ from django.core.files.uploadedfile import UploadedFile
 from core import mail as outbox
 from core.uploads import validate_image_upload
 
-from .models import Resident
+from .models import Account, Person, Resident
 
 
 class LocalDateInput(forms.DateInput):
@@ -52,58 +52,64 @@ class EmailAuthenticationForm(AuthenticationForm):
         )
 
 
-class ResidentEditForm(forms.ModelForm):
-    """Indstilling edits a resident's core data (everything in the alumneliste that is not per-month:
-    room/embedsgruppe/rengøring live on the monthly Residency and are edited on the next-month list)."""
+class PersonForm(forms.ModelForm):
+    """The human: name, birthday, phone."""
 
     class Meta:
-        model = Resident
-        fields = [
-            "first_name",
-            "last_name",
-            "email",
-            "phone",
-            "birthday",
-            "study",
-            "move_in_date",
-            "move_out_date",
-            "sponsor",
-            "fylgje_raw",
-        ]
+        model = Person
+        fields = ["first_name", "last_name", "birthday", "phone"]
         labels = {
             "first_name": "Fornavn",
             "last_name": "Efternavn",
-            "email": "E-mail",
-            "phone": "Telefon",
             "birthday": "Fødselsdag",
+            "phone": "Telefon",
+        }
+        widgets = {"birthday": LocalDateInput()}
+
+
+class ResidentForm(forms.ModelForm):
+    """Their time at the house (everything in the alumneliste that is not per-month: room,
+    embedsgruppe and rengøring live on the monthly Residency and are edited on the next-month list)."""
+
+    class Meta:
+        model = Resident
+        fields = ["study", "move_in_date", "move_out_date", "sponsor", "fylgje_raw"]
+        labels = {
             "study": "Studie",
             "move_in_date": "Indflyttet",
             "move_out_date": "Fraflyttet",
             "sponsor": "Fylgje (fadder)",
             "fylgje_raw": "Fylgje (fritekst, hvis ukendt)",
         }
-        widgets = {
-            "birthday": LocalDateInput(),
-            "move_in_date": LocalDateInput(),
-            "move_out_date": LocalDateInput(),
-        }
+        widgets = {"move_in_date": LocalDateInput(), "move_out_date": LocalDateInput()}
 
     def __init__(self, *args, **kwargs) -> None:  # noqa: ANN002, ANN003
         super().__init__(*args, **kwargs)
-        # Fylgje picker: any other resident, by name; not required.
+        # Fylgje picker: any other resident, with a login or not, by name; not required.
         sponsor = self.fields["sponsor"]
         if isinstance(sponsor, forms.ModelChoiceField):
-            sponsor.queryset = Resident.objects.exclude(pk=self.instance.pk).order_by(
-                "first_name", "last_name"
+            sponsor.queryset = (
+                Resident.objects.exclude(pk=self.instance.pk)
+                .select_related("person")
+                .order_by("person__first_name", "person__last_name")
             )
         sponsor.required = False
+
+
+class ContactForm(forms.ModelForm):
+    """The login of a person's account, edited beside the person."""
+
+    class Meta:
+        model = Account
+        fields = ["email"]
+        labels = {"email": "E-mail"}
 
 
 class ProfileEditForm(forms.ModelForm):
     """A resident edits their own public profile (picture, bio, social links)."""
 
     class Meta:
-        model = Resident
+        model = Account
         fields = ["profile_picture", "bio", "facebook_link", "instagram_handle"]
         labels = {
             "profile_picture": "Profilbillede",
@@ -154,9 +160,9 @@ class ResidentPasswordResetForm(PasswordResetForm):
     accounts authenticated by other means (LDAP/SSO), which GAHK has none of.
     """
 
-    def get_users(self, email: str) -> Iterator[Resident]:
-        field = Resident.get_email_field_name()
-        candidates = Resident._default_manager.filter(**{f"{field}__iexact": email, "is_active": True})
+    def get_users(self, email: str) -> Iterator[Account]:
+        field = Account.get_email_field_name()
+        candidates = Account._default_manager.filter(**{f"{field}__iexact": email, "is_active": True})
         return (
             u
             for u in candidates

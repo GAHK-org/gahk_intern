@@ -171,7 +171,7 @@ if os.environ.get("DATABASE_POOL") == "1":
     DATABASES["default"].setdefault("OPTIONS", {})["pool"] = {"min_size": 2, "max_size": 20}
 
 # --- Auth (01-infrastructure.md A4/A5; 02-schema-etl.md §1.6) ---
-AUTH_USER_MODEL = "residents.Resident"
+AUTH_USER_MODEL = "residents.Account"
 
 # First hasher = default for new/upgraded passwords. The legacy hasher (last) only verifies the old
 # unsalted sha256 hashes, then Django re-hashes on next login (upgrade-on-login, scope §5).
@@ -563,7 +563,7 @@ _MEDIA_S3_OPTIONS = {
     # Kept in step with core.media.PRESIGN_TTL, which is what actually signs the URLs we serve.
     "querystring_expire": 3600,
     # FALSE, and django-storages defaults it to True — which skips Django's name-suffixing entirely.
-    # Resident.profile_picture uploads to a flat "profile_pictures/" with no date and no uniquifier,
+    # Account.profile_picture uploads to a flat "profile_pictures/" with no date and no uniquifier,
     # so with overwriting on, the second resident to upload an IMG_1234.jpg silently replaces the
     # first one's photo and the first one's row then points at somebody else's face.
     "file_overwrite": False,

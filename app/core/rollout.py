@@ -82,7 +82,7 @@ class Gate:
         return wrapped
 
     def allowed_residents(self, qs: QuerySet) -> QuerySet:
-        """Narrow a notification audience (a Resident queryset) to people who can open the feature.
+        """Narrow a notification audience (a Account queryset) to people who can open the feature.
 
         Without this, gating the page would still notify every resident — and tapping that
         notification lands on a 403. A notification you are not allowed to read is worse than no

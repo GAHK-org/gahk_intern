@@ -10,7 +10,7 @@ from django.utils import timezone
 
 from photo_album import tasks
 from photo_album.models import DERIVATIVE_CLAIM_TTL, Album, DerivativeState, Media, MediaStatus
-from residents.models import Resident, Role
+from residents.models import Account, Role
 
 
 def _retry(kind: str) -> str:
@@ -30,7 +30,7 @@ def queued(monkeypatch: pytest.MonkeyPatch) -> list[int]:
 
 
 @pytest.fixture
-def items(make_resident: Callable[..., Resident]) -> dict[str, Media]:
+def items(make_resident: Callable[..., Account]) -> dict[str, Media]:
     resident = make_resident(email="foto@gahk.dk")
     album = Album.objects.create(folder="2004", name="Fest")
 
@@ -77,13 +77,13 @@ def items(make_resident: Callable[..., Resident]) -> dict[str, Media]:
 
 
 @pytest.fixture
-def admin_client(client: Client, make_resident: Callable[..., Resident]) -> Client:
+def admin_client(client: Client, make_resident: Callable[..., Account]) -> Client:
     client.force_login(make_resident(email="admin@gahk.dk", roles=(Role.ADMINISTRATOR,)))
     return client
 
 
 @pytest.mark.django_db
-def test_only_administrators_retry(client: Client, make_resident: Callable[..., Resident]) -> None:
+def test_only_administrators_retry(client: Client, make_resident: Callable[..., Account]) -> None:
     assert client.post(_retry("fejlede-versioner")).status_code == 302  # to the login
     client.force_login(make_resident(roles=(Role.FOTO,)))
     assert client.post(_retry("fejlede-versioner")).status_code == 403

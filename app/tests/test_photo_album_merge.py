@@ -31,7 +31,7 @@ from photo_album.models import (
 from photo_album.services import store_upload
 from photo_album.storage import get_photo_album_storage
 from photo_album.tasks import fail_stalled_merges, process_album_merge
-from residents.models import Resident, Role
+from residents.models import Account, Role
 
 from .media_samples import jpeg_bytes
 
@@ -39,12 +39,12 @@ SIDECAR_TIME = datetime(2014, 6, 21, 18, 30, tzinfo=UTC)
 
 
 @pytest.fixture
-def uploader(make_resident: Callable[..., Resident]) -> Resident:
+def uploader(make_resident: Callable[..., Account]) -> Account:
     return make_resident(email="foto@gahk.dk")
 
 
 def _item(
-    album: Album, name: str, content: bytes, by: Resident, *, sidecar: bytes = b"", **fields: object
+    album: Album, name: str, content: bytes, by: Account, *, sidecar: bytes = b"", **fields: object
 ) -> Media:
     media = store_upload(
         album=album,
@@ -68,7 +68,7 @@ def _albums(*names: str, folder: str = "2014") -> list[Album]:
 
 
 @pytest.mark.django_db
-def test_everything_moves_into_the_album_that_keeps_its_name(uploader: Resident) -> None:
+def test_everything_moves_into_the_album_that_keeps_its_name(uploader: Account) -> None:
     target, source = _albums("Sommerfest", "Sommerfest 2")
     kept = _item(target, "a.jpg", jpeg_bytes(), uploader)
     moved = _item(source, "b.jpg", jpeg_bytes(), uploader)
@@ -116,7 +116,7 @@ def test_everything_moves_into_the_album_that_keeps_its_name(uploader: Resident)
 
 @pytest.mark.django_db
 def test_downloads_and_imports_of_the_merged_album_now_name_the_one_it_went_into(
-    uploader: Resident,
+    uploader: Account,
 ) -> None:
     target, source = _albums("Sommerfest", "Sommerfest 2")
     download = AlbumDownload.objects.create(album=source, requested_by=uploader, name="Sommerfest 2")
@@ -141,7 +141,7 @@ def test_downloads_and_imports_of_the_merged_album_now_name_the_one_it_went_into
 
 @pytest.mark.django_db
 def test_an_item_already_there_byte_for_byte_is_kept_once_whatever_its_name(
-    uploader: Resident, django_capture_on_commit_callbacks: Callable[..., Any]
+    uploader: Account, django_capture_on_commit_callbacks: Callable[..., Any]
 ) -> None:
     target, source = _albums("Sommerfest", "Sommerfest 2")
     same = jpeg_bytes()
@@ -159,7 +159,7 @@ def test_an_item_already_there_byte_for_byte_is_kept_once_whatever_its_name(
 
 
 @pytest.mark.django_db
-def test_an_original_never_hashed_is_hashed_to_be_compared(uploader: Resident) -> None:
+def test_an_original_never_hashed_is_hashed_to_be_compared(uploader: Account) -> None:
     target, source = _albums("Sommerfest", "Sommerfest 2")
     same = jpeg_bytes()
     there = _item(target, "a.jpg", same, uploader, sha256="", size=None)
@@ -173,7 +173,7 @@ def test_an_original_never_hashed_is_hashed_to_be_compared(uploader: Resident) -
 
 @pytest.mark.django_db
 def test_the_copy_kept_gets_the_sidecar_and_its_date_when_only_the_other_had_one(
-    uploader: Resident, django_capture_on_commit_callbacks: Callable[..., Any]
+    uploader: Account, django_capture_on_commit_callbacks: Callable[..., Any]
 ) -> None:
     target, source = _albums("Sommerfest", "Sommerfest 2")
     same = jpeg_bytes()
@@ -200,7 +200,7 @@ def test_the_copy_kept_gets_the_sidecar_and_its_date_when_only_the_other_had_one
 
 
 @pytest.mark.django_db
-def test_the_copy_kept_keeps_its_own_sidecar_when_the_other_has_none(uploader: Resident) -> None:
+def test_the_copy_kept_keeps_its_own_sidecar_when_the_other_has_none(uploader: Account) -> None:
     target, source = _albums("Sommerfest", "Sommerfest 2")
     same = jpeg_bytes()
     there = _item(target, "a.jpg", same, uploader, sidecar=b"record")
@@ -214,7 +214,7 @@ def test_the_copy_kept_keeps_its_own_sidecar_when_the_other_has_none(uploader: R
 
 @pytest.mark.django_db
 def test_copies_with_identical_sidecars_are_duplicates_and_with_different_ones_are_not(
-    uploader: Resident,
+    uploader: Account,
 ) -> None:
     target, source = _albums("Sommerfest", "Sommerfest 2")
     first, second = jpeg_bytes(), jpeg_bytes()
@@ -231,7 +231,7 @@ def test_copies_with_identical_sidecars_are_duplicates_and_with_different_ones_a
 
 
 @pytest.mark.django_db
-def test_the_copy_kept_is_the_one_that_shows(uploader: Resident) -> None:
+def test_the_copy_kept_is_the_one_that_shows(uploader: Account) -> None:
     target, source = _albums("Sommerfest", "Sommerfest 2")
     first, second = jpeg_bytes(), jpeg_bytes()
     binned = _item(target, "a.jpg", first, uploader, deleted_at=timezone.now())
@@ -247,7 +247,7 @@ def test_the_copy_kept_is_the_one_that_shows(uploader: Resident) -> None:
 
 @pytest.mark.django_db
 def test_the_copy_kept_has_the_tags_views_and_dashboard_days_of_both(
-    uploader: Resident, make_resident: Callable[..., Resident]
+    uploader: Account, make_resident: Callable[..., Account]
 ) -> None:
     target, source = _albums("Sommerfest", "Sommerfest 2")
     same = jpeg_bytes()
@@ -326,7 +326,7 @@ def test_both_albums_and_every_sub_album_merged_by_name_must_be_unlocked() -> No
 
 
 @pytest.mark.django_db
-def test_a_sub_album_merged_into_its_own_root_is_flattened_into_it(uploader: Resident) -> None:
+def test_a_sub_album_merged_into_its_own_root_is_flattened_into_it(uploader: Account) -> None:
     """The import descends through folders holding one folder, but not when that folder sits beside
     files: "Generalforsamlingen 2006" holding photos and "Generalforsamlingen 2006" again."""
     root = Album.objects.create(folder="2006", name="Generalforsamlingen 2006")
@@ -348,7 +348,7 @@ def test_a_sub_album_merged_into_its_own_root_is_flattened_into_it(uploader: Res
 
 
 @pytest.mark.django_db
-def test_a_sub_album_of_another_root_moves_up_with_everything_below_it(uploader: Resident) -> None:
+def test_a_sub_album_of_another_root_moves_up_with_everything_below_it(uploader: Account) -> None:
     fest = Album.objects.create(folder="2014", name="Fest")
     gallafest = Album.objects.create(folder="2014", name="Gallafest")
     night = Album.objects.create(folder="2014", name="Nat", parent=gallafest)
@@ -382,7 +382,7 @@ def test_nothing_may_end_up_deeper_than_five_levels() -> None:
 
 @pytest.mark.django_db
 def test_the_locks_of_a_whole_folder_are_known_in_one_query(
-    uploader: Resident, django_assert_num_queries: Callable[..., Any]
+    uploader: Account, django_assert_num_queries: Callable[..., Any]
 ) -> None:
     fest, gallafest = _albums("Fest", "Gallafest")
     evening = Album.objects.create(folder="2014", name="Aften", parent=fest)
@@ -403,7 +403,7 @@ def test_the_locks_of_a_whole_folder_are_known_in_one_query(
 
 @pytest.mark.django_db
 def test_only_an_administrator_is_offered_the_merge_and_may_make_it(
-    client: Client, make_resident: Callable[..., Resident]
+    client: Client, make_resident: Callable[..., Account]
 ) -> None:
     target, source = _albums("Sommerfest", "Sommerfest 2")
     evening = Album.objects.create(folder="2014", name="Aften", parent=source)
@@ -438,8 +438,8 @@ def test_only_an_administrator_is_offered_the_merge_and_may_make_it(
 @pytest.mark.django_db
 def test_an_administrator_sees_what_will_happen_merges_and_is_told_how_it_went(
     client: Client,
-    make_resident: Callable[..., Resident],
-    uploader: Resident,
+    make_resident: Callable[..., Account],
+    uploader: Account,
     django_capture_on_commit_callbacks: Callable[..., Any],
 ) -> None:
     target, source = _albums("Sommerfest", "Sommerfest 2")
@@ -486,7 +486,7 @@ def test_an_administrator_sees_what_will_happen_merges_and_is_told_how_it_went(
 @pytest.mark.django_db
 def test_an_album_merged_into_one_of_the_same_name_is_told_apart_by_its_path(
     client: Client,
-    make_resident: Callable[..., Resident],
+    make_resident: Callable[..., Account],
     django_capture_on_commit_callbacks: Callable[..., Any],
 ) -> None:
     root = Album.objects.create(folder="2006", name="Generalforsamling")
@@ -512,7 +512,7 @@ def test_an_album_merged_into_one_of_the_same_name_is_told_apart_by_its_path(
 
 @pytest.mark.django_db
 def test_albums_that_cannot_be_merged_are_turned_back_before_the_confirmation(
-    client: Client, make_resident: Callable[..., Resident]
+    client: Client, make_resident: Callable[..., Account]
 ) -> None:
     target = Album.objects.create(folder="2014", name="Sommerfest")
     other_year = Album.objects.create(folder="2015", name="Sommerfest")
@@ -528,7 +528,7 @@ def test_albums_that_cannot_be_merged_are_turned_back_before_the_confirmation(
 
 @pytest.mark.django_db
 def test_the_administrator_closes_the_notice_of_how_it_went_for_good(
-    client: Client, make_resident: Callable[..., Resident]
+    client: Client, make_resident: Callable[..., Account]
 ) -> None:
     target = Album.objects.create(folder="2014", name="Sommerfest")
     administrator = make_resident(email="admin@gahk.dk", roles=(Role.ADMINISTRATOR,))
@@ -560,7 +560,7 @@ def test_the_administrator_closes_the_notice_of_how_it_went_for_good(
 
 @pytest.mark.django_db
 def test_a_merge_still_running_keeps_its_notice(
-    client: Client, make_resident: Callable[..., Resident]
+    client: Client, make_resident: Callable[..., Account]
 ) -> None:
     target, source = _albums("Sommerfest", "Sommerfest 2")
     administrator = make_resident(email="admin@gahk.dk", roles=(Role.ADMINISTRATOR,))
@@ -581,7 +581,7 @@ def test_a_merge_still_running_keeps_its_notice(
 
 @pytest.mark.django_db
 def test_while_a_merge_runs_neither_album_takes_uploads_and_the_page_says_so(
-    client: Client, make_resident: Callable[..., Resident]
+    client: Client, make_resident: Callable[..., Account]
 ) -> None:
     target, source = _albums("Sommerfest", "Sommerfest 2")
     beside = Album.objects.create(folder="2014", name="Julefrokost")
@@ -617,7 +617,7 @@ def test_while_a_merge_runs_neither_album_takes_uploads_and_the_page_says_so(
 
 @pytest.mark.django_db
 def test_a_merge_refused_by_the_time_it_runs_fails_with_why_and_changes_nothing(
-    make_resident: Callable[..., Resident], uploader: Resident
+    make_resident: Callable[..., Account], uploader: Account
 ) -> None:
     target, source = _albums("Sommerfest", "Sommerfest 2")
     item = _item(source, "a.jpg", jpeg_bytes(), uploader)
@@ -642,7 +642,7 @@ def test_a_merge_refused_by_the_time_it_runs_fails_with_why_and_changes_nothing(
 
 
 @pytest.mark.django_db
-def test_a_merge_no_worker_is_coming_back_to_is_failed(make_resident: Callable[..., Resident]) -> None:
+def test_a_merge_no_worker_is_coming_back_to_is_failed(make_resident: Callable[..., Account]) -> None:
     target, source = _albums("Sommerfest", "Sommerfest 2")
     job = AlbumMerge.objects.create(
         target=target,
@@ -665,7 +665,7 @@ def test_a_merge_no_worker_is_coming_back_to_is_failed(make_resident: Callable[.
 
 @pytest.mark.django_db
 def test_the_storage_measured_after_a_merge_counts_moved_files_in_their_new_album(
-    uploader: Resident, django_capture_on_commit_callbacks: Callable[..., Any]
+    uploader: Account, django_capture_on_commit_callbacks: Callable[..., Any]
 ) -> None:
     target, source = _albums("Sommerfest", "Sommerfest 2")
     with django_capture_on_commit_callbacks(execute=True):  # the derivatives, built eagerly

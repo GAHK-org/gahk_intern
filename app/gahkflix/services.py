@@ -26,7 +26,7 @@ from django.utils import timezone
 from core.job_directories import job_directory
 from core.job_progress import report_progress
 from photo_album.models import validate_tag_name
-from residents.models import Resident
+from residents.models import Account
 
 from . import dating, encoding, notify
 from .dating import DatePrecision, DateSource, PartialDate, parse_premiere, premiere_value
@@ -120,7 +120,7 @@ def _delete_keys(keys: Iterable[str | None]) -> None:
 def record_event(
     video: Video,
     kind: str,
-    actor: Resident | None = None,
+    actor: Account | None = None,
     *,
     changes: dict[str, Any] | None = None,
     request: ChangeRequest | None = None,
@@ -172,11 +172,11 @@ def search_tags(query: str, limit: int = 20) -> list[str]:
 # --- Uploading ----------------------------------------------------------------------------------
 
 
-def draft_count(resident: Resident) -> int:
+def draft_count(resident: Account) -> int:
     return Video.objects.drafts().filter(uploaded_by=resident).count()
 
 
-def drafts_left(resident: Resident) -> int:
+def drafts_left(resident: Account) -> int:
     """How many more videos they may upload: a resident has at most MAX_DRAFTS unpublished drafts,
     those still being processed included. Making a video a draft again may take them past it; it
     only stops new uploads."""
@@ -213,7 +213,7 @@ def fingerprint_duplicate(fingerprint: str, size: int) -> Video | None:
     return match.video if match else None
 
 
-def _upload_refusal(resident: Resident, fingerprint: str, size: int, video: Video | None) -> str | None:
+def _upload_refusal(resident: Account, fingerprint: str, size: int, video: Video | None) -> str | None:
     if video is None and (count := draft_count(resident)) >= MAX_DRAFTS:
         return (
             f"Du har allerede {count} videoer, der ikke er udgivet (højst {MAX_DRAFTS}). "
@@ -227,7 +227,7 @@ def _upload_refusal(resident: Resident, fingerprint: str, size: int, video: Vide
 
 
 def begin_upload(
-    resident: Resident,
+    resident: Account,
     *,
     name: str,
     size: int,
@@ -278,7 +278,7 @@ def _title_from(name: str) -> str:
     return " ".join(Path(name).stem.replace("_", " ").replace("-", " ").split())[:200] or "Uden titel"
 
 
-def commit_upload(ticket: UploadTicket, resident: Resident, stored_size: int | None) -> Video:
+def commit_upload(ticket: UploadTicket, resident: Account, stored_size: int | None) -> Video:
     """Create the rows for a file the storage has, and queue its encode. Raises ValidationError.
 
     Refusing here deletes what was uploaded: nothing else will ever refer to it.
@@ -297,7 +297,7 @@ def commit_upload(ticket: UploadTicket, resident: Resident, stored_size: int | N
         raise refuse("Filen kom ikke helt frem. Prøv igen.")
     with transaction.atomic():
         # Locked, so two tabs committing at once cannot both get past the limit on drafts.
-        Resident.objects.select_for_update().filter(pk=resident.pk).first()
+        Account.objects.select_for_update().filter(pk=resident.pk).first()
         revised = None
         if ticket.video is not None:
             revised = Video.objects.filter(pk=ticket.video, deleted_at__isnull=True).first()
@@ -724,7 +724,7 @@ def set_picture(
     kind: str,
     key: str,
     frame: VideoFrame | None,
-    resident: Resident,
+    resident: Account,
     *,
     needs_approval: bool,
     origin: str = "",
@@ -814,7 +814,7 @@ def _replace_cast(video: Video, cast: list[dict[str, Any]]) -> set[int]:
     """Set the credits; return the residents who were not credited before."""
     before = set(video.cast.exclude(resident=None).values_list("resident_id", flat=True))
     residents = {
-        r.pk: r for r in Resident.objects.filter(pk__in=[m["resident"] for m in cast if m.get("resident")])
+        r.pk: r for r in Account.objects.filter(pk__in=[m["resident"] for m in cast if m.get("resident")])
     }
     video.cast.all().delete()
     seen: set[int] = set()
@@ -842,7 +842,7 @@ def _replace_cast(video: Video, cast: list[dict[str, Any]]) -> set[int]:
 
 
 def apply_changes(
-    video: Video, changes: dict[str, Any], resident: Resident, *, request: ChangeRequest | None = None
+    video: Video, changes: dict[str, Any], resident: Account, *, request: ChangeRequest | None = None
 ) -> list[str]:
     """Write `changes` to the video, as an edit or as the proposal `request` once it is approved,
     and add what changed to the video's history. Returns notes on anything that could not be
@@ -921,9 +921,7 @@ def apply_changes(
     return notes
 
 
-def edit_video(
-    video: Video, proposed: dict[str, Any], resident: Resident, *, needs_approval: bool
-) -> Outcome:
+def edit_video(video: Video, proposed: dict[str, Any], resident: Account, *, needs_approval: bool) -> Outcome:
     changes = diff(snapshot(video), proposed)
     if not changes:
         return Outcome()
@@ -935,7 +933,7 @@ def edit_video(
 
 
 def edit_series(
-    series: Series, proposed: dict[str, Any], resident: Resident, *, needs_approval: bool
+    series: Series, proposed: dict[str, Any], resident: Account, *, needs_approval: bool
 ) -> Outcome:
     current = {"title": series.title, "description": series.description}
     changes = diff(current, proposed)
@@ -979,7 +977,7 @@ def missing_for_publishing(video: Video, *, details: bool = True) -> list[str]:
     return missing
 
 
-def publish(video: Video, resident: Resident) -> None:
+def publish(video: Video, resident: Account) -> None:
     """Publish a draft. It is out at once, unless it is a premiere still to come: then it is listed as
     upcoming, and announced at its premiere (announce_released)."""
     if missing := missing_for_publishing(video):
@@ -1006,7 +1004,7 @@ def _announce(video: Video) -> None:
     transaction.on_commit(tell)
 
 
-def unpublish(video: Video, resident: Resident) -> None:
+def unpublish(video: Video, resident: Account) -> None:
     """Make a video a draft again: an upcoming premiere, or one out for less than TAKE_BACK_WINDOW.
     What everybody was told about it is withdrawn, and its days as a draft count from now."""
     if not video.can_be_taken_back:
@@ -1088,7 +1086,7 @@ def _pending_pictures(changes: dict[str, Any]) -> list[str]:
     return [changes[kind]["key"] for kind in PICTURE_KINDS if isinstance(changes.get(kind), dict)]
 
 
-def propose(target: Video | Series, changes: dict[str, Any], resident: Resident) -> ChangeRequest:
+def propose(target: Video | Series, changes: dict[str, Any], resident: Account) -> ChangeRequest:
     """An edit for another administrator to accept. The resident's own open proposal is extended
     rather than a second one opened; somebody else's has to be decided first."""
     with transaction.atomic():
@@ -1115,7 +1113,7 @@ def propose(target: Video | Series, changes: dict[str, Any], resident: Resident)
     return change
 
 
-def request_deletion(video: Video, resident: Resident, reason: str) -> ChangeRequest:
+def request_deletion(video: Video, resident: Account, reason: str) -> ChangeRequest:
     if open_request(video, ChangeRequest.Kind.DELETE) is not None:
         raise ValidationError("Der er allerede en anmodning om at slette videoen.")
     if not reason.strip():
@@ -1137,7 +1135,7 @@ def _close(change: ChangeRequest, state: str, note: str = "") -> None:
         _delete_keys(_pending_pictures(change.changes))
 
 
-def vote(change: ChangeRequest, voter: Resident, *, approve: bool, comment: str = "") -> ChangeRequest:
+def vote(change: ChangeRequest, voter: Account, *, approve: bool, comment: str = "") -> ChangeRequest:
     """One administrator's vote. A rejection closes the request; enough approvals carry it out."""
     with transaction.atomic():
         # Only the request row is locked: video and series are nullable joins, which FOR UPDATE refuses.
@@ -1209,7 +1207,7 @@ def expire_requests(now: datetime | None = None) -> int:
 # --- Bin and deletion ---------------------------------------------------------------------------
 
 
-def bin_video(video: Video, resident: Resident, *, closing: ChangeRequest | None = None) -> None:
+def bin_video(video: Video, resident: Account, *, closing: ChangeRequest | None = None) -> None:
     """Move a published video to the bin. Proposals about it are moot now, and are closed."""
     video.deleted_at = _now()
     video.deleted_by = resident
@@ -1221,7 +1219,7 @@ def bin_video(video: Video, resident: Resident, *, closing: ChangeRequest | None
         _close(change, ChangeRequest.State.WITHDRAWN, "Videoen blev slettet.")
 
 
-def restore(video: Video, resident: Resident) -> None:
+def restore(video: Video, resident: Account) -> None:
     video.deleted_at = None
     video.deleted_by = None
     video.save(update_fields=["deleted_at", "deleted_by"])
@@ -1422,7 +1420,7 @@ def sweep_orphans(now: datetime | None = None) -> OrphanSweep:
 # --- Watching -----------------------------------------------------------------------------------
 
 
-def _watch(video: Video, resident: Resident) -> Watch:
+def _watch(video: Video, resident: Account) -> Watch:
     try:
         with transaction.atomic():
             return Watch.objects.get_or_create(video=video, resident=resident)[0]
@@ -1430,7 +1428,7 @@ def _watch(video: Video, resident: Resident) -> Watch:
         return Watch.objects.get(video=video, resident=resident)
 
 
-def open_viewing(video: Video, resident: Resident, now: datetime | None = None) -> ViewEvent:
+def open_viewing(video: Video, resident: Account, now: datetime | None = None) -> ViewEvent:
     """The player has opened the video for the resident: go on with their viewing of it if they
     left it short of the end less than VIEW_DEDUPE_WINDOW ago, else begin a new one."""
     moment = now or _now()
@@ -1448,7 +1446,7 @@ def open_viewing(video: Video, resident: Resident, now: datetime | None = None) 
 
 
 def record_view(
-    video: Video, resident: Resident, now: datetime | None = None, *, viewing: ViewEvent | None = None
+    video: Video, resident: Account, now: datetime | None = None, *, viewing: ViewEvent | None = None
 ) -> bool:
     """Count a view (the player asks once a few seconds have actually played). One statement, so
     two tabs reporting at once cannot both count. `viewing` is the player's (open_viewing): one
@@ -1477,7 +1475,7 @@ MAX_REPORTED = 4 * 60 * 60.0
 
 def save_position(
     video: Video,
-    resident: Resident,
+    resident: Account,
     position: float,
     now: datetime | None = None,
     *,
@@ -1502,14 +1500,14 @@ def save_position(
     return watch
 
 
-def resume_position(video: Video, resident: Resident) -> float:
+def resume_position(video: Video, resident: Account) -> float:
     watch = Watch.objects.filter(video=video, resident=resident).first()
     if watch is None or watch.finished or watch.position < RESUME_FROM:
         return 0.0
     return watch.position
 
 
-def progress_by_video(resident: Resident, videos: Iterable[Video]) -> dict[int, float]:
+def progress_by_video(resident: Account, videos: Iterable[Video]) -> dict[int, float]:
     """How far the resident is into each video, 0–1, for the red bar under a card."""
     ids = [video.pk for video in videos]
     out = {}
@@ -1520,7 +1518,7 @@ def progress_by_video(resident: Resident, videos: Iterable[Video]) -> dict[int, 
     return out
 
 
-def continue_watching(resident: Resident, limit: int = 12) -> list[Video]:
+def continue_watching(resident: Account, limit: int = 12) -> list[Video]:
     watches = (
         Watch.objects.filter(resident=resident, finished=False, position__gte=RESUME_FROM)
         .filter(video__in=Video.objects.released())
@@ -1728,7 +1726,7 @@ def next_episode(video: Video) -> Video | None:
     return None
 
 
-def up_next(video: Video, resident: Resident) -> Video | None:
+def up_next(video: Video, resident: Account) -> Video | None:
     """What autoplay starts after this video: the next episode, else a film the resident hasn't finished."""
     if (episode := next_episode(video)) is not None:
         return episode
@@ -1792,7 +1790,7 @@ def timeline() -> list[tuple[int, list[tuple[int | None, list[Video]]]]]:
     ]
 
 
-def credits_of(resident: Resident) -> QuerySet[Video]:
+def credits_of(resident: Account) -> QuerySet[Video]:
     return released().filter(cast__resident=resident).distinct()
 
 

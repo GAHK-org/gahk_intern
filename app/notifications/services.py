@@ -33,7 +33,7 @@ from django.utils.http import url_has_allowed_host_and_scheme
 from core import push
 from core.clock import current_datetime
 from core.models import PushSubscription
-from residents.models import Residency, Resident, RoleAssignment, active_period
+from residents.models import Account, Residency, RoleAssignment, active_period
 
 from . import categories, live
 from .categories import Importance
@@ -58,7 +58,7 @@ def _default_expiry(now: datetime.datetime) -> datetime.datetime:
 # so keeping every liker of a popular post would grow the row for nothing.
 MAX_ACTORS = 50
 
-Recipients = QuerySet[Resident] | Iterable[int]
+Recipients = QuerySet[Account] | Iterable[int]
 
 
 def is_site_path(url: str) -> bool:
@@ -68,7 +68,7 @@ def is_site_path(url: str) -> bool:
     return url.startswith("/") and url_has_allowed_host_and_scheme(url, allowed_hosts=None)
 
 
-def everyone() -> QuerySet[Resident]:
+def everyone() -> QuerySet[Account]:
     """The whole kollegium, as an audience: anyone living here this month, anyone holding a role
     this month (administrators need not live here), superusers — and anyone with a push device.
 
@@ -81,15 +81,15 @@ def everyone() -> QuerySet[Resident]:
     roles = RoleAssignment.objects.filter(year=year, month=month).values("resident_id")
     devices = PushSubscription.objects.values("user_id")
     # Not the kitchen account: its push device would otherwise put it in every feature's audience.
-    return Resident.objects.filter(is_active=True, is_kitchen=False).filter(
-        Q(pk__in=living) | Q(pk__in=roles) | Q(pk__in=devices) | Q(is_superuser=True)
+    return Account.objects.filter(is_active=True, is_kitchen=False).filter(
+        Q(person__resident__in=living) | Q(pk__in=roles) | Q(pk__in=devices) | Q(is_superuser=True)
     )
 
 
-def kitchen() -> QuerySet[Resident]:
+def kitchen() -> QuerySet[Account]:
     """The kitchen account, which everyone() leaves out. Added back by the audiences it can open:
     its Den Hurtige channel and the admin broadcast."""
-    return Resident.objects.filter(is_active=True, is_kitchen=True)
+    return Account.objects.filter(is_active=True, is_kitchen=True)
 
 
 @dataclass(frozen=True)
@@ -261,7 +261,7 @@ def notify_grouped(
     *,
     category: str,
     group_key: str,
-    actor: Resident,
+    actor: Account,
     verb: str,
     url: str,
     body: str = "",

@@ -32,7 +32,7 @@ from django.db.models import Q, QuerySet
 from django.http import HttpRequest
 
 from core.rollout import Gate
-from residents.models import Resident
+from residents.models import Account
 from residents.permissions import View, current_resident
 
 from .models import Event, EventComment, EventInvite, EventQuerySet, Visibility
@@ -85,7 +85,7 @@ def allowed_residents(qs: QuerySet) -> QuerySet:
     return _GATE.allowed_residents(qs)
 
 
-def visible_to(resident: Resident) -> EventQuerySet:
+def visible_to(resident: Account) -> EventQuerySet:
     """The ONLY queryset any view, partial, calendar or feed may start from.
 
     SUBQUERIES RATHER THAN JOINS, and that is correctness, not taste. `Q(invites__resident=r)` is a
@@ -99,12 +99,12 @@ def visible_to(resident: Resident) -> EventQuerySet:
     return Event.objects.filter(
         Q(visibility=Visibility.AABENT)
         | Q(organiser=resident)
-        | Q(pk__in=Event.co_organisers.through.objects.filter(resident_id=resident.pk).values("event_id"))
+        | Q(pk__in=Event.co_organisers.through.objects.filter(account_id=resident.pk).values("event_id"))
         | Q(pk__in=EventInvite.objects.filter(resident=resident).values("event_id"))
     )
 
 
-def is_host(event: Event, resident: Resident) -> bool:
+def is_host(event: Event, resident: Account) -> bool:
     """Whether this resident runs the event — the organiser or a co-organiser.
 
     Hosts may edit, cancel, invite, uninvite and promote. Everything except handing over the
@@ -115,7 +115,7 @@ def is_host(event: Event, resident: Resident) -> bool:
     return event.co_organisers.filter(pk=resident.pk).exists()
 
 
-def can_edit(event: Event, resident: Resident) -> bool:
+def can_edit(event: Event, resident: Account) -> bool:
     """Hosts edit; nobody else does, moderators included.
 
     A cancelled event is frozen: there is nothing useful to change about something that is not
@@ -124,7 +124,7 @@ def can_edit(event: Event, resident: Resident) -> bool:
     return not event.is_cancelled and is_host(event, resident)
 
 
-def can_manage_hosts(event: Event, resident: Resident) -> bool:
+def can_manage_hosts(event: Event, resident: Account) -> bool:
     """Only the ORIGINAL organiser adds or removes co-organisers.
 
     If co-organisers could, one of them could remove the organiser and the event would have no
@@ -133,7 +133,7 @@ def can_manage_hosts(event: Event, resident: Resident) -> bool:
     return event.organiser_id == resident.pk
 
 
-def can_delete(event: Event, resident: Resident) -> bool:
+def can_delete(event: Event, resident: Account) -> bool:
     """Delete is for events nobody has committed to yet.
 
     Once anyone has said ja the control becomes Aflys instead (see services.cancel). A hard delete
@@ -146,12 +146,12 @@ def can_delete(event: Event, resident: Resident) -> bool:
     return not event.rsvps.filter(answer="ja").exists()
 
 
-def can_cancel(event: Event, resident: Resident) -> bool:
+def can_cancel(event: Event, resident: Account) -> bool:
     """The other half of can_delete: hosts may aflys anything not already cancelled."""
     return not event.is_cancelled and is_host(event, resident)
 
 
-def can_delete_comment(comment: EventComment, resident: Resident, *, host: bool | None = None) -> bool:
+def can_delete_comment(comment: EventComment, resident: Account, *, host: bool | None = None) -> bool:
     """Its author, or a HOST of the event it is on.
 
     NOT "a moderator", which is where the two sibling features land (opslagstavle.access and

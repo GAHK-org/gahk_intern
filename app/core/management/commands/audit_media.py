@@ -151,7 +151,7 @@ class Command(BaseCommand):
         ]:
             names.update(unquote(m.group(1)) for m in MEDIA_REF.finditer(body or ""))
 
-        # 4. Resident-authored Markdown. The token walk, not a regex — a URL in a code fence is not
+        # 4. Account-authored Markdown. The token walk, not a regex — a URL in a code fence is not
         #    a reference, which is the whole reason opslagstavle claims images this way.
         for body in Notice.objects.values_list("body", flat=True):
             names.update(extract_image_names(body or ""))

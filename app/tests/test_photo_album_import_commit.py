@@ -13,7 +13,7 @@ from photo_album import services, tasks
 from photo_album.models import Album, DerivativeState, Media
 from photo_album.services import import_zip_album, upload_media
 from photo_album.storage import get_photo_album_storage
-from residents.models import Resident
+from residents.models import Account
 
 from .media_samples import image_upload, jpeg_bytes
 
@@ -33,7 +33,7 @@ def _broker_down(media: Media) -> None:
 
 @pytest.mark.django_db(transaction=True)
 def test_a_job_that_cannot_be_queued_does_not_undo_a_committed_import(
-    make_resident: Callable[..., Resident], monkeypatch: pytest.MonkeyPatch
+    make_resident: Callable[..., Account], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """The callbacks that queue the derivative jobs run after the COMMIT. One raised — the broker's
     connection shared across a fork — and the import's cleanup, taking it for a failed import,
@@ -54,7 +54,7 @@ def test_a_job_that_cannot_be_queued_does_not_undo_a_committed_import(
 
 @pytest.mark.django_db(transaction=True)
 def test_an_error_after_the_commit_never_deletes_what_was_committed(
-    make_resident: Callable[..., Resident], monkeypatch: pytest.MonkeyPatch
+    make_resident: Callable[..., Account], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """The cleanup itself, for any callback that does raise: it only undoes an import that did not
     commit."""
@@ -97,7 +97,7 @@ def test_a_forked_worker_process_gets_broker_connections_of_its_own(monkeypatch:
 
 @pytest.mark.django_db
 def test_media_without_an_original_are_found_and_removed_with_the_albums_they_empty(
-    make_resident: Callable[..., Resident],
+    make_resident: Callable[..., Account],
 ) -> None:
     resident = make_resident()
     storage = get_photo_album_storage()

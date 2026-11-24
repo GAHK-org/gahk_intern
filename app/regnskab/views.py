@@ -21,7 +21,7 @@ from django.utils.http import url_has_allowed_host_and_scheme
 from ak.models import AkEntry
 from audit import trail
 from core.models import OutgoingMail
-from residents.models import Residency, Resident, prev_period
+from residents.models import Account, Residency, prev_period
 from residents.permissions import current_resident, role_required
 from residents.views import DA_MONTHS, _parse_period, _period_options
 
@@ -31,13 +31,13 @@ from .models import AlumneregningSend, AlumneregningSettings
 
 
 class Row(NamedTuple):
-    resident: Resident
+    resident: Account
     room: int | None  # room number in the month they were last resident (None for a free lookup)
     ak_krydser: int  # negative = owes labour
     oek_ore: int  # negative = owes the ølkælder
 
 
-def _row(resident: Resident, room: int | None) -> Row:
+def _row(resident: Account, room: int | None) -> Row:
     oek_ore = sum((a.balance_ore for a in resident.shopper_accounts.all()), 0)
     return Row(resident, room, AkEntry.balance_for(resident), oek_ore)
 
@@ -51,10 +51,15 @@ def overview(request: HttpRequest) -> HttpResponse:
     alumneregning_from = date(year, month, 1)
     alumneregning_to = date(year, month, calendar.monthrange(year, month)[1])
 
-    prior = Residency.objects.filter(year=py, month=pm).select_related("resident", "room")
+    prior = Residency.objects.filter(year=py, month=pm).select_related("resident__person__account", "room")
     still_here = set(Residency.objects.filter(year=year, month=month).values_list("resident_id", flat=True))
+    # The list names residents; what is settled is their accounts (a resident with no login has none).
     leavers = sorted(
-        (_row(r.resident, r.room.number) for r in prior if r.resident_id not in still_here),
+        (
+            _row(r.resident.login, r.room.number)
+            for r in prior
+            if r.resident_id not in still_here and r.resident.login is not None
+        ),
         key=lambda row: row.resident.full_name,
     )
 
@@ -62,7 +67,7 @@ def overview(request: HttpRequest) -> HttpResponse:
     q = (request.GET.get("q") or "").strip()
     results = []
     if q:
-        found = Resident.objects.filter(
+        found = Account.objects.filter(
             Q(first_name__icontains=q) | Q(last_name__icontains=q) | Q(email__icontains=q)
         ).order_by("first_name", "last_name")[:50]
         results = [_row(r, None) for r in found]
@@ -106,7 +111,7 @@ def edit_economic_account_number(request: HttpRequest, pk: int) -> HttpResponse:
     """Regnskab sees a resident's data but can change only their e-conomic kontonr., on its own page
     with a deliberate "Gem" (not inline in a table, where a stray click could change it). A new number
     is looked up in e-conomic first and only saved if the account there carries the resident's name."""
-    resident = get_object_or_404(Resident, pk=pk)
+    resident = get_object_or_404(Account, pk=pk)
     nxt = request.GET.get("next", "")
     if not url_has_allowed_host_and_scheme(nxt, allowed_hosts={request.get_host()}):
         nxt = ""
@@ -219,7 +224,7 @@ def alumneregning_statement_pdf_view(request: HttpRequest, pk: int) -> HttpRespo
         return HttpResponseNotFound("Ugyldig eller manglende periode.")
     date_from, date_to = period
 
-    resident = get_object_or_404(Resident, pk=pk)
+    resident = get_object_or_404(Account, pk=pk)
     try:
         pdf = alumneregning.render_preview_pdf(resident, date_from, date_to)
     except economic.EconomicAuthError:

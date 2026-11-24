@@ -41,7 +41,7 @@ from django.views.decorators.http import require_GET, require_POST
 from audit import trail
 from core.downloads import content_disposition
 from core.media import REDIRECT_CACHE_CONTROL
-from residents.models import Resident
+from residents.models import Account
 from residents.permissions import current_resident
 
 from . import access, cache, direct_upload, featured, merge, services
@@ -113,14 +113,14 @@ def default_folder() -> str:
     return str(timezone.localdate().year)
 
 
-def _token_import_resident(request: HttpRequest) -> Resident | None:
+def _token_import_resident(request: HttpRequest) -> Account | None:
     token = settings.PHOTO_ALBUM_IMPORT_TOKEN
     authorization = request.headers.get("Authorization", "")
     if not token or not compare_digest(authorization, f"Bearer {token}"):
         return None
     # The import script's own account, made the first time it calls in.
     with trail.event("residents.resident.created", actor=None, only_if_changed=True) as event:
-        resident, created = Resident.objects.get_or_create(
+        resident, created = Account.objects.get_or_create(
             email=settings.PHOTO_ALBUM_SYSTEM_IMPORT_EMAIL,
             defaults={"first_name": "System", "last_name": "", "is_active": True},
         )
@@ -1001,7 +1001,7 @@ def direct_upload_sign(request: HttpRequest) -> JsonResponse:
 
 def _queue_import(
     form: ZipAlbumImportForm | DirectZipImportForm,
-    resident: Resident,
+    resident: Account,
     *,
     stored: tuple[str, str] | None = None,
     lock: bool = False,
@@ -1282,7 +1282,7 @@ def _noted(
     outcome: services.UploadOutcome,
     name: str,
     album: Album,
-    resident: Resident,
+    resident: Account,
     skipped: list[str],
     warnings: list[str],
 ) -> bool:

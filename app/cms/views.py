@@ -34,7 +34,7 @@ from django.utils import timezone
 from django.utils.dateparse import parse_datetime
 from django.views.decorators.http import require_POST
 
-from residents.models import Resident, Role
+from residents.models import Account, Role
 from residents.permissions import CMS_EDITOR_ROLES, current_resident, request_has_role, role_required
 
 from . import services
@@ -543,7 +543,7 @@ def _item_edit(
     instance: NewsItem | Event | None,
     form_class: type[NewsForm | EventForm],
     initial: dict[str, Any],
-    save: Callable[[Any, dict[str, Any], Resident], NewsItem | Event],
+    save: Callable[[Any, dict[str, Any], Account], NewsItem | Event],
     template: str,
     kind: str,
     edit_url: str,
@@ -955,7 +955,7 @@ def change_log(request: HttpRequest) -> HttpResponse:
             link = LINKED_KINDS[change.kind][1]
         rows.append((change, link, change_fields(change)))
     people = (
-        Resident.objects.filter(cms_content_changes__isnull=False)
+        Account.objects.filter(cms_content_changes__isnull=False)
         .distinct()
         .order_by("first_name", "last_name")
     )

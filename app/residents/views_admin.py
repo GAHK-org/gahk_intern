@@ -34,7 +34,7 @@ from core.tasks import task_time_limit
 from core.worker_logs import SENT_AT_HEADER, parse_sent_at
 
 from . import admin_access
-from .models import AdminAccessGrant, Resident, Role, RoleAssignment, active_period
+from .models import Account, AdminAccessGrant, Role, RoleAssignment, active_period
 from .permissions import (
     KITCHEN,
     PREVIEW_SESSION_KEY,
@@ -1187,13 +1187,13 @@ def roles(request: HttpRequest) -> HttpResponse:
         rid = request.POST.get("resident")
         role = request.POST.get("role")
         action = request.POST.get("action")
-        resident = Resident.objects.filter(pk=rid or 0).first() if (rid or "").isdecimal() else None
+        resident = Account.objects.filter(pk=rid or 0).first() if (rid or "").isdecimal() else None
         if resident is not None and role in Role.values:
             details = {"role": role, "period": f"{year}-{month:02d}"}
             if action == "add":
                 with trail.event("residents.role.added", subject=resident, details=details):
                     RoleAssignment.objects.get_or_create(resident=resident, role=role, year=year, month=month)
-                    Resident.objects.filter(id=resident.pk).update(is_staff=True)
+                    Account.objects.filter(id=resident.pk).update(is_staff=True)
                     # Stamp the granter so they cannot also be the approver (residents.admin_access).
                     # The grant itself is opened by the signal, which covers the other three doors.
                     if role == Role.ADMINISTRATOR:
@@ -1211,7 +1211,9 @@ def roles(request: HttpRequest) -> HttpResponse:
         return redirect("siteadmin:roles")
 
     residents = (
-        Resident.objects.filter(residencies__year=year, residencies__month=month)
+        Account.objects.filter(
+            person__resident__residencies__year=year, person__resident__residencies__month=month
+        )
         .distinct()
         .order_by("first_name", "last_name")
     )

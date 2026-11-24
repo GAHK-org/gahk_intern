@@ -17,15 +17,15 @@ from django.conf import settings
 
 from core.clock import current_datetime
 from core.uploads import validate_image_upload
-from residents.models import Residency, Resident, active_period
+from residents.models import Account, Residency, active_period
 
 from .models import MIN_INVITEES, Event, EventComment, Visibility
 
 
-def invitable_residents(exclude: Resident | None = None) -> object:
+def invitable_residents(exclude: Account | None = None) -> object:
     """Who can be invited: whoever lives here this month, minus the organiser.
 
-    Current residency rather than "every Resident row", because the table also holds alumni — a
+    Current residency rather than "every Account row", because the table also holds alumni — a
     picker offering four hundred names, most of whom moved out years ago, is not a picker. This is
     the same question ak.services asks, and it is answered the same way.
 
@@ -34,7 +34,7 @@ def invitable_residents(exclude: Resident | None = None) -> object:
     """
     year, month = active_period()
     living_here = Residency.objects.filter(year=year, month=month).values("resident_id")
-    qs = Resident.objects.filter(pk__in=living_here).order_by("first_name", "last_name")
+    qs = Account.objects.filter(person__resident__in=living_here).order_by("first_name", "last_name")
     return qs.exclude(pk=exclude.pk) if exclude else qs
 
 
@@ -59,13 +59,13 @@ class LocalDateTimeInput(forms.DateTimeInput):
 class ResidentChoiceField(forms.ModelMultipleChoiceField):
     """Names only in the guest list.
 
-    Resident.__str__ is "Ann Anden <ann@gahk.dk>", which is right in the admin and wrong here:
+    Account.__str__ is "Ann Anden <ann@gahk.dk>", which is right in the admin and wrong here:
     sixty rows of address noise in a list you are meant to scan by name, and everybody's e-mail on
     screen for no reason. The search box filters on the rendered label, so shortening it also stops
     a search for "ak" matching half the house through their addresses.
     """
 
-    def label_from_instance(self, obj: Resident) -> str:
+    def label_from_instance(self, obj: Account) -> str:
         return obj.full_name
 
 
@@ -74,7 +74,7 @@ class EventForm(forms.ModelForm):
     invites are their own table, reconciled in `save_invites` below."""
 
     invitees = ResidentChoiceField(
-        queryset=Resident.objects.none(),
+        queryset=Account.objects.none(),
         required=False,
         widget=forms.CheckboxSelectMultiple,
         label="Inviterede",
@@ -154,7 +154,7 @@ class EventForm(forms.ModelForm):
         ),
     )
 
-    def __init__(self, *args: object, organiser: Resident | None = None, **kwargs: object) -> None:
+    def __init__(self, *args: object, organiser: Account | None = None, **kwargs: object) -> None:
         """`organiser` is passed by the view so they can be kept out of their own guest list.
 
         The queryset is bound HERE rather than at class definition, because it depends on

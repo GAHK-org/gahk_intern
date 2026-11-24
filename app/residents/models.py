@@ -6,6 +6,7 @@ privileges come from the *current month's* assignments, not a static table — s
 02-schema-etl.md §5 / 99-index.md F-010. Network-closed / MAC fields are dropped (feature retired).
 """
 
+import datetime
 import logging
 from typing import Any
 
@@ -52,10 +53,10 @@ WORKGROUP_ROLE = {
 WORKGROUP_ROLE_VALUES = frozenset(WORKGROUP_ROLE.values())
 
 
-class ResidentManager(BaseUserManager["Resident"]):
+class AccountManager(BaseUserManager["Account"]):
     use_in_migrations = True
 
-    def get_by_natural_key(self, username: str | None) -> "Resident":
+    def get_by_natural_key(self, username: str | None) -> "Account":
         """Look up the login principal (email) case-insensitively.
 
         Email is the USERNAME_FIELD, and an email login id should not be case-sensitive - residents
@@ -71,7 +72,7 @@ class ResidentManager(BaseUserManager["Resident"]):
         except self.model.DoesNotExist:
             return self.get(**{f"{field}__iexact": username})
 
-    def create_user(self, email: str, password: str | None = None, **extra: object) -> "Resident":
+    def create_user(self, email: str, password: str | None = None, **extra: object) -> "Account":
         if not email:
             raise ValueError("Residents must have an email address")
         user = self.model(email=self.normalize_email(email), **extra)
@@ -79,7 +80,7 @@ class ResidentManager(BaseUserManager["Resident"]):
         user.save(using=self._db)
         return user
 
-    def create_superuser(self, email: str, password: str | None = None, **extra: object) -> "Resident":
+    def create_superuser(self, email: str, password: str | None = None, **extra: object) -> "Account":
         extra.setdefault("is_staff", True)
         extra.setdefault("is_superuser", True)
         extra.setdefault("is_active", True)
@@ -100,14 +101,67 @@ PROFILE_THUMBNAIL_REQUEUE_SECONDS = 3600
 logger = logging.getLogger(__name__)
 
 
-class Resident(AbstractBaseUser, PermissionsMixin):
-    # identity / login (legacy intern_alumne.email becomes the unique login id)
-    email = models.EmailField(unique=True)
+class Person(models.Model):
+    """A human the house knows: a resident past or present, one of the kitchen staff, a guest.
+
+    Whether they lived here is their Resident; whether they can log in is their Account. An alumne
+    from 1975 is a person with a resident and no account; one of the kitchen staff is a person with
+    an account and no resident.
+    """
+
     first_name = models.CharField(max_length=100)
-    last_name = models.CharField(max_length=100)
-    phone = models.CharField(max_length=40, blank=True)
-    # residency facts
+    last_name = models.CharField(max_length=100, blank=True)
     birthday = models.DateField(null=True, blank=True)
+    phone = models.CharField(max_length=40, blank=True)
+
+    class Meta:
+        ordering = ["first_name", "last_name"]
+
+    def __str__(self) -> str:
+        return self.full_name
+
+    def save(self, *args: Any, **kwargs: Any) -> None:  # noqa: ANN401
+        """The account keeps a copy of the name, for display, search and ordering wherever the
+        account is what is at hand (a post's author, a shopper); this keeps it current."""
+        super().save(*args, **kwargs)
+        Account.objects.filter(person=self).exclude(
+            first_name=self.first_name, last_name=self.last_name
+        ).update(first_name=self.first_name, last_name=self.last_name)
+
+    @property
+    def full_name(self) -> str:
+        return f"{self.first_name} {self.last_name}".strip()
+
+    @property
+    def login(self) -> "Account | None":
+        """The person's account, or None for someone with no login."""
+        try:
+            return self.account
+        except Account.DoesNotExist:
+            return None
+
+    @property
+    def house(self) -> "Resident | None":
+        """The person's membership of the house, or None for someone who never lived here."""
+        try:
+            return self.resident
+        except Resident.DoesNotExist:
+            return None
+
+    @property
+    def email(self) -> str:
+        """The address the house reaches them at: their login's."""
+        account = self.login
+        return account.email if account is not None else ""
+
+
+class Resident(models.Model):
+    """A person's membership of the house: when they came and left, what they studied, who brought
+    them in (their fylgje), and their months on the alumneliste (Residency). One per person, however
+    often they moved out and back; the months show the gaps. The Stamtræ is every resident.
+    """
+
+    person = models.OneToOneField(Person, on_delete=models.CASCADE, related_name="resident")
     move_in_date = models.DateField(null=True, blank=True)
     move_out_date = models.DateField(null=True, blank=True)
     study = models.CharField(max_length=255, blank=True)
@@ -116,6 +170,56 @@ class Resident(AbstractBaseUser, PermissionsMixin):
         "self", null=True, blank=True, on_delete=models.SET_NULL, related_name="proteges"
     )
     fylgje_raw = models.CharField(max_length=255, blank=True)  # original free-text, kept if unresolved
+
+    class Meta:
+        ordering = ["person__first_name", "person__last_name"]
+
+    def __str__(self) -> str:
+        return self.full_name
+
+    # The person's facts, read through the resident where the list is what is at hand.
+    @property
+    def full_name(self) -> str:
+        return self.person.full_name
+
+    @property
+    def first_name(self) -> str:
+        return self.person.first_name
+
+    @property
+    def last_name(self) -> str:
+        return self.person.last_name
+
+    @property
+    def birthday(self) -> datetime.date | None:
+        return self.person.birthday
+
+    @property
+    def phone(self) -> str:
+        return self.person.phone
+
+    @property
+    def email(self) -> str:
+        return self.person.email
+
+    @property
+    def login(self) -> "Account | None":
+        return self.person.login
+
+
+class Account(AbstractBaseUser, PermissionsMixin):
+    """Something that logs in and acts: a person's login, and in time a device (the Ølkælder till) or
+    a service (the photo import script). Posts, krydser, bills and roles belong to it. The human
+    behind it, if any, is its `person`."""
+
+    # identity / login (legacy intern_alumne.email becomes the unique login id)
+    email = models.EmailField(unique=True)
+    person = models.OneToOneField(
+        Person, null=True, blank=True, on_delete=models.SET_NULL, related_name="account"
+    )
+    # The person's name, copied (Person.save keeps it current); an account with no person has its own.
+    first_name = models.CharField(max_length=100)
+    last_name = models.CharField(max_length=100)
     # e-conomic's chart-of-accounts accountNumber for this alumne (F-010 regnskab role; alumneregning automation).
     economic_account_number = models.PositiveIntegerField(null=True, blank=True, unique=True)
     # profile
@@ -137,7 +241,7 @@ class Resident(AbstractBaseUser, PermissionsMixin):
     is_kitchen = models.BooleanField(default=False)
     date_joined = models.DateTimeField(default=timezone.now)
 
-    objects = ResidentManager()
+    objects = AccountManager()
 
     # profile_picture's name as last loaded or saved; see from_db/save below.
     _stored_picture: str | None
@@ -173,7 +277,7 @@ class Resident(AbstractBaseUser, PermissionsMixin):
     # Until the worker has made it, avatars draw the original, as they did before #177.
 
     @classmethod
-    def from_db(cls, db: str | None, field_names: Any, values: Any) -> "Resident":  # noqa: ANN401
+    def from_db(cls, db: str | None, field_names: Any, values: Any) -> "Account":  # noqa: ANN401
         instance = super().from_db(db, field_names, values)
         # Raw from __dict__ so a deferred field is not fetched just to remember it; absent means
         # "unknown", and an unknown picture is never treated as changed.
@@ -205,8 +309,8 @@ class Resident(AbstractBaseUser, PermissionsMixin):
             return
         self.profile_thumbnail = ""
         # update(), not save(): this runs inside save(), and only this one column has changed.
-        Resident.objects.filter(pk=self.pk).update(profile_thumbnail="")
-        delete_files_after_commit([(self.profile_thumbnail.storage, old)], f"residents.Resident:{self.pk}")
+        Account.objects.filter(pk=self.pk).update(profile_thumbnail="")
+        delete_files_after_commit([(self.profile_thumbnail.storage, old)], f"residents.Account:{self.pk}")
 
     def queue_profile_thumbnail(self) -> None:
         """Ask the worker for the current picture's thumbnail, at most once an hour per process.
@@ -249,6 +353,45 @@ class Resident(AbstractBaseUser, PermissionsMixin):
     def full_name(self) -> str:
         return f"{self.first_name} {self.last_name}".strip()
 
+    # The person's and their residency's facts, read through the account where the account is what
+    # is at hand (a profile page, a mail). Written on the person and the resident.
+    @property
+    def phone(self) -> str:
+        person = self.person
+        return person.phone if person is not None else ""
+
+    @property
+    def birthday(self) -> datetime.date | None:
+        person = self.person
+        return person.birthday if person is not None else None
+
+    @property
+    def house(self) -> "Resident | None":
+        """The account's person's membership of the house, if any."""
+        person = self.person
+        return person.house if person is not None else None
+
+    @property
+    def study(self) -> str:
+        house = self.house
+        return house.study if house is not None else ""
+
+    @property
+    def move_in_date(self) -> datetime.date | None:
+        house = self.house
+        return house.move_in_date if house is not None else None
+
+    @property
+    def move_out_date(self) -> datetime.date | None:
+        house = self.house
+        return house.move_out_date if house is not None else None
+
+    @property
+    def residencies(self) -> "models.QuerySet[Residency]":
+        """The months on the alumneliste of the account's person (none for anyone who never lived here)."""
+        house = self.house
+        return house.residencies.all() if house is not None else Residency.objects.none()
+
     def has_role(self, role: str, period: tuple[int, int] | None = None) -> bool:
         year, month = period or active_period()
         return self.role_assignments.filter(role=role, year=year, month=month).exists()
@@ -281,6 +424,7 @@ class Resident(AbstractBaseUser, PermissionsMixin):
 class Residency(models.Model):
     """One row per resident per month (legacy intern_alumne_liste): which room + chore groups."""
 
+    # The resident on the list (Resident: a person's membership of the house), with a login or not.
     resident = models.ForeignKey(Resident, on_delete=models.CASCADE, related_name="residencies")
     room = models.ForeignKey("core.Room", on_delete=models.PROTECT, related_name="residencies")
     workgroup = models.ForeignKey("core.Workgroup", null=True, blank=True, on_delete=models.SET_NULL)
@@ -302,7 +446,7 @@ class Residency(models.Model):
 class RoleAssignment(models.Model):
     """A privilege/embedsgruppe role held by a resident **for a specific month** (decided 2026-06)."""
 
-    resident = models.ForeignKey(Resident, on_delete=models.CASCADE, related_name="role_assignments")
+    resident = models.ForeignKey(Account, on_delete=models.CASCADE, related_name="role_assignments")
     role = models.CharField(max_length=20, choices=Role.choices)
     year = models.PositiveSmallIntegerField()
     month = models.PositiveSmallIntegerField()
@@ -321,7 +465,7 @@ class AdminAccessGrant(models.Model):
     """One resident's accepted (or pending) Django-admin access — the two-person rule on `administrator`.
 
     Holding the role is necessary but not sufficient: a *second* administrator must accept before
-    `Resident._has_admin_role` returns True. Both doors that mint the role (the role editor and the
+    `Account._has_admin_role` returns True. Both doors that mint the role (the role editor and the
     monthly list roll-forward) are reachable by the group itself, so without this Netvaerksgruppen
     decides its own membership. Opened and closed by residents.signals, decided in residents.admin_access.
     """
@@ -331,15 +475,15 @@ class AdminAccessGrant(models.Model):
         APPROVED = "approved", "Godkendt"
         DENIED = "denied", "Afvist"
 
-    resident = models.OneToOneField(Resident, on_delete=models.CASCADE, related_name="admin_access")
+    resident = models.OneToOneField(Account, on_delete=models.CASCADE, related_name="admin_access")
     status = models.CharField(max_length=10, choices=Status.choices, default=Status.PENDING)
     # Who granted the role, when known. The role editor stamps it; the monthly roll-forward and the
     # ETL leave it NULL, and a NULL only means the "granter may not approve" rule has nobody to bar.
     requested_by = models.ForeignKey(
-        Resident, null=True, blank=True, on_delete=models.SET_NULL, related_name="+"
+        Account, null=True, blank=True, on_delete=models.SET_NULL, related_name="+"
     )
     decided_by = models.ForeignKey(
-        Resident, null=True, blank=True, on_delete=models.SET_NULL, related_name="+"
+        Account, null=True, blank=True, on_delete=models.SET_NULL, related_name="+"
     )
     decided_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(default=timezone.now)
@@ -378,7 +522,7 @@ def active_period() -> tuple[int, int]:
     return today.year, today.month
 
 
-def embedsgruppe_of(resident: "Resident", period: tuple[int, int] | None = None) -> str:
+def embedsgruppe_of(resident: "Account", period: tuple[int, int] | None = None) -> str:
     """The Workgroup name `resident` holds in `period` (the active month by default), or "".
 
     Read at the moment something is written, never when it is displayed: opslagstavle.models stamps
@@ -391,7 +535,7 @@ def embedsgruppe_of(resident: "Resident", period: tuple[int, int] | None = None)
     """
     year, month = period or active_period()
     name = (
-        Residency.objects.filter(resident=resident, year=year, month=month)
+        Residency.objects.filter(resident__person__account=resident, year=year, month=month)
         .values_list("workgroup__name", flat=True)
         .first()
     )
@@ -410,7 +554,7 @@ def prev_period(period: tuple[int, int] | None = None) -> tuple[int, int]:
     return (year - 1, 12) if month == 1 else (year, month - 1)
 
 
-@receiver(post_delete, sender=Resident)
+@receiver(post_delete, sender=Account)
 def _delete_resident_files(sender: type[models.Model], instance: models.Model, **kwargs: Any) -> None:  # noqa: ANN401
     """Remove the profile picture from storage when a resident row is deleted."""
     delete_attached_files(instance)

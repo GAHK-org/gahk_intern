@@ -21,7 +21,7 @@ from django.core.exceptions import PermissionDenied
 from django.http import HttpRequest
 from django.http.response import HttpResponseBase
 
-from .models import Resident, Role, active_period
+from .models import Account, Role, active_period
 
 # A Django view: called with a request (plus captured URL kwargs) and returns a response.
 #
@@ -31,13 +31,13 @@ from .models import Resident, Role, active_period
 # cannot be decorated with role_required or a rollout Gate, which is the one place the decorator is
 # most worth having. Widening a return type is safe for every existing caller.
 View = Callable[..., HttpResponseBase]
-# What request.user is statically typed as: django-stubs can't know it is always a Resident here.
+# What request.user is statically typed as: django-stubs can't know it is always a Account here.
 AnyUser = AbstractBaseUser | AnonymousUser
 
 ALL_ROLES = frozenset(Role.values)
 PREVIEW_SESSION_KEY = "preview_roles"
 
-# Pseudo-role of the kitchen-staff account (Resident.is_kitchen). Not a Role choice, so it grants
+# Pseudo-role of the kitchen-staff account (Account.is_kitchen). Not a Role choice, so it grants
 # nothing anywhere; it only lets the preview tool show the site as the kitchen sees it.
 KITCHEN = "koekken"
 
@@ -57,20 +57,20 @@ CMS_EDITOR_ROLES = (Role.ADMINISTRATOR, Role.INDSTILLING, Role.INSPEKTION, Role.
 MODERATION_ROLES = (Role.ADMINISTRATOR, Role.INSPEKTION)
 
 
-def current_resident(request: HttpRequest) -> Resident:
-    """The logged-in Resident for a request behind @login_required / @role_required.
+def current_resident(request: HttpRequest) -> Account:
+    """The logged-in Account for a request behind @login_required / @role_required.
 
-    Centralizes the "an authenticated user is a Resident" invariant that django-stubs can't express.
+    Centralizes the "an authenticated user is a Account" invariant that django-stubs can't express.
     Raises PermissionDenied if the request user is not an authenticated resident - which only happens
     if a view forgot its access decorator (a programming error), never in the normal flow.
     """
     user = request.user
-    if not isinstance(user, Resident):
+    if not isinstance(user, Account):
         raise PermissionDenied
     return user
 
 
-def _load_real_roles(user: Resident) -> frozenset[str]:
+def _load_real_roles(user: Account) -> frozenset[str]:
     """Read the role set from the DB. Superuser and `administrator` => every role (all-access)."""
     if user.is_superuser:
         return ALL_ROLES
@@ -101,7 +101,7 @@ def real_roles(user: AnyUser) -> set[str]:
     changes the current user's roles mid-request today (the role editor redirects, and the monthly
     sync writes *next* month), but if that ever changes, call `forget_real_roles` after the write.
     """
-    if not isinstance(user, Resident):
+    if not isinstance(user, Account):
         return set()
     cached = getattr(user, _REAL_ROLES_MEMO, None)
     if cached is None:
@@ -138,7 +138,7 @@ def is_kitchen(request: HttpRequest) -> bool:
     """Whether this request is the kitchen account, or an admin previewing as it. Runs on every
     request (core.middleware), so it only resolves roles when a preview is set."""
     user = request.user
-    if not isinstance(user, Resident):
+    if not isinstance(user, Account):
         return False
     if user.is_kitchen:
         return True

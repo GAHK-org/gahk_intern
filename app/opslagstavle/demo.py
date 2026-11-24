@@ -21,7 +21,7 @@ same reason. The multi-image post references files already in `static/legacy/` i
 import random
 from datetime import datetime, timedelta
 
-from residents.models import Resident, Role
+from residents.models import Account, Role
 
 from .models import Category, Notice, NoticeComment, NoticeReaction
 
@@ -97,7 +97,7 @@ EMOJI = ["👍", "🎉", "❤️", "👀"]
 STALE_AGE_DAYS = 365 * 3
 
 
-def seed(residents: list[Resident], now: datetime, rng: random.Random) -> int:
+def seed(residents: list[Account], now: datetime, rng: random.Random) -> int:
     """Create the demo board. Returns the number of notices made."""
     created: list[Notice] = []
     for i, (category, body) in enumerate(POSTS):
@@ -107,7 +107,7 @@ def seed(residents: list[Resident], now: datetime, rng: random.Random) -> int:
         created.append(notice)
 
     # Pinned by an actual inspektion member, so the demo shows a real attribution rather than "None".
-    pinner = Resident.objects.filter(role_assignments__role=Role.INSPEKTION).first() or residents[0]
+    pinner = Account.objects.filter(role_assignments__role=Role.INSPEKTION).first() or residents[0]
     Notice.objects.filter(pk=created[0].pk).update(pinned_at=now, pinned_by=pinner)
 
     stale = Notice.objects.create(
@@ -128,7 +128,7 @@ def seed(residents: list[Resident], now: datetime, rng: random.Random) -> int:
     return len(created) + 1
 
 
-def seed_embeds(residents: list[Resident], now: datetime) -> int:
+def seed_embeds(residents: list[Account], now: datetime) -> int:
     """Posts embedding a demo album and a demo film, drawn as their widgets (opslagstavle.embeds).
 
     Separate from `seed` because it needs the photo album and GAHKFlix seeded first; seed_demo runs

@@ -12,7 +12,7 @@ from ak.models import AkEntry
 from cms.models import NewsItem, Page, PylonEvent
 from core.etl import fetch_all
 from oelkaelder.models import Deposit, Product, Transaction
-from residents.models import Residency, Resident
+from residents.models import Account, Residency
 from rooms.models import KvotientApplication, RoomCondition
 from stats.models import DailyVisitCount
 
@@ -36,7 +36,7 @@ class Command(BaseCommand):
             (
                 "residents",
                 "SELECT COUNT(*) n FROM intern_alumne",
-                Resident.objects.count(),
+                Account.objects.count(),
                 "clean ≤ legacy (dup emails merged, empty dropped)",
             ),
             (

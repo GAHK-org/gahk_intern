@@ -35,13 +35,23 @@ def backfill_embedsgruppe(apps, schema_editor) -> None:  # noqa: ANN001
     }
     if not group_by_person_month:
         return
+    # Once accounts and residents are apart (residents 0013) the list names residents; a post names
+    # an account. Before that, the two ids are one.
+    Account = apps.get_model("residents", "Account")
+    resident_of = (
+        dict(Account.objects.filter(person__resident__isnull=False).values_list("id", "person__resident__id"))
+        if any(f.name == "person" for f in Account._meta.get_fields())
+        else {}
+    )
 
     for model_name in ("Notice", "NoticeComment"):
         model = apps.get_model("opslagstavle", model_name)
         updated = []
         for row in model.objects.all().only("id", "author_id", "created_at"):
             local = timezone.localtime(row.created_at)
-            name = group_by_person_month.get((row.author_id, local.year, local.month))
+            name = group_by_person_month.get(
+                (resident_of.get(row.author_id, row.author_id), local.year, local.month)
+            )
             if name:
                 row.author_embedsgruppe = name
                 updated.append(row)

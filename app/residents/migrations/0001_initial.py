@@ -18,7 +18,7 @@ class Migration(migrations.Migration):
 
     operations = [
         migrations.CreateModel(
-            name="Resident",
+            name="Account",
             fields=[
                 (
                     "id",
@@ -83,9 +83,12 @@ class Migration(migrations.Migration):
             ],
             options={
                 "ordering": ["first_name", "last_name"],
+                # The login model was named Resident until the accounts and people came apart
+                # (0013), which also gave it a table of its own; until then it is this table.
+                "db_table": "residents_resident",
             },
             managers=[
-                ("objects", residents.models.ResidentManager()),
+                ("objects", residents.models.AccountManager()),
             ],
         ),
         migrations.CreateModel(

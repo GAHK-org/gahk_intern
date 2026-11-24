@@ -1,13 +1,13 @@
 from django.db import models
 from django.utils import timezone
 
-from residents.models import Resident
+from residents.models import Account
 
 
 class EconomicLedgerEntry(models.Model):
     """One posting from e-conomic's ledger, mirrored locally (F-010 regnskab, alumneregning)."""
 
-    resident = models.ForeignKey(Resident, on_delete=models.PROTECT, related_name="economic_entries")
+    resident = models.ForeignKey(Account, on_delete=models.PROTECT, related_name="economic_entries")
     entry_number = models.PositiveIntegerField()  # e-conomic's entryNumber, or journalEntryNumber if draft
     is_draft = models.BooleanField(default=False)
     date = models.DateField()
@@ -90,7 +90,7 @@ class AlumneregningSend(models.Model):
     exact period's bill (outcome="sent") rather than mailing them again, and doubles as the audit
     trail/status page for what went out and when — see regnskab.alumneregning.send_alumneregninger."""
 
-    resident = models.ForeignKey(Resident, on_delete=models.PROTECT, related_name="alumneregning_sends")
+    resident = models.ForeignKey(Account, on_delete=models.PROTECT, related_name="alumneregning_sends")
     date_from = models.DateField()
     date_to = models.DateField()
     # "sent": the statement was made and its mail queued (core.mail) — `mail` says whether it has gone

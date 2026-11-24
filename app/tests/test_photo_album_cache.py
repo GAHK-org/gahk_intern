@@ -12,7 +12,7 @@ from photo_album import cache
 from photo_album.models import Album, Media, MediaStatus
 from photo_album.services import build_derivatives, upload_media
 from photo_album.storage import get_photo_album_storage
-from residents.models import Resident
+from residents.models import Account
 
 from .media_samples import image_upload
 
@@ -23,7 +23,7 @@ def cache_dir(settings: object, tmp_path: Path) -> Path:
     return tmp_path / "cache"
 
 
-def _stored(resident: Resident, **fields: object) -> Media:
+def _stored(resident: Account, **fields: object) -> Media:
     album = Album.objects.create(folder="2024", name="Fest")
     media = upload_media(album=album, uploaded_file=image_upload("x.jpg"), resident=resident, approved=True)
     assert build_derivatives(media)
@@ -44,7 +44,7 @@ def _body(response: object) -> bytes:
 
 @pytest.mark.django_db
 def test_a_thumbnail_is_copied_once_then_served_from_disk(
-    client: Client, cache_dir: Path, make_resident: Callable[..., Resident]
+    client: Client, cache_dir: Path, make_resident: Callable[..., Account]
 ) -> None:
     resident = make_resident()
     media = _stored(resident)
@@ -65,7 +65,7 @@ def test_a_thumbnail_is_copied_once_then_served_from_disk(
 
 @pytest.mark.django_db
 def test_hd_images_are_cached_but_originals_are_not(
-    client: Client, cache_dir: Path, make_resident: Callable[..., Resident]
+    client: Client, cache_dir: Path, make_resident: Callable[..., Account]
 ) -> None:
     resident = make_resident()
     media = _stored(resident)
@@ -80,7 +80,7 @@ def test_hd_images_are_cached_but_originals_are_not(
 
 
 @pytest.mark.django_db
-def test_a_video_is_never_cached_in_hd(cache_dir: Path, make_resident: Callable[..., Resident]) -> None:
+def test_a_video_is_never_cached_in_hd(cache_dir: Path, make_resident: Callable[..., Account]) -> None:
     """Its player seeks with Range requests, which only the bucket answers."""
     media = _stored(make_resident(), content_type="video/mp4")
 
@@ -90,7 +90,7 @@ def test_a_video_is_never_cached_in_hd(cache_dir: Path, make_resident: Callable[
 
 @pytest.mark.django_db
 def test_nothing_is_cached_for_a_reader_who_may_not_see_it(
-    client: Client, cache_dir: Path, make_resident: Callable[..., Resident]
+    client: Client, cache_dir: Path, make_resident: Callable[..., Account]
 ) -> None:
     media = _stored(make_resident(email="owner@gahk.dk"), status=MediaStatus.PENDING)
     client.force_login(make_resident(email="other@gahk.dk"))
@@ -101,7 +101,7 @@ def test_nothing_is_cached_for_a_reader_who_may_not_see_it(
 
 @pytest.mark.django_db
 def test_a_failed_copy_falls_back_to_the_bucket(
-    client: Client, cache_dir: Path, make_resident: Callable[..., Resident], monkeypatch: pytest.MonkeyPatch
+    client: Client, cache_dir: Path, make_resident: Callable[..., Account], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     resident = make_resident()
     media = _stored(resident)
@@ -116,7 +116,7 @@ def test_a_failed_copy_falls_back_to_the_bucket(
 
 
 @pytest.mark.django_db
-def test_caching_is_off_without_a_directory(make_resident: Callable[..., Resident]) -> None:
+def test_caching_is_off_without_a_directory(make_resident: Callable[..., Account]) -> None:
     media = _stored(make_resident())
     assert cache.cached_file(media, media.thumbnail.name) is None
 

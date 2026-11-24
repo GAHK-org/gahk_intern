@@ -22,7 +22,7 @@ from opslagstavle import embeds
 from opslagstavle import services as board_services
 from opslagstavle.models import Notice
 from photo_album.models import Album, DerivativeState, Media, MediaStatus
-from residents.models import Resident, Role
+from residents.models import Account, Role
 
 from .test_gahkflix import make_video
 
@@ -40,17 +40,17 @@ urlpatterns = [
 
 
 @pytest.fixture
-def beboer(make_resident: Callable[..., Resident]) -> Resident:
+def beboer(make_resident: Callable[..., Account]) -> Account:
     return make_resident(email="beboer@gahk.dk", first_name="Bo", last_name="Beboer")
 
 
 @pytest.fixture
-def other(make_resident: Callable[..., Resident]) -> Resident:
+def other(make_resident: Callable[..., Account]) -> Account:
     return make_resident(email="anden@gahk.dk", first_name="Ann", last_name="Anden")
 
 
 @pytest.fixture
-def member(make_resident: Callable[..., Resident]) -> Resident:
+def member(make_resident: Callable[..., Account]) -> Account:
     """Fotogruppen: inside GAHKFlix's rollout gate, and one of its administrators."""
     return make_resident(email="foto@gahk.dk", roles=(Role.FOTO,), first_name="Dorte")
 
@@ -61,13 +61,13 @@ def videos_open(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(gahkflix_access, "ACCESS_ROLES", None)
 
 
-def client_for(resident: Resident) -> Client:
+def client_for(resident: Account) -> Client:
     client = Client()
     client.force_login(resident)
     return client
 
 
-def post(author: Resident, body: str) -> Notice:
+def post(author: Account, body: str) -> Notice:
     return Notice.objects.create(author=author, body=body)
 
 
@@ -83,7 +83,7 @@ def embed(thing: Album | Video, *featured: Media) -> str:
     return embed_syntax.markdown("gahkflix", thing.pk, thing.title)
 
 
-def photo(into: Album, owner: Resident, minute: int, **fields: object) -> Media:
+def photo(into: Album, owner: Account, minute: int, **fields: object) -> Media:
     defaults: dict[str, object] = {
         "title": "foto",
         "original": "o",
@@ -121,7 +121,7 @@ def body_of(html: str) -> str:
 # --- the album's widget ---------------------------------------------------------------------------
 
 
-def test_an_album_is_drawn_as_the_photo_albums_own_widget_where_it_is_embedded(beboer: Resident) -> None:
+def test_an_album_is_drawn_as_the_photo_albums_own_widget_where_it_is_embedded(beboer: Account) -> None:
     party = album()
     for minute in range(3):
         photo(party, beboer, minute)
@@ -143,7 +143,7 @@ def test_an_album_is_drawn_as_the_photo_albums_own_widget_where_it_is_embedded(b
     assert "album:" not in text.replace(widget, "")
 
 
-def test_the_feed_shows_the_excerpt_and_the_first_widget_under_it(beboer: Resident) -> None:
+def test_the_feed_shows_the_excerpt_and_the_first_widget_under_it(beboer: Account) -> None:
     first, second = album("Fredag"), album("Lørdag")
     notice = post(beboer, f"Fredag:\n\n{embed(first)}\n\nOg lørdag:\n\n{embed(second)}")
     client = client_for(beboer)
@@ -163,7 +163,7 @@ def test_the_feed_shows_the_excerpt_and_the_first_widget_under_it(beboer: Reside
     ]
 
 
-def test_an_embed_in_a_sentence_is_drawn_after_its_paragraph(beboer: Resident) -> None:
+def test_an_embed_in_a_sentence_is_drawn_after_its_paragraph(beboer: Account) -> None:
     notice = post(beboer, f"Se {embed(album())} fra i går.")
 
     text = body_of(client_for(beboer).get(f"{BOARD}{notice.pk}").content.decode())
@@ -172,7 +172,7 @@ def test_an_embed_in_a_sentence_is_drawn_after_its_paragraph(beboer: Resident) -
     assert text.index("<p>Se  fra i går.</p>") < text.index(widget)
 
 
-def test_the_album_widget_counts_pictures_and_videos_all_the_way_down(beboer: Resident) -> None:
+def test_the_album_widget_counts_pictures_and_videos_all_the_way_down(beboer: Account) -> None:
     roskilde = album("Roskilde")
     saturday = album("Lørdag", parent=roskilde)
     for minute in range(4):
@@ -192,7 +192,7 @@ def test_the_album_widget_counts_pictures_and_videos_all_the_way_down(beboer: Re
     assert '<span class="album-eyebrow">Fotoalbum · 2026 · Roskilde</span>' in sub
 
 
-def test_the_album_widget_shows_what_every_reader_sees(beboer: Resident, other: Resident) -> None:
+def test_the_album_widget_shows_what_every_reader_sees(beboer: Account, other: Account) -> None:
     party = album()
     photo(party, beboer, 0)
     photo(party, other, 1, status=MediaStatus.PENDING)
@@ -207,7 +207,7 @@ def test_the_album_widget_shows_what_every_reader_sees(beboer: Resident, other: 
     assert pictures(widget) == [f"/photo-album/{party.pk}/thumbnails/0.jpg"]
 
 
-def test_an_empty_album_still_has_its_widget(beboer: Resident) -> None:
+def test_an_empty_album_still_has_its_widget(beboer: Account) -> None:
     post(beboer, embed(album()))
 
     [widget] = album_widgets(client_for(beboer).get(BOARD).content.decode())
@@ -215,7 +215,7 @@ def test_an_empty_album_still_has_its_widget(beboer: Resident) -> None:
     assert "album-embed-n0" in widget and "Ingen billeder endnu" in widget
 
 
-def test_an_album_that_is_gone_leaves_its_name(beboer: Resident) -> None:
+def test_an_album_that_is_gone_leaves_its_name(beboer: Account) -> None:
     party = album()
     notice = post(beboer, f"Billeder:\n\n{embed(party)}")
     party.delete()
@@ -230,7 +230,7 @@ def thumbnail(media: Media) -> str:
     return f"/{media.thumbnail.name}"
 
 
-def test_an_album_shows_the_pictures_picked_for_it_in_their_order(beboer: Resident) -> None:
+def test_an_album_shows_the_pictures_picked_for_it_in_their_order(beboer: Account) -> None:
     party = album()
     shots = [photo(party, beboer, minute) for minute in range(4)]
     notice = post(beboer, embed(party, shots[0], shots[2]))
@@ -243,7 +243,7 @@ def test_an_album_shows_the_pictures_picked_for_it_in_their_order(beboer: Reside
     assert "4 billeder" in widget
 
 
-def test_picks_are_passed_over_once_the_widget_may_not_show_them(beboer: Resident) -> None:
+def test_picks_are_passed_over_once_the_widget_may_not_show_them(beboer: Account) -> None:
     party = album()
     under = album("Natten", parent=party)
     elsewhere = album("Andet")
@@ -260,7 +260,7 @@ def test_picks_are_passed_over_once_the_widget_may_not_show_them(beboer: Residen
     assert pictures(widget) == [thumbnail(from_below), thumbnail(kept)]
 
 
-def test_a_picture_picked_twice_is_shown_once(beboer: Resident) -> None:
+def test_a_picture_picked_twice_is_shown_once(beboer: Account) -> None:
     """Typed by hand, `album:84/512,513,512`: the album is still drawn, with each picture once, and
     the composer's buttons find the embed by what was typed."""
     party = album()
@@ -278,7 +278,7 @@ def test_a_picture_picked_twice_is_shown_once(beboer: Resident) -> None:
     assert f'data-embed-feature="{source}" data-url="{url}"' in drawn
 
 
-def test_with_none_of_its_picks_left_an_album_shows_its_newest_again(beboer: Resident) -> None:
+def test_with_none_of_its_picks_left_an_album_shows_its_newest_again(beboer: Account) -> None:
     party = album()
     gone = photo(party, beboer, 0)
     newest = photo(party, beboer, 1)
@@ -290,7 +290,7 @@ def test_with_none_of_its_picks_left_an_album_shows_its_newest_again(beboer: Res
     assert pictures(widget) == [thumbnail(newest)]
 
 
-def test_one_album_embedded_twice_can_show_two_sets(beboer: Resident) -> None:
+def test_one_album_embedded_twice_can_show_two_sets(beboer: Account) -> None:
     party = album()
     first, second = photo(party, beboer, 0), photo(party, beboer, 1)
     notice = post(beboer, f"{embed(party, first)}\n\nOg resten:\n\n{embed(party)}")
@@ -306,7 +306,7 @@ def test_one_album_embedded_twice_can_show_two_sets(beboer: Resident) -> None:
 # --- the film's widget ----------------------------------------------------------------------------
 
 
-def test_a_film_is_drawn_as_gahkflixs_own_widget(beboer: Resident, videos_open: None) -> None:
+def test_a_film_is_drawn_as_gahkflixs_own_widget(beboer: Account, videos_open: None) -> None:
     show = Series.objects.create(title="Revyen", created_by=beboer)
     film = make_video(
         beboer, title="Revy 2009", series=show, episode=3, duration=754.0, description="Sange og sketches."
@@ -326,7 +326,7 @@ def test_a_film_is_drawn_as_gahkflixs_own_widget(beboer: Resident, videos_open: 
 
 
 def test_the_film_widget_says_how_far_the_reader_got(
-    beboer: Resident, other: Resident, videos_open: None
+    beboer: Account, other: Account, videos_open: None
 ) -> None:
     film = make_video(beboer, duration=600.0)
     post(beboer, embed(film))
@@ -343,7 +343,7 @@ def test_the_film_widget_says_how_far_the_reader_got(
 
 
 def test_a_draft_or_binned_film_is_drawn_only_for_those_who_may_see_it(
-    beboer: Resident, other: Resident, member: Resident, videos_open: None
+    beboer: Account, other: Account, member: Account, videos_open: None
 ) -> None:
     draft = make_video(other, title="Ufærdig", published=False)
     binned = make_video(other, title="Væk", deleted_at=timezone.now())
@@ -359,7 +359,7 @@ def test_a_draft_or_binned_film_is_drawn_only_for_those_who_may_see_it(
     assert '<span class="flix-state is-binned">I papirkurven</span>' in administrator
 
 
-def test_no_film_widget_for_a_reader_gahkflix_keeps_out(beboer: Resident, member: Resident) -> None:
+def test_no_film_widget_for_a_reader_gahkflix_keeps_out(beboer: Account, member: Account) -> None:
     """GAHKFlix's own rollout gate: its widget would be a play button that answers 403."""
     film = make_video(member, title="Revy")
     notice = post(member, f"{embed(film)}\n\n{embed(album())}")
@@ -372,7 +372,7 @@ def test_no_film_widget_for_a_reader_gahkflix_keeps_out(beboer: Resident, member
     assert "flix-embed" in client_for(member).get(f"{BOARD}{notice.pk}").content.decode()
 
 
-def test_the_kitchen_account_gets_no_widgets(make_resident: Callable[..., Resident]) -> None:
+def test_the_kitchen_account_gets_no_widgets(make_resident: Callable[..., Account]) -> None:
     """It can open neither the photo album nor GAHKFlix (core.middleware.KitchenAccountGate)."""
     kitchen = make_resident(email="koekken@gahk.dk", is_kitchen=True)
     post(kitchen, f"Fra køkkenet\n\n{embed(album())}")
@@ -385,7 +385,7 @@ def test_the_kitchen_account_gets_no_widgets(make_resident: Callable[..., Reside
 
 
 @override_settings(ROOT_URLCONF=__name__)
-def test_the_widgets_follow_their_pages_to_new_addresses(beboer: Resident, videos_open: None) -> None:
+def test_the_widgets_follow_their_pages_to_new_addresses(beboer: Account, videos_open: None) -> None:
     """Posts hold what they embed, not its address: move the pages and every post follows."""
     party = album()
     film = make_video(beboer)
@@ -401,7 +401,7 @@ def test_the_widgets_follow_their_pages_to_new_addresses(beboer: Resident, video
 
 
 def test_widgets_cost_the_same_queries_however_many_posts_embed_one(
-    beboer: Resident, videos_open: None
+    beboer: Account, videos_open: None
 ) -> None:
     notices = [post(beboer, "Ingen indlejringer") for _ in range(4)]
     client = client_for(beboer)
@@ -426,7 +426,7 @@ def test_widgets_cost_the_same_queries_however_many_posts_embed_one(
     assert board_queries() == one_embedding
 
 
-def test_a_post_draws_at_most_ten_widgets(beboer: Resident) -> None:
+def test_a_post_draws_at_most_ten_widgets(beboer: Account) -> None:
     albums = [album(f"Album {n}") for n in range(embeds.MAX_PER_POST + 1)]
     notice = post(beboer, "\n\n".join(embed(each) for each in albums))
 
@@ -441,7 +441,7 @@ def test_core_and_the_board_know_the_same_kinds() -> None:
 
 
 def test_an_album_can_be_the_whole_post(
-    beboer: Resident, other: Resident, monkeypatch: pytest.MonkeyPatch
+    beboer: Account, other: Account, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     party = album()
     told: list[str] = []
@@ -460,7 +460,7 @@ def test_an_album_can_be_the_whole_post(
 # --- the composer and its pickers -------------------------------------------------------------------
 
 
-def test_sharing_an_album_starts_a_post_with_it_embedded(beboer: Resident) -> None:
+def test_sharing_an_album_starts_a_post_with_it_embedded(beboer: Account) -> None:
     party = album()
     photo(party, beboer, 0)
 
@@ -477,7 +477,7 @@ def test_sharing_an_album_starts_a_post_with_it_embedded(beboer: Resident) -> No
     assert f'data-embed-remove="album:{party.pk}"' in html
 
 
-def test_sharing_a_film_starts_a_post_with_it_embedded(beboer: Resident, videos_open: None) -> None:
+def test_sharing_a_film_starts_a_post_with_it_embedded(beboer: Account, videos_open: None) -> None:
     film = make_video(beboer, title="Revy 2009")
 
     html = client_for(beboer).get(BOARD + f"opret?gahkflix={film.pk}").content.decode()
@@ -486,7 +486,7 @@ def test_sharing_a_film_starts_a_post_with_it_embedded(beboer: Resident, videos_
     assert '<div class="flix-embed">' in html
 
 
-def test_a_shared_name_stays_one_embed(beboer: Resident) -> None:
+def test_a_shared_name_stays_one_embed(beboer: Account) -> None:
     party = album("[Revy] 2009")
     client = client_for(beboer)
 
@@ -499,14 +499,14 @@ def test_a_shared_name_stays_one_embed(beboer: Resident) -> None:
 
 
 @pytest.mark.parametrize("query", ["album=999999", "album=abc", "album=99999999999999999999", "noget=1"])
-def test_sharing_nothing_embeddable_opens_an_empty_composer(beboer: Resident, query: str) -> None:
+def test_sharing_nothing_embeddable_opens_an_empty_composer(beboer: Account, query: str) -> None:
     tag, body = textarea(client_for(beboer).get(BOARD + f"opret?{query}").content.decode())
 
     assert body.strip() == ""
     assert "autofocus" not in tag
 
 
-def test_a_draft_cannot_be_shared(beboer: Resident, videos_open: None) -> None:
+def test_a_draft_cannot_be_shared(beboer: Account, videos_open: None) -> None:
     draft = make_video(beboer, published=False)
 
     html = client_for(beboer).get(BOARD + f"opret?gahkflix={draft.pk}").content.decode()
@@ -514,7 +514,7 @@ def test_a_draft_cannot_be_shared(beboer: Resident, videos_open: None) -> None:
     assert textarea(html)[1].strip() == ""
 
 
-def test_the_composer_offers_what_the_reader_may_embed(beboer: Resident, member: Resident) -> None:
+def test_the_composer_offers_what_the_reader_may_embed(beboer: Account, member: Account) -> None:
     plain = client_for(beboer).get(BOARD + "opret").content.decode()
     fotogruppen = client_for(member).get(BOARD + "opret").content.decode()
 
@@ -525,7 +525,7 @@ def test_the_composer_offers_what_the_reader_may_embed(beboer: Resident, member:
     assert 'id="js-embed-gahkflix"' in fotogruppen
 
 
-def test_the_album_picker_lists_the_newest_and_finds_by_name(beboer: Resident) -> None:
+def test_the_album_picker_lists_the_newest_and_finds_by_name(beboer: Account) -> None:
     old = album("Forårsrengøring")
     party = album()
     photo(party, beboer, 0)
@@ -544,7 +544,7 @@ def test_the_album_picker_lists_the_newest_and_finds_by_name(beboer: Resident) -
     assert "Ingen albummer matcher «xyz»." in none
 
 
-def test_the_film_picker_lists_published_films_only(beboer: Resident, videos_open: None) -> None:
+def test_the_film_picker_lists_published_films_only(beboer: Account, videos_open: None) -> None:
     show = Series.objects.create(title="Gangen", created_by=beboer)
     film = make_video(beboer, title="Pilot", series=show)
     draft = make_video(beboer, title="Ufærdig", published=False)
@@ -560,13 +560,13 @@ def test_the_film_picker_lists_published_films_only(beboer: Resident, videos_ope
     assert f"(gahkflix:{film.pk})" in by_series
 
 
-def test_no_film_picker_for_a_reader_gahkflix_keeps_out(beboer: Resident, member: Resident) -> None:
+def test_no_film_picker_for_a_reader_gahkflix_keeps_out(beboer: Account, member: Account) -> None:
     make_video(member, title="Revy")
 
     assert "Revy" not in client_for(beboer).get(BOARD + "indlejr/gahkflix").content.decode()
 
 
-def test_the_composer_draws_the_widgets_the_body_embeds(beboer: Resident) -> None:
+def test_the_composer_draws_the_widgets_the_body_embeds(beboer: Account) -> None:
     party = album()
     client = client_for(beboer)
 
@@ -578,7 +578,7 @@ def test_the_composer_draws_the_widgets_the_body_embeds(beboer: Resident) -> Non
     assert album_widgets(nothing) == []
 
 
-def test_the_preview_tab_draws_the_widgets_where_they_stand(beboer: Resident) -> None:
+def test_the_preview_tab_draws_the_widgets_where_they_stand(beboer: Account) -> None:
     party = album()
 
     response = client_for(beboer).post(
@@ -607,7 +607,7 @@ def test_the_composer_endpoints_are_for_residents(client: Client, method: str, u
 
 
 def test_an_albums_widget_in_the_composer_offers_to_pick_its_pictures(
-    beboer: Resident, videos_open: None
+    beboer: Account, videos_open: None
 ) -> None:
     party = album()
     shot = photo(party, beboer, 0)
@@ -626,7 +626,7 @@ def test_an_albums_widget_in_the_composer_offers_to_pick_its_pictures(
     assert f'data-embed-remove="gahkflix:{film.pk}"' in drawn
 
 
-def test_picking_pictures_lists_what_the_widget_may_show_newest_first(beboer: Resident) -> None:
+def test_picking_pictures_lists_what_the_widget_may_show_newest_first(beboer: Account) -> None:
     party = album()
     under = album("Natten", parent=party)
     older = photo(party, beboer, 0)
@@ -644,7 +644,7 @@ def test_picking_pictures_lists_what_the_widget_may_show_newest_first(beboer: Re
     assert "Vis flere" not in html
 
 
-def test_picking_pictures_shows_those_picked_in_their_order(beboer: Resident) -> None:
+def test_picking_pictures_shows_those_picked_in_their_order(beboer: Account) -> None:
     party = album()
     first, second, third = (photo(party, beboer, minute) for minute in range(3))
     gone = photo(party, beboer, 3, deleted_at=timezone.now())
@@ -661,9 +661,7 @@ def test_picking_pictures_shows_those_picked_in_their_order(beboer: Resident) ->
     assert str(second.pk) not in re.findall(r'data-picture-picked="(\d+)"', html)
 
 
-def test_picking_pictures_pages_through_a_big_album(
-    beboer: Resident, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_picking_pictures_pages_through_a_big_album(beboer: Account, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(embeds, "PICTURES_PAGE", 2)
     party = album()
     shots = [photo(party, beboer, minute) for minute in range(5)]
@@ -681,14 +679,14 @@ def test_picking_pictures_pages_through_a_big_album(
 
 
 @pytest.mark.parametrize("query", [{"side": "0"}, {"side": "x"}, {"side": "-1"}])
-def test_picking_pictures_refuses_what_is_no_page(beboer: Resident, query: dict[str, str]) -> None:
+def test_picking_pictures_refuses_what_is_no_page(beboer: Account, query: dict[str, str]) -> None:
     party = album()
 
     assert client_for(beboer).get(f"{BOARD}indlejr/album/{party.pk}/billeder", query).status_code == 404
 
 
 def test_no_pictures_to_pick_for_an_album_that_is_gone_or_for_the_kitchen(
-    beboer: Resident, make_resident: Callable[..., Resident]
+    beboer: Account, make_resident: Callable[..., Account]
 ) -> None:
     party = album()
     kitchen = make_resident(email="koekken@gahk.dk", is_kitchen=True)
@@ -700,7 +698,7 @@ def test_no_pictures_to_pick_for_an_album_that_is_gone_or_for_the_kitchen(
 # --- "Del på opslagstavlen" -------------------------------------------------------------------------
 
 
-def test_the_album_page_offers_to_share_it(beboer: Resident) -> None:
+def test_the_album_page_offers_to_share_it(beboer: Account) -> None:
     party = album()
 
     html = client_for(beboer).get(f"/fotoalbum/{party.pk}").content.decode()
@@ -709,7 +707,7 @@ def test_the_album_page_offers_to_share_it(beboer: Resident) -> None:
 
 
 def test_no_share_button_for_a_reader_the_board_keeps_out(
-    beboer: Resident, monkeypatch: pytest.MonkeyPatch
+    beboer: Account, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setattr(board_access, "ACCESS_ROLES", (Role.INSPEKTION,))
 
@@ -718,9 +716,7 @@ def test_no_share_button_for_a_reader_the_board_keeps_out(
     assert "Del på opslagstavlen" not in html
 
 
-def test_a_published_film_offers_to_share_it_and_a_draft_does_not(
-    beboer: Resident, videos_open: None
-) -> None:
+def test_a_published_film_offers_to_share_it_and_a_draft_does_not(beboer: Account, videos_open: None) -> None:
     film = make_video(beboer)
     draft = make_video(beboer, title="Kladde", published=False)
     client = client_for(beboer)

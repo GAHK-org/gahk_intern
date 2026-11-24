@@ -16,7 +16,7 @@ from django.utils import timezone
 # ----------------------------------------------------------------------------- kvotient (F-004)
 class KvotientApplication(models.Model):  # intern_kvotient_nyintern
     resident = models.ForeignKey(
-        "residents.Resident", on_delete=models.CASCADE, related_name="kvotient_applications"
+        "residents.Account", on_delete=models.CASCADE, related_name="kvotient_applications"
     )
     move_month = models.IntegerField()  # 0-indexed month number (decided)
     move_in_month = models.IntegerField()  # 0-indexed
@@ -120,7 +120,7 @@ class RoomCriterion(models.Model):  # intern_room_criteria
 class RoomCondition(models.Model):  # intern_room_condition (only the current state kept, decided)
     room = models.ForeignKey("core.Room", on_delete=models.CASCADE, related_name="conditions")
     resident = models.ForeignKey(
-        "residents.Resident", null=True, blank=True, on_delete=models.SET_NULL, related_name="+"
+        "residents.Account", null=True, blank=True, on_delete=models.SET_NULL, related_name="+"
     )
     recorded_by_name = models.CharField(max_length=255, blank=True)  # legacy alumne_fullname snapshot
     recorded_at = models.DateTimeField()

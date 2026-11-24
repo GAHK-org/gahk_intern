@@ -31,7 +31,7 @@ from django.dispatch import receiver
 from django.utils import timezone
 
 from core.files import delete_attached_files
-from residents.models import Resident, embedsgruppe_of
+from residents.models import Account, embedsgruppe_of
 
 # NO RETENTION. Opslag are kept indefinitely; nothing deletes a post but its author or a moderator.
 #
@@ -119,7 +119,7 @@ class AuthoredByResident(models.Model):
         abstract = True
 
     if TYPE_CHECKING:  # declared as a real FK by each concrete model, with its own related_name
-        author: Resident
+        author: Account
 
     def save(
         self,

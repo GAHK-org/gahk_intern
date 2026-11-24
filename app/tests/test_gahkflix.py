@@ -45,7 +45,7 @@ from gahkflix.storage import get_video_storage
 from notifications import categories
 from notifications.categories import Importance
 from notifications.models import Notification
-from residents.models import Resident, Role
+from residents.models import Account, Role
 
 from .media_samples import broken_audio_mpg_bytes, jpeg_bytes, mp4_bytes, subtitled_mkv_bytes
 
@@ -62,28 +62,28 @@ def _media(settings: Any, tmp_path: Path) -> None:  # noqa: ANN401
 
 
 @pytest.fixture
-def admin(make_resident: Callable[..., Resident]) -> Resident:
+def admin(make_resident: Callable[..., Account]) -> Account:
     return make_resident(email="admin@gahk.dk", roles=(Role.ADMINISTRATOR,), first_name="Ada")
 
 
 @pytest.fixture
-def admin2(make_resident: Callable[..., Resident]) -> Resident:
+def admin2(make_resident: Callable[..., Account]) -> Account:
     return make_resident(email="admin2@gahk.dk", roles=(Role.ADMINISTRATOR,), first_name="Bo")
 
 
 @pytest.fixture
-def admin3(make_resident: Callable[..., Resident]) -> Resident:
+def admin3(make_resident: Callable[..., Account]) -> Account:
     return make_resident(email="admin3@gahk.dk", roles=(Role.FOTO,), first_name="Cille")
 
 
 @pytest.fixture
-def member(make_resident: Callable[..., Resident]) -> Resident:
+def member(make_resident: Callable[..., Account]) -> Account:
     """Fotogruppen: inside the rollout gate, and an "administrator" in GAHKFlix's sense."""
     return make_resident(email="foto@gahk.dk", roles=(Role.FOTO,), first_name="Dorte")
 
 
 @pytest.fixture
-def plain(make_resident: Callable[..., Resident]) -> Resident:
+def plain(make_resident: Callable[..., Account]) -> Account:
     return make_resident(email="beboer@gahk.dk", first_name="Erik", last_name="Hansen")
 
 
@@ -92,14 +92,14 @@ def open_gate(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(access, "ACCESS_ROLES", None)
 
 
-def client_for(resident: Resident) -> Client:
+def client_for(resident: Account) -> Client:
     client = Client()
     client.force_login(resident)
     return client
 
 
 def make_video(
-    owner: Resident,
+    owner: Account,
     *,
     title: str = "Revy 2026",
     published: bool = True,
@@ -194,7 +194,7 @@ def upload(
     return client.post(reverse("gahkflix:upload_commit"), {"token": token}, content_type="application/json")
 
 
-def notified(resident: Resident, category: str) -> list[Notification]:
+def notified(resident: Account, category: str) -> list[Notification]:
     return list(Notification.objects.filter(recipient=resident, category=category))
 
 
@@ -234,15 +234,15 @@ def details(video: Video, **changes: Any) -> dict[str, str]:  # noqa: ANN401
 
 
 def test_gate_admits_administrators_and_fotogruppen_only(
-    admin: Resident, member: Resident, plain: Resident
+    admin: Account, member: Account, plain: Account
 ) -> None:
     assert client_for(admin).get(reverse("gahkflix:home")).status_code == 200
     assert client_for(member).get(reverse("gahkflix:home")).status_code == 200
     assert client_for(plain).get(reverse("gahkflix:home")).status_code == 403
 
 
-def test_sidebar_entry_follows_the_gate(admin: Resident, plain: Resident) -> None:
-    def urls(resident: Resident) -> list[str]:
+def test_sidebar_entry_follows_the_gate(admin: Account, plain: Account) -> None:
+    def urls(resident: Account) -> list[str]:
         nav = client_for(resident).get("/").context["nav_intern"]
         return [url for _section, items in nav for url, _label, _icon in items]
 
@@ -250,11 +250,11 @@ def test_sidebar_entry_follows_the_gate(admin: Resident, plain: Resident) -> Non
     assert "/gahkflix/" not in urls(plain)
 
 
-def test_opening_the_gate_lets_every_resident_in(open_gate: None, plain: Resident) -> None:
+def test_opening_the_gate_lets_every_resident_in(open_gate: None, plain: Account) -> None:
     assert client_for(plain).get(reverse("gahkflix:home")).status_code == 200
 
 
-def test_every_resident_is_let_in_with_debug_on(settings: Any, plain: Resident, admin: Resident) -> None:  # noqa: ANN401
+def test_every_resident_is_let_in_with_debug_on(settings: Any, plain: Account, admin: Account) -> None:  # noqa: ANN401
     """So a non-administrator's GAHKFlix can be tried locally while it is still under test."""
     settings.DEBUG = True
     client = client_for(plain)
@@ -262,14 +262,14 @@ def test_every_resident_is_let_in_with_debug_on(settings: Any, plain: Resident, 
     assert "/gahkflix/" in [url for _s, items in client.get("/").context["nav_intern"] for url, *_ in items]
     # Inside, a resident is still a resident: none of the administrators' pages.
     assert client.get(reverse("gahkflix:drafts")).status_code == 403
-    assert plain in access.audience(Resident.objects.all())
+    assert plain in access.audience(Account.objects.all())
 
 
 # --- Uploading and processing -------------------------------------------------------------------
 
 
 def test_upload_is_encoded_and_offers_frames(
-    admin: Resident, django_capture_on_commit_callbacks: Callable[..., Any]
+    admin: Account, django_capture_on_commit_callbacks: Callable[..., Any]
 ) -> None:
     client = client_for(admin)
     with django_capture_on_commit_callbacks(execute=True):
@@ -293,7 +293,7 @@ def test_upload_is_encoded_and_offers_frames(
     assert notified(admin, categories.GAHKFLIX_UPLOADS)
 
 
-def test_the_edit_page_offers_the_files_date_and_the_original(admin: Resident) -> None:
+def test_the_edit_page_offers_the_files_date_and_the_original(admin: Account) -> None:
     """The date the file suggests fills nothing in by itself: a button puts it in the fields."""
     video = make_video(admin, published=False, released_on=None)
     client = client_for(admin)
@@ -324,7 +324,7 @@ def test_the_edit_page_offers_the_files_date_and_the_original(admin: Resident) -
 
 
 def test_a_release_date_once_given_stays_and_an_older_video_without_one_can_still_be_edited(
-    admin: Resident,
+    admin: Account,
 ) -> None:
     """From before the date was filled in by hand: a typo is fixed without making up a year."""
     old = make_video(admin, title="Revyn", released_on=None, days_old=3)
@@ -345,7 +345,7 @@ def test_a_release_date_once_given_stays_and_an_older_video_without_one_can_stil
 
 
 def test_a_draft_is_published_once_it_has_pictures(
-    admin: Resident, admin2: Resident, plain: Resident, django_capture_on_commit_callbacks: Callable[..., Any]
+    admin: Account, admin2: Account, plain: Account, django_capture_on_commit_callbacks: Callable[..., Any]
 ) -> None:
     client = client_for(admin)
     with django_capture_on_commit_callbacks(execute=True):
@@ -392,7 +392,7 @@ def test_a_draft_is_published_once_it_has_pictures(
     ],
 )
 def test_a_custom_thumbnail_or_banner_becomes_16_by_9(
-    admin: Resident, kind: str, size: tuple[int, int]
+    admin: Account, kind: str, size: tuple[int, int]
 ) -> None:
     video = make_video(admin, published=False)
     response = client_for(admin).post(
@@ -411,7 +411,7 @@ def test_a_custom_thumbnail_or_banner_becomes_16_by_9(
     assert getattr(video, f"{kind}_frame") is None
 
 
-def test_the_upload_page_shows_your_unpublished_videos(admin: Resident, member: Resident) -> None:
+def test_the_upload_page_shows_your_unpublished_videos(admin: Account, member: Account) -> None:
     make_video(admin, title="Min halvfærdige revy", published=False)
     make_video(admin, title="Allerede ude", days_old=30)
     make_video(member, title="Andens kladde", published=False)
@@ -421,7 +421,7 @@ def test_the_upload_page_shows_your_unpublished_videos(admin: Resident, member: 
     assert "Allerede ude" not in page and "Andens kladde" not in page
 
 
-def test_the_upload_page_lists_your_recent_videos(admin: Resident) -> None:
+def test_the_upload_page_lists_your_recent_videos(admin: Account) -> None:
     recent = make_video(admin, title="Revy, lige udgivet", days_old=2)
     processing = make_video(admin, title="Sketch, behandles", published=False)
     VideoFile.objects.filter(video=processing).update(state=FileState.PROCESSING, progress=40)
@@ -433,13 +433,13 @@ def test_the_upload_page_lists_your_recent_videos(admin: Resident) -> None:
     assert "ny version" not in page.lower()
 
 
-def test_the_new_version_section_says_it_is_for_corrections(admin: Resident) -> None:
+def test_the_new_version_section_says_it_is_for_corrections(admin: Account) -> None:
     recent = make_video(admin, days_old=2)
     edit = client_for(admin).get(reverse("gahkflix:edit", args=[recent.pk])).content.decode()
     assert 'id="ny-version"' in edit and "Upload den rettede fil her" in edit
 
 
-def test_after_seven_days_the_edit_page_says_why_there_is_no_new_version(admin: Resident) -> None:
+def test_after_seven_days_the_edit_page_says_why_there_is_no_new_version(admin: Account) -> None:
     old = make_video(admin, days_old=10)
     edit = client_for(admin).get(reverse("gahkflix:edit", args=[old.pk])).content.decode()
     assert "kan kun skiftes de første 7 dage" in edit
@@ -447,7 +447,7 @@ def test_after_seven_days_the_edit_page_says_why_there_is_no_new_version(admin: 
 
 
 def test_pick_a_moment_yourself(
-    admin: Resident, django_capture_on_commit_callbacks: Callable[..., Any]
+    admin: Account, django_capture_on_commit_callbacks: Callable[..., Any]
 ) -> None:
     client = client_for(admin)
     with django_capture_on_commit_callbacks(execute=True):
@@ -492,7 +492,7 @@ def test_ffmpeg_reads_stored_files_over_the_loopback() -> None:
         assert refused.value.code == 416
 
 
-def test_season_and_episode_fields(admin: Resident, member: Resident) -> None:
+def test_season_and_episode_fields(admin: Account, member: Account) -> None:
     series = Series.objects.create(title="Gangen", created_by=admin)
     make_video(admin, title="Pilot", series=series, season=1, episode=1)
     make_video(member, title="Hemmelig", series=series, season=1, episode=2, published=False)
@@ -506,7 +506,7 @@ def test_season_and_episode_fields(admin: Resident, member: Resident) -> None:
 
 
 def test_season_and_episode_titles_of_drafts_you_cannot_see(
-    open_gate: None, admin: Resident, plain: Resident
+    open_gate: None, admin: Account, plain: Account
 ) -> None:
     series = Series.objects.create(title="Gangen", created_by=admin)
     make_video(admin, title="Hemmelig", series=series, season=1, episode=2, published=False)
@@ -520,7 +520,7 @@ def test_season_and_episode_titles_of_drafts_you_cannot_see(
 
 
 def test_up_to_ten_drafts_even_while_one_is_processing(
-    admin: Resident, admin2: Resident, django_capture_on_commit_callbacks: Callable[..., Any]
+    admin: Account, admin2: Account, django_capture_on_commit_callbacks: Callable[..., Any]
 ) -> None:
     processing = make_video(admin, title="Behandles stadig", published=False)
     VideoFile.objects.filter(video=processing).update(state=FileState.PROCESSING)
@@ -556,7 +556,7 @@ def test_up_to_ten_drafts_even_while_one_is_processing(
     assert "Kladder" in client.get(reverse("gahkflix:mine")).content.decode()
 
 
-def test_the_lists_of_uploads_follow_the_processing(admin: Resident) -> None:
+def test_the_lists_of_uploads_follow_the_processing(admin: Account) -> None:
     """The upload page and Mine videoer fetch their lists again while anything in them is processed,
     and the upload page as each file arrives (gahkflix.ts, initLiveLists)."""
     busy = make_video(admin, title="Behandles", published=False)
@@ -578,7 +578,7 @@ def test_the_lists_of_uploads_follow_the_processing(admin: Resident) -> None:
     assert "data-flix-live" in client.get(reverse("gahkflix:upload")).content.decode()
 
 
-def test_an_upload_waiting_its_turn_says_so(admin: Resident, admin2: Resident) -> None:
+def test_an_upload_waiting_its_turn_says_so(admin: Account, admin2: Account) -> None:
     encoding_now = make_video(admin2, title="Andens revy", published=False)
     VideoFile.objects.filter(video=encoding_now).update(state=FileState.PROCESSING, progress=40)
     waiting = make_video(admin, title="Min revy", published=False)
@@ -598,7 +598,7 @@ def test_an_upload_waiting_its_turn_says_so(admin: Resident, admin2: Resident) -
     assert "I kø · den næste" in client.get(reverse("gahkflix:mine")).content.decode()
 
 
-def test_the_same_file_is_refused_before_it_is_sent(admin: Resident, member: Resident) -> None:
+def test_the_same_file_is_refused_before_it_is_sent(admin: Account, member: Account) -> None:
     existing = make_video(admin, title="Julerevy")
     existing_file = existing.file
     assert existing_file is not None
@@ -608,7 +608,7 @@ def test_the_same_file_is_refused_before_it_is_sent(admin: Resident, member: Res
 
 
 def test_a_duplicate_the_fingerprint_missed_is_caught_by_the_worker(
-    admin: Resident, member: Resident, django_capture_on_commit_callbacks: Callable[..., Any]
+    admin: Account, member: Account, django_capture_on_commit_callbacks: Callable[..., Any]
 ) -> None:
     with django_capture_on_commit_callbacks(execute=True):
         upload(client_for(admin), mp4_bytes())
@@ -624,7 +624,7 @@ def test_a_duplicate_the_fingerprint_missed_is_caught_by_the_worker(
     ("name", "size", "message"),
     [("revy.pdf", 10, "Filtypen"), ("revy.mp4", 0, "tom"), ("revy.mp4", 10 * 1024**3, "for stor")],
 )
-def test_begin_checks_the_file(admin: Resident, name: str, size: int, message: str) -> None:
+def test_begin_checks_the_file(admin: Account, name: str, size: int, message: str) -> None:
     response = client_for(admin).post(
         reverse("gahkflix:upload_begin"),
         {"name": name, "size": size, "type": "", "fingerprint": "a" * 64},
@@ -634,14 +634,14 @@ def test_begin_checks_the_file(admin: Resident, name: str, size: int, message: s
     assert message in response.json()["error"]
 
 
-def test_commit_refuses_a_file_that_did_not_arrive_whole(admin: Resident) -> None:
+def test_commit_refuses_a_file_that_did_not_arrive_whole(admin: Account) -> None:
     response = upload(client_for(admin), b"short", declared_size=1000)
     assert response.status_code == 409
     assert not Video.objects.exists()
     assert not list((Path(get_video_storage().location) / "gahkflix").rglob("*.mp4"))  # type: ignore[attr-defined]
 
 
-def test_commit_refuses_somebody_elses_token(admin: Resident, member: Resident) -> None:
+def test_commit_refuses_somebody_elses_token(admin: Account, member: Account) -> None:
     begin = client_for(admin).post(
         reverse("gahkflix:upload_begin"),
         {"name": "revy.mp4", "size": 5, "type": "video/mp4", "fingerprint": "b" * 64},
@@ -654,7 +654,7 @@ def test_commit_refuses_somebody_elses_token(admin: Resident, member: Resident) 
 
 
 def test_a_file_without_video_fails_and_says_so(
-    admin: Resident, django_capture_on_commit_callbacks: Callable[..., Any]
+    admin: Account, django_capture_on_commit_callbacks: Callable[..., Any]
 ) -> None:
     with django_capture_on_commit_callbacks(execute=True):
         upload(client_for(admin), b"not a video at all" * 100)
@@ -665,7 +665,7 @@ def test_a_file_without_video_fails_and_says_so(
 
 
 def test_a_new_version_replaces_the_file_and_keeps_the_rest(
-    admin: Resident, django_capture_on_commit_callbacks: Callable[..., Any]
+    admin: Account, django_capture_on_commit_callbacks: Callable[..., Any]
 ) -> None:
     client = client_for(admin)
     with django_capture_on_commit_callbacks(execute=True):
@@ -687,7 +687,7 @@ def test_a_new_version_replaces_the_file_and_keeps_the_rest(
     assert Video.objects.count() == 1
 
 
-def test_no_new_version_after_seven_days(admin: Resident) -> None:
+def test_no_new_version_after_seven_days(admin: Account) -> None:
     video = make_video(admin, days_old=8)
     response = client_for(admin).post(
         reverse("gahkflix:upload_begin"),
@@ -701,7 +701,7 @@ def test_no_new_version_after_seven_days(admin: Resident) -> None:
 
 
 def test_a_draft_is_seen_only_by_its_uploader_and_administrators(
-    open_gate: None, plain: Resident, admin: Resident, make_resident: Callable[..., Resident]
+    open_gate: None, plain: Account, admin: Account, make_resident: Callable[..., Account]
 ) -> None:
     draft = make_video(plain, published=False)
     other = make_resident(email="anden@gahk.dk")
@@ -711,7 +711,7 @@ def test_a_draft_is_seen_only_by_its_uploader_and_administrators(
     assert client_for(other).get(reverse("gahkflix:picture", args=[draft.pk, "thumbnail"])).status_code == 404
 
 
-def test_files_are_served_after_the_access_check(admin: Resident) -> None:
+def test_files_are_served_after_the_access_check(admin: Account) -> None:
     video = make_video(admin)
     client = client_for(admin)
     stream = client.get(reverse("gahkflix:stream", args=[video.pk, "hd"]))
@@ -720,7 +720,7 @@ def test_files_are_served_after_the_access_check(admin: Resident) -> None:
     assert client.get(reverse("gahkflix:picture", args=[video.pk, "banner"])).status_code == 200
 
 
-def test_download_in_hd_full_hd_or_the_original(admin: Resident) -> None:
+def test_download_in_hd_full_hd_or_the_original(admin: Account) -> None:
     video = make_video(admin, title='Revy: "Den store"')
     client = client_for(admin)
 
@@ -746,7 +746,7 @@ def test_download_in_hd_full_hd_or_the_original(admin: Resident) -> None:
     assert page.count("2\xa0bytes") == 2 and "3\xa0bytes" in page  # HD, Full HD, and the original
 
 
-def test_the_player_config_for_the_overlay(admin: Resident) -> None:
+def test_the_player_config_for_the_overlay(admin: Account) -> None:
     series = Series.objects.create(title="Gangen", created_by=admin)
     first = make_video(admin, title="En", series=series, season=1, episode=1)
     second = make_video(admin, title="To", series=series, season=1, episode=2)
@@ -787,7 +787,7 @@ def test_the_player_config_for_the_overlay(admin: Resident) -> None:
 
 
 def test_edits_within_30_days_apply_directly(
-    admin: Resident, member: Resident, django_capture_on_commit_callbacks: Callable[..., Any]
+    admin: Account, member: Account, django_capture_on_commit_callbacks: Callable[..., Any]
 ) -> None:
     video = make_video(admin, days_old=10)
     cast = [
@@ -819,9 +819,9 @@ def test_edits_within_30_days_apply_directly(
 
 
 def test_after_30_days_an_edit_needs_another_administrator(
-    admin: Resident,
-    admin2: Resident,
-    member: Resident,
+    admin: Account,
+    admin2: Account,
+    member: Account,
     django_capture_on_commit_callbacks: Callable[..., Any],
 ) -> None:
     video = make_video(member, days_old=31)
@@ -854,7 +854,7 @@ def test_after_30_days_an_edit_needs_another_administrator(
 
 
 def test_a_rejected_picture_proposal_is_thrown_away(
-    admin: Resident, admin2: Resident, django_capture_on_commit_callbacks: Callable[..., Any]
+    admin: Account, admin2: Account, django_capture_on_commit_callbacks: Callable[..., Any]
 ) -> None:
     video = make_video(admin, days_old=40)
     frame = VideoFrame(video=video, at_seconds=1.0)
@@ -883,7 +883,7 @@ def test_a_rejected_picture_proposal_is_thrown_away(
     assert not get_video_storage().exists(proposed)
 
 
-def test_episode_numbers_are_unique_within_a_series(admin: Resident) -> None:
+def test_episode_numbers_are_unique_within_a_series(admin: Account) -> None:
     series = Series.objects.create(title="Gangen", created_by=admin)
     make_video(admin, title="Pilot", series=series, season=1, episode=1)
     second = make_video(admin, title="Afsnit to", series=series)
@@ -895,7 +895,7 @@ def test_episode_numbers_are_unique_within_a_series(admin: Resident) -> None:
 
 
 def test_publishing_saves_what_was_typed_first(
-    admin: Resident, admin2: Resident, django_capture_on_commit_callbacks: Callable[..., Any]
+    admin: Account, admin2: Account, django_capture_on_commit_callbacks: Callable[..., Any]
 ) -> None:
     """The publish button belongs to the details form: a draft is never published under the title
     it had before, while the one typed is lost."""
@@ -921,7 +921,7 @@ def test_publishing_saves_what_was_typed_first(
 
 
 def test_new_frames_are_drawn_without_leaving_the_page(
-    admin: Resident, django_capture_on_commit_callbacks: Callable[..., Any]
+    admin: Account, django_capture_on_commit_callbacks: Callable[..., Any]
 ) -> None:
     client = client_for(admin)
     with django_capture_on_commit_callbacks(execute=True):
@@ -934,7 +934,7 @@ def test_new_frames_are_drawn_without_leaving_the_page(
     assert services.frame_batch(video) == 2 and len(services.current_frames(video)) >= 1
 
 
-def test_a_series_made_from_the_edit_page_is_picked(admin: Resident) -> None:
+def test_a_series_made_from_the_edit_page_is_picked(admin: Account) -> None:
     video = make_video(admin, published=False)
     client = client_for(admin)
     assert "data-flix-series-dialog" in client.get(reverse("gahkflix:edit", args=[video.pk])).content.decode()
@@ -962,7 +962,7 @@ def test_a_series_made_from_the_edit_page_is_picked(admin: Resident) -> None:
     ("released_on", "label"),
     [("2015", "2015"), ("2015-03", "marts 2015"), ("2015-03-12", "12. marts 2015")],
 )
-def test_a_release_date_needs_only_its_year(admin: Resident, released_on: str, label: str) -> None:
+def test_a_release_date_needs_only_its_year(admin: Account, released_on: str, label: str) -> None:
     video = make_video(admin, published=False)
     client = client_for(admin)
     response = client.post(reverse("gahkflix:edit", args=[video.pk]), details(video, released_on=released_on))
@@ -993,7 +993,7 @@ def test_a_release_date_needs_only_its_year(admin: Resident, released_on: str, l
     ],
 )
 def test_a_release_date_that_cannot_be(
-    admin: Resident, posted: dict[str, str], field: str, message: str
+    admin: Account, posted: dict[str, str], field: str, message: str
 ) -> None:
     from gahkflix.forms import VideoDetailsForm
 
@@ -1004,7 +1004,7 @@ def test_a_release_date_that_cannot_be(
     assert message in " ".join(form.errors[field])
 
 
-def test_a_cleared_release_date_falls_back_to_the_upload(admin: Resident) -> None:
+def test_a_cleared_release_date_falls_back_to_the_upload(admin: Account) -> None:
     video = make_video(admin, published=False)
     services.apply_changes(video, {"released_on": "2015-03"}, admin)
     services.apply_changes(video, {"released_on": None}, admin)
@@ -1013,7 +1013,7 @@ def test_a_cleared_release_date_falls_back_to_the_upload(admin: Resident) -> Non
     assert video.date_label == date_format(timezone.localdate(video.created_at), "j. F Y")
 
 
-def test_the_timeline_files_a_film_known_only_by_its_year_after_the_months(admin: Resident) -> None:
+def test_the_timeline_files_a_film_known_only_by_its_year_after_the_months(admin: Account) -> None:
     for title, released_on in (("Forårsfest", "2015-03-12"), ("Revyen", "2015"), ("Nytår", "2015-01")):
         services.apply_changes(make_video(admin, title=title), {"released_on": released_on}, admin)
     [(year, months)] = services.timeline()
@@ -1027,7 +1027,7 @@ def test_the_timeline_files_a_film_known_only_by_its_year_after_the_months(admin
     assert page.index("Marts") < page.index("Januar") < page.index("Uden måned")
 
 
-def test_a_proposed_release_date_reads_as_a_date(admin: Resident, admin2: Resident) -> None:
+def test_a_proposed_release_date_reads_as_a_date(admin: Account, admin2: Account) -> None:
     video = make_video(admin, days_old=40)
     change = services.propose(video, {"released_on": "2015-03"}, admin)
     page = client_for(admin2).get(reverse("gahkflix:request", args=[change.pk])).content.decode()
@@ -1035,7 +1035,7 @@ def test_a_proposed_release_date_reads_as_a_date(admin: Resident, admin2: Reside
 
 
 def test_a_date_set_by_hand_is_not_guessed_over_by_a_new_version(
-    admin: Resident, django_capture_on_commit_callbacks: Callable[..., Any]
+    admin: Account, django_capture_on_commit_callbacks: Callable[..., Any]
 ) -> None:
     client = client_for(admin)
     with django_capture_on_commit_callbacks(execute=True):
@@ -1138,7 +1138,7 @@ def content_of(response: Any) -> bytes:  # noqa: ANN401
     return b"".join(response.streaming_content) if response.streaming else response.content
 
 
-def test_a_future_release_date_needs_a_premiere_with_a_time(admin: Resident) -> None:
+def test_a_future_release_date_needs_a_premiere_with_a_time(admin: Account) -> None:
     from gahkflix.forms import VideoDetailsForm
 
     video = make_video(admin, published=False)
@@ -1172,7 +1172,7 @@ def test_a_future_release_date_needs_a_premiere_with_a_time(admin: Resident) -> 
 
 
 def test_a_premiere_already_past_is_released_at_once(
-    admin: Resident, admin2: Resident, django_capture_on_commit_callbacks: Callable[..., Any]
+    admin: Account, admin2: Account, django_capture_on_commit_callbacks: Callable[..., Any]
 ) -> None:
     video = make_video(admin, title="Revyen", published=False)
     with django_capture_on_commit_callbacks(execute=True):
@@ -1192,9 +1192,9 @@ def test_a_premiere_already_past_is_released_at_once(
 
 def test_an_upcoming_premiere_is_listed_but_not_opened(
     open_gate: None,
-    admin: Resident,
-    admin2: Resident,
-    plain: Resident,
+    admin: Account,
+    admin2: Account,
+    plain: Account,
     django_capture_on_commit_callbacks: Callable[..., Any],
 ) -> None:
     series = Series.objects.create(title="Gangen", created_by=admin)
@@ -1259,7 +1259,7 @@ def test_an_upcoming_premiere_is_listed_but_not_opened(
 
 
 def test_an_upcoming_premiere_shows_its_thumbnail_blurred(
-    open_gate: None, admin: Resident, plain: Resident
+    open_gate: None, admin: Account, plain: Account
 ) -> None:
     from gahkflix.templatetags.gahkflix import picture_url
 
@@ -1293,9 +1293,9 @@ def test_an_upcoming_premiere_shows_its_thumbnail_blurred(
 
 
 def test_a_premiere_is_announced_when_it_comes(
-    admin: Resident,
-    admin2: Resident,
-    member: Resident,
+    admin: Account,
+    admin2: Account,
+    member: Account,
     django_capture_on_commit_callbacks: Callable[..., Any],
 ) -> None:
     video = make_video(admin, title="Julerevyen", published=False)
@@ -1333,7 +1333,7 @@ def lined_up(monkeypatch: pytest.MonkeyPatch) -> list[datetime]:
 
 
 def test_a_premiere_is_announced_on_its_minute_without_a_job_every_minute(
-    admin: Resident, lined_up: list[datetime], django_capture_on_commit_callbacks: Callable[..., Any]
+    admin: Account, lined_up: list[datetime], django_capture_on_commit_callbacks: Callable[..., Any]
 ) -> None:
     client = client_for(admin)
     later = make_video(admin, title="Om et døgn", published=False)
@@ -1358,7 +1358,7 @@ def test_a_premiere_is_announced_on_its_minute_without_a_job_every_minute(
 
 
 def test_a_premiere_taken_away_is_announced_at_once(
-    admin: Resident, admin2: Resident, django_capture_on_commit_callbacks: Callable[..., Any]
+    admin: Account, admin2: Account, django_capture_on_commit_callbacks: Callable[..., Any]
 ) -> None:
     video = make_video(admin, title="Revyen", published=False)
     client = client_for(admin)
@@ -1378,7 +1378,7 @@ def test_a_premiere_taken_away_is_announced_at_once(
     assert not video.events.filter(kind=VideoEvent.Kind.PREMIERED).exists()
 
 
-def test_a_video_out_for_more_than_a_day_cannot_premiere_later(admin: Resident) -> None:
+def test_a_video_out_for_more_than_a_day_cannot_premiere_later(admin: Account) -> None:
     video = make_video(admin, days_old=2)
     response = client_for(admin).post(
         reverse("gahkflix:edit", args=[video.pk]), details(video, premiere_at=evening(2))
@@ -1398,9 +1398,9 @@ def publish_now(client: Client, video: Video, capture: Callable[..., Any], **cha
 
 
 def test_a_video_out_less_than_a_day_can_be_made_a_draft_again(
-    admin: Resident,
-    admin2: Resident,
-    member: Resident,
+    admin: Account,
+    admin2: Account,
+    member: Account,
     django_capture_on_commit_callbacks: Callable[..., Any],
 ) -> None:
     video = make_video(admin, title="Revyen", published=False, days_old=120)  # uploaded long ago
@@ -1440,7 +1440,7 @@ def test_a_video_out_less_than_a_day_can_be_made_a_draft_again(
 
 
 def test_a_video_out_less_than_a_day_can_get_a_premiere_later(
-    admin: Resident, admin2: Resident, django_capture_on_commit_callbacks: Callable[..., Any]
+    admin: Account, admin2: Account, django_capture_on_commit_callbacks: Callable[..., Any]
 ) -> None:
     """Published by mistake, with a wrong year at that: within the day it can still be a premiere."""
     video = make_video(admin, title="Revyen", published=False)
@@ -1466,7 +1466,7 @@ def test_a_video_out_less_than_a_day_can_get_a_premiere_later(
 
 
 def test_a_published_video_cannot_be_given_a_premiere_already_past_after_it_came_out(
-    admin: Resident, django_capture_on_commit_callbacks: Callable[..., Any]
+    admin: Account, django_capture_on_commit_callbacks: Callable[..., Any]
 ) -> None:
     """It would seem to have come out then: its time windows would open again, and it would be first
     under the newest, as often as anybody liked."""
@@ -1502,7 +1502,7 @@ def test_a_published_video_cannot_be_given_a_premiere_already_past_after_it_came
     assert response.status_code == 200 and "Fjern fluebenet ved Premiere" in response.content.decode()
 
 
-def test_an_upcoming_premiere_can_be_made_a_draft_again_at_any_time(admin: Resident) -> None:
+def test_an_upcoming_premiere_can_be_made_a_draft_again_at_any_time(admin: Account) -> None:
     video = make_video(admin, days_old=10, premiere_at=evening(3))
     assert video.is_upcoming and video.can_be_taken_back
     assert client_for(admin).post(reverse("gahkflix:unpublish", args=[video.pk])).status_code == 302
@@ -1511,7 +1511,7 @@ def test_an_upcoming_premiere_can_be_made_a_draft_again_at_any_time(admin: Resid
 
 
 def test_uploaders_are_warned_daily_about_unpublished_premieres(
-    admin: Resident, admin2: Resident, member: Resident
+    admin: Account, admin2: Account, member: Account
 ) -> None:
     soon = make_video(
         admin, title="Julerevyen", published=False, premiere_at=timezone.now() + timedelta(hours=5)
@@ -1535,7 +1535,7 @@ def test_uploaders_are_warned_daily_about_unpublished_premieres(
     assert one.expires_at <= timezone.now() + timedelta(days=1)
 
 
-def test_a_premiere_is_open_as_a_draft_until_it_comes_and_its_windows_run_from_it(admin: Resident) -> None:
+def test_a_premiere_is_open_as_a_draft_until_it_comes_and_its_windows_run_from_it(admin: Account) -> None:
     """Uploaded 40 days ago for a premiere still to come: nobody has seen it, so a new version, binning
     and free edits are open; once it is out, the 7 and 30 days run from the premiere."""
     video = make_video(admin, days_old=40, premiere_at=evening(5))
@@ -1579,7 +1579,7 @@ def test_a_premiere_is_open_as_a_draft_until_it_comes_and_its_windows_run_from_i
     assert not old.windows_from_premiere and access.edit_needs_approval(old)
 
 
-def test_an_upcoming_premiere_may_be_binned_directly(admin: Resident) -> None:
+def test_an_upcoming_premiere_may_be_binned_directly(admin: Account) -> None:
     video = make_video(admin, days_old=40, premiere_at=evening(5))
     client_for(admin).post(reverse("gahkflix:delete", args=[video.pk]))
     video.refresh_from_db()
@@ -1597,7 +1597,7 @@ def test_the_blur_levels() -> None:
 
 
 def test_the_history_says_who_did_what_and_when(
-    admin: Resident, admin2: Resident, django_capture_on_commit_callbacks: Callable[..., Any]
+    admin: Account, admin2: Account, django_capture_on_commit_callbacks: Callable[..., Any]
 ) -> None:
     client = client_for(admin)
     with django_capture_on_commit_callbacks(execute=True):
@@ -1643,7 +1643,7 @@ def test_the_history_says_who_did_what_and_when(
 
 
 def test_an_approved_proposal_is_in_the_history_as_the_proposers(
-    admin: Resident, admin2: Resident, member: Resident
+    admin: Account, admin2: Account, member: Account
 ) -> None:
     video = make_video(member, days_old=40)
     change = services.propose(video, {"title": "Ny titel"}, member)
@@ -1660,7 +1660,7 @@ def test_an_approved_proposal_is_in_the_history_as_the_proposers(
 
 
 def test_only_the_uploader_and_administrators_see_the_history(
-    open_gate: None, plain: Resident, admin: Resident, make_resident: Callable[..., Resident]
+    open_gate: None, plain: Account, admin: Account, make_resident: Callable[..., Account]
 ) -> None:
     video = make_video(plain)
     url = reverse("gahkflix:history", args=[video.pk])
@@ -1670,7 +1670,7 @@ def test_only_the_uploader_and_administrators_see_the_history(
 
 
 def test_an_earlier_picture_is_kept_and_can_be_brought_back(
-    admin: Resident, django_capture_on_commit_callbacks: Callable[..., Any]
+    admin: Account, django_capture_on_commit_callbacks: Callable[..., Any]
 ) -> None:
     video = make_video(admin, published=False)
     first = video.thumbnail.name
@@ -1715,7 +1715,7 @@ def test_an_earlier_picture_is_kept_and_can_be_brought_back(
 
 
 def test_bringing_an_old_picture_back_after_30_days_is_a_proposal(
-    admin: Resident, admin2: Resident, django_capture_on_commit_callbacks: Callable[..., Any]
+    admin: Account, admin2: Account, django_capture_on_commit_callbacks: Callable[..., Any]
 ) -> None:
     video = make_video(admin, days_old=40)
     first = video.thumbnail.name
@@ -1737,9 +1737,7 @@ def test_bringing_an_old_picture_back_after_30_days_is_a_proposal(
 # --- Deleting -----------------------------------------------------------------------------------
 
 
-def test_the_uploader_bins_a_video_within_seven_days(
-    open_gate: None, plain: Resident, admin: Resident
-) -> None:
+def test_the_uploader_bins_a_video_within_seven_days(open_gate: None, plain: Account, admin: Account) -> None:
     video = make_video(plain, days_old=3)
     assert client_for(plain).post(reverse("gahkflix:delete", args=[video.pk])).status_code == 302
     video.refresh_from_db()
@@ -1750,16 +1748,16 @@ def test_the_uploader_bins_a_video_within_seven_days(
     assert not video.is_binned
 
 
-def test_after_seven_days_only_administrators_may_ask(open_gate: None, plain: Resident) -> None:
+def test_after_seven_days_only_administrators_may_ask(open_gate: None, plain: Account) -> None:
     video = make_video(plain, days_old=8)
     assert client_for(plain).post(reverse("gahkflix:delete", args=[video.pk])).status_code == 403
     assert client_for(plain).get(reverse("gahkflix:request_deletion", args=[video.pk])).status_code == 403
 
 
 def test_deleting_an_old_video_takes_two_other_administrators(
-    admin: Resident,
-    admin2: Resident,
-    admin3: Resident,
+    admin: Account,
+    admin2: Account,
+    admin3: Account,
     django_capture_on_commit_callbacks: Callable[..., Any],
 ) -> None:
     video = make_video(admin2, days_old=60)
@@ -1781,7 +1779,7 @@ def test_deleting_an_old_video_takes_two_other_administrators(
     assert notified(admin, categories.GAHKFLIX_UPLOADS)
 
 
-def test_one_rejection_closes_a_deletion_request(admin: Resident, admin2: Resident) -> None:
+def test_one_rejection_closes_a_deletion_request(admin: Account, admin2: Account) -> None:
     video = make_video(admin2, days_old=60)
     change = services.request_deletion(video, admin, "Dublet")
     services.vote(change, admin2, approve=False)
@@ -1791,7 +1789,7 @@ def test_one_rejection_closes_a_deletion_request(admin: Resident, admin2: Reside
 
 
 def test_a_draft_is_deleted_outright(
-    admin: Resident, django_capture_on_commit_callbacks: Callable[..., Any]
+    admin: Account, django_capture_on_commit_callbacks: Callable[..., Any]
 ) -> None:
     video = make_video(admin, published=False, days_old=20)
     keys = [video.thumbnail.name, video.file.original.name]  # type: ignore[union-attr]
@@ -1802,7 +1800,7 @@ def test_a_draft_is_deleted_outright(
 
 
 def test_the_nightly_sweep(
-    admin: Resident, admin2: Resident, django_capture_on_commit_callbacks: Callable[..., Any]
+    admin: Account, admin2: Account, django_capture_on_commit_callbacks: Callable[..., Any]
 ) -> None:
     binned = make_video(admin, title="Gammel")
     services.bin_video(binned, admin)
@@ -1824,7 +1822,7 @@ def test_the_nightly_sweep(
     assert notified(admin, categories.GAHKFLIX_UPLOADS)
 
 
-def test_a_draft_is_deleted_90_calendar_days_after_its_upload(admin: Resident) -> None:
+def test_a_draft_is_deleted_90_calendar_days_after_its_upload(admin: Account) -> None:
     video = make_video(admin, published=False)
     today = timezone.localdate()
     uploaded = timezone.make_aware(datetime.combine(today - timedelta(days=89), time(23, 59)))
@@ -1838,7 +1836,7 @@ def test_a_draft_is_deleted_90_calendar_days_after_its_upload(admin: Resident) -
 
 
 def test_weekly_reminders_about_unpublished_drafts(
-    admin: Resident, admin2: Resident, member: Resident, open_gate: None, plain: Resident
+    admin: Account, admin2: Account, member: Account, open_gate: None, plain: Account
 ) -> None:
     make_video(plain, title="Første", published=False, days_old=20)
     make_video(plain, title="Anden", published=False, days_old=10)
@@ -1862,7 +1860,7 @@ def test_weekly_reminders_about_unpublished_drafts(
 
 
 def test_a_last_warning_the_day_before_a_draft_is_deleted(
-    admin: Resident, admin2: Resident, member: Resident
+    admin: Account, admin2: Account, member: Account
 ) -> None:
     expiring = make_video(member, title="Sidste chance", published=False, days_old=89)
     make_video(member, title="Masser af tid", published=False, days_old=60)
@@ -1879,7 +1877,7 @@ def test_a_last_warning_the_day_before_a_draft_is_deleted(
     assert not notified(member, categories.GAHKFLIX_DRAFTS)  # the uploader is told once, as uploader
 
 
-def test_the_drafts_page_is_for_administrators(admin: Resident, open_gate: None, plain: Resident) -> None:
+def test_the_drafts_page_is_for_administrators(admin: Account, open_gate: None, plain: Account) -> None:
     make_video(plain, title="Halvfærdig", published=False, days_old=12)
     page = client_for(admin).get(reverse("gahkflix:drafts"))
     assert page.status_code == 200 and "Halvfærdig" in page.content.decode()
@@ -1897,7 +1895,7 @@ def _store_aged(key: str, days: float) -> str:
     return name
 
 
-def test_files_nothing_refers_to_are_swept_after_two_days(admin: Resident, admin2: Resident) -> None:
+def test_files_nothing_refers_to_are_swept_after_two_days(admin: Account, admin2: Account) -> None:
     video = make_video(admin, days_old=40)
     abandoned = _store_aged("gahkflix/0b7d/0c1e/original/aflyst.mp4", days=3)
     in_flight = _store_aged("gahkflix/0b7d/0c1f/original/undervejs.mp4", days=1)
@@ -1919,7 +1917,7 @@ def test_files_nothing_refers_to_are_swept_after_two_days(admin: Resident, admin
     assert all(storage.exists(name) for name in keep)
 
 
-def test_the_sweep_refuses_when_the_database_does_not_match_the_bucket(admin: Resident) -> None:
+def test_the_sweep_refuses_when_the_database_does_not_match_the_bucket(admin: Account) -> None:
     make_video(admin)
     stray = [_store_aged(f"gahkflix/{index:04x}/original/fremmed.mp4", days=10) for index in range(25)]
     result = services.sweep_orphans()
@@ -1927,7 +1925,7 @@ def test_the_sweep_refuses_when_the_database_does_not_match_the_bucket(admin: Re
     assert all(get_video_storage().exists(name) for name in stray)
 
 
-def test_a_refused_picture_proposal_does_not_leave_its_file_behind(admin: Resident, admin2: Resident) -> None:
+def test_a_refused_picture_proposal_does_not_leave_its_file_behind(admin: Account, admin2: Account) -> None:
     video = make_video(admin, days_old=40)
     services.propose(video, {"title": "Andet navn"}, admin2)
     key = services.store_picture(video, "thumbnail", jpeg_bytes())
@@ -1939,7 +1937,7 @@ def test_a_refused_picture_proposal_does_not_leave_its_file_behind(admin: Reside
 # --- Watching -----------------------------------------------------------------------------------
 
 
-def test_views_count_once_per_ten_minutes(admin: Resident) -> None:
+def test_views_count_once_per_ten_minutes(admin: Account) -> None:
     video = make_video(admin)
     now = timezone.now()
     assert services.record_view(video, admin, now)
@@ -1950,15 +1948,13 @@ def test_views_count_once_per_ten_minutes(admin: Resident) -> None:
     assert stats.views == 2 and stats.viewers == 1 and stats.peak >= 1
 
 
-def test_a_draft_is_not_counted(admin: Resident) -> None:
+def test_a_draft_is_not_counted(admin: Account) -> None:
     video = make_video(admin, published=False)
     response = client_for(admin).post(reverse("gahkflix:record_view", args=[video.pk]))
     assert response.json() == {"counted": False}
 
 
-def test_trending_ranks_by_unique_viewers_this_week(
-    admin: Resident, admin2: Resident, member: Resident
-) -> None:
+def test_trending_ranks_by_unique_viewers_this_week(admin: Account, admin2: Account, member: Account) -> None:
     popular = make_video(admin, title="Populær")
     quiet = make_video(admin, title="Stille")
     for resident in (admin, admin2, member):
@@ -1970,7 +1966,7 @@ def test_trending_ranks_by_unique_viewers_this_week(
     assert [video.title for video in services.trending()] == ["Populær", "Stille"]
 
 
-def test_resume_where_you_stopped(admin: Resident) -> None:
+def test_resume_where_you_stopped(admin: Account) -> None:
     video = make_video(admin, duration=600)
     client = client_for(admin)
     client.post(
@@ -1991,7 +1987,7 @@ def test_resume_where_you_stopped(admin: Resident) -> None:
     assert bad.status_code == 400
 
 
-def test_a_viewing_from_opening_the_player_to_the_end(admin: Resident) -> None:
+def test_a_viewing_from_opening_the_player_to_the_end(admin: Account) -> None:
     video = make_video(admin, duration=600)
     client = client_for(admin)
 
@@ -2022,7 +2018,7 @@ def test_a_viewing_from_opening_the_player_to_the_end(admin: Resident) -> None:
     assert "Åbnet i afspilleren" in page and "Gennemsnitlig set tid" in page and "69 % af videoen" in page
 
 
-def test_opening_the_player_again_soon_goes_on_with_the_same_viewing(admin: Resident) -> None:
+def test_opening_the_player_again_soon_goes_on_with_the_same_viewing(admin: Account) -> None:
     video = make_video(admin, duration=600)
     now = timezone.now()
     first = services.open_viewing(video, admin, now)
@@ -2031,7 +2027,7 @@ def test_opening_the_player_again_soon_goes_on_with_the_same_viewing(admin: Resi
     assert services.open_viewing(video, admin, now + timedelta(minutes=30)) != first
 
 
-def test_the_player_reports_only_on_its_own_viewing(admin: Resident, admin2: Resident) -> None:
+def test_the_player_reports_only_on_its_own_viewing(admin: Account, admin2: Account) -> None:
     video = make_video(admin, duration=600)
     someone_elses = services.open_viewing(video, admin2)
     own = services.open_viewing(video, admin)
@@ -2051,7 +2047,7 @@ def test_the_player_reports_only_on_its_own_viewing(admin: Resident, admin2: Res
     assert client.get(reverse("gahkflix:play", args=[draft.pk]), {"format": "json"}).json()["viewing"] is None
 
 
-def test_views_from_before_their_time_was_measured(admin: Resident) -> None:
+def test_views_from_before_their_time_was_measured(admin: Account) -> None:
     video = make_video(admin, duration=600)
     services.record_view(video, admin)  # as every view before the player reported its viewings
     viewing = services.open_viewing(video, admin, timezone.now() + timedelta(hours=1))
@@ -2064,7 +2060,7 @@ def test_views_from_before_their_time_was_measured(admin: Resident) -> None:
 # --- Browsing -----------------------------------------------------------------------------------
 
 
-def test_search_finds_titles_tags_credits_and_series(admin: Resident, plain: Resident) -> None:
+def test_search_finds_titles_tags_credits_and_series(admin: Account, plain: Account) -> None:
     series = Series.objects.create(title="Kollegiekanalen", created_by=admin)
     video = make_video(admin, title="Sommerfest", series=series, episode=1)
     services.apply_changes(
@@ -2086,7 +2082,7 @@ def test_search_finds_titles_tags_credits_and_series(admin: Resident, plain: Res
     assert "Sommerfest" in response.content.decode()
 
 
-def test_cast_pages_and_the_profile_strip(admin: Resident, plain: Resident) -> None:
+def test_cast_pages_and_the_profile_strip(admin: Account, plain: Account) -> None:
     video = make_video(admin, title="Revy")
     CastMember.objects.create(video=video, resident=plain, name=plain.full_name, role="Hamlet")
     CastMember.objects.create(video=video, name="Ole Udefra")
@@ -2102,7 +2098,7 @@ def test_cast_pages_and_the_profile_strip(admin: Resident, plain: Resident) -> N
     )
 
 
-def test_series_episodes_and_next_episode(admin: Resident) -> None:
+def test_series_episodes_and_next_episode(admin: Account) -> None:
     series = Series.objects.create(title="Gangen", created_by=admin)
     second = make_video(admin, title="To", series=series, season=1, episode=2)
     first = make_video(admin, title="En", series=series, season=1, episode=1)
@@ -2118,7 +2114,7 @@ def test_series_episodes_and_next_episode(admin: Resident) -> None:
     assert services.series_cover(series) == first
 
 
-def test_up_next_is_the_next_episode_else_a_film_not_yet_watched(admin: Resident, admin2: Resident) -> None:
+def test_up_next_is_the_next_episode_else_a_film_not_yet_watched(admin: Account, admin2: Account) -> None:
     series = Series.objects.create(title="Gangen", created_by=admin)
     first = make_video(admin, title="En", series=series, season=1, episode=1, days_old=9)
     second = make_video(admin, title="To", series=series, season=1, episode=2, days_old=9)
@@ -2149,7 +2145,7 @@ def test_up_next_is_the_next_episode_else_a_film_not_yet_watched(admin: Resident
     assert services.up_next(second, admin) == revy2
 
 
-def test_series_rules(open_gate: None, plain: Resident, make_resident: Callable[..., Resident]) -> None:
+def test_series_rules(open_gate: None, plain: Account, make_resident: Callable[..., Account]) -> None:
     client = client_for(plain)
     client.post(reverse("gahkflix:series_create"), {"title": "Sketches", "description": ""})
     series = Series.objects.get()
@@ -2166,7 +2162,7 @@ def test_series_rules(open_gate: None, plain: Resident, make_resident: Callable[
     assert ChangeRequest.objects.get().series == series
 
 
-def test_pages_render(admin: Resident, admin2: Resident) -> None:
+def test_pages_render(admin: Account, admin2: Account) -> None:
     series = Series.objects.create(title="Gangen", created_by=admin)
     video = make_video(admin, series=series, season=1, episode=1)
     services.apply_changes(video, {"tags": ["revy"]}, admin)
@@ -2217,7 +2213,7 @@ def dispatched(monkeypatch: pytest.MonkeyPatch) -> Iterator[list[int]]:
     yield sent
 
 
-def test_a_stalled_encode_is_sent_again_then_given_up(admin: Resident, dispatched: list[int]) -> None:
+def test_a_stalled_encode_is_sent_again_then_given_up(admin: Account, dispatched: list[int]) -> None:
     video = make_video(admin, published=False)
     stalled = video.files.get()
     old = timezone.now() - timedelta(minutes=20)
@@ -2232,13 +2228,13 @@ def test_a_stalled_encode_is_sent_again_then_given_up(admin: Resident, dispatche
     assert stalled.state == FileState.FAILED
 
 
-def test_a_claimed_file_is_not_processed_twice(admin: Resident) -> None:
+def test_a_claimed_file_is_not_processed_twice(admin: Account) -> None:
     video = make_video(admin, published=False)
     VideoFile.objects.filter(video=video).update(state=FileState.PROCESSING)
     assert tasks.process_video_file(video.files.get().pk) is False
 
 
-def test_a_job_sent_again_after_its_worker_died_is_a_failed_job(admin: Resident) -> None:
+def test_a_job_sent_again_after_its_worker_died_is_a_failed_job(admin: Account) -> None:
     """Celery sends a killed worker's job again; it finds the file claimed under its own id."""
     video_file = make_video(admin, published=False).files.get()
     VideoFile.objects.filter(pk=video_file.pk).update(
@@ -2253,7 +2249,7 @@ def test_a_job_sent_again_after_its_worker_died_is_a_failed_job(admin: Resident)
     assert (video_file.state, video_file.attempts) == (FileState.PROCESSING, 1)
 
 
-def test_a_file_ffmpeg_refuses_is_a_failed_job(admin: Resident, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_a_file_ffmpeg_refuses_is_a_failed_job(admin: Account, monkeypatch: pytest.MonkeyPatch) -> None:
     upload(client_for(admin), mp4_bytes())  # committed; outside on_commit, its job is not sent
     video_file = VideoFile.objects.get()
 
@@ -2269,7 +2265,7 @@ def test_a_file_ffmpeg_refuses_is_a_failed_job(admin: Resident, monkeypatch: pyt
 
 
 def test_ffmpeg_stopped_by_a_signal_is_tried_again_not_blamed_on_the_file(
-    admin: Resident, monkeypatch: pytest.MonkeyPatch
+    admin: Account, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     upload(client_for(admin), mp4_bytes())
     video_file = VideoFile.objects.get()
@@ -2286,7 +2282,7 @@ def test_ffmpeg_stopped_by_a_signal_is_tried_again_not_blamed_on_the_file(
 
 
 def test_an_encode_past_its_time_limit_is_a_failed_job(
-    admin: Resident, monkeypatch: pytest.MonkeyPatch
+    admin: Account, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     upload(client_for(admin), mp4_bytes())
     video_file = VideoFile.objects.get()
@@ -2302,7 +2298,7 @@ def test_an_encode_past_its_time_limit_is_a_failed_job(
 
 
 def test_the_sound_is_the_track_with_most_channels_not_a_broken_first_one(
-    admin: Resident, django_capture_on_commit_callbacks: Callable[..., Any]
+    admin: Account, django_capture_on_commit_callbacks: Callable[..., Any]
 ) -> None:
     """An old camera's MPEG: an AC3 track ffmpeg makes out as "0 channels" before its real sound.
     Taking the first track failed the whole encode."""
@@ -2314,7 +2310,7 @@ def test_the_sound_is_the_track_with_most_channels_not_a_broken_first_one(
 
 
 def test_text_subtitles_are_kept_as_webvtt(
-    admin: Resident, django_capture_on_commit_callbacks: Callable[..., Any]
+    admin: Account, django_capture_on_commit_callbacks: Callable[..., Any]
 ) -> None:
     with django_capture_on_commit_callbacks(execute=True):
         upload(client_for(admin), subtitled_mkv_bytes(), name="film.mkv")
@@ -2339,7 +2335,7 @@ def test_text_subtitles_are_kept_as_webvtt(
     assert not get_video_storage().exists(danish.track.name)
 
 
-def test_the_jobs_page_names_what_a_gahkflix_job_works_on(admin: Resident) -> None:
+def test_the_jobs_page_names_what_a_gahkflix_job_works_on(admin: Account) -> None:
     from residents.views_admin import Job, _add_task_context
 
     video = make_video(admin, title="Julefrokost")

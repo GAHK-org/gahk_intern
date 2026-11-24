@@ -41,7 +41,7 @@ from den_hurtige.models import (
 from den_hurtige.views import ARCHIVE_PAGE, channel_counts, posts_for, reactions_for
 from notifications import categories
 from notifications.models import Notification, NotificationPreference
-from residents.models import Resident, Role
+from residents.models import Account, Role
 
 FEED_URL = "/den-hurtige/"
 
@@ -84,7 +84,7 @@ def rollout_limited(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(access, "ACCESS_ROLES", GATED_ROLES)
 
 
-def subscribe(user: Resident, endpoint: str) -> PushSubscription:
+def subscribe(user: Account, endpoint: str) -> PushSubscription:
     """Register a fake device for `user`. A device is for everything now — there is no per-feature
     opt-in — and owning one is also what puts a resident with no residency this month into
     notifications.services.everyone(), which is why these tests need nothing more."""
@@ -97,7 +97,7 @@ def subscribe(user: Resident, endpoint: str) -> PushSubscription:
     )
 
 
-def mute(resident: Resident, slug: str) -> NotificationPreference:
+def mute(resident: Account, slug: str) -> NotificationPreference:
     """Turn push for one room off, as the settings page does. This is what a ChannelMute row became
     (notifications migration 0002): a preference for the room's own category, push off."""
     return NotificationPreference.objects.create(
@@ -168,7 +168,7 @@ def test_manifest_points_at_the_feed_and_ships_every_icon_it_references() -> Non
     ],
 )
 def test_every_endpoint_is_closed_to_non_administrators(
-    client: Client, make_resident: Callable[..., Resident], rollout_limited: None, path: str
+    client: Client, make_resident: Callable[..., Account], rollout_limited: None, path: str
 ) -> None:
     """While ACCESS_ROLES is set, a plain resident must not reach any of it — not just the page.
     Parametrised over every route so a new view cannot quietly be added outside the gate."""
@@ -182,7 +182,7 @@ def test_every_endpoint_is_closed_to_non_administrators(
 
 
 def test_administrators_get_in(
-    client: Client, make_resident: Callable[..., Resident], rollout_limited: None
+    client: Client, make_resident: Callable[..., Account], rollout_limited: None
 ) -> None:
     client.force_login(make_resident(email="admin@gahk.dk", roles=(Role.ADMINISTRATOR,)))
 
@@ -193,7 +193,7 @@ def test_administrators_get_in(
 
 
 def test_the_poll_stays_quiet_for_non_administrators(
-    client: Client, make_resident: Callable[..., Resident], rollout_limited: None
+    client: Client, make_resident: Callable[..., Account], rollout_limited: None
 ) -> None:
     """204 rather than 403: htmx would swap a 403 body into the feed. Still leaks nothing."""
     author = make_resident(email="admin@gahk.dk", roles=(Role.ADMINISTRATOR,))
@@ -207,7 +207,7 @@ def test_the_poll_stays_quiet_for_non_administrators(
 
 
 def test_the_sidebar_only_advertises_the_page_to_those_who_can_open_it(
-    client: Client, make_resident: Callable[..., Resident], rollout_limited: None
+    client: Client, make_resident: Callable[..., Account], rollout_limited: None
 ) -> None:
     """A visible link that answers 403 is worse than no link."""
     client.force_login(make_resident(email="beboer@gahk.dk"))
@@ -219,7 +219,7 @@ def test_the_sidebar_only_advertises_the_page_to_those_who_can_open_it(
 
 def test_clearing_access_roles_opens_it_to_every_resident(
     client: Client,
-    make_resident: Callable[..., Resident],
+    make_resident: Callable[..., Account],
     rollout_limited: None,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -237,7 +237,7 @@ def test_clearing_access_roles_opens_it_to_every_resident(
 
 
 def test_preview_as_a_plain_resident_is_locked_out(
-    client: Client, make_resident: Callable[..., Resident], rollout_limited: None
+    client: Client, make_resident: Callable[..., Account], rollout_limited: None
 ) -> None:
     """The gate reads *effective* roles, so an admin previewing as a beboer sees what a beboer sees
     — which is the whole point of the preview tool during a staged rollout."""
@@ -260,7 +260,7 @@ def test_feed_requires_login(client: Client) -> None:
 
 
 def test_the_feed_archives_expired_posts_instead_of_deleting_them(
-    client: Client, make_resident: Callable[..., Resident]
+    client: Client, make_resident: Callable[..., Account]
 ) -> None:
     """The inversion, in one test. Loading the feed used to hard-delete every expired post on the
     way in; it now leaves them alone and simply stops listing them."""
@@ -280,7 +280,7 @@ def test_the_feed_archives_expired_posts_instead_of_deleting_them(
 
 
 def test_a_post_and_its_replies_survive_expiry_whole(
-    make_resident: Callable[..., Resident],
+    make_resident: Callable[..., Account],
 ) -> None:
     """The cascade that used to take the replies with the post fires only on a real delete now."""
     user = make_resident(email="a@gahk.dk")
@@ -294,7 +294,7 @@ def test_a_post_and_its_replies_survive_expiry_whole(
     assert QuickComment.objects.filter(post=post).count() == 1
 
 
-def test_active_and_archived_partition_the_table(make_resident: Callable[..., Resident]) -> None:
+def test_active_and_archived_partition_the_table(make_resident: Callable[..., Account]) -> None:
     """No message may be in both or in neither — the archive is the only copy, so a post that fell
     out of active() without falling into archived() would not be hidden, it would be lost."""
     user = make_resident(email="a@gahk.dk")
@@ -354,9 +354,7 @@ def test_the_expiry_label_reads_as_a_duration_not_a_pile_of_minutes(minutes: int
     assert post.expires_label == expected
 
 
-def test_the_feed_shows_the_short_expiry_label(
-    client: Client, make_resident: Callable[..., Resident]
-) -> None:
+def test_the_feed_shows_the_short_expiry_label(client: Client, make_resident: Callable[..., Account]) -> None:
     """And shows it as a glyph plus a duration, with the sentence kept in the title. The words
     "udløber om" were most of the header at 11.5px, and the pair of them with a long name is what
     wrapped the delete cross onto its own row.
@@ -377,7 +375,7 @@ def test_the_feed_shows_the_short_expiry_label(
 
 
 def test_create_post_honours_the_chosen_duration(
-    client: Client, make_resident: Callable[..., Resident], pushes: list
+    client: Client, make_resident: Callable[..., Account], pushes: list
 ) -> None:
     user = make_resident(email="a@gahk.dk")
     client.force_login(user)
@@ -392,7 +390,7 @@ def test_create_post_honours_the_chosen_duration(
     "duration", ["99999", "", "toogtyve", None], ids=["unknown", "blank", "not a number", "absent"]
 )
 def test_create_post_refuses_a_duration_it_cannot_honour(
-    client: Client, make_resident: Callable[..., Resident], pushes: list, duration: str | None
+    client: Client, make_resident: Callable[..., Account], pushes: list, duration: str | None
 ) -> None:
     """#192: the one field this view will not guess at.
 
@@ -410,7 +408,7 @@ def test_create_post_refuses_a_duration_it_cannot_honour(
 
 
 def test_create_post_stores_an_attached_image(
-    client: Client, make_resident: Callable[..., Resident], pushes: list, settings: object, tmp_path: Path
+    client: Client, make_resident: Callable[..., Account], pushes: list, settings: object, tmp_path: Path
 ) -> None:
     """MEDIA_ROOT is redirected at the tmp dir: the happy path actually writes a file, and the repo's
     app/media/ is not a dumping ground for test uploads."""
@@ -429,7 +427,7 @@ def test_create_post_stores_an_attached_image(
 
 @pytest.mark.parametrize("remove", ["expire", "delete"])
 def test_an_attached_image_is_erased_with_its_post(
-    make_resident: Callable[..., Resident],
+    make_resident: Callable[..., Account],
     settings: object,
     tmp_path: Path,
     remove: str,
@@ -481,7 +479,7 @@ def test_an_attached_image_is_erased_with_its_post(
 )
 def test_create_post_drops_a_bad_image_but_keeps_the_message(
     client: Client,
-    make_resident: Callable[..., Resident],
+    make_resident: Callable[..., Account],
     pushes: list,
     settings: object,
     tmp_path: Path,
@@ -510,7 +508,7 @@ def test_create_post_drops_a_bad_image_but_keeps_the_message(
 
 
 def test_delete_post_is_author_or_administrator_only(
-    client: Client, make_resident: Callable[..., Resident]
+    client: Client, make_resident: Callable[..., Account]
 ) -> None:
     author = make_resident(email="a@gahk.dk")
     other = make_resident(email="b@gahk.dk")
@@ -527,7 +525,7 @@ def test_delete_post_is_author_or_administrator_only(
 
 
 def test_den_hurtige_pages_leak_no_template_syntax(
-    client: Client, make_resident: Callable[..., Resident], settings: object
+    client: Client, make_resident: Callable[..., Account], settings: object
 ) -> None:
     """Django's {# … #} is single-line only; a multi-line one renders verbatim onto the page. This
     has bitten base.html and both feed templates already — assert every Den Hurtige surface is
@@ -556,7 +554,7 @@ def test_den_hurtige_pages_leak_no_template_syntax(
 
 
 def test_the_poll_resolves_roles_once_per_request(
-    client: Client, make_resident: Callable[..., Resident]
+    client: Client, make_resident: Callable[..., Account]
 ) -> None:
     """The access gate, the sidebar's effective_roles and can_preview all ask for the role set. Each
     used to hit the DB, so this endpoint — which every open tab calls every 20 seconds — cost three
@@ -575,9 +573,7 @@ def test_the_poll_resolves_roles_once_per_request(
     assert sum("residents_residency" in s for s in sql) == 1
 
 
-def test_feed_items_returns_only_the_post_list(
-    client: Client, make_resident: Callable[..., Resident]
-) -> None:
+def test_feed_items_returns_only_the_post_list(client: Client, make_resident: Callable[..., Account]) -> None:
     """The poll target is a fragment, not a page — swapping a full document into #js-feed would
     nest a second <html> and a second compose form inside the feed."""
     user = make_resident(email="a@gahk.dk")
@@ -592,7 +588,7 @@ def test_feed_items_returns_only_the_post_list(
 
 
 def test_feed_items_picks_up_a_post_made_after_the_page_loaded(
-    client: Client, make_resident: Callable[..., Resident]
+    client: Client, make_resident: Callable[..., Account]
 ) -> None:
     reader = make_resident(email="a@gahk.dk")
     poster = make_resident(email="b@gahk.dk")
@@ -605,7 +601,7 @@ def test_feed_items_picks_up_a_post_made_after_the_page_loaded(
 
 
 def test_feed_items_drops_archived_posts_but_keeps_them(
-    client: Client, make_resident: Callable[..., Resident]
+    client: Client, make_resident: Callable[..., Account]
 ) -> None:
     user = make_resident(email="a@gahk.dk")
     QuickPost.objects.create(author=user, content="udløbet", expires_at=timezone.now() - timedelta(minutes=1))
@@ -630,7 +626,7 @@ def test_feed_items_returns_204_for_an_expired_session(client: Client) -> None:
 
 
 def test_new_post_notifies_the_room_except_the_author(
-    client: Client, make_resident: Callable[..., Resident], pushes: list
+    client: Client, make_resident: Callable[..., Account], pushes: list
 ) -> None:
     """A new message goes out under the room's own category, push only: the feed itself is the
     in-app record of a chat message, so a bell row per message would only duplicate it."""
@@ -654,7 +650,7 @@ def test_new_post_notifies_the_room_except_the_author(
 
 
 def test_a_room_notification_reaches_nobody_without_a_device(
-    client: Client, make_resident: Callable[..., Resident], pushes: list
+    client: Client, make_resident: Callable[..., Account], pushes: list
 ) -> None:
     """The room categories are push only, so a resident who could read the room but has no device
     gets no row at all — not an unreachable one that would only skew the statistics."""
@@ -669,7 +665,7 @@ def test_a_room_notification_reaches_nobody_without_a_device(
 
 
 def test_comment_notifies_only_the_original_poster_by_default(
-    client: Client, make_resident: Callable[..., Resident], pushes: list
+    client: Client, make_resident: Callable[..., Account], pushes: list
 ) -> None:
     author = make_resident(email="a@gahk.dk")
     commenter = make_resident(email="b@gahk.dk")
@@ -690,7 +686,7 @@ def test_comment_notifies_only_the_original_poster_by_default(
 
 
 def test_replies_to_one_message_fold_into_one_notification(
-    client: Client, make_resident: Callable[..., Resident], pushes: list
+    client: Client, make_resident: Callable[..., Account], pushes: list
 ) -> None:
     """Two people answering the same message is one notification that names them both, newest
     first — not two rows and two banners. The push carries the group key as its tag, so on the
@@ -715,7 +711,7 @@ def test_replies_to_one_message_fold_into_one_notification(
 
 
 def test_comment_can_notify_everyone_except_the_commenter(
-    client: Client, make_resident: Callable[..., Resident], pushes: list
+    client: Client, make_resident: Callable[..., Account], pushes: list
 ) -> None:
     """Underret alle tells the post's author as a reply (grouped, under "Svar på dine beskeder")
     AND announces it to the room — minus the author, who must not be buzzed twice for one reply."""
@@ -738,7 +734,7 @@ def test_comment_can_notify_everyone_except_the_commenter(
 
 
 def test_commenting_on_your_own_post_notifies_nobody(
-    client: Client, make_resident: Callable[..., Resident], pushes: list
+    client: Client, make_resident: Callable[..., Account], pushes: list
 ) -> None:
     author = make_resident(email="a@gahk.dk")
     subscribe(make_resident(email="b@gahk.dk"), "https://push.example/other")
@@ -752,7 +748,7 @@ def test_commenting_on_your_own_post_notifies_nobody(
 
 
 def test_nothing_is_sent_when_vapid_keys_are_missing(
-    client: Client, make_resident: Callable[..., Resident], pushes: list, settings: object
+    client: Client, make_resident: Callable[..., Account], pushes: list, settings: object
 ) -> None:
     """And no row is written either: a room notification is push only, and with push unconfigured
     (the normal dev state) there is nobody it could reach."""
@@ -779,7 +775,7 @@ def react(client: Client, post: QuickPost, emoji: str) -> object:
 
 
 def test_a_reaction_toggles_off_when_tapped_again(
-    client: Client, make_resident: Callable[..., Resident]
+    client: Client, make_resident: Callable[..., Account]
 ) -> None:
     """The unique constraint is what makes this a toggle rather than a counter: tapping your own
     emoji again removes it instead of adding a second row."""
@@ -795,7 +791,7 @@ def test_a_reaction_toggles_off_when_tapped_again(
 
 
 def test_reactions_count_per_emoji_and_flag_your_own(
-    client: Client, make_resident: Callable[..., Resident]
+    client: Client, make_resident: Callable[..., Account]
 ) -> None:
     """Counts are per emoji across people; `mine` is what makes your own pill render active."""
     author = make_resident(email="a@gahk.dk")
@@ -830,7 +826,7 @@ def test_reactions_count_per_emoji_and_flag_your_own(
     ],
 )
 def test_only_emoji_are_accepted_as_reactions(
-    client: Client, make_resident: Callable[..., Resident], emoji: str
+    client: Client, make_resident: Callable[..., Account], emoji: str
 ) -> None:
     """Allowing any emoji means arbitrary text reaches the database, so the validator is a real
     gate rather than a formality."""
@@ -852,7 +848,7 @@ def test_only_emoji_are_accepted_as_reactions(
         "\u2764\ufe0f",  # VS16 presentation selector
     ],
 )
-def test_real_emoji_are_accepted(client: Client, make_resident: Callable[..., Resident], emoji: str) -> None:
+def test_real_emoji_are_accepted(client: Client, make_resident: Callable[..., Account], emoji: str) -> None:
     """Plain, ZWJ-joined, skin-toned and VS16 forms all have to get through."""
     user = make_resident(email="a@gahk.dk")
     post = QuickPost.objects.create(author=user, content="Kaffe")
@@ -864,7 +860,7 @@ def test_real_emoji_are_accepted(client: Client, make_resident: Callable[..., Re
 
 
 def test_reacting_tells_the_author_and_nobody_else(
-    client: Client, make_resident: Callable[..., Resident], pushes: list
+    client: Client, make_resident: Callable[..., Account], pushes: list
 ) -> None:
     """A reaction is addressed to the message's author, under its own low-importance category —
     never a room-wide buzz, which is the noise this feature exists to remove."""
@@ -891,7 +887,7 @@ def test_reacting_tells_the_author_and_nobody_else(
 
 
 def test_reactions_to_one_message_fold_into_one_notification(
-    client: Client, make_resident: Callable[..., Resident], pushes: list
+    client: Client, make_resident: Callable[..., Account], pushes: list
 ) -> None:
     """Ten thumbs-up are one row that says so, not ten — "A og B reagerede", then a count."""
     author = make_resident(email="a@gahk.dk")
@@ -916,7 +912,7 @@ def test_reactions_to_one_message_fold_into_one_notification(
 
 
 def test_changing_or_clearing_a_reaction_notifies_nobody(
-    client: Client, make_resident: Callable[..., Resident], pushes: list
+    client: Client, make_resident: Callable[..., Account], pushes: list
 ) -> None:
     """Only a NEW reaction is news. Swapping 👍 for 🎉 is a correction, and un-reacting must not buzz
     the author's phone to tell them somebody now likes their message less."""
@@ -937,7 +933,7 @@ def test_changing_or_clearing_a_reaction_notifies_nobody(
 
 
 def test_reacting_to_your_own_message_notifies_nobody(
-    client: Client, make_resident: Callable[..., Resident], pushes: list
+    client: Client, make_resident: Callable[..., Account], pushes: list
 ) -> None:
     author = make_resident(email="a@gahk.dk")
     subscribe(author, "https://push.example/author")
@@ -950,7 +946,7 @@ def test_reacting_to_your_own_message_notifies_nobody(
     assert not Notification.objects.exists()
 
 
-def test_reactions_die_with_their_post(client: Client, make_resident: Callable[..., Resident]) -> None:
+def test_reactions_die_with_their_post(client: Client, make_resident: Callable[..., Account]) -> None:
     """On a real delete. Archiving keeps them — see the archive tests."""
     user = make_resident(email="a@gahk.dk")
     post = QuickPost.objects.create(author=user, content="Kaffe")
@@ -965,7 +961,7 @@ def test_reactions_die_with_their_post(client: Client, make_resident: Callable[.
 # --- chat layout ---------------------------------------------------------------------------------
 
 
-def test_the_feed_reads_oldest_first(client: Client, make_resident: Callable[..., Resident]) -> None:
+def test_the_feed_reads_oldest_first(client: Client, make_resident: Callable[..., Account]) -> None:
     """Chat order: the newest message sits next to the composer at the bottom. The model's own
     ordering stays newest-first for the admin, so this is asserted on the rendered page."""
     user = make_resident(email="a@gahk.dk")
@@ -980,7 +976,7 @@ def test_the_feed_reads_oldest_first(client: Client, make_resident: Callable[...
 
 
 def test_consecutive_messages_from_one_person_are_grouped(
-    make_resident: Callable[..., Resident],
+    make_resident: Callable[..., Account],
 ) -> None:
     """Without grouping a short back-and-forth renders as a stack of cards — the forum look this
     redesign removes."""
@@ -997,7 +993,7 @@ def test_consecutive_messages_from_one_person_are_grouped(
 
 
 def test_a_continuation_repeats_no_name_and_the_run_carries_one_avatar(
-    client: Client, make_resident: Callable[..., Resident]
+    client: Client, make_resident: Callable[..., Account]
 ) -> None:
     """The formatting bug this replaced: a follow-up message from the same person dropped the name
     but kept the whole header line, so it rendered a stray "14:32 · ⏱ 45 min" attached to nobody.
@@ -1031,7 +1027,7 @@ def test_a_continuation_repeats_no_name_and_the_run_carries_one_avatar(
 
 
 def test_the_feed_marks_messages_as_swipe_targets_but_not_the_thread_parent(
-    client: Client, make_resident: Callable[..., Resident]
+    client: Client, make_resident: Callable[..., Account]
 ) -> None:
     """frontend/src/feed.ts finds swipeable messages by [data-msg-swipe], and reaches the gesture's
     effect through the controls rendered beside it — the "N svar" anchor and the delete form —
@@ -1057,7 +1053,7 @@ def test_the_feed_marks_messages_as_swipe_targets_but_not_the_thread_parent(
 
 
 def test_the_end_of_a_run_is_marked_for_the_avatar_and_the_tail(
-    make_resident: Callable[..., Resident],
+    make_resident: Callable[..., Account],
 ) -> None:
     """`grouped` says "something of mine is above me", which is what decides the name and the top
     corners. The avatar sits at the BOTTOM of a run and the bubble's tail hangs off its last
@@ -1084,7 +1080,7 @@ def test_the_end_of_a_run_is_marked_for_the_avatar_and_the_tail(
 
 
 def test_a_single_message_ends_its_own_run(
-    make_resident: Callable[..., Resident],
+    make_resident: Callable[..., Account],
 ) -> None:
     """The one-message feed, which is what a quiet channel looks like most of the week."""
     author = make_resident(email="a@gahk.dk")
@@ -1100,7 +1096,7 @@ def test_a_single_message_ends_its_own_run(
 
 
 def test_the_feed_costs_no_extra_query_per_reaction(
-    client: Client, make_resident: Callable[..., Resident]
+    client: Client, make_resident: Callable[..., Account]
 ) -> None:
     """Reactions are counted in Python over a prefetch. A per-post aggregate would be an N+1 on a
     page that re-renders itself every 20 seconds."""
@@ -1119,7 +1115,7 @@ def test_the_feed_costs_no_extra_query_per_reaction(
 
 
 def test_a_message_notification_is_titled_with_the_sender(
-    client: Client, make_resident: Callable[..., Resident], pushes: list
+    client: Client, make_resident: Callable[..., Account], pushes: list
 ) -> None:
     """Every platform already labels a notification with the app it came from — iOS renders
     "from GAHK Intern" under the title, taken from the manifest name. Repeating it in the title
@@ -1140,7 +1136,7 @@ def test_a_message_notification_is_titled_with_the_sender(
 
 
 def test_a_reply_notification_says_who_replied(
-    client: Client, make_resident: Callable[..., Resident], pushes: list
+    client: Client, make_resident: Callable[..., Account], pushes: list
 ) -> None:
     """A reply still has to be distinguishable from a new message, but "svarede" carries that
     without naming the app again."""
@@ -1159,7 +1155,7 @@ def test_a_reply_notification_says_who_replied(
 
 
 def test_posting_shows_no_confirmation_message(
-    client: Client, make_resident: Callable[..., Resident], pushes: list
+    client: Client, make_resident: Callable[..., Account], pushes: list
 ) -> None:
     """The message appearing in the feed is the confirmation. A toast on every send is noise in a
     chat — but the warnings that change what was posted must still come through."""
@@ -1174,7 +1170,7 @@ def test_posting_shows_no_confirmation_message(
 
 
 def test_a_rejected_image_still_warns(
-    client: Client, make_resident: Callable[..., Resident], pushes: list, settings: object, tmp_path: Path
+    client: Client, make_resident: Callable[..., Account], pushes: list, settings: object, tmp_path: Path
 ) -> None:
     """Removing the success toast must not silence the warnings — those tell you the post is not
     what you thought you sent."""
@@ -1195,7 +1191,7 @@ def test_a_rejected_image_still_warns(
 
 
 def test_the_reaction_picker_offers_one_tap_emoji(
-    client: Client, make_resident: Callable[..., Resident]
+    client: Client, make_resident: Callable[..., Account]
 ) -> None:
     """A bare text input was the first attempt: on a desktop browser that is a cursor and no help.
     The shortlist has to render as real buttons, with the free field kept for anything else."""
@@ -1212,7 +1208,7 @@ def test_the_reaction_picker_offers_one_tap_emoji(
     assert 'name="emoji"' in html
 
 
-def test_a_quick_emoji_button_reacts(client: Client, make_resident: Callable[..., Resident]) -> None:
+def test_a_quick_emoji_button_reacts(client: Client, make_resident: Callable[..., Account]) -> None:
     """The shortlist posts the same endpoint as the pills, so it toggles identically."""
     user = make_resident(email="a@gahk.dk")
     post = QuickPost.objects.create(author=user, content="Kaffe")
@@ -1224,7 +1220,7 @@ def test_a_quick_emoji_button_reacts(client: Client, make_resident: Callable[...
 
 
 def test_the_heart_in_the_shortlist_matches_what_keyboards_send(
-    client: Client, make_resident: Callable[..., Resident]
+    client: Client, make_resident: Callable[..., Account]
 ) -> None:
     """U+2764 without U+FE0F would count separately from the heart every phone keyboard emits,
     silently splitting one reaction into two columns."""
@@ -1244,7 +1240,7 @@ def test_the_heart_in_the_shortlist_matches_what_keyboards_send(
 # --- one reaction per person ---------------------------------------------------------------------
 
 
-def test_a_second_emoji_replaces_your_first(client: Client, make_resident: Callable[..., Resident]) -> None:
+def test_a_second_emoji_replaces_your_first(client: Client, make_resident: Callable[..., Account]) -> None:
     """One person, one reaction per message. Picking a different emoji moves yours instead of
     stacking a second, so nobody can carpet a message in five reactions."""
     user = make_resident(email="a@gahk.dk")
@@ -1260,7 +1256,7 @@ def test_a_second_emoji_replaces_your_first(client: Client, make_resident: Calla
 
 
 def test_different_people_still_react_independently(
-    client: Client, make_resident: Callable[..., Resident]
+    client: Client, make_resident: Callable[..., Account]
 ) -> None:
     """The limit is per person, not per message — a message can still collect many reactions."""
     author = make_resident(email="a@gahk.dk")
@@ -1284,7 +1280,7 @@ def test_different_people_still_react_independently(
     ],
 )
 def test_pasting_several_emoji_is_rejected(
-    client: Client, make_resident: Callable[..., Resident], pasted: str
+    client: Client, make_resident: Callable[..., Account], pasted: str
 ) -> None:
     """The "Anden emoji" field accepts a paste, and several emoji are all category So — so a length
     check alone let someone land three of them in a single reaction bubble."""
@@ -1305,7 +1301,7 @@ def test_pasting_several_emoji_is_rejected(
     ],
 )
 def test_multi_codepoint_emoji_are_still_one_emoji(
-    client: Client, make_resident: Callable[..., Resident], emoji: str
+    client: Client, make_resident: Callable[..., Account], emoji: str
 ) -> None:
     """Rejecting multiple emoji must not reject the single ones that happen to be several code
     points — the naive fix breaks flags, keycaps and family sequences."""
@@ -1322,7 +1318,7 @@ def test_multi_codepoint_emoji_are_still_one_emoji(
 
 
 def test_a_reply_can_carry_an_image(
-    client: Client, make_resident: Callable[..., Resident], pushes: list, settings: object, tmp_path: Path
+    client: Client, make_resident: Callable[..., Account], pushes: list, settings: object, tmp_path: Path
 ) -> None:
     settings.MEDIA_ROOT = tmp_path  # type: ignore[attr-defined]
     author = make_resident(email="a@gahk.dk")
@@ -1345,7 +1341,7 @@ def test_a_reply_can_carry_an_image(
 
 def test_a_reply_image_is_erased_with_its_post(
     client: Client,
-    make_resident: Callable[..., Resident],
+    make_resident: Callable[..., Account],
     settings: object,
     tmp_path: Path,
     django_capture_on_commit_callbacks: Callable,
@@ -1371,7 +1367,7 @@ def test_a_reply_image_is_erased_with_its_post(
 
 
 def test_a_bad_reply_image_is_dropped_but_the_reply_survives(
-    client: Client, make_resident: Callable[..., Resident], pushes: list, settings: object, tmp_path: Path
+    client: Client, make_resident: Callable[..., Account], pushes: list, settings: object, tmp_path: Path
 ) -> None:
     settings.MEDIA_ROOT = tmp_path  # type: ignore[attr-defined]
     author = make_resident(email="a@gahk.dk")
@@ -1394,7 +1390,7 @@ def test_a_bad_reply_image_is_dropped_but_the_reply_survives(
     assert any("blev ikke gemt" in str(m) for m in response.context["messages"])
 
 
-def test_the_reply_form_accepts_files(client: Client, make_resident: Callable[..., Resident]) -> None:
+def test_the_reply_form_accepts_files(client: Client, make_resident: Callable[..., Account]) -> None:
     """Without the multipart encoding the browser posts the filename as text and the image is
     silently lost — the kind of thing no server-side test would otherwise notice.
 
@@ -1417,7 +1413,7 @@ def test_the_reply_form_accepts_files(client: Client, make_resident: Callable[..
 # --- zoom lockdown -------------------------------------------------------------------------------
 
 
-def test_den_hurtige_locks_the_viewport(client: Client, make_resident: Callable[..., Resident]) -> None:
+def test_den_hurtige_locks_the_viewport(client: Client, make_resident: Callable[..., Account]) -> None:
     """One-handed chat use: a stray pinch or a double tap meant for a reaction leaves the composer
     off-screen. The meta covers Android and desktop; feed.ts covers iOS, which ignores it."""
     client.force_login(make_resident(email="a@gahk.dk"))
@@ -1431,7 +1427,7 @@ def test_den_hurtige_locks_the_viewport(client: Client, make_resident: Callable[
     assert "viewport-fit=cover" in html  # so the composer can use the safe-area inset
 
 
-def test_the_rest_of_intern_keeps_pinch_zoom(client: Client, make_resident: Callable[..., Resident]) -> None:
+def test_the_rest_of_intern_keeps_pinch_zoom(client: Client, make_resident: Callable[..., Account]) -> None:
     """Locking zoom site-wide would be a real accessibility regression — the alumneliste and long
     CMS pages are exactly where people pinch. The override has to stay scoped to Den Hurtige."""
     client.force_login(make_resident(email="a@gahk.dk"))
@@ -1446,7 +1442,7 @@ def test_the_rest_of_intern_keeps_pinch_zoom(client: Client, make_resident: Call
 
 
 def test_inspektionen_can_open_the_chat_during_the_trial(
-    client: Client, make_resident: Callable[..., Resident], rollout_limited: None
+    client: Client, make_resident: Callable[..., Account], rollout_limited: None
 ) -> None:
     """Inspektionen are in the trial alongside the administrators."""
     client.force_login(make_resident(email="insp@gahk.dk", roles=(Role.INSPEKTION,)))
@@ -1456,7 +1452,7 @@ def test_inspektionen_can_open_the_chat_during_the_trial(
 
 
 def test_inspektionen_can_delete_someone_elses_message(
-    client: Client, make_resident: Callable[..., Resident]
+    client: Client, make_resident: Callable[..., Account]
 ) -> None:
     """They keep the kollegium's house rules, so they moderate the chat too."""
     author = make_resident(email="a@gahk.dk")
@@ -1471,7 +1467,7 @@ def test_inspektionen_can_delete_someone_elses_message(
 
 
 def test_a_plain_resident_still_cannot_delete_other_messages(
-    client: Client, make_resident: Callable[..., Resident]
+    client: Client, make_resident: Callable[..., Account]
 ) -> None:
     author = make_resident(email="a@gahk.dk")
     post = QuickPost.objects.create(author=author, content="Min besked")
@@ -1487,7 +1483,7 @@ def test_a_plain_resident_still_cannot_delete_other_messages(
     [((Role.INSPEKTION,), True), ((Role.ADMINISTRATOR,), True), ((), False), ((Role.AK,), False)],
 )
 def test_only_moderators_see_the_delete_button_on_other_messages(
-    client: Client, make_resident: Callable[..., Resident], roles: tuple, expected: bool
+    client: Client, make_resident: Callable[..., Account], roles: tuple, expected: bool
 ) -> None:
     """The button has to follow the permission, or people meet a 403 they could not have predicted."""
     author = make_resident(email="a@gahk.dk")
@@ -1506,7 +1502,7 @@ OTHER = "tv-rezz"
 
 
 def test_the_bare_url_renders_the_default_channel(
-    client: Client, make_resident: Callable[..., Resident]
+    client: Client, make_resident: Callable[..., Account]
 ) -> None:
     """static/manifest.json opens the installed app on /den-hurtige/ (its start_url), so it must
     answer with a real page. Not a redirect, not an index of channels — the default feed itself."""
@@ -1518,7 +1514,7 @@ def test_the_bare_url_renders_the_default_channel(
     assert response.context["channel"].slug == channels.DEFAULT.slug
 
 
-def test_posts_do_not_leak_between_channels(client: Client, make_resident: Callable[..., Resident]) -> None:
+def test_posts_do_not_leak_between_channels(client: Client, make_resident: Callable[..., Account]) -> None:
     author = make_resident(email="a@gahk.dk")
     QuickPost.objects.create(author=author, content="Kaffe i koekkenet", channel="generelt")
     QuickPost.objects.create(author=author, content="Vi tager i byen", channel=OTHER)
@@ -1534,7 +1530,7 @@ def test_posts_do_not_leak_between_channels(client: Client, make_resident: Calla
 
 
 def test_the_composer_posts_into_the_channel_it_was_rendered_in(
-    client: Client, make_resident: Callable[..., Resident]
+    client: Client, make_resident: Callable[..., Account]
 ) -> None:
     """The channel travels in a hidden field rendered server-side, so it cannot disagree with the
     page — and the redirect goes back to that channel rather than dumping you on the default."""
@@ -1547,7 +1543,7 @@ def test_the_composer_posts_into_the_channel_it_was_rendered_in(
 
 
 def test_a_post_with_an_unknown_channel_lands_in_the_default_one(
-    client: Client, make_resident: Callable[..., Resident]
+    client: Client, make_resident: Callable[..., Account]
 ) -> None:
     """An urgent message must not be lost to a hidden field the author never saw — the same call
     create_post already makes for an unrecognised duration."""
@@ -1559,7 +1555,7 @@ def test_a_post_with_an_unknown_channel_lands_in_the_default_one(
 
 
 def test_replying_and_deleting_return_to_the_posts_own_channel(
-    client: Client, make_resident: Callable[..., Resident]
+    client: Client, make_resident: Callable[..., Account]
 ) -> None:
     """Actions on a post take the channel from the post, never from the request.
 
@@ -1577,7 +1573,7 @@ def test_replying_and_deleting_return_to_the_posts_own_channel(
 
 
 def test_an_unknown_channel_is_404_on_the_page_and_204_on_the_poll(
-    client: Client, make_resident: Callable[..., Resident]
+    client: Client, make_resident: Callable[..., Account]
 ) -> None:
     """The poll must never swap an error body into the middle of the feed — the same reason an
     expired session gets a 204 there rather than a redirect to the login page."""
@@ -1588,7 +1584,7 @@ def test_an_unknown_channel_is_404_on_the_page_and_204_on_the_poll(
 
 
 def test_the_poll_without_a_channel_serves_the_default_one(
-    client: Client, make_resident: Callable[..., Resident]
+    client: Client, make_resident: Callable[..., Account]
 ) -> None:
     """A tab left open across the deploy that added channels keeps polling the old URL. It must get
     the default feed, not a 204 that silently freezes the page."""
@@ -1603,7 +1599,7 @@ def test_the_poll_without_a_channel_serves_the_default_one(
 
 
 def test_reading_one_channel_deletes_nothing_in_another(
-    client: Client, make_resident: Callable[..., Resident]
+    client: Client, make_resident: Callable[..., Account]
 ) -> None:
     """This test used to assert the opposite, and the inversion is the point.
 
@@ -1627,7 +1623,7 @@ def test_reading_one_channel_deletes_nothing_in_another(
 
 
 def test_the_channel_picker_counts_live_posts_per_channel(
-    client: Client, make_resident: Callable[..., Resident]
+    client: Client, make_resident: Callable[..., Account]
 ) -> None:
     """Live, not unread: an expired post must stop being counted without anyone visiting."""
     author = make_resident(email="a@gahk.dk")
@@ -1647,7 +1643,7 @@ def test_the_channel_picker_counts_live_posts_per_channel(
     assert tabs[channels.DEFAULT.slug] == 0
 
 
-def test_the_channel_picker_costs_one_query(client: Client, make_resident: Callable[..., Resident]) -> None:
+def test_the_channel_picker_costs_one_query(client: Client, make_resident: Callable[..., Account]) -> None:
     """One aggregate for every channel, not one count per entry — this page polls itself.
 
     The reply-count annotate on the posts query is also a COUNT, and is excluded here by the table
@@ -1668,7 +1664,7 @@ def test_the_channel_picker_costs_one_query(client: Client, make_resident: Calla
         q
         for q in captured.captured_queries
         # "COUNT(" (the aggregate call), not bare "COUNT" — a plain column/table fetch can contain
-        # that substring incidentally (e.g. Resident.economic_account_number: "...ACCOUNT_NUMBER..."
+        # that substring incidentally (e.g. Account.economic_account_number: "...ACCOUNT_NUMBER..."
         # upper-cased contains "COUNT") without running any extra aggregate query.
         if "COUNT(" in q["sql"].upper()
         and "den_hurtige_quickcomment" not in q["sql"]
@@ -1678,7 +1674,7 @@ def test_the_channel_picker_costs_one_query(client: Client, make_resident: Calla
 
 
 def test_a_channel_can_be_restricted_to_a_role(
-    client: Client, make_resident: Callable[..., Resident], monkeypatch: pytest.MonkeyPatch
+    client: Client, make_resident: Callable[..., Account], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """The per-channel gate stacks on top of den_hurtige.access. 404 rather than 403 on purpose: a
     403 would confirm the channel exists to someone who may not read it."""
@@ -1699,7 +1695,7 @@ def test_a_channel_can_be_restricted_to_a_role(
 
 
 def test_every_channel_notifies_until_it_is_muted(
-    client: Client, make_resident: Callable[..., Resident], pushes: list
+    client: Client, make_resident: Callable[..., Account], pushes: list
 ) -> None:
     """Opt-out, not opt-in: a new channel that notifies nobody until people find it is a new channel
     nobody posts in. Each room is its own category, so no preference row means "on"."""
@@ -1715,7 +1711,7 @@ def test_every_channel_notifies_until_it_is_muted(
 
 
 def test_a_mute_silences_only_the_channel_it_names(
-    client: Client, make_resident: Callable[..., Resident], pushes: list
+    client: Client, make_resident: Callable[..., Account], pushes: list
 ) -> None:
     """A mute is a push=False preference for one room's category; the other rooms are untouched."""
     author = make_resident(email="a@gahk.dk")
@@ -1733,7 +1729,7 @@ def test_a_mute_silences_only_the_channel_it_names(
 
 
 def test_a_direct_reply_reaches_a_muted_poster(
-    client: Client, make_resident: Callable[..., Resident], pushes: list
+    client: Client, make_resident: Callable[..., Account], pushes: list
 ) -> None:
     """A mute is about the channel's chatter, not about answers to your own message — you are not
     being broadcast at, you are being replied to. Replies are their own category (chat.replies),
@@ -1751,7 +1747,7 @@ def test_a_direct_reply_reaches_a_muted_poster(
 
 
 def test_notify_everyone_still_respects_a_mute(
-    client: Client, make_resident: Callable[..., Resident], pushes: list
+    client: Client, make_resident: Callable[..., Account], pushes: list
 ) -> None:
     """Underret alle is a broadcast to the room, under the room's category, and a mute is exactly a
     refusal of this channel's broadcasts."""
@@ -1771,7 +1767,7 @@ def test_notify_everyone_still_respects_a_mute(
 
 
 def test_the_room_bell_links_to_the_rooms_row_on_the_settings_page(
-    client: Client, make_resident: Callable[..., Resident]
+    client: Client, make_resident: Callable[..., Account]
 ) -> None:
     """Rooms are turned on and off on the notifications settings page now, next to every other
     choice — the feed's bell is a plain link to this room's row there, not a toggle of its own."""
@@ -1787,7 +1783,7 @@ def test_the_room_bell_links_to_the_rooms_row_on_the_settings_page(
 
 
 def test_the_room_bell_shows_a_muted_room_as_off(
-    client: Client, make_resident: Callable[..., Resident]
+    client: Client, make_resident: Callable[..., Account]
 ) -> None:
     """...and only for the room that was muted: the state is read per room, per resident."""
     resident = make_resident(email="a@gahk.dk")
@@ -1804,7 +1800,7 @@ def test_the_room_bell_shows_a_muted_room_as_off(
 
 
 def test_a_room_with_only_vibration_off_is_not_drawn_as_muted(
-    client: Client, make_resident: Callable[..., Resident]
+    client: Client, make_resident: Callable[..., Account]
 ) -> None:
     """A preference row exists whenever anything differs from the default — vibration off, say. The
     bell asks about push alone, so a room that still pushes (silently) is not drawn as muted."""
@@ -1819,7 +1815,7 @@ def test_a_room_with_only_vibration_off_is_not_drawn_as_muted(
 
 @pytest.mark.parametrize("path", ["lyd/tv-rezz", "abonner"])
 def test_the_old_mute_and_subscribe_endpoints_are_gone(
-    client: Client, make_resident: Callable[..., Resident], path: str
+    client: Client, make_resident: Callable[..., Account], path: str
 ) -> None:
     """Muting moved to the settings page and subscribing to notifications/enhed. The segments stay
     reserved (channels.RESERVED_SLUGS) so no channel can claim them, but nothing answers there."""
@@ -1832,7 +1828,7 @@ def test_the_old_mute_and_subscribe_endpoints_are_gone(
 
 
 def test_a_notification_deep_links_to_the_channel_the_message_is_in(
-    client: Client, make_resident: Callable[..., Resident], pushes: list
+    client: Client, make_resident: Callable[..., Account], pushes: list
 ) -> None:
     """sw.js hands notificationclick whatever `url` the payload carries, so tapping must open the
     feed the message is actually in rather than the default one. A tap goes through the open-link
@@ -1851,7 +1847,7 @@ def test_a_notification_deep_links_to_the_channel_the_message_is_in(
 
 
 def test_a_message_notification_carries_no_tag(
-    client: Client, make_resident: Callable[..., Resident], pushes: list
+    client: Client, make_resident: Callable[..., Account], pushes: list
 ) -> None:
     """Deliberate, and worth pinning: a shared tag makes each notification replace the previous one,
     so a second post would silently overwrite the first. As true per channel as it was feed-wide.
@@ -1908,7 +1904,7 @@ def test_the_default_channel_must_match_the_model_field_default(
 
 
 def test_every_channel_is_reachable_from_every_other_one(
-    client: Client, make_resident: Callable[..., Resident]
+    client: Client, make_resident: Callable[..., Account]
 ) -> None:
     """The header must always offer the full set. A horizontally scrolling tab strip failed this in
     practice rather than in code — at five channels it ran off the edge of a phone with nothing to
@@ -1921,7 +1917,7 @@ def test_every_channel_is_reachable_from_every_other_one(
             assert f'href="{target.url}"' in body, f"{target.slug} unreachable from {page.slug}"
 
 
-def test_every_channel_url_resolves(client: Client, make_resident: Callable[..., Resident]) -> None:
+def test_every_channel_url_resolves(client: Client, make_resident: Callable[..., Account]) -> None:
     """A slug urls.py cannot route would put a dead link in the tab strip on every page load."""
     client.force_login(make_resident(email="a@gahk.dk"))
 
@@ -1933,7 +1929,7 @@ def test_every_channel_url_resolves(client: Client, make_resident: Callable[...,
 
 
 def test_reaction_rows_name_the_people_behind_each_emoji(
-    client: Client, make_resident: Callable[..., Resident]
+    client: Client, make_resident: Callable[..., Account]
 ) -> None:
     """The panel and the pills are rendered from one list, so `people` must group and order exactly
     as the counts do — most-used first, ties by first use."""
@@ -1954,7 +1950,7 @@ def test_reaction_rows_name_the_people_behind_each_emoji(
 
 
 def test_the_feed_shows_who_reacted_and_with_what(
-    client: Client, make_resident: Callable[..., Resident]
+    client: Client, make_resident: Callable[..., Account]
 ) -> None:
     author = make_resident(email="a@gahk.dk", first_name="Anton", last_name="Storgaard")
     post = QuickPost.objects.create(author=author, content="Kaffe?")
@@ -1968,7 +1964,7 @@ def test_the_feed_shows_who_reacted_and_with_what(
 
 
 def test_no_reader_panel_when_nobody_has_reacted(
-    client: Client, make_resident: Callable[..., Resident]
+    client: Client, make_resident: Callable[..., Account]
 ) -> None:
     """An empty panel behind a button that says "see who reacted" is worse than no button."""
     author = make_resident(email="a@gahk.dk")
@@ -1981,7 +1977,7 @@ def test_no_reader_panel_when_nobody_has_reacted(
 
 
 def test_both_reaction_panels_are_overlays_with_a_backdrop(
-    client: Client, make_resident: Callable[..., Resident]
+    client: Client, make_resident: Callable[..., Account]
 ) -> None:
     """The panels are fixed-position overlays over a backdrop, not absolutely positioned beside
     their summary: anchored to the "+" button — which sits after the pills — a message with several
@@ -2005,7 +2001,7 @@ def test_both_reaction_panels_are_overlays_with_a_backdrop(
 
 
 def test_the_reaction_row_survives_a_toggle_with_its_reader_panel(
-    client: Client, make_resident: Callable[..., Resident]
+    client: Client, make_resident: Callable[..., Account]
 ) -> None:
     """The toggle re-renders only this row, so it has to carry the panel back with it — otherwise
     reacting would make the "who reacted" button vanish until the next poll."""
@@ -2019,7 +2015,7 @@ def test_the_reaction_row_survives_a_toggle_with_its_reader_panel(
     assert "Anton Storgaard" in body
 
 
-def test_deleting_a_message_asks_first(client: Client, make_resident: Callable[..., Resident]) -> None:
+def test_deleting_a_message_asks_first(client: Client, make_resident: Callable[..., Account]) -> None:
     """The delete control is a bare x on every message in a scrolling feed, and purge_expired is a
     HARD delete with no history to restore from — so a mis-tap has to be recoverable at the point of
     the tap or not at all. The message text is quoted so a moderator can see which one they are
@@ -2035,7 +2031,7 @@ def test_deleting_a_message_asks_first(client: Client, make_resident: Callable[.
 
 
 def test_the_confirmation_survives_the_poll_re_rendering_the_row(
-    client: Client, make_resident: Callable[..., Resident]
+    client: Client, make_resident: Callable[..., Account]
 ) -> None:
     """It is an inline onsubmit rather than a delegated listener precisely so the 20-second swap
     cannot leave a message whose delete no longer asks."""
@@ -2047,7 +2043,7 @@ def test_the_confirmation_survives_the_poll_re_rendering_the_row(
 
 
 def test_the_reader_panel_lists_one_row_per_person(
-    client: Client, make_resident: Callable[..., Resident]
+    client: Client, make_resident: Callable[..., Account]
 ) -> None:
     """Comma-joining a whole group onto one line stopped being readable as soon as a post got
     popular. A row each, so the list scrolls and can be scanned.
@@ -2081,7 +2077,7 @@ def test_the_reader_panel_lists_one_row_per_person(
 
 
 def test_holding_a_reaction_pill_is_what_opens_the_reader_panel(
-    client: Client, make_resident: Callable[..., Resident]
+    client: Client, make_resident: Callable[..., Account]
 ) -> None:
     """The 👥 pill that used to sit after the reactions is gone, so the pills themselves have to
     carry the way in.
@@ -2108,7 +2104,7 @@ def test_holding_a_reaction_pill_is_what_opens_the_reader_panel(
 
 
 def test_the_add_reaction_button_spells_itself_out_on_an_untouched_message(
-    client: Client, make_resident: Callable[..., Resident]
+    client: Client, make_resident: Callable[..., Account]
 ) -> None:
     """On a message with no reactions the picker is the only thing in the row, and a bare glyph read
     as an empty slot rather than the control that fills it. The label is CSS-gated on .is-empty so a
@@ -2126,7 +2122,7 @@ def test_the_add_reaction_button_spells_itself_out_on_an_untouched_message(
 # --- thread panel --------------------------------------------------------------------------------
 
 
-def test_the_feed_no_longer_loads_replies(client: Client, make_resident: Callable[..., Resident]) -> None:
+def test_the_feed_no_longer_loads_replies(client: Client, make_resident: Callable[..., Account]) -> None:
     """The feed prefetched comments__author for every post on every poll — loading every reply of
     every message, five seconds apart, in order to render the number "3".
 
@@ -2152,7 +2148,7 @@ def test_the_feed_no_longer_loads_replies(client: Client, make_resident: Callabl
 
 
 def test_the_reply_count_costs_no_extra_query_per_message(
-    client: Client, make_resident: Callable[..., Resident]
+    client: Client, make_resident: Callable[..., Account]
 ) -> None:
     """The count is an annotate on the posts query, so N messages stay one query. A per-post
     `post.comments.count()` in the template would be the N+1 this replaced."""
@@ -2175,7 +2171,7 @@ def test_the_reply_count_costs_no_extra_query_per_message(
 
 
 def test_the_feed_shows_a_reply_count_and_no_reply_form(
-    client: Client, make_resident: Callable[..., Resident]
+    client: Client, make_resident: Callable[..., Account]
 ) -> None:
     """Replies live in the panel now. The feed carries a link and nothing else — the reply form
     used to be rendered inline on every single message, open or not."""
@@ -2194,7 +2190,7 @@ def test_the_feed_shows_a_reply_count_and_no_reply_form(
 
 
 def test_a_message_with_replies_is_marked_differently_from_one_without(
-    client: Client, make_resident: Callable[..., Resident]
+    client: Client, make_resident: Callable[..., Account]
 ) -> None:
     """The two states of the "Svar" link must not render as the same object with different words.
 
@@ -2229,7 +2225,7 @@ def test_a_message_with_replies_is_marked_differently_from_one_without(
 
 
 def test_the_thread_panel_lives_outside_the_polled_region(
-    client: Client, make_resident: Callable[..., Resident]
+    client: Client, make_resident: Callable[..., Account]
 ) -> None:
     """#js-thread is a sibling of #js-feed, never inside it.
 
@@ -2250,7 +2246,7 @@ def test_the_thread_panel_lives_outside_the_polled_region(
     assert page.index('id="js-feed"') < page.index('id="js-thread"')
 
 
-def test_the_thread_panel_refreshes_itself(client: Client, make_resident: Callable[..., Resident]) -> None:
+def test_the_thread_panel_refreshes_itself(client: Client, make_resident: Callable[..., Account]) -> None:
     """Being outside #js-feed means it gets no refresh from the feed's, so the fragment brings its
     own — on its ROOT, morphed by outerHTML, so the trigger survives its own swap. The trigger is a
     live signal with the 5s poll as its fallback (see test_live.py)."""
@@ -2266,7 +2262,7 @@ def test_the_thread_panel_refreshes_itself(client: Client, make_resident: Callab
 
 
 def test_the_reply_composer_is_shielded_from_the_morph(
-    client: Client, make_resident: Callable[..., Resident]
+    client: Client, make_resident: Callable[..., Account]
 ) -> None:
     """idiomorph's ignoreActiveValue only spares the field being typed INTO. Type half a reply, tap
     a reaction, and the panel's own poll would overwrite it with the server's empty value.
@@ -2282,7 +2278,7 @@ def test_the_reply_composer_is_shielded_from_the_morph(
 
 
 def test_a_reply_through_htmx_returns_only_the_reply_list(
-    client: Client, make_resident: Callable[..., Resident]
+    client: Client, make_resident: Callable[..., Account]
 ) -> None:
     """The list, not the whole panel — the form carries data-morph-skip, so a response that
     replaced the panel would skip the form and leave the sent text sitting in the box."""
@@ -2301,7 +2297,7 @@ def test_a_reply_through_htmx_returns_only_the_reply_list(
 
 
 def test_a_reply_error_reaches_the_panel_instead_of_the_session(
-    client: Client, make_resident: Callable[..., Resident]
+    client: Client, make_resident: Callable[..., Account]
 ) -> None:
     """Without JS these surfaced on the redirect. A reply posted through htmx never reloads the
     page, so an empty-comment warning would sit unread in the session until something else
@@ -2319,7 +2315,7 @@ def test_a_reply_error_reaches_the_panel_instead_of_the_session(
 
 def test_a_reply_can_be_a_photo_with_no_text(
     client: Client,
-    make_resident: Callable[..., Resident],
+    make_resident: Callable[..., Account],
     settings: object,
     tmp_path: Path,
 ) -> None:
@@ -2345,7 +2341,7 @@ def test_a_reply_can_be_a_photo_with_no_text(
 
 
 def test_a_reply_with_neither_text_nor_photo_is_still_refused(
-    client: Client, make_resident: Callable[..., Resident]
+    client: Client, make_resident: Callable[..., Account]
 ) -> None:
     """Dropping `required` from the input moved this check to the server; it did not remove it.
     An empty press must still produce nothing but a message."""
@@ -2360,7 +2356,7 @@ def test_a_reply_with_neither_text_nor_photo_is_still_refused(
 
 
 def test_a_rejected_photo_with_no_text_reports_both_what_and_why(
-    client: Client, make_resident: Callable[..., Resident]
+    client: Client, make_resident: Callable[..., Account]
 ) -> None:
     """_validated_image returns None for "nothing attached" and for "attached but refused" alike, so
     a bad photo with no caption falls through to the empty-reply branch. That is the right landing
@@ -2386,7 +2382,7 @@ def test_a_rejected_photo_with_no_text_reports_both_what_and_why(
 
 def test_a_photo_only_reply_notifies_with_a_body_rather_than_a_blank(
     client: Client,
-    make_resident: Callable[..., Resident],
+    make_resident: Callable[..., Account],
     pushes: list,
     tmp_path: Path,
     settings: object,
@@ -2411,7 +2407,7 @@ def test_a_photo_only_reply_notifies_with_a_body_rather_than_a_blank(
 
 
 def test_an_archived_thread_still_opens_but_read_only_and_without_polling(
-    client: Client, make_resident: Callable[..., Resident]
+    client: Client, make_resident: Callable[..., Account]
 ) -> None:
     """This used to answer "gone" on both halves, which was true then and is a lie now.
 
@@ -2438,7 +2434,7 @@ def test_an_archived_thread_still_opens_but_read_only_and_without_polling(
 
 
 def test_a_deleted_post_still_gives_a_notice_to_the_panel_and_404_to_the_page(
-    client: Client, make_resident: Callable[..., Resident]
+    client: Client, make_resident: Callable[..., Account]
 ) -> None:
     """The "gone" branch survives archiving — it just stopped being reachable by expiry. A message
     an administrator removed still has to answer something, and the fragment must not poll for it."""
@@ -2457,7 +2453,7 @@ def test_a_deleted_post_still_gives_a_notice_to_the_panel_and_404_to_the_page(
 
 
 def test_a_thread_in_a_restricted_channel_is_404(
-    client: Client, make_resident: Callable[..., Resident], monkeypatch: pytest.MonkeyPatch
+    client: Client, make_resident: Callable[..., Account], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """The per-post endpoints resolve a post by pk alone, which says nothing about whether the
     caller may read the CHANNEL it lives in. That mattered less while they were all writes; a
@@ -2477,7 +2473,7 @@ def test_a_thread_in_a_restricted_channel_is_404(
 
 
 def test_the_thread_page_stands_alone_without_htmx(
-    client: Client, make_resident: Callable[..., Resident]
+    client: Client, make_resident: Callable[..., Account]
 ) -> None:
     """The "N svar" anchor has a real href, so the thread works with no JavaScript at all — that is
     what keeps the no-JS path the old <details> had."""
@@ -2495,7 +2491,7 @@ def test_the_thread_page_stands_alone_without_htmx(
 
 
 def test_reactions_still_work_from_inside_a_thread(
-    client: Client, make_resident: Callable[..., Resident]
+    client: Client, make_resident: Callable[..., Account]
 ) -> None:
     """The panel is deliberately an in-flow box with no z-index and no resting transform, because a
     stacking context would trap every `.pop` inside it. The pickers being present here is the half
@@ -2513,7 +2509,7 @@ def test_reactions_still_work_from_inside_a_thread(
 
 
 def test_a_reply_notification_deep_links_to_the_thread(
-    client: Client, make_resident: Callable[..., Resident], pushes: list
+    client: Client, make_resident: Callable[..., Account], pushes: list
 ) -> None:
     """Tapping "Anders svarede" used to land at the bottom of the channel, leaving you to find the
     message it was about — which, in a feed where everything expires, may already be gone."""
@@ -2530,7 +2526,7 @@ def test_a_reply_notification_deep_links_to_the_thread(
 
 
 def test_the_channel_page_pre_opens_a_requested_thread(
-    client: Client, make_resident: Callable[..., Resident]
+    client: Client, make_resident: Callable[..., Account]
 ) -> None:
     """What makes that deep link work: ?traad= wires the empty panel container to fetch on load."""
     author = make_resident(email="a@gahk.dk")
@@ -2546,7 +2542,7 @@ def test_the_channel_page_pre_opens_a_requested_thread(
 
 
 def test_the_feed_morphs_its_poll_instead_of_replacing_the_list(
-    client: Client, make_resident: Callable[..., Resident]
+    client: Client, make_resident: Callable[..., Account]
 ) -> None:
     """The poll patches the existing DOM rather than swapping it out.
 
@@ -2564,7 +2560,7 @@ def test_the_feed_morphs_its_poll_instead_of_replacing_the_list(
 
 
 def test_the_feed_falls_back_to_polling_every_five_seconds(
-    client: Client, make_resident: Callable[..., Resident]
+    client: Client, make_resident: Callable[..., Account]
 ) -> None:
     """20s read as broken in a chat. The interval only became safe to shorten once the swap stopped
     being destructive -- the two changes belong together, so this pins the pair. The feed is live
@@ -2576,9 +2572,7 @@ def test_the_feed_falls_back_to_polling_every_five_seconds(
     assert 'hx-trigger="gahk-live, every 5s [' in body
 
 
-def test_the_poll_still_returns_the_whole_list(
-    client: Client, make_resident: Callable[..., Resident]
-) -> None:
+def test_the_poll_still_returns_the_whole_list(client: Client, make_resident: Callable[..., Account]) -> None:
     """Deliberately NOT an incremental "only what is new" endpoint. Traffic was never the problem at
     this scale, and sending everything is what keeps deletions, expiry, reaction counts and new
     replies correct without a second reconciliation path. Morphing makes the full response cheap to
@@ -2603,7 +2597,7 @@ def test_the_poll_still_returns_the_whole_list(
 ARCHIVE_URL = FEED_URL + "arkiv"
 
 
-def archived_post(author: Resident, content: str, *, days_ago: float = 1.0, **kwargs: object) -> QuickPost:
+def archived_post(author: Account, content: str, *, days_ago: float = 1.0, **kwargs: object) -> QuickPost:
     """A post whose timer ran out `days_ago` days ago, written a minute before that.
 
     `created_at` is auto_now_add, so it has to be forced with an UPDATE afterwards — which is
@@ -2620,7 +2614,7 @@ def archived_post(author: Resident, content: str, *, days_ago: float = 1.0, **kw
 
 
 def test_the_archive_lists_what_has_left_the_feed_and_nothing_that_has_not(
-    client: Client, make_resident: Callable[..., Resident]
+    client: Client, make_resident: Callable[..., Account]
 ) -> None:
     author = make_resident(email="a@gahk.dk")
     archived_post(author, "Kaffe i gaar")
@@ -2634,7 +2628,7 @@ def test_the_archive_lists_what_has_left_the_feed_and_nothing_that_has_not(
 
 
 def test_the_archive_reads_forwards_into_the_live_feed(
-    client: Client, make_resident: Callable[..., Resident]
+    client: Client, make_resident: Callable[..., Account]
 ) -> None:
     """A chunk is PREPENDED above the live messages, so it has to read downwards into them like the
     rest of the conversation: oldest at the top, newest against the divider. The query still walks
@@ -2654,7 +2648,7 @@ def test_the_archive_reads_forwards_into_the_live_feed(
 
 
 def test_the_archive_is_scoped_to_the_channel_it_was_opened_from(
-    client: Client, make_resident: Callable[..., Resident]
+    client: Client, make_resident: Callable[..., Account]
 ) -> None:
     author = make_resident(email="a@gahk.dk")
     archived_post(author, "Herinde")
@@ -2668,7 +2662,7 @@ def test_the_archive_is_scoped_to_the_channel_it_was_opened_from(
 
 
 def test_the_archive_of_a_restricted_channel_is_refused(
-    client: Client, make_resident: Callable[..., Resident], monkeypatch: pytest.MonkeyPatch
+    client: Client, make_resident: Callable[..., Account], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """The archive is a READ over every message a channel has ever held, so it is the widest leak
     in the feature if it forgets the per-channel roles. Same answer as every other surface: the
@@ -2696,7 +2690,7 @@ def test_the_archive_returns_204_for_an_expired_session(client: Client) -> None:
 
 
 def test_an_archived_message_cannot_be_replied_to(
-    client: Client, make_resident: Callable[..., Resident]
+    client: Client, make_resident: Callable[..., Account]
 ) -> None:
     author = make_resident(email="a@gahk.dk")
     post = archived_post(author, "Kaffe")
@@ -2708,7 +2702,7 @@ def test_an_archived_message_cannot_be_replied_to(
 
 
 def test_an_archived_message_cannot_be_reacted_to(
-    client: Client, make_resident: Callable[..., Resident]
+    client: Client, make_resident: Callable[..., Account]
 ) -> None:
     author = make_resident(email="a@gahk.dk")
     post = archived_post(author, "Kaffe")
@@ -2724,7 +2718,7 @@ def test_an_archived_message_cannot_be_reacted_to(
 
 
 def test_an_archived_message_cannot_be_deleted_by_its_author(
-    client: Client, make_resident: Callable[..., Resident]
+    client: Client, make_resident: Callable[..., Account]
 ) -> None:
     author = make_resident(email="a@gahk.dk")
     post = archived_post(author, "Kaffe")
@@ -2736,7 +2730,7 @@ def test_an_archived_message_cannot_be_deleted_by_its_author(
 
 
 def test_an_archived_message_cannot_be_deleted_by_a_moderator_either(
-    client: Client, make_resident: Callable[..., Resident]
+    client: Client, make_resident: Callable[..., Account]
 ) -> None:
     """The check is ordered BEFORE the permission check on purpose: the two answers are "you may
     not" and "this cannot be done", and the second is the true one. Ordered the other way, a
@@ -2752,7 +2746,7 @@ def test_an_archived_message_cannot_be_deleted_by_a_moderator_either(
     assert QuickPost.objects.filter(pk=post.pk).exists()
 
 
-def test_a_live_message_can_still_be_deleted(client: Client, make_resident: Callable[..., Resident]) -> None:
+def test_a_live_message_can_still_be_deleted(client: Client, make_resident: Callable[..., Account]) -> None:
     """The counterweight to the four tests above. "Archived messages cannot be deleted" must not
     quietly become "nothing can be deleted" — an author who has just posted to the wrong channel
     still needs to take it back."""
@@ -2766,7 +2760,7 @@ def test_a_live_message_can_still_be_deleted(client: Client, make_resident: Call
 
 
 def test_the_archive_renders_no_control_that_would_write(
-    client: Client, make_resident: Callable[..., Resident]
+    client: Client, make_resident: Callable[..., Account]
 ) -> None:
     """The server refuses all three regardless; this is about not offering them. A reaction picker
     or a delete cross that answers "no" is a worse answer than one that is not there."""
@@ -2783,7 +2777,7 @@ def test_the_archive_renders_no_control_that_would_write(
 
 
 def test_an_archived_message_links_to_its_thread_like_any_other(
-    client: Client, make_resident: Callable[..., Resident]
+    client: Client, make_resident: Callable[..., Account]
 ) -> None:
     """The replies are in the side panel, not inlined under the message.
 
@@ -2807,7 +2801,7 @@ def test_an_archived_message_links_to_its_thread_like_any_other(
 
 
 def test_the_archive_pages_with_a_cursor_and_keeps_a_day_whole(
-    client: Client, make_resident: Callable[..., Resident]
+    client: Client, make_resident: Callable[..., Account]
 ) -> None:
     """Two rules in one scroll, because they only interact at the chunk boundary.
 
@@ -2846,7 +2840,7 @@ def test_the_archive_pages_with_a_cursor_and_keeps_a_day_whole(
 
 
 def test_a_junk_cursor_reopens_the_archive_at_the_top(
-    client: Client, make_resident: Callable[..., Resident]
+    client: Client, make_resident: Callable[..., Account]
 ) -> None:
     """A mangled cursor is a reader's worst case, not a 400 in the middle of an infinite scroll."""
     author = make_resident(email="a@gahk.dk")
@@ -2860,7 +2854,7 @@ def test_a_junk_cursor_reopens_the_archive_at_the_top(
 
 
 def test_the_feed_says_the_archive_is_up_there_but_does_not_fetch_it(
-    client: Client, make_resident: Callable[..., Resident]
+    client: Client, make_resident: Callable[..., Account]
 ) -> None:
     """The divider is the instruction; the sentinel waits for a gesture and nothing else.
 
@@ -2883,7 +2877,7 @@ def test_the_feed_says_the_archive_is_up_there_but_does_not_fetch_it(
     assert "dagens eneste besked" in body
 
 
-def test_an_empty_archive_is_not_advertised(client: Client, make_resident: Callable[..., Resident]) -> None:
+def test_an_empty_archive_is_not_advertised(client: Client, make_resident: Callable[..., Account]) -> None:
     """The counterweight. On a channel whose first message is still live, telling somebody to drag
     up into an empty archive is a worse first impression than saying nothing."""
     author = make_resident(email="a@gahk.dk")
@@ -2896,7 +2890,7 @@ def test_an_empty_archive_is_not_advertised(client: Client, make_resident: Calla
     assert "gahk-open-archive" not in body
 
 
-def test_the_archive_page_works_without_htmx(client: Client, make_resident: Callable[..., Resident]) -> None:
+def test_the_archive_page_works_without_htmx(client: Client, make_resident: Callable[..., Account]) -> None:
     """The no-JS half of the same link, and a URL somebody can bookmark."""
     author = make_resident(email="a@gahk.dk")
     archived_post(author, "Kaffe i gaar")
@@ -2909,7 +2903,7 @@ def test_the_archive_page_works_without_htmx(client: Client, make_resident: Call
 
 
 def test_the_scroll_ends_with_a_marker_rather_than_running_out(
-    client: Client, make_resident: Callable[..., Resident]
+    client: Client, make_resident: Callable[..., Account]
 ) -> None:
     """The last chunk carries no sentinel — otherwise something would be left on the page still
     asking for more — so it says where the archive stops instead."""
@@ -2924,7 +2918,7 @@ def test_the_scroll_ends_with_a_marker_rather_than_running_out(
 
 
 def test_chunks_after_the_first_keep_loading_as_you_scroll(
-    client: Client, make_resident: Callable[..., Resident]
+    client: Client, make_resident: Callable[..., Account]
 ) -> None:
     """Opening the archive is a decision; continuing through it is just scrolling. So the sentinel
     INSIDE a chunk goes back to watching for visibility — stopping to ask again at every chunk
@@ -2941,7 +2935,7 @@ def test_chunks_after_the_first_keep_loading_as_you_scroll(
 
 
 def test_the_standalone_page_pages_with_plain_links(
-    client: Client, make_resident: Callable[..., Resident]
+    client: Client, make_resident: Callable[..., Account]
 ) -> None:
     """The no-JS half. There is no scrolling-to-load without JavaScript, so the page walks the same
     cursor with an "ældre" link — and suppresses the scroll sentinel, or a browser WITH JavaScript
@@ -2959,7 +2953,7 @@ def test_the_standalone_page_pages_with_plain_links(
 
 
 def test_the_dev_clock_moves_messages_into_the_archive(
-    client: Client, make_resident: Callable[..., Resident]
+    client: Client, make_resident: Callable[..., Account]
 ) -> None:
     """Fast-forward a month and yesterday's chat is history — no waiting, no editing timestamps."""
     from django.test import override_settings
@@ -2984,7 +2978,7 @@ def test_the_dev_clock_moves_messages_into_the_archive(
 
 
 def test_a_message_written_under_the_dev_clock_gets_its_full_life(
-    client: Client, make_resident: Callable[..., Resident]
+    client: Client, make_resident: Callable[..., Account]
 ) -> None:
     """The other half, and the one that is wrong if only the queryset is fixed: an expiry measured
     from the real clock while the feed filters on the simulated one is born archived."""
@@ -3007,7 +3001,7 @@ def test_a_message_written_under_the_dev_clock_gets_its_full_life(
 
 
 def test_the_real_clock_is_untouched_when_debug_is_off(
-    client: Client, make_resident: Callable[..., Resident]
+    client: Client, make_resident: Callable[..., Account]
 ) -> None:
     """The gate that makes the whole mechanism safe to ship: a DevClock row left in a production
     database must not shift anything. Held here as well as in test_soegvaerelse, because this is
@@ -3030,7 +3024,7 @@ def test_the_real_clock_is_untouched_when_debug_is_off(
 
 
 def test_reading_the_clock_costs_one_query_however_many_messages(
-    client: Client, make_resident: Callable[..., Resident]
+    client: Client, make_resident: Callable[..., Account]
 ) -> None:
     """The reason core.clock memoises. The expiry label alone renders three times per bubble, so an
     un-cached DevClock lookup was a SELECT per read — and the feature that needs the clock most was
@@ -3053,7 +3047,7 @@ def test_reading_the_clock_costs_one_query_however_many_messages(
 
 
 def test_the_archive_offers_no_reply_affordance_on_a_message_nobody_answered(
-    client: Client, make_resident: Callable[..., Resident]
+    client: Client, make_resident: Callable[..., Account]
 ) -> None:
     """Empty, the "N svar" element is an affordance and nothing else — it reads "Svar" and its whole
     job is to say you may answer. In the archive you may not, so on a message nobody ever replied to
@@ -3075,7 +3069,7 @@ def test_the_archive_offers_no_reply_affordance_on_a_message_nobody_answered(
     assert f"/den-hurtige/{lonely.pk}/traad" not in body
 
 
-def test_the_live_feed_still_offers_it(client: Client, make_resident: Callable[..., Resident]) -> None:
+def test_the_live_feed_still_offers_it(client: Client, make_resident: Callable[..., Account]) -> None:
     """The counterweight: "Svar" disappearing from the ARCHIVE must not quietly remove it from the
     feed, where an unanswered message is exactly the one that wants inviting."""
     author = make_resident(email="a@gahk.dk")
@@ -3091,7 +3085,7 @@ def test_the_live_feed_still_offers_it(client: Client, make_resident: Callable[.
 # message becomes a tombstone. Refusal on archived messages is covered in the archive section above.
 
 
-def aged(author: Resident, content: str, *, minutes: float = 30, **kwargs: object) -> QuickPost:
+def aged(author: Account, content: str, *, minutes: float = 30, **kwargs: object) -> QuickPost:
     """A live message written `minutes` ago — past DELETE_GRACE by default, and never archived, so
     these tests exercise the grace period alone."""
     written = timezone.now() - timedelta(minutes=minutes)
@@ -3102,7 +3096,7 @@ def aged(author: Resident, content: str, *, minutes: float = 30, **kwargs: objec
 
 
 def test_deleting_within_five_minutes_leaves_nothing_behind(
-    client: Client, make_resident: Callable[..., Resident]
+    client: Client, make_resident: Callable[..., Account]
 ) -> None:
     """The slip nobody has read yet — a tombstone would advertise it more loudly than the message."""
     author = make_resident(email="a@gahk.dk")
@@ -3115,7 +3109,7 @@ def test_deleting_within_five_minutes_leaves_nothing_behind(
 
 
 def test_deleting_after_five_minutes_leaves_a_tombstone(
-    client: Client, make_resident: Callable[..., Resident]
+    client: Client, make_resident: Callable[..., Account]
 ) -> None:
     """The row survives, holding the message's place; the message does not."""
     author = make_resident(email="a@gahk.dk")
@@ -3131,7 +3125,7 @@ def test_deleting_after_five_minutes_leaves_a_tombstone(
 
 
 def test_the_grace_period_is_measured_from_writing_not_from_expiry(
-    client: Client, make_resident: Callable[..., Resident]
+    client: Client, make_resident: Callable[..., Account]
 ) -> None:
     """Both plausible off-by-ones fail silently: `<=` would destroy a message somebody had just
     answered, and measuring from `expires_at` would tie the grace period to the chosen duration."""
@@ -3147,7 +3141,7 @@ def test_the_grace_period_is_measured_from_writing_not_from_expiry(
 
 
 def test_a_tombstone_keeps_the_replies_other_people_wrote(
-    client: Client, make_resident: Callable[..., Resident]
+    client: Client, make_resident: Callable[..., Account]
 ) -> None:
     """The reason the tombstone exists: deleting your own message is not authority over the answers
     to it."""
@@ -3164,7 +3158,7 @@ def test_a_tombstone_keeps_the_replies_other_people_wrote(
 
 
 def test_a_tombstone_drops_the_reactions_that_were_on_it(
-    client: Client, make_resident: Callable[..., Resident]
+    client: Client, make_resident: Callable[..., Account]
 ) -> None:
     """Unlike the replies: a reaction is an opinion about content nobody can read any more."""
     author = make_resident(email="a@gahk.dk")
@@ -3180,7 +3174,7 @@ def test_a_tombstone_drops_the_reactions_that_were_on_it(
 
 def test_a_tombstones_photograph_is_erased_from_storage(
     client: Client,
-    make_resident: Callable[..., Resident],
+    make_resident: Callable[..., Account],
     settings: object,
     tmp_path: Path,
     django_capture_on_commit_callbacks: Callable,
@@ -3207,7 +3201,7 @@ def test_a_tombstones_photograph_is_erased_from_storage(
 
 
 def test_the_feed_draws_a_tombstone_where_the_message_was(
-    client: Client, make_resident: Callable[..., Resident]
+    client: Client, make_resident: Callable[..., Account]
 ) -> None:
     author = make_resident(email="a@gahk.dk")
     post = aged(author, "Hemmeligheden")
@@ -3222,7 +3216,7 @@ def test_the_feed_draws_a_tombstone_where_the_message_was(
 
 
 def test_a_tombstone_offers_no_control_that_would_write(
-    client: Client, make_resident: Callable[..., Resident]
+    client: Client, make_resident: Callable[..., Account]
 ) -> None:
     """The server refuses all of these regardless; this is about not offering them."""
     author = make_resident(email="a@gahk.dk")
@@ -3239,7 +3233,7 @@ def test_a_tombstone_offers_no_control_that_would_write(
 
 
 def test_a_tombstone_still_links_to_the_thread_it_started(
-    client: Client, make_resident: Callable[..., Resident]
+    client: Client, make_resident: Callable[..., Account]
 ) -> None:
     """The counterweight: the replies outlive the message and this link is the only way to them."""
     author = make_resident(email="a@gahk.dk")
@@ -3255,7 +3249,7 @@ def test_a_tombstone_still_links_to_the_thread_it_started(
     assert f"/den-hurtige/{post.pk}/traad" in body
 
 
-def test_a_tombstone_cannot_be_replied_to(client: Client, make_resident: Callable[..., Resident]) -> None:
+def test_a_tombstone_cannot_be_replied_to(client: Client, make_resident: Callable[..., Account]) -> None:
     author = make_resident(email="a@gahk.dk")
     other = make_resident(email="b@gahk.dk")
     post = aged(author, "Noget")
@@ -3268,7 +3262,7 @@ def test_a_tombstone_cannot_be_replied_to(client: Client, make_resident: Callabl
     assert not QuickComment.objects.filter(post=post).exists()
 
 
-def test_a_tombstone_cannot_be_reacted_to(client: Client, make_resident: Callable[..., Resident]) -> None:
+def test_a_tombstone_cannot_be_reacted_to(client: Client, make_resident: Callable[..., Account]) -> None:
     """Answered with the now-empty row rather than a 404, for the same reason the archive is: a 404
     would leave the live-looking row on screen and the tap appearing to have been lost."""
     author = make_resident(email="a@gahk.dk")
@@ -3285,7 +3279,7 @@ def test_a_tombstone_cannot_be_reacted_to(client: Client, make_resident: Callabl
 
 
 def test_a_tombstone_cannot_be_deleted_a_second_time(
-    client: Client, make_resident: Callable[..., Resident]
+    client: Client, make_resident: Callable[..., Account]
 ) -> None:
     """Refused outright, rather than succeeding at doing nothing and reporting success."""
     author = make_resident(email="a@gahk.dk")
@@ -3301,7 +3295,7 @@ def test_a_tombstone_cannot_be_deleted_a_second_time(
 
 
 def test_a_moderator_deleting_an_old_message_leaves_the_same_tombstone(
-    client: Client, make_resident: Callable[..., Resident]
+    client: Client, make_resident: Callable[..., Account]
 ) -> None:
     """Moderators are not a special case: a takedown leaves the same visible marker."""
     author = make_resident(email="a@gahk.dk")
@@ -3317,7 +3311,7 @@ def test_a_moderator_deleting_an_old_message_leaves_the_same_tombstone(
 
 
 def test_a_moderator_inside_the_grace_period_still_removes_it_outright(
-    client: Client, make_resident: Callable[..., Resident]
+    client: Client, make_resident: Callable[..., Account]
 ) -> None:
     """The split is decided by the message's age, not by who is deleting it."""
     author = make_resident(email="a@gahk.dk")
@@ -3331,7 +3325,7 @@ def test_a_moderator_inside_the_grace_period_still_removes_it_outright(
 
 
 def test_a_plain_resident_still_cannot_delete_someone_elses_message(
-    client: Client, make_resident: Callable[..., Resident]
+    client: Client, make_resident: Callable[..., Account]
 ) -> None:
     """The permission check now runs after the two "cannot be done" checks; it still runs."""
     author = make_resident(email="a@gahk.dk")
@@ -3344,7 +3338,7 @@ def test_a_plain_resident_still_cannot_delete_someone_elses_message(
 
 
 def test_a_tombstone_archives_on_its_original_timer_like_any_other_message(
-    client: Client, make_resident: Callable[..., Resident]
+    client: Client, make_resident: Callable[..., Account]
 ) -> None:
     """`deleted_at` is not part of the active()/archived() partition. A tombstone that fell out of
     both would not be hidden, it would be lost."""
@@ -3360,7 +3354,7 @@ def test_a_tombstone_archives_on_its_original_timer_like_any_other_message(
 
 
 def test_the_channel_strip_does_not_count_tombstones(
-    client: Client, make_resident: Callable[..., Resident]
+    client: Client, make_resident: Callable[..., Account]
 ) -> None:
     """A deleted message is not something to go and read."""
     author = make_resident(email="a@gahk.dk")
@@ -3373,7 +3367,7 @@ def test_the_channel_strip_does_not_count_tombstones(
 
 
 def test_the_thread_panel_of_a_tombstone_is_read_only(
-    client: Client, make_resident: Callable[..., Resident]
+    client: Client, make_resident: Callable[..., Account]
 ) -> None:
     """Still shows the conversation, with nowhere to add to it and no poll for an answer that
     cannot change."""
@@ -3393,7 +3387,7 @@ def test_the_thread_panel_of_a_tombstone_is_read_only(
 
 
 def test_the_standalone_thread_page_of_a_tombstone_says_so(
-    client: Client, make_resident: Callable[..., Resident]
+    client: Client, make_resident: Callable[..., Account]
 ) -> None:
     """The no-JS half of the same rule."""
     author = make_resident(email="a@gahk.dk")
@@ -3409,7 +3403,7 @@ def test_the_standalone_thread_page_of_a_tombstone_says_so(
 
 
 def test_soft_deleting_a_row_that_vanished_underneath_reports_rather_than_raises(
-    make_resident: Callable[..., Resident],
+    make_resident: Callable[..., Account],
 ) -> None:
     """The interleaving a request cannot be held open long enough to show: delete_post fetched the
     post, another delete hard-removed the row, and only then did this one write. There is no
@@ -3423,7 +3417,7 @@ def test_soft_deleting_a_row_that_vanished_underneath_reports_rather_than_raises
 
 
 def test_two_overlapping_soft_deletes_only_one_takes_effect(
-    make_resident: Callable[..., Resident],
+    make_resident: Callable[..., Account],
 ) -> None:
     """Both callers passed the is_deleted guard before either wrote. The tombstone is a claim, so
     the second reports failure rather than re-stamping deleted_at."""
@@ -3439,7 +3433,7 @@ def test_two_overlapping_soft_deletes_only_one_takes_effect(
 
 
 def test_the_photograph_survives_a_soft_delete_that_does_not_happen(
-    make_resident: Callable[..., Resident],
+    make_resident: Callable[..., Account],
     settings: object,
     tmp_path: Path,
     django_capture_on_commit_callbacks: Callable,
@@ -3466,7 +3460,7 @@ def test_the_photograph_survives_a_soft_delete_that_does_not_happen(
 # two days of messages and did not.
 
 
-def _post_at(author: Resident, when: datetime, content: str) -> QuickPost:
+def _post_at(author: Account, when: datetime, content: str) -> QuickPost:
     """A message whose created_at is backdated — auto_now_add has to be overwritten after the fact."""
     post = QuickPost.objects.create(author=author, content=content)
     QuickPost.objects.filter(pk=post.pk).update(created_at=when)
@@ -3474,7 +3468,7 @@ def _post_at(author: Resident, when: datetime, content: str) -> QuickPost:
 
 
 def test_the_feed_groups_messages_under_a_date_heading(
-    make_resident: Callable[..., Resident],
+    make_resident: Callable[..., Account],
 ) -> None:
     author = make_resident(email="a@gahk.dk")
     now = timezone.now()
@@ -3489,7 +3483,7 @@ def test_the_feed_groups_messages_under_a_date_heading(
     assert [[p.content for p in day.posts] for day in days] == [["I gaar"], ["I dag"]]
 
 
-def test_a_run_does_not_span_midnight(make_resident: Callable[..., Resident]) -> None:
+def test_a_run_does_not_span_midnight(make_resident: Callable[..., Account]) -> None:
     """A date heading interrupts a run visually, so the same author either side of midnight must
     read as two runs — not one group with the heading wedged into the middle of it."""
     author = make_resident(email="a@gahk.dk")
@@ -3506,7 +3500,7 @@ def test_a_run_does_not_span_midnight(make_resident: Callable[..., Resident]) ->
     assert [p.group_end for p in _messages(days)] == [True, True]
 
 
-def test_the_heading_is_rendered_in_the_feed(client: Client, make_resident: Callable[..., Resident]) -> None:
+def test_the_heading_is_rendered_in_the_feed(client: Client, make_resident: Callable[..., Account]) -> None:
     author = make_resident(email="a@gahk.dk")
     client.force_login(author)
     _post_at(author, timezone.now() - timedelta(days=1), "Gammel besked")
@@ -3518,7 +3512,7 @@ def test_the_heading_is_rendered_in_the_feed(client: Client, make_resident: Call
 
 
 def test_the_poll_fragment_carries_the_headings_too(
-    client: Client, make_resident: Callable[..., Resident]
+    client: Client, make_resident: Callable[..., Account]
 ) -> None:
     """#js-feed is morphed wholesale from this fragment, so a heading missing here would vanish
     from the feed 20 seconds after the page loaded."""
@@ -3534,7 +3528,7 @@ def test_the_poll_fragment_carries_the_headings_too(
 # ---- the composer asks for a duration, it does not assume one (#192) ----------------------------
 
 
-def test_the_composer_preselects_no_duration(client: Client, make_resident: Callable[..., Resident]) -> None:
+def test_the_composer_preselects_no_duration(client: Client, make_resident: Callable[..., Account]) -> None:
     """A preselected 2 døgn is the whole reason nothing ever left the feed."""
     client.force_login(make_resident(email="a@gahk.dk"))
 
@@ -3545,7 +3539,7 @@ def test_the_composer_preselects_no_duration(client: Client, make_resident: Call
     assert '<option value="" selected>' in picker
 
 
-def test_the_no_js_picker_is_required(client: Client, make_resident: Callable[..., Resident]) -> None:
+def test_the_no_js_picker_is_required(client: Client, make_resident: Callable[..., Account]) -> None:
     """Without JavaScript there is no sheet, so the browser's own required check is what forces the
     choice. feed.ts drops the attribute when it takes over."""
     client.force_login(make_resident(email="a@gahk.dk"))
@@ -3556,7 +3550,7 @@ def test_the_no_js_picker_is_required(client: Client, make_resident: Callable[..
 
 
 def test_the_composer_offers_the_sheet_with_every_duration(
-    client: Client, make_resident: Callable[..., Resident]
+    client: Client, make_resident: Callable[..., Account]
 ) -> None:
     client.force_login(make_resident(email="a@gahk.dk"))
 
@@ -3570,7 +3564,7 @@ def test_the_composer_offers_the_sheet_with_every_duration(
 
 
 def test_a_rejected_post_does_not_keep_the_draft_forever(
-    client: Client, make_resident: Callable[..., Resident]
+    client: Client, make_resident: Callable[..., Account]
 ) -> None:
     """The draft is handed back once. Left in the session it would reappear in the box on the next
     visit, next to messages that were posted since."""
@@ -3582,7 +3576,7 @@ def test_a_rejected_post_does_not_keep_the_draft_forever(
 
 
 def test_a_post_with_a_valid_duration_still_goes_straight_through(
-    client: Client, make_resident: Callable[..., Resident], pushes: list
+    client: Client, make_resident: Callable[..., Account], pushes: list
 ) -> None:
     """The sheet is the only new gate; a complete submission is unchanged."""
     client.force_login(make_resident(email="a@gahk.dk"))
@@ -3594,7 +3588,7 @@ def test_a_post_with_a_valid_duration_still_goes_straight_through(
 
 
 def test_the_authors_name_links_to_their_profile(
-    client: Client, make_resident: Callable[..., Resident]
+    client: Client, make_resident: Callable[..., Account]
 ) -> None:
     from django.urls import reverse
 

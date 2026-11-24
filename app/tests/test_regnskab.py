@@ -11,7 +11,7 @@ from ak.models import AkEntry
 from core.models import Room, Workgroup
 from oelkaelder.models import Deposit, Shopper
 from regnskab import alumneregning, economic, tasks
-from residents.models import Residency, Resident, RoleAssignment, prev_period
+from residents.models import Account, Person, Residency, Resident, RoleAssignment, prev_period
 from residents.views import _sync_month_roles
 
 
@@ -30,7 +30,7 @@ def _setup_leaver_and_stayer(make_resident: Callable) -> None:
 
     stayer = make_resident(email="stay@gahk.dk", first_name="Sta", last_name="Yer")
     Residency.objects.create(
-        resident=stayer,
+        resident=stayer.house,
         year=cy,
         month=cm,
         room=Room.objects.create(legacy_index=2, number=4, floor="stuen", side="mod gården"),
@@ -38,7 +38,7 @@ def _setup_leaver_and_stayer(make_resident: Callable) -> None:
 
     leaver = make_resident(email="leaver@gahk.dk", first_name="Lea", last_name="Ver")
     Residency.objects.create(
-        resident=leaver,
+        resident=leaver.house,
         year=py,
         month=pm,
         room=Room.objects.create(legacy_index=1, number=3, floor="stuen", side="mod gaden"),
@@ -104,13 +104,13 @@ def test_view_is_regnskab_gated(make_resident: Callable) -> None:
 def test_economic_account_number_not_editable_via_django_admin_by_regnskab_alone(
     make_resident: Callable,
 ) -> None:
-    """A plain regnskab-role user must not reach the Django Admin change form for a Resident."""
+    """A plain regnskab-role user must not reach the Django Admin change form for a Account."""
     acc = make_resident(email="acc@gahk.dk", roles=("regnskab",))
     target = make_resident(email="target@gahk.dk", economic_account_number=4207)
     c = Client()
     c.force_login(acc)
 
-    response = c.get(f"/django-admin/residents/resident/{target.pk}/change/")
+    response = c.get(f"/django-admin/residents/account/{target.pk}/change/")
 
     assert response.status_code != 200
 
@@ -127,7 +127,7 @@ def test_economic_account_number_editable_via_django_admin_by_approved_administr
     c = Client()
     c.force_login(admin)
 
-    response = c.get(f"/django-admin/residents/resident/{target.pk}/change/")
+    response = c.get(f"/django-admin/residents/account/{target.pk}/change/")
 
     assert response.status_code == 200
 
@@ -161,7 +161,7 @@ def test_send_alumneregninger_queues_the_task_and_the_status_page_shows_the_resu
         email="alumne@gahk.dk", economic_account_number=1101, first_name="Alu", last_name="Mne"
     )
     Residency.objects.create(
-        resident=alumne,
+        resident=alumne.house,
         year=2026,
         month=8,
         room=Room.objects.create(legacy_index=1, number=1, floor="stuen", side="mod gaden"),
@@ -193,7 +193,7 @@ def test_send_alumneregninger_auth_error_does_not_crash_the_request(
     just queues and redirects; the status page simply shows nobody processed yet."""
     alumne = make_resident(email="alumne@gahk.dk", economic_account_number=1101)
     Residency.objects.create(
-        resident=alumne,
+        resident=alumne.house,
         year=2026,
         month=8,
         room=Room.objects.create(legacy_index=1, number=1, floor="stuen", side="mod gaden"),
@@ -273,7 +273,7 @@ def test_preview_renders_rows_and_pdf_link(monkeypatch: pytest.MonkeyPatch, make
         email="alumne@gahk.dk", economic_account_number=1101, first_name="Alu", last_name="Mne"
     )
     Residency.objects.create(
-        resident=alumne,
+        resident=alumne.house,
         year=2026,
         month=8,
         room=Room.objects.create(legacy_index=1, number=1, floor="stuen", side="mod gaden"),
@@ -399,17 +399,19 @@ def test_regnskab_workgroup_grants_role(make_resident: Callable) -> None:
     r = make_resident(email="d@gahk.dk")
     wg, _ = Workgroup.objects.get_or_create(name="Regnskabsgruppen")  # created by migration core.0003
 
-    _sync_month_roles(r.id, wg, 2026, 8, is_admin=False)
+    _sync_month_roles(r.house.pk, wg, 2026, 8, admins=set())
 
     assert RoleAssignment.objects.filter(resident=r, role="regnskab", year=2026, month=8).exists()
 
 
-def _alumne_in_august(email: str, number: int | None, room: int) -> Resident:
-    alumne = Resident.objects.create(
-        email=email, first_name=email.partition("@")[0], economic_account_number=number
+def _alumne_in_august(email: str, number: int | None, room: int) -> Account:
+    person = Person.objects.create(first_name=email.partition("@")[0])
+    Resident.objects.create(person=person)
+    alumne = Account.objects.create(
+        email=email, first_name=email.partition("@")[0], economic_account_number=number, person=person
     )
     Residency.objects.create(
-        resident=alumne,
+        resident=alumne.house,
         year=2026,
         month=8,
         room=Room.objects.create(legacy_index=room, number=room, floor="stuen", side="mod gaden"),

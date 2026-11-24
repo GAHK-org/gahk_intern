@@ -24,7 +24,7 @@ from django.utils import timezone
 
 from core.etl import fetch_all, resident_id_remap
 from core.models import Room
-from residents.models import Resident
+from residents.models import Account
 from rooms.models import RoomCondition, RoomConditionScore, RoomCriterion
 
 from .etl_rooms import parse_kv
@@ -42,7 +42,7 @@ class Command(BaseCommand):
         by_number = {r.number: r for r in Room.objects.all()}
         criteria = {c.code: c for c in RoomCriterion.objects.all()}
         remap = resident_id_remap()
-        resident_ids = set(Resident.objects.values_list("id", flat=True))
+        resident_ids = set(Account.objects.values_list("id", flat=True))
         seen = {
             (room_id, recorded_at)
             for room_id, recorded_at in RoomCondition.objects.values_list("room_id", "recorded_at")

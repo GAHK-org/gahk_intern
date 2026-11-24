@@ -28,7 +28,7 @@ from django.http import HttpRequest
 from django.utils import timezone
 
 from core.rollout import Gate
-from residents.models import Resident, Role, RoleAssignment, active_period
+from residents.models import Account, Role, RoleAssignment, active_period
 from residents.permissions import current_resident, request_has_role
 
 from .models import ChangeRequest, Series, Video
@@ -57,13 +57,13 @@ def request_allowed(request: HttpRequest) -> bool:
     return gate.request_allowed(request)
 
 
-def _with_roles(residents: QuerySet[Resident], roles: Collection[str]) -> QuerySet[Resident]:
+def _with_roles(residents: QuerySet[Account], roles: Collection[str]) -> QuerySet[Account]:
     year, month = active_period()
     holders = RoleAssignment.objects.filter(role__in=roles, year=year, month=month).values("resident_id")
     return residents.filter(Q(pk__in=holders) | Q(is_superuser=True)).filter(is_active=True)
 
 
-def audience(residents: QuerySet[Resident]) -> QuerySet[Resident]:
+def audience(residents: QuerySet[Account]) -> QuerySet[Account]:
     """`residents` narrowed to those who can open GAHKFlix — a notification must not lead to a 403."""
     roles = _access_roles()
     if roles is None:
@@ -71,9 +71,9 @@ def audience(residents: QuerySet[Resident]) -> QuerySet[Resident]:
     return _with_roles(residents, roles)
 
 
-def administrators() -> QuerySet[Resident]:
+def administrators() -> QuerySet[Account]:
     """Everyone who may approve requests this month, as a notification audience."""
-    return _with_roles(Resident.objects.all(), ADMINISTRATOR_ROLES)
+    return _with_roles(Account.objects.all(), ADMINISTRATOR_ROLES)
 
 
 def is_administrator(request: HttpRequest) -> bool:

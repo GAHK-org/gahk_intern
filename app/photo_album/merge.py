@@ -33,7 +33,7 @@ from django.db.models import CharField, F, Max, Value
 from django.db.models.fields.files import FieldFile
 from django.db.models.functions import Concat, Substr
 
-from residents.models import Resident
+from residents.models import Account
 
 from .models import (
     MAX_ALBUM_DEPTH,
@@ -160,7 +160,7 @@ def merge_targets(album: Album) -> list[Candidate]:
     return sorted(candidates, key=lambda candidate: [name.lower() for name in candidate.path])
 
 
-def request_merge(target: Album, source: Album, *, by: Resident) -> AlbumMerge:
+def request_merge(target: Album, source: Album, *, by: Account) -> AlbumMerge:
     """Queue the merge of `source` into `target`, once the transaction commits. Raises
     ValidationError for albums that cannot be merged, or while another merge in the folder runs."""
     plan(target, source)

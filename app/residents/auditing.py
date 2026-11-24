@@ -2,28 +2,24 @@
 
 from audit import trail
 
-from .models import AdminAccessGrant, Residency, Resident, RoleAssignment
+from .models import Account, AdminAccessGrant, Person, Residency, Resident, RoleAssignment
 
 trail.register(
-    Resident,
+    Account,
+    # The login was the Resident model when the trail began, and the trail's rows cannot change, so
+    # the kind keeps that name.
     "residents.resident",
     name=lambda r: r.full_name or r.email,
-    label="Beboer",
+    label="Konto",
     # last_login moves at every login, which is its own event; is_staff follows the roles and the
     # thumbnail follows the picture, both kept by code rather than by anyone's choice.
     ignore={"last_login", "is_staff", "profile_thumbnail", "groups", "user_permissions"},
     redact={"password"},
     labels={
         "email": "E-mail",
+        "person": "Person",
         "first_name": "Fornavn",
         "last_name": "Efternavn",
-        "phone": "Telefon",
-        "birthday": "Fødselsdag",
-        "move_in_date": "Indflytning",
-        "move_out_date": "Udflytning",
-        "study": "Studie",
-        "sponsor": "Fylgje",
-        "fylgje_raw": "Fylgje (fritekst)",
         "economic_account_number": "E-conomic kontonr.",
         "profile_picture": "Profilbillede",
         "bio": "Om mig",
@@ -32,6 +28,27 @@ trail.register(
         "is_active": "Aktiv",
         "is_kitchen": "Køkkenkonto",
         "date_joined": "Oprettet",
+    },
+)
+trail.register(
+    Person,
+    "residents.person",
+    name=lambda p: p.full_name,
+    label="Person",
+    labels={"first_name": "Fornavn", "last_name": "Efternavn", "birthday": "Fødselsdag", "phone": "Telefon"},
+)
+trail.register(
+    Resident,
+    "residents.member",
+    name=lambda r: r.full_name,
+    label="Beboer",
+    labels={
+        "person": "Person",
+        "move_in_date": "Indflytning",
+        "move_out_date": "Udflytning",
+        "study": "Studie",
+        "sponsor": "Fylgje",
+        "fylgje_raw": "Fylgje (fritekst)",
     },
 )
 trail.register(

@@ -24,7 +24,7 @@ from pywebpush import WebPushException
 
 from core import push
 from core.models import PushSubscription
-from residents.models import Resident
+from residents.models import Account
 
 
 class Command(BaseCommand):
@@ -43,8 +43,8 @@ class Command(BaseCommand):
             )
 
         try:
-            resident = Resident.objects.get(email__iexact=email)
-        except Resident.DoesNotExist as exc:
+            resident = Account.objects.get(email__iexact=email)
+        except Account.DoesNotExist as exc:
             raise CommandError(f"No resident with email {email!r}.") from exc
 
         subscriptions = list(PushSubscription.objects.filter(user=resident))

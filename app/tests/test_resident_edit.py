@@ -17,28 +17,30 @@ def test_indstilling_can_edit_resident_core_data(make_resident: Callable) -> Non
     c.force_login(ind)
 
     resp = c.post(
-        reverse("edit_resident", args=[r.id]),
+        reverse("edit_resident", args=[r.house.pk]),
         {
-            "first_name": "Ny",
-            "last_name": "Navn",
-            "email": "ny@gahk.dk",
-            "phone": "12345678",
-            "study": "Fysik, KU",
-            "birthday": "2000-01-01",
-            "move_in_date": "",
-            "move_out_date": "",
-            "sponsor": str(fylgje.id),
-            "fylgje_raw": "",
+            "person-first_name": "Ny",
+            "person-last_name": "Navn",
+            "contact-email": "ny@gahk.dk",
+            "person-phone": "12345678",
+            "resident-study": "Fysik, KU",
+            "person-birthday": "2000-01-01",
+            "resident-move_in_date": "",
+            "resident-move_out_date": "",
+            "resident-sponsor": str(fylgje.house.pk),
+            "resident-fylgje_raw": "",
         },
     )
 
     assert resp.status_code == 302
     r.refresh_from_db()
+    r.person.refresh_from_db()
+    r.house.refresh_from_db()
     assert r.first_name == "Ny"
     assert r.email == "ny@gahk.dk"
     assert r.phone == "12345678"
     assert r.study == "Fysik, KU"
-    assert r.sponsor_id == fylgje.id
+    assert r.house.sponsor_id == fylgje.house.pk
 
 
 @pytest.mark.django_db
@@ -47,10 +49,11 @@ def test_edit_resident_is_indstilling_gated(make_resident: Callable) -> None:
     plain = make_resident(email="p@gahk.dk")
     c = Client()
     c.force_login(plain)
-    assert c.get(reverse("edit_resident", args=[r.id])).status_code == 403
+    assert c.get(reverse("edit_resident", args=[r.house.pk])).status_code == 403
     # a plain resident cannot change anyone's data
     c.post(
-        reverse("edit_resident", args=[r.id]), {"first_name": "Hacked", "last_name": "x", "email": r.email}
+        reverse("edit_resident", args=[r.house.pk]),
+        {"first_name": "Hacked", "person-last_name": "x", "contact-email": r.email},
     )
     r.refresh_from_db()
     assert r.first_name != "Hacked"
@@ -64,18 +67,21 @@ def test_edit_link_shown_only_to_indstilling(make_resident: Callable) -> None:
     cy, cm = active_period()
     room = Room.objects.create(legacy_index=1, number=5, floor="stuen", side="mod gaden")
     resident = make_resident(email="beboer@gahk.dk")
-    Residency.objects.create(resident=resident, room=room, year=cy, month=cm)
+    Residency.objects.create(resident=resident.house, room=room, year=cy, month=cm)
 
     ind = make_resident(email="ind@gahk.dk", roles=("indstilling",))
     plain = make_resident(email="plain@gahk.dk")
 
     ci = Client()
     ci.force_login(ind)
-    assert reverse("edit_resident", args=[resident.id]) in ci.get(reverse("directory")).content.decode()
+    assert reverse("edit_resident", args=[resident.house.pk]) in ci.get(reverse("directory")).content.decode()
 
     cp = Client()
     cp.force_login(plain)
-    assert reverse("edit_resident", args=[resident.id]) not in cp.get(reverse("directory")).content.decode()
+    assert (
+        reverse("edit_resident", args=[resident.house.pk])
+        not in cp.get(reverse("directory")).content.decode()
+    )
 
 
 @pytest.mark.django_db
@@ -91,6 +97,6 @@ def test_edit_form_prefills_dates_in_iso(make_resident: Callable) -> None:
     c = Client()
     c.force_login(ind)
 
-    html = c.get(reverse("edit_resident", args=[r.id])).content.decode()
+    html = c.get(reverse("edit_resident", args=[r.house.pk])).content.decode()
     assert 'value="2000-01-01"' in html
     assert 'value="2021-08-01"' in html

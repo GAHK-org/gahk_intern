@@ -6,7 +6,7 @@ from io import BytesIO
 
 from django.core.files.base import ContentFile
 
-from residents.models import Resident
+from residents.models import Account
 
 from .models import DEFAULT_CHANNEL_SLUG, QuickComment, QuickPost, QuickReaction
 
@@ -189,7 +189,7 @@ COMMENTS = ["Jeg kan godt.", "Jeg er på vej hjem nu.", "Tak, det løser jeg.", 
 EMOJI = ["👍", "🎉", "👀", "❤️", "✅"]
 
 
-def seed(residents: list[Resident], now: datetime, rng: random.Random) -> int:
+def seed(residents: list[Account], now: datetime, rng: random.Random) -> int:
     """Create a varied message matrix; TV-Rezz is deliberately left empty."""
     if not residents:
         return 0

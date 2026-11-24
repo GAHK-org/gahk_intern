@@ -35,7 +35,7 @@ from PIL import ExifTags, Image, ImageFile, ImageOps, ImageSequence, IptcImagePl
 
 from core.job_directories import job_directory
 from core.job_progress import stage
-from residents.models import Resident
+from residents.models import Account
 
 from . import file_metadata, raw
 from .models import (
@@ -205,7 +205,7 @@ def store_upload(
     *,
     album: Album,
     uploaded_file: Any,  # noqa: ANN401 — an UploadedFile or File
-    resident: Resident,
+    resident: Account,
     title: str = "",
     approved: bool = False,
     file_modified_at: datetime | None = None,
@@ -279,7 +279,7 @@ def upload_media(
     *,
     album: Album,
     uploaded_file: Any,  # noqa: ANN401 — an UploadedFile or File
-    resident: Resident,
+    resident: Account,
     title: str = "",
     approved: bool = False,
     file_modified_at: datetime | None = None,
@@ -320,7 +320,7 @@ def create_album(*, name: str, folder: str = "", parent: Album | None = None) ->
     return album
 
 
-def rename_album(album: Album, name: str, *, by: Resident) -> None:
+def rename_album(album: Album, name: str, *, by: Account) -> None:
     """Rename an album. Its storage keys and its path are made of ids, so nothing else moves.
 
     A locked album keeps its name, with one exception decided here rather than by the caller: the
@@ -340,12 +340,12 @@ def rename_album(album: Album, name: str, *, by: Resident) -> None:
         raise ValidationError({"name": "Der findes allerede et album med det navn."}) from exc
 
 
-def is_import_script(resident: Resident) -> bool:
+def is_import_script(resident: Account) -> bool:
     """The resident the import script acts as (views._token_import_resident): nobody logs in as it."""
     return resident.email == settings.PHOTO_ALBUM_SYSTEM_IMPORT_EMAIL
 
 
-def imported_by_import_script(album: Album, resident: Resident) -> bool:
+def imported_by_import_script(album: Album, resident: Account) -> bool:
     """Whether `resident` is the import script and one of its imports made `album`: created it while
     it ran. An album made on the site stays the site's, even once the script has added to it, or an
     album merge (merge.py) has put it in an import's `album_ids` in place of the one merged in."""
@@ -614,7 +614,7 @@ def _plan_import(
     merge: bool = False,
     root_name: str = "",
     limit_video_size: bool = True,
-    resident: Resident | None = None,
+    resident: Account | None = None,
     progress: Progress = no_progress,
 ) -> _ImportPlan:
     """Pass one: read, check and extract everything, collecting EVERY reason to refuse the import."""
@@ -776,7 +776,7 @@ def import_zip_album(
     *,
     archive: File,
     folder: str,
-    resident: Resident,
+    resident: Account,
     lock: bool = False,
     merge: bool = False,
     root_name: str = "",
@@ -846,7 +846,7 @@ def import_zip_album(
 def _store_import(
     plan: _ImportPlan,
     folder: str,
-    resident: Resident,
+    resident: Account,
     *,
     lock: bool = False,
     progress: Progress = no_progress,
@@ -2116,14 +2116,14 @@ def _decimal_coordinate(parts: tuple[float, float, float], hemisphere: str) -> f
     return -coordinate if hemisphere in {"S", "W"} else coordinate
 
 
-def approve(media: Media, resident: Resident) -> None:
+def approve(media: Media, resident: Account) -> None:
     media.status = MediaStatus.APPROVED
     media.approved_by = resident
     media.approved_at = timezone.now()
     media.save(update_fields=["status", "approved_by", "approved_at"])
 
 
-def reject(media: Media, resident: Resident) -> None:
+def reject(media: Media, resident: Account) -> None:
     media.status = MediaStatus.REJECTED
     media.deleted_at = timezone.now()
     media.deleted_by = resident
@@ -2150,7 +2150,7 @@ def restore(media: Media) -> None:
     media.save(update_fields=["deleted_at", "deleted_by", "status"])
 
 
-def delete(media: Media, resident: Resident, now: datetime | None = None) -> None:
+def delete(media: Media, resident: Account, now: datetime | None = None) -> None:
     """Move media to the recoverable bin."""
     moment = now or timezone.now()
     media.deleted_at = moment
@@ -2183,7 +2183,7 @@ def _delete_files(media: Media) -> None:
             file_field.delete(save=False)
 
 
-def record_view(media: Media, resident: Resident, now: datetime | None = None) -> bool:
+def record_view(media: Media, resident: Account, now: datetime | None = None) -> bool:
     """Count one look at `media` by `resident`. Returns whether it counted as a new view.
 
     A view within MEDIA_VIEW_DEDUPE_WINDOW of that resident's last one is the same view — paging back

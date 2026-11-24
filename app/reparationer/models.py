@@ -42,7 +42,7 @@ from django.dispatch import receiver
 
 from core.clock import current_datetime
 from core.files import delete_attached_files
-from residents.models import Resident
+from residents.models import Account
 
 # How long a ticket may sit in Færdig before the nightly sweep archives it. Long enough that a
 # just-closed repair does not vanish from the board while still fresh, short enough that Færdig does
@@ -95,7 +95,7 @@ class RepairTask(models.Model):
     responsible = models.CharField(
         "Ansvarlig", max_length=20, choices=Responsible.choices, default=Responsible.VICEVAERT
     )
-    reported_by = models.ForeignKey(Resident, on_delete=models.CASCADE, related_name="reported_repairs")
+    reported_by = models.ForeignKey(Account, on_delete=models.CASCADE, related_name="reported_repairs")
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
     # When the ticket entered its current column — set by views.set_status on a real move only, so
@@ -138,7 +138,7 @@ class RepairComment(models.Model):
     who may remove one."""
 
     task = models.ForeignKey(RepairTask, on_delete=models.CASCADE, related_name="comments")
-    author = models.ForeignKey(Resident, on_delete=models.CASCADE, related_name="repair_comments")
+    author = models.ForeignKey(Account, on_delete=models.CASCADE, related_name="repair_comments")
     # Blank when the photos ARE the note — "se her" is an answer. The view refuses a note with
     # neither (views.create_comment), as opslagstavle's comments do.
     body = models.TextField("Note", blank=True)

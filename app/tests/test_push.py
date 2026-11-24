@@ -32,7 +32,7 @@ from pywebpush import WebPushException
 from core import push
 from core.checks import check_vapid_public_key
 from core.models import PushDeliveryDay, PushSubscription
-from residents.models import Resident
+from residents.models import Account
 
 ENDPOINT = "https://fcm.googleapis.com/fcm/send/abc"
 
@@ -54,7 +54,7 @@ def vapid(settings: object) -> None:
     settings.VAPID_ADMIN_EMAIL = "drift@gahk.dk"  # type: ignore[attr-defined]
 
 
-def subscribe(user: Resident, endpoint: str) -> PushSubscription:
+def subscribe(user: Account, endpoint: str) -> PushSubscription:
     """Register a fake device. One row per device, for everything — there are no topic flags."""
     return PushSubscription.objects.create(
         user=user,
@@ -144,7 +144,7 @@ def _raiser(status: int | None) -> WebPushException:
 
 @pytest.mark.parametrize("status", [404, 410])
 def test_dispatch_drops_a_gone_subscription_and_keeps_going(
-    monkeypatch: pytest.MonkeyPatch, make_resident: Callable[..., Resident], status: int
+    monkeypatch: pytest.MonkeyPatch, make_resident: Callable[..., Account], status: int
 ) -> None:
     """A 404/410 endpoint must be deleted, and must not cost the later recipients their
     notification. FCM answers 404 for an endpoint it no longer knows, so both count as gone."""
@@ -169,7 +169,7 @@ def test_dispatch_drops_a_gone_subscription_and_keeps_going(
 
 @pytest.mark.parametrize("status", [503, None])
 def test_dispatch_keeps_a_subscription_that_failed_transiently_and_counts_the_failure(
-    monkeypatch: pytest.MonkeyPatch, make_resident: Callable[..., Resident], status: int | None
+    monkeypatch: pytest.MonkeyPatch, make_resident: Callable[..., Account], status: int | None
 ) -> None:
     """A server error or a dropped connection is not evidence the endpoint is gone — keep the row so
     the next notification retries it, but count the failure: the admin page shows a device that
@@ -190,7 +190,7 @@ def test_dispatch_keeps_a_subscription_that_failed_transiently_and_counts_the_fa
 
 
 def test_a_success_records_when_and_resets_the_failure_count(
-    monkeypatch: pytest.MonkeyPatch, make_resident: Callable[..., Resident]
+    monkeypatch: pytest.MonkeyPatch, make_resident: Callable[..., Account]
 ) -> None:
     """`failure_count` is CONSECUTIVE failures. A device that recovered must not keep looking dead
     on the admin page because of last week's outage."""
@@ -206,7 +206,7 @@ def test_a_success_records_when_and_resets_the_failure_count(
 
 
 def test_dispatch_sends_the_payload_as_json_with_the_given_ttl(
-    monkeypatch: pytest.MonkeyPatch, make_resident: Callable[..., Resident]
+    monkeypatch: pytest.MonkeyPatch, make_resident: Callable[..., Account]
 ) -> None:
     """sw.js parses the body with event.data.json(), so it must arrive as a JSON string. The TTL is
     the notification's own (a Den Hurtige message's is its expiry), handed through to the push
@@ -223,7 +223,7 @@ def test_dispatch_sends_the_payload_as_json_with_the_given_ttl(
 
 
 def test_dispatch_defaults_to_the_fallback_ttl(
-    monkeypatch: pytest.MonkeyPatch, make_resident: Callable[..., Resident]
+    monkeypatch: pytest.MonkeyPatch, make_resident: Callable[..., Account]
 ) -> None:
     subscribe(make_resident(email="a@gahk.dk"), "https://push.example/one")
     ttls: list[int] = []
@@ -235,7 +235,7 @@ def test_dispatch_defaults_to_the_fallback_ttl(
 
 
 def test_dispatch_counts_outcomes_into_todays_delivery_day(
-    monkeypatch: pytest.MonkeyPatch, make_resident: Callable[..., Resident]
+    monkeypatch: pytest.MonkeyPatch, make_resident: Callable[..., Account]
 ) -> None:
     """The admin statistics: delivered, failed (kept for retry) and removed (gone, deleted) are
     separate numbers, and two fan-outs on the same day ADD UP rather than overwrite."""
@@ -273,7 +273,7 @@ def test_a_dispatch_to_nobody_writes_no_delivery_day() -> None:
 
 
 def test_send_many_delivers_inline_when_background_is_off(
-    monkeypatch: pytest.MonkeyPatch, make_resident: Callable[..., Resident], vapid: None
+    monkeypatch: pytest.MonkeyPatch, make_resident: Callable[..., Account], vapid: None
 ) -> None:
     """A management command must have delivered before `handle()` returns: a daemon thread is
     killed at interpreter shutdown, mid-fan-out."""
@@ -292,7 +292,7 @@ def test_send_many_delivers_inline_when_background_is_off(
 
 
 def test_send_many_runs_every_delivery_in_one_background_thread(
-    monkeypatch: pytest.MonkeyPatch, make_resident: Callable[..., Resident], vapid: None
+    monkeypatch: pytest.MonkeyPatch, make_resident: Callable[..., Account], vapid: None
 ) -> None:
     """One notification can need two payloads (vibrating and silent). A thread per payload would be
     a thread per variant per post; they share ONE, and nothing is sent on the request thread."""
@@ -326,7 +326,7 @@ def test_send_many_runs_every_delivery_in_one_background_thread(
 
 
 def test_send_many_is_a_no_op_when_push_is_not_configured(
-    monkeypatch: pytest.MonkeyPatch, make_resident: Callable[..., Resident], settings: object
+    monkeypatch: pytest.MonkeyPatch, make_resident: Callable[..., Account], settings: object
 ) -> None:
     """The normal dev state: no VAPID keys. Features still work; nothing tries to push."""
     settings.VAPID_PUBLIC_KEY = ""  # type: ignore[attr-defined]
@@ -378,7 +378,7 @@ def test_subscribe_requires_login(client: Client, subscribe_url: str) -> None:
 
 
 def test_the_endpoint_is_post_only(
-    client: Client, make_resident: Callable[..., Resident], subscribe_url: str
+    client: Client, make_resident: Callable[..., Account], subscribe_url: str
 ) -> None:
     client.force_login(make_resident(email="a@gahk.dk"))
 
@@ -386,7 +386,7 @@ def test_the_endpoint_is_post_only(
 
 
 def test_subscribe_binds_the_device_to_the_logged_in_user(
-    client: Client, make_resident: Callable[..., Resident], subscribe_url: str
+    client: Client, make_resident: Callable[..., Account], subscribe_url: str
 ) -> None:
     """The owner comes from the session, never the request body — django-webpush's endpoint took
     its audience from the payload, so anyone could have joined the dorm's notification list."""
@@ -405,7 +405,7 @@ def test_subscribe_binds_the_device_to_the_logged_in_user(
 
 
 def test_resubscribing_the_same_device_updates_rather_than_duplicates(
-    client: Client, make_resident: Callable[..., Resident], subscribe_url: str
+    client: Client, make_resident: Callable[..., Account], subscribe_url: str
 ) -> None:
     """The endpoint is the device identity. django-webpush keyed on every field, so a browser that
     merely changed its user-agent string silently produced a second row and a double notification.
@@ -425,7 +425,7 @@ def test_resubscribing_the_same_device_updates_rather_than_duplicates(
 
 
 def test_resubscribing_clears_the_failure_count(
-    client: Client, make_resident: Callable[..., Resident], subscribe_url: str
+    client: Client, make_resident: Callable[..., Account], subscribe_url: str
 ) -> None:
     """Pressing the button again is the resident saying "this device works" — the admin page must
     not keep showing the old run of failures against fresh keys."""
@@ -441,7 +441,7 @@ def test_resubscribing_clears_the_failure_count(
 
 
 def test_a_stale_topic_key_is_ignored(
-    client: Client, make_resident: Callable[..., Resident], subscribe_url: str
+    client: Client, make_resident: Callable[..., Account], subscribe_url: str
 ) -> None:
     """A browser running a cached copy of the per-feature push.ts still sends `topic`. A device now
     subscribes once for everything, which is what that build was asking for anyway — so it must
@@ -455,7 +455,7 @@ def test_a_stale_topic_key_is_ignored(
 
 
 def test_unsubscribe_removes_the_device(
-    client: Client, make_resident: Callable[..., Resident], subscribe_url: str
+    client: Client, make_resident: Callable[..., Account], subscribe_url: str
 ) -> None:
     """No topics left to keep the row for: unsubscribe is a delete."""
     user = make_resident(email="a@gahk.dk")
@@ -469,7 +469,7 @@ def test_unsubscribe_removes_the_device(
 
 
 def test_unsubscribe_cannot_remove_another_residents_device(
-    client: Client, make_resident: Callable[..., Resident], subscribe_url: str
+    client: Client, make_resident: Callable[..., Account], subscribe_url: str
 ) -> None:
     """Endpoints are guessable-ish strings that travel in push traffic; deleting must be scoped to
     the requesting user so a replayed endpoint cannot silence someone else's phone."""
@@ -489,7 +489,7 @@ def test_unsubscribe_cannot_remove_another_residents_device(
 )
 def test_status_says_whose_the_endpoint_is(
     client: Client,
-    make_resident: Callable[..., Resident],
+    make_resident: Callable[..., Account],
     subscribe_url: str,
     owner: str | None,
     expected: str,
@@ -511,7 +511,7 @@ def test_status_says_whose_the_endpoint_is(
 
 
 def test_status_and_unsubscribe_need_no_keys(
-    client: Client, make_resident: Callable[..., Resident], subscribe_url: str
+    client: Client, make_resident: Callable[..., Account], subscribe_url: str
 ) -> None:
     """Both only identify the device by its endpoint; requiring keys would break the status probe
     of a browser that has already thrown its subscription away."""
@@ -542,7 +542,7 @@ def test_status_and_unsubscribe_need_no_keys(
     ],
 )
 def test_subscribe_rejects_malformed_payloads(
-    client: Client, make_resident: Callable[..., Resident], subscribe_url: str, body: str
+    client: Client, make_resident: Callable[..., Account], subscribe_url: str, body: str
 ) -> None:
     """Untrusted input on a login-gated endpoint: anything malformed is a 400, never a 500 and
     never a half-written row."""
@@ -558,7 +558,7 @@ def test_subscribe_rejects_malformed_payloads(
 
 
 def test_send_test_push_reports_each_device(
-    monkeypatch: pytest.MonkeyPatch, make_resident: Callable[..., Resident], vapid: None
+    monkeypatch: pytest.MonkeyPatch, make_resident: Callable[..., Account], vapid: None
 ) -> None:
     """The diagnostic command bypasses `_dispatch` on purpose (its job is to hide errors), and
     ignores the resident's notification settings — it tests the device, not a category."""
@@ -586,7 +586,7 @@ def test_send_test_push_reports_each_device(
 
 
 def test_send_test_push_succeeds_without_a_topic(
-    monkeypatch: pytest.MonkeyPatch, make_resident: Callable[..., Resident], vapid: None
+    monkeypatch: pytest.MonkeyPatch, make_resident: Callable[..., Account], vapid: None
 ) -> None:
     """There is one subscription per device now, so the command takes only the email."""
     subscribe(make_resident(email="anton@gahk.dk"), "https://push.example/ok")
@@ -598,7 +598,7 @@ def test_send_test_push_succeeds_without_a_topic(
     assert "All devices accepted" in out.getvalue()
 
 
-def test_send_test_push_no_longer_takes_a_topic(make_resident: Callable[..., Resident], vapid: None) -> None:
+def test_send_test_push_no_longer_takes_a_topic(make_resident: Callable[..., Account], vapid: None) -> None:
     subscribe(make_resident(email="anton@gahk.dk"), "https://push.example/ok")
 
     with pytest.raises(CommandError):
@@ -606,7 +606,7 @@ def test_send_test_push_no_longer_takes_a_topic(make_resident: Callable[..., Res
 
 
 def test_send_test_push_explains_a_resident_without_devices(
-    make_resident: Callable[..., Resident], vapid: None
+    make_resident: Callable[..., Account], vapid: None
 ) -> None:
     make_resident(email="anton@gahk.dk")
 
@@ -615,7 +615,7 @@ def test_send_test_push_explains_a_resident_without_devices(
 
 
 def test_send_test_push_refuses_without_vapid_keys(
-    make_resident: Callable[..., Resident], settings: object
+    make_resident: Callable[..., Account], settings: object
 ) -> None:
     settings.VAPID_PUBLIC_KEY = ""  # type: ignore[attr-defined]
     settings.VAPID_PRIVATE_KEY = ""  # type: ignore[attr-defined]

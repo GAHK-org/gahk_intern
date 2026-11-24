@@ -68,7 +68,7 @@ def delete_files_after_commit(targets: list[tuple[Storage, str]], label: str) ->
     """Delete each (storage, name) after the current transaction commits, logging any failure.
 
     The half of delete_attached_files that does not care where the names came from, for a model that
-    replaces a file it owns while the row lives on (residents.models.Resident.profile_thumbnail).
+    replaces a file it owns while the row lives on (residents.models.Account.profile_thumbnail).
     """
     if not targets:
         return

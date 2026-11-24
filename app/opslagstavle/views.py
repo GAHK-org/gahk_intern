@@ -64,7 +64,7 @@ def _decorate(notices: list[Notice], request: HttpRequest) -> list[Notice]:
     A Django template cannot call a function with arguments, and every one of these depends on who
     is asking — the same reason den_hurtige.views.posts_for attaches `reaction_rows`.
     """
-    # current_resident, not request.user: it narrows the type to a Resident (whose pk is an int),
+    # current_resident, not request.user: it narrows the type to a Account (whose pk is an int),
     # which is the invariant every view here already relies on behind @access_required.
     user_id = current_resident(request).pk
     moderator = can_moderate(request)

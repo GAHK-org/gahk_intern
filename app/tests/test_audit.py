@@ -18,7 +18,7 @@ from django.utils.http import urlsafe_base64_encode
 from audit import trail
 from audit.models import AppendOnlyError, AuditChange, AuditEntity, AuditEvent
 from core.models import OutgoingMail
-from residents.models import AdminAccessGrant, Resident, Role, RoleAssignment, active_period
+from residents.models import Account, AdminAccessGrant, Role, RoleAssignment, active_period
 
 LOGIN = "/admin/login"
 
@@ -73,12 +73,12 @@ def _backdated_event(action: str, days: int) -> AuditEvent:
 
 @pytest.mark.django_db
 def test_the_database_lets_a_row_go_only_once_its_retention_ran_out(
-    make_resident: Callable[..., Resident],
+    make_resident: Callable[..., Account],
 ) -> None:
-    anna = make_resident(email="anna@gahk.dk", phone="111")
+    anna = make_resident(email="anna@gahk.dk", bio="111")
     with trail.backdated(timezone.now() - datetime.timedelta(days=2 * 365)):
         with trail.event("residents.resident.updated", actor=None, subject=anna):
-            anna.phone = "222"
+            anna.bio = "222"
             anna.save()
     kept = AuditEvent.objects.get()
     entity = kept.entities.get()
@@ -102,18 +102,18 @@ def test_the_database_lets_a_row_go_only_once_its_retention_ran_out(
 
 @pytest.mark.django_db
 def test_the_nightly_purge_deletes_what_expired_and_says_how_much(
-    make_resident: Callable[..., Resident],
+    make_resident: Callable[..., Account],
 ) -> None:
     from audit.tasks import purge_expired
 
-    anna = make_resident(email="anna@gahk.dk", phone="111")
+    anna = make_resident(email="anna@gahk.dk", bio="111")
     for action in ("auth.login", "auth.login.failed", "auth.logout", "auth.password_reset.requested"):
         _backdated_event(action, days=366)
     young_login = _backdated_event("auth.login", days=300)
     young_change = _backdated_event("residents.role.added", days=366)
     with trail.backdated(timezone.now() - datetime.timedelta(days=5 * 366)):
         with trail.event("residents.resident.updated", actor=None, subject=anna):
-            anna.phone = "222"
+            anna.bio = "222"
             anna.save()
 
     assert purge_expired() == 5
@@ -145,12 +145,12 @@ def test_the_models_refuse_before_the_database_has_to() -> None:
 
 
 @pytest.mark.django_db
-def test_deleting_a_resident_leaves_their_history_as_it_was(make_resident: Callable[..., Resident]) -> None:
+def test_deleting_a_resident_leaves_their_history_as_it_was(make_resident: Callable[..., Account]) -> None:
     anna = make_resident(email="anna@gahk.dk", first_name="Anna", last_name="Berg")
     with trail.event("residents.resident.updated", actor=anna, subject=anna):
-        anna.phone = "12345678"
+        anna.bio = "12345678"
         anna.save()
-    Resident.objects.filter(pk=anna.pk).delete()
+    Account.objects.filter(pk=anna.pk).delete()
 
     event = AuditEvent.objects.get()
     assert (event.actor_id, event.actor_name) == (anna.pk, "Anna Berg")
@@ -161,16 +161,16 @@ def test_deleting_a_resident_leaves_their_history_as_it_was(make_resident: Calla
 
 
 @pytest.mark.django_db
-def test_an_event_captures_creations_changes_and_deletions(make_resident: Callable[..., Resident]) -> None:
+def test_an_event_captures_creations_changes_and_deletions(make_resident: Callable[..., Account]) -> None:
     admin = make_resident(email="admin@gahk.dk", first_name="Ada", last_name="Min")
-    anna = make_resident(email="anna@gahk.dk", first_name="Anna", last_name="Berg", phone="111")
+    anna = make_resident(email="anna@gahk.dk", first_name="Anna", last_name="Berg", bio="111")
     year, month = active_period()
     old_role = RoleAssignment.objects.create(resident=anna, role=Role.AK, year=year, month=month)
 
     with trail.event("test.several", actor=admin, subject=anna, details={"why": "test"}):
-        anna.phone = "222"
+        anna.bio = "222"
         anna.save()
-        anna.phone = "333"  # two writes of one field: one change, first before to last after
+        anna.bio = "333"  # two writes of one field: one change, first before to last after
         anna.save()
         RoleAssignment.objects.create(resident=anna, role=Role.PR, year=year, month=month)
         old_role.delete()
@@ -184,14 +184,14 @@ def test_an_event_captures_creations_changes_and_deletions(make_resident: Callab
     )
     subject = event.entities.get(kind="residents.resident")
     assert (subject.role, subject.operation, subject.name) == ("subject", "updated", "Anna Berg")
-    assert _changes(event, "residents.resident") == {"phone": ("111", "333")}
+    assert _changes(event, "residents.resident") == {"bio": ("111", "333")}
     roles = {e.operation: e for e in event.entities.filter(kind="residents.role")}
     assert {c.field: c.after for c in roles["created"].changes.all()}["role"] == Role.PR
     assert {c.field: c.before for c in roles["deleted"].changes.all()}["role"] == Role.AK
 
 
 @pytest.mark.django_db
-def test_a_password_is_recorded_as_changed_never_its_value(make_resident: Callable[..., Resident]) -> None:
+def test_a_password_is_recorded_as_changed_never_its_value(make_resident: Callable[..., Account]) -> None:
     anna = make_resident(email="anna@gahk.dk")
     with trail.event("auth.password.changed", actor=anna, subject=anna):
         anna.set_password("helt-ny")
@@ -202,7 +202,7 @@ def test_a_password_is_recorded_as_changed_never_its_value(make_resident: Callab
 
 
 @pytest.mark.django_db
-def test_ignored_fields_alone_record_nothing(make_resident: Callable[..., Resident]) -> None:
+def test_ignored_fields_alone_record_nothing(make_resident: Callable[..., Account]) -> None:
     anna = make_resident(email="anna@gahk.dk")
     with trail.event("test.login", actor=anna, only_if_changed=True):
         anna.save(update_fields=["last_login"])
@@ -214,7 +214,7 @@ def test_ignored_fields_alone_record_nothing(make_resident: Callable[..., Reside
 @pytest.mark.django_db
 def test_a_subject_made_inside_the_event_is_named_with_its_id() -> None:
     with trail.event("residents.resident.created", actor=None) as event:
-        made = Resident.objects.create(email="ny@gahk.dk", first_name="Ny", last_name="Beboer")
+        made = Account.objects.create(email="ny@gahk.dk", first_name="Ny", last_name="Beboer")
         event.involve(made, "subject")
     entity = AuditEntity.objects.get()
     assert (entity.entity_id, entity.role, entity.operation, entity.name) == (
@@ -243,36 +243,36 @@ def test_a_backdated_event_is_dated_when_the_demo_history_says() -> None:
 
 @pytest.mark.django_db
 def test_unaudited_work_leaves_no_trail_not_even_a_named_event(
-    make_resident: Callable[..., Resident],
+    make_resident: Callable[..., Account],
 ) -> None:
     """An import or the demo seed may call a service that names its own event: still nothing."""
-    anna = make_resident(email="anna@gahk.dk", phone="111")
+    anna = make_resident(email="anna@gahk.dk", bio="111")
     with trail.unaudited():
         with trail.event("test.thing", actor=None, subject=anna):
-            anna.phone = "222"
+            anna.bio = "222"
             anna.save()
         trail.record("test.thing", actor=None)
     assert not AuditEvent.objects.exists()
 
 
 @pytest.mark.django_db
-def test_work_that_fails_leaves_no_trail(make_resident: Callable[..., Resident]) -> None:
-    anna = make_resident(email="anna@gahk.dk", phone="111")
+def test_work_that_fails_leaves_no_trail(make_resident: Callable[..., Account]) -> None:
+    anna = make_resident(email="anna@gahk.dk", bio="111")
     with pytest.raises(RuntimeError), trail.event("test.fails", actor=None):
-        anna.phone = "222"
+        anna.bio = "222"
         anna.save()
         raise RuntimeError
     assert not AuditEvent.objects.exists()
-    assert Resident.objects.get(pk=anna.pk).phone == "111"
+    assert Account.objects.get(pk=anna.pk).bio == "111"
 
 
 @pytest.mark.django_db
-def test_a_change_no_signal_sees_can_be_recorded_by_hand(make_resident: Callable[..., Resident]) -> None:
-    anna = make_resident(email="anna@gahk.dk", phone="111")
+def test_a_change_no_signal_sees_can_be_recorded_by_hand(make_resident: Callable[..., Account]) -> None:
+    anna = make_resident(email="anna@gahk.dk", bio="111")
     with trail.event("test.bulk", actor=None) as event:
-        Resident.objects.filter(pk=anna.pk).update(phone="999")
-        event.change(anna, "phone", "111", "999")
-    assert _changes(AuditEvent.objects.get(), "residents.resident") == {"phone": ("111", "999")}
+        Account.objects.filter(pk=anna.pk).update(bio="999")
+        event.change(anna, "bio", "111", "999")
+    assert _changes(AuditEvent.objects.get(), "residents.resident") == {"bio": ("111", "999")}
 
 
 # --- outside an event ------------------------------------------------------------------------------
@@ -280,34 +280,34 @@ def test_a_change_no_signal_sees_can_be_recorded_by_hand(make_resident: Callable
 
 @pytest.mark.django_db
 def test_a_request_writing_outside_an_event_is_an_error_in_tests(
-    make_resident: Callable[..., Resident],
+    make_resident: Callable[..., Account],
 ) -> None:
     anna = make_resident(email="anna@gahk.dk")
     with (
         trail.context("web", request=RequestFactory().post("/somewhere")),
         pytest.raises(trail.UnauditedWrite),
     ):
-        anna.phone = "222"
+        anna.bio = "222"
         anna.save()
 
 
 @pytest.mark.django_db
 def test_outside_tests_it_is_recorded_as_unclaimed(
-    make_resident: Callable[..., Resident], settings: object, caplog: pytest.LogCaptureFixture
+    make_resident: Callable[..., Account], settings: object, caplog: pytest.LogCaptureFixture
 ) -> None:
     settings.AUDIT_STRICT = False  # type: ignore[attr-defined]
     settings.AUDIT_FALLBACK = True  # type: ignore[attr-defined]
-    anna = make_resident(email="anna@gahk.dk", phone="111")
+    anna = make_resident(email="anna@gahk.dk", bio="111")
     AuditEvent.objects.all()  # the creation above is recorded too (as "system": no request)
     request = RequestFactory().post("/somewhere")
     request.user = anna
     with trail.context("web", request=request):
-        anna.phone = "222"
+        anna.bio = "222"
         anna.save()
 
     event = AuditEvent.objects.filter(action="residents.resident.updated").get()
     assert (event.unclaimed, event.source, event.actor_id) == (True, "web", anna.pk)
-    assert _changes(event, "residents.resident") == {"phone": ("111", "222")}
+    assert _changes(event, "residents.resident") == {"bio": ("111", "222")}
     assert "Unclaimed audit write" in caplog.text
     created = AuditEvent.objects.get(action="residents.resident.created")
     assert (created.unclaimed, created.source) == (True, "system")
@@ -315,13 +315,13 @@ def test_outside_tests_it_is_recorded_as_unclaimed(
 
 @pytest.mark.django_db
 def test_the_django_admin_is_recorded_unclaimed_without_a_warning(
-    make_resident: Callable[..., Resident], settings: object, caplog: pytest.LogCaptureFixture
+    make_resident: Callable[..., Account], settings: object, caplog: pytest.LogCaptureFixture
 ) -> None:
-    anna = make_resident(email="anna@gahk.dk", phone="111")
+    anna = make_resident(email="anna@gahk.dk", bio="111")
     request = RequestFactory().post("/django-admin/residents/resident/1/change/")
     request.user = anna
     with trail.context("web", request=request):
-        anna.phone = "222"
+        anna.bio = "222"
         anna.save()
     assert AuditEvent.objects.get().unclaimed
     assert "Unclaimed" not in caplog.text
@@ -331,7 +331,7 @@ def test_the_django_admin_is_recorded_unclaimed_without_a_warning(
 
 
 @pytest.mark.django_db
-def test_a_login_and_a_logout(make_resident: Callable[..., Resident]) -> None:
+def test_a_login_and_a_logout(make_resident: Callable[..., Account]) -> None:
     anna = make_resident(email="anna@gahk.dk", password="rigtig")
     client = Client(REMOTE_ADDR="10.0.0.7")
     client.post(LOGIN, {"username": "anna@gahk.dk", "password": "rigtig"})
@@ -349,7 +349,7 @@ def test_a_login_and_a_logout(make_resident: Callable[..., Resident]) -> None:
 
 
 @pytest.mark.django_db
-def test_failed_logins_say_why(make_resident: Callable[..., Resident]) -> None:
+def test_failed_logins_say_why(make_resident: Callable[..., Account]) -> None:
     anna = make_resident(email="anna@gahk.dk", password="rigtig")
     Client().post(LOGIN, {"username": "anna@gahk.dk", "password": "forkert"})
     Client().post(LOGIN, {"username": "ukendt@gahk.dk", "password": "x"})
@@ -379,7 +379,7 @@ def test_a_password_typed_as_the_address_is_not_kept() -> None:
 
 @pytest.mark.django_db
 def test_an_old_password_upgraded_at_login_is_part_of_the_login(
-    make_resident: Callable[..., Resident],
+    make_resident: Callable[..., Account],
 ) -> None:
     make_resident(email="gammel@gahk.dk", password="rigtig", legacy=True)
     Client().post(LOGIN, {"username": "gammel@gahk.dk", "password": "rigtig"})
@@ -395,7 +395,7 @@ def test_a_login_form_with_nothing_in_it_records_nothing() -> None:
 
 
 @pytest.mark.django_db
-def test_password_change_and_reset(make_resident: Callable[..., Resident]) -> None:
+def test_password_change_and_reset(make_resident: Callable[..., Account]) -> None:
     anna = make_resident(email="anna@gahk.dk", password="rigtig")
     client = Client()
     client.force_login(anna)
@@ -411,7 +411,7 @@ def test_password_change_and_reset(make_resident: Callable[..., Resident]) -> No
     Client().post("/admin/password-reset", {"email": "ingen@gahk.dk"})
     assert len(mail.outbox) == 1
     uid = urlsafe_base64_encode(force_bytes(anna.pk))
-    token = default_token_generator.make_token(Resident.objects.get(pk=anna.pk))
+    token = default_token_generator.make_token(Account.objects.get(pk=anna.pk))
     reset = Client()
     url = reset.get(f"/admin/reset/{uid}/{token}/").url
     reset.post(url, {"new_password1": "Endnu-et-kodeord-7", "new_password2": "Endnu-et-kodeord-7"})
@@ -430,7 +430,7 @@ def test_password_change_and_reset(make_resident: Callable[..., Resident]) -> No
 
 
 @pytest.mark.django_db
-def test_roles_admin_access_preview_and_refusals(make_resident: Callable[..., Resident]) -> None:
+def test_roles_admin_access_preview_and_refusals(make_resident: Callable[..., Account]) -> None:
     admin = make_resident(email="admin@gahk.dk", roles=[Role.ADMINISTRATOR], is_superuser=True)
     second = make_resident(email="second@gahk.dk", is_superuser=True)
     anna = make_resident(email="anna@gahk.dk")
@@ -497,7 +497,7 @@ def _failed_mail(recipient: str, status: str = "failed") -> OutgoingMail:
 
 @pytest.mark.django_db
 def test_the_outbox_itself_is_left_out_but_sending_a_mail_again_is_an_event(
-    make_resident: Callable[..., Resident], monkeypatch: pytest.MonkeyPatch
+    make_resident: Callable[..., Account], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """The deliverer rewrites a mail on every attempt (core.auditing); a person sending one again acts."""
     from core import mail as outbox
@@ -527,7 +527,7 @@ def test_the_outbox_itself_is_left_out_but_sending_a_mail_again_is_an_event(
 
 @pytest.mark.django_db
 def test_regnskab_sending_the_alumneregninger_and_one_again_are_events(
-    make_resident: Callable[..., Resident], monkeypatch: pytest.MonkeyPatch
+    make_resident: Callable[..., Account], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     from regnskab import tasks
     from regnskab.models import AlumneregningSend
@@ -537,7 +537,7 @@ def test_regnskab_sending_the_alumneregninger_and_one_again_are_events(
 
     monkeypatch.setattr(tasks.send_alumneregninger_task, "delay", broker_down)
     regnskab = make_resident(email="acc@gahk.dk", roles=("regnskab",))
-    anna = make_resident(email="anna@gahk.dk", phone="111")
+    anna = make_resident(email="anna@gahk.dk", bio="111")
     period = {"date_from": "2026-08-01", "date_to": "2026-08-31"}
     lost = AlumneregningSend.objects.create(
         resident=anna, outcome="sent", mail=_failed_mail("anna@gahk.dk", status="unknown"), **period
@@ -586,7 +586,7 @@ def test_every_named_action_is_a_dotted_name() -> None:
 
 
 @pytest.mark.django_db
-def test_the_audit_page_is_for_administrators(make_resident: Callable[..., Resident]) -> None:
+def test_the_audit_page_is_for_administrators(make_resident: Callable[..., Account]) -> None:
     anna = make_resident(email="anna@gahk.dk")
     client = Client()
     client.force_login(anna)
@@ -594,13 +594,13 @@ def test_the_audit_page_is_for_administrators(make_resident: Callable[..., Resid
 
 
 @pytest.mark.django_db
-def test_the_audit_page_shows_and_filters_the_trail(make_resident: Callable[..., Resident]) -> None:
+def test_the_audit_page_shows_and_filters_the_trail(make_resident: Callable[..., Account]) -> None:
     admin = make_resident(
         email="admin@gahk.dk", first_name="Ada", last_name="Min", roles=[Role.ADMINISTRATOR]
     )
-    anna = make_resident(email="anna@gahk.dk", first_name="Anna", last_name="Berg", phone="111")
+    anna = make_resident(email="anna@gahk.dk", first_name="Anna", last_name="Berg", bio="111")
     with trail.event("residents.resident.updated", actor=admin, subject=anna):
-        anna.phone = "222"
+        anna.bio = "222"
         anna.set_password("ny")
         anna.save()
     trail.record(
@@ -616,7 +616,7 @@ def test_the_audit_page_shows_and_filters_the_trail(make_resident: Callable[...,
     assert "mislykket login" in page
 
     history = client.get(f"/admin/audit?kind=residents.resident&id={anna.pk}").content.decode()
-    assert "Historik: Beboer «Anna Berg»" in history
+    assert "Historik: Konto «Anna Berg»" in history
     assert "mislykket login" not in history
     by_area = client.get("/admin/audit?area=auth").content.decode()
     assert "mislykket login" in by_area and "rettede beboer" not in by_area
@@ -625,15 +625,15 @@ def test_the_audit_page_shows_and_filters_the_trail(make_resident: Callable[...,
 
 @pytest.mark.django_db
 def test_the_audit_page_finds_actions_by_their_names_and_typed_addresses_by_hash(
-    make_resident: Callable[..., Resident],
+    make_resident: Callable[..., Account],
 ) -> None:
     from audit import presentation
 
     admin = make_resident(email="admin@gahk.dk", roles=[Role.ADMINISTRATOR])
-    anna = make_resident(email="anna@gahk.dk", phone="111")
+    anna = make_resident(email="anna@gahk.dk", bio="111")
     trail.record("residents.role.added", actor=admin, subject=anna, details={"role": "ak"})
     with trail.event("residents.resident.updated", actor=admin, subject=anna):
-        anna.phone = "222"
+        anna.bio = "222"
         anna.save()
     trail.record(
         "auth.login.failed", actor=None, details={"reason": "no account", **trail.typed_address("x@y.dk")}
@@ -656,7 +656,7 @@ def test_the_audit_page_finds_actions_by_their_names_and_typed_addresses_by_hash
 
 
 @pytest.mark.django_db
-def test_the_audit_page_pages_back_by_id(make_resident: Callable[..., Resident]) -> None:
+def test_the_audit_page_pages_back_by_id(make_resident: Callable[..., Account]) -> None:
     from audit import presentation
 
     for n in range(5):

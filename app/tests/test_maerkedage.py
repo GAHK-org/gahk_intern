@@ -11,13 +11,13 @@ from django.utils import timezone
 from events import agenda as agenda_mod
 from events import maerkedage
 from events.models import Event, Visibility
-from residents.models import Resident
+from residents.models import Account
 
 EVENTS = "/begivenheder/"
 
 
 @pytest.fixture
-def beboer(make_resident: Callable[..., Resident]) -> Resident:
+def beboer(make_resident: Callable[..., Account]) -> Account:
     return make_resident(email="beboer@gahk.dk")
 
 
@@ -35,7 +35,7 @@ def test_a_span_across_new_year_finds_nothing_it_should_not() -> None:
 
 
 @pytest.mark.django_db
-def test_the_calendar_marks_the_day_and_lists_it(client: Client, beboer: Resident) -> None:
+def test_the_calendar_marks_the_day_and_lists_it(client: Client, beboer: Account) -> None:
     client.force_login(beboer)
 
     response = client.get(f"{EVENTS}kalender?maaned=2026-05&dag=2026-05-16")
@@ -52,7 +52,7 @@ def test_the_calendar_marks_the_day_and_lists_it(client: Client, beboer: Residen
 
 @pytest.mark.django_db
 def test_the_dashboard_shows_the_kollegium_calendar_not_google(
-    client: Client, beboer: Resident, monkeypatch: pytest.MonkeyPatch
+    client: Client, beboer: Account, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setattr(agenda_mod, "current_date", lambda: datetime.date(2026, 9, 10))
     Event.objects.create(
@@ -73,7 +73,7 @@ def test_the_dashboard_shows_the_kollegium_calendar_not_google(
 
 @pytest.mark.django_db
 def test_the_agenda_announces_only_maerkedage_within_30_days(
-    beboer: Resident, monkeypatch: pytest.MonkeyPatch
+    beboer: Account, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setattr(agenda_mod, "current_date", lambda: datetime.date(2026, 5, 1))
     items = agenda_mod.agenda(beboer)
@@ -81,7 +81,7 @@ def test_the_agenda_announces_only_maerkedage_within_30_days(
 
 
 @pytest.mark.django_db
-def test_the_invite_picker_offers_to_invite_every_resident(client: Client, beboer: Resident) -> None:
+def test_the_invite_picker_offers_to_invite_every_resident(client: Client, beboer: Account) -> None:
     """Rendered hidden; events.ts reveals it, so without JS there is no button that does nothing."""
     client.force_login(beboer)
 

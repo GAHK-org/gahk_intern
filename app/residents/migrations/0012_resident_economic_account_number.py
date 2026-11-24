@@ -10,7 +10,7 @@ class Migration(migrations.Migration):
 
     operations = [
         migrations.AddField(
-            model_name="resident",
+            model_name="account",
             name="economic_account_number",
             field=models.PositiveIntegerField(blank=True, null=True, unique=True),
         ),

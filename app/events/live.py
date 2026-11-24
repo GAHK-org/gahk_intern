@@ -13,7 +13,7 @@ an edit or a cancellation changes the facts, a comment changes the thread.
 from django.http import HttpRequest
 
 from core import live
-from residents.models import Resident
+from residents.models import Account
 
 from . import access
 
@@ -28,7 +28,7 @@ def may_listen(request: HttpRequest, rest: str) -> bool:
     user = request.user
     return (
         rest.isdigit()
-        and isinstance(user, Resident)
+        and isinstance(user, Account)
         and access.request_allowed(request)
         and access.visible_to(user).filter(pk=int(rest)).exists()
     )

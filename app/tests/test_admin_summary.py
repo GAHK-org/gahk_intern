@@ -19,7 +19,7 @@ from django.utils.formats import date_format
 
 from core.admin_summary import compose, previous_month
 from core.tasks import WORKER_JOB_RETENTION, send_admin_monthly_summary
-from residents.models import AdminAccessGrant, Resident, Role
+from residents.models import Account, AdminAccessGrant, Role
 
 LOCAL = ZoneInfo(settings.TIME_ZONE)
 RESULT_TABLE = """
@@ -93,7 +93,7 @@ def test_without_a_result_table_the_summary_says_so() -> None:
 
 @pytest.mark.django_db
 def test_everyone_with_django_admin_access_gets_who_holds_access(
-    make_resident: Callable[..., Resident],
+    make_resident: Callable[..., Account],
 ) -> None:
     superuser = make_resident(email="su@gahk.dk", first_name="Super", last_name="Bruger", is_superuser=True)
     approved = make_resident(email="adm@gahk.dk", first_name="Anna", roles=(Role.ADMINISTRATOR,))
@@ -121,7 +121,7 @@ def test_everyone_with_django_admin_access_gets_who_holds_access(
 
 
 @pytest.mark.django_db
-def test_nothing_is_sent_without_anyone_to_send_it_to(make_resident: Callable[..., Resident]) -> None:
+def test_nothing_is_sent_without_anyone_to_send_it_to(make_resident: Callable[..., Account]) -> None:
     make_resident(email="ny@gahk.dk", roles=(Role.ADMINISTRATOR,))  # pending: no access yet
     mail.outbox.clear()
 

@@ -23,7 +23,7 @@ from photo_album.services import (
     upload_media,
 )
 from photo_album.uploads import check_media_upload, validate_media_upload
-from residents.models import Resident, Role
+from residents.models import Account, Role
 
 from .media_samples import _ffmpeg_output, dng_bytes, jpeg_bytes, mp4_bytes
 
@@ -31,7 +31,7 @@ SYSTEM = "system@gahk.dk"
 SRGB = ImageCms.ImageCmsProfile(ImageCms.createProfile("sRGB")).tobytes()
 
 
-def _upload(make_resident: Callable[..., Resident], name: str, content: bytes) -> Media:
+def _upload(make_resident: Callable[..., Account], name: str, content: bytes) -> Media:
     album, _ = Album.objects.get_or_create(folder="2004", name="Fremkaldning")
     resident = make_resident(email=f"uploader-{Media.objects.count()}@gahk.dk")
     return upload_media(album=album, uploaded_file=SimpleUploadedFile(name, content), resident=resident)
@@ -68,7 +68,7 @@ def _exif_photo(**tags: object) -> bytes:
 
 @pytest.mark.django_db
 def test_a_raw_file_is_stored_as_it_came_flagged_and_given_upright_jpeg_copies(
-    make_resident: Callable[..., Resident],
+    make_resident: Callable[..., Account],
 ) -> None:
     original = dng_bytes((64, 48), orientation=6)
     media = _upload(make_resident, "IMG_0001.DNG", original)
@@ -86,7 +86,7 @@ def test_a_raw_file_is_stored_as_it_came_flagged_and_given_upright_jpeg_copies(
 
 
 @pytest.mark.django_db
-def test_a_raw_files_date_and_camera_are_read_from_it(make_resident: Callable[..., Resident]) -> None:
+def test_a_raw_files_date_and_camera_are_read_from_it(make_resident: Callable[..., Account]) -> None:
     """Pillow cannot open a RAW file at all, so exiv2 reads it."""
     original = dng_bytes(captured="2018:12:04 19:46:03", make="Panasonic", model="DMC-FZ1000")
     media = _upload(make_resident, "P1080125.DNG", original)
@@ -132,7 +132,7 @@ def test_a_raw_file_has_a_size_limit_of_its_own() -> None:
 
 @pytest.mark.django_db
 def test_the_viewer_says_when_the_original_is_a_raw_file(
-    client: Client, make_resident: Callable[..., Resident]
+    client: Client, make_resident: Callable[..., Account]
 ) -> None:
     administrator = make_resident(roles=(Role.ADMINISTRATOR,))
     album = Album.objects.create(folder="2004", name="Fremkaldning")
@@ -158,7 +158,7 @@ def test_the_viewer_says_when_the_original_is_a_raw_file(
 
 
 @pytest.mark.django_db
-def test_the_hd_copy_of_a_photo_keeps_its_exif_iptc_and_xmp(make_resident: Callable[..., Resident]) -> None:
+def test_the_hd_copy_of_a_photo_keeps_its_exif_iptc_and_xmp(make_resident: Callable[..., Account]) -> None:
     """Pillow wrote nothing but the pixels: a photo downloaded as "Komprimeret (HD)" came without its
     date, camera or place."""
     media = _upload(make_resident, "IMG_0001.JPG", _exif_photo())
@@ -187,7 +187,7 @@ def test_the_hd_copy_of_a_photo_keeps_its_exif_iptc_and_xmp(make_resident: Calla
 
 
 @pytest.mark.django_db
-def test_the_hd_copy_of_a_heic_photo_keeps_its_exif(make_resident: Callable[..., Resident]) -> None:
+def test_the_hd_copy_of_a_heic_photo_keeps_its_exif(make_resident: Callable[..., Account]) -> None:
     from pillow_heif import from_pillow
 
     image = Image.new("RGB", (2400, 1200), "red")
@@ -207,7 +207,7 @@ def test_the_hd_copy_of_a_heic_photo_keeps_its_exif(make_resident: Callable[...,
 
 @pytest.mark.django_db
 def test_the_hd_copy_of_a_raw_file_keeps_its_exif_but_not_how_the_raw_stores_its_pixels(
-    make_resident: Callable[..., Resident],
+    make_resident: Callable[..., Account],
 ) -> None:
     media = _upload(make_resident, "IMG_0001.DNG", dng_bytes(orientation=6))
 
@@ -225,7 +225,7 @@ def test_the_hd_copy_of_a_raw_file_keeps_its_exif_but_not_how_the_raw_stores_its
 
 
 @pytest.mark.django_db
-def test_a_photo_without_metadata_gets_a_copy_without_any(make_resident: Callable[..., Resident]) -> None:
+def test_a_photo_without_metadata_gets_a_copy_without_any(make_resident: Callable[..., Account]) -> None:
     media = _upload(make_resident, "plain.jpg", jpeg_bytes(size=(2000, 1000)))
 
     assert build_derivatives(media)
@@ -237,7 +237,7 @@ def test_a_photo_without_metadata_gets_a_copy_without_any(make_resident: Callabl
 
 @pytest.mark.django_db
 def test_the_hd_copy_of_a_video_keeps_when_where_and_with_what_it_was_recorded(
-    make_resident: Callable[..., Resident],
+    make_resident: Callable[..., Account],
 ) -> None:
     """ffmpeg left out the recording time and every key an iPhone writes."""
     recorded = _ffmpeg_output(
@@ -287,7 +287,7 @@ def _video_archive() -> File:
 @pytest.mark.django_db
 @override_settings(PHOTO_ALBUM_VIDEO_MAX_MB=0, PHOTO_ALBUM_SYSTEM_IMPORT_EMAIL=SYSTEM)
 def test_the_import_script_brings_a_video_in_whatever_its_size(
-    make_resident: Callable[..., Resident],
+    make_resident: Callable[..., Account],
 ) -> None:
     with pytest.raises(ValidationError, match="Videoen er for stor"):
         import_zip_album(archive=_video_archive(), folder="2016", resident=make_resident())

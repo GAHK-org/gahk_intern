@@ -39,7 +39,7 @@ from core.markdown import plain_text
 from core.mentions import notify_mentions, to_plain
 from notifications import categories
 from notifications import services as notifications
-from residents.models import Residency, Resident, active_period
+from residents.models import Account, active_period
 
 from . import access
 from .models import Answer, Event, EventComment, EventInvite, Rsvp, Visibility
@@ -60,7 +60,7 @@ class RsvpOutcome:
 
     rsvp: Rsvp
     seated: bool
-    promoted: Resident | None = None
+    promoted: Account | None = None
 
 
 def answers_locked(event: Event, now: datetime.datetime | None = None) -> bool:
@@ -120,7 +120,7 @@ def waitlist(event: Event) -> list[Rsvp]:
 
 
 @transaction.atomic
-def set_answer(event_pk: int, resident: Resident, answer: str) -> RsvpOutcome:
+def set_answer(event_pk: int, resident: Account, answer: str) -> RsvpOutcome:
     """Record one resident's ja or nej, and notify whoever that let in.
 
     THE AUTHORITATIVE DEADLINE CHECK — not the view, and not the form. The same transition is
@@ -175,7 +175,7 @@ def set_answer(event_pk: int, resident: Resident, answer: str) -> RsvpOutcome:
 
 
 @transaction.atomic
-def sync_invites(event: Event, residents: list[Resident], invited_by: Resident) -> list[Resident]:
+def sync_invites(event: Event, residents: list[Account], invited_by: Account) -> list[Account]:
     """Make the guest list match `residents`. Returns the people newly added, so they can be told.
 
     Reconciled rather than cleared-and-rewritten: deleting every invite and re-inserting would make
@@ -250,7 +250,7 @@ def significant_change(before: tuple, after: Event) -> bool:
 # you planned around it), reminders and waitlist promotions (personal, high), and comments to hosts.
 
 
-def _audience(event: Event) -> QuerySet[Resident]:
+def _audience(event: Event) -> QuerySet[Account]:
     """Who may hear about this event at all.
 
     An invite-only event notifies ITS INVITEES AND NOBODY ELSE. Announcing a private event to the
@@ -272,7 +272,7 @@ def _when(event: Event) -> str:
 
 
 def notify_mentions_in_description(
-    event: Event, actor: Resident, old_description: str | None = None
+    event: Event, actor: Account, old_description: str | None = None
 ) -> set[int]:
     """Tell residents newly @-mentioned in the description. After sync_invites, because on a private
     event the invite list decides who may be told. Hosts are added back: they are not on their own
@@ -283,7 +283,7 @@ def notify_mentions_in_description(
         actor=actor,
         where=f"i {event.title}",
         url=_url(event),
-        audience=_audience(event) | access.allowed_residents(Resident.objects.filter(pk__in=hosts)),
+        audience=_audience(event) | access.allowed_residents(Account.objects.filter(pk__in=hosts)),
         old_text=old_description,
     )
 
@@ -356,7 +356,7 @@ def notify_new_comment(comment: EventComment) -> None:
         actor=comment.author,
         where=f"på {event.title}",
         url=_url(event),
-        audience=_audience(event) | access.allowed_residents(Resident.objects.filter(pk__in=hosts)),
+        audience=_audience(event) | access.allowed_residents(Account.objects.filter(pk__in=hosts)),
     )
     hosts -= mentioned
     hosts.discard(comment.author_id)
@@ -365,7 +365,7 @@ def notify_new_comment(comment: EventComment) -> None:
     # The title always carries the event, so a photo-only comment still has something to say; the
     # glyph is what tells the reader there is a picture.
     body = push.preview(f"{event.title}: {to_plain(comment.body) or '📷 Billede'}")
-    for host_id in access.allowed_residents(Resident.objects.filter(pk__in=hosts)).values_list(
+    for host_id in access.allowed_residents(Account.objects.filter(pk__in=hosts)).values_list(
         "pk", flat=True
     ):
         notifications.notify_grouped(
@@ -392,24 +392,28 @@ def events_needing_reminder(now: datetime.datetime | None = None) -> list[Event]
     )
 
 
-def deadline_reminder_audience(event: Event) -> QuerySet[Resident]:
+def deadline_reminder_audience(event: Event) -> QuerySet[Account]:
     """The residents the reminder is actionable for.
 
     Everyone eligible, minus everyone who has already answered, minus the hosts — they know.
     "Eligible" is the invite list for a private event and this month's residents for an open one:
     a Residency row for active_period() is what "bor her" means in this codebase, and it is how
-    ak.services asks the same question. The whole Resident table would include alumni.
+    ak.services asks the same question. The whole Account table would include alumni.
     """
     if event.visibility == Visibility.KUN_INVITEREDE:
         eligible = set(event.invites.values_list("resident_id", flat=True))
     else:
         year, month = active_period()
-        eligible = set(Residency.objects.filter(year=year, month=month).values_list("resident_id", flat=True))
+        eligible = set(
+            Account.objects.filter(
+                person__resident__residencies__year=year, person__resident__residencies__month=month
+            ).values_list("pk", flat=True)
+        )
 
     answered = set(event.rsvps.values_list("resident_id", flat=True))
     hosts = {event.organiser_id, *event.co_organisers.values_list("pk", flat=True)}
     targets = eligible - answered - hosts
-    return access.allowed_residents(Resident.objects.filter(pk__in=targets, is_active=True))
+    return access.allowed_residents(Account.objects.filter(pk__in=targets, is_active=True))
 
 
 def send_deadline_reminder(event: Event, now: datetime.datetime | None = None) -> int:

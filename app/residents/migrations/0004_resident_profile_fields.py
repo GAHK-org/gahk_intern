@@ -10,22 +10,22 @@ class Migration(migrations.Migration):
 
     operations = [
         migrations.AddField(
-            model_name="resident",
+            model_name="account",
             name="profile_picture",
             field=models.FileField(blank=True, upload_to="profile_pictures/"),
         ),
         migrations.AddField(
-            model_name="resident",
+            model_name="account",
             name="bio",
             field=models.TextField(blank=True, max_length=500),
         ),
         migrations.AddField(
-            model_name="resident",
+            model_name="account",
             name="facebook_link",
             field=models.URLField(blank=True),
         ),
         migrations.AddField(
-            model_name="resident",
+            model_name="account",
             name="instagram_handle",
             field=models.CharField(blank=True, max_length=50),
         ),

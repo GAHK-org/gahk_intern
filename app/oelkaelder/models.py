@@ -53,7 +53,7 @@ class Product(models.Model):  # intern_oelkaelder_product
 
 class Shopper(models.Model):  # intern_shopper (+ intern_oelkaelder_saldo.active)
     resident = models.ForeignKey(
-        "residents.Resident", on_delete=models.CASCADE, related_name="shopper_accounts"
+        "residents.Account", on_delete=models.CASCADE, related_name="shopper_accounts"
     )
     active = models.BooleanField(default=True)
 

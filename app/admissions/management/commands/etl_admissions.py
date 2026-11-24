@@ -31,9 +31,9 @@ class Command(BaseCommand):
 
     def handle(self, *args, **opts) -> None:  # noqa: ANN002, ANN003
         remap = resident_id_remap()
-        from residents.models import Resident
+        from residents.models import Account
 
-        resident_ids = set(Resident.objects.values_list("id", flat=True))
+        resident_ids = set(Account.objects.values_list("id", flat=True))
 
         rows = fetch_all("SELECT * FROM gahk_ansoegninger")
         unknown_type = no_date = receiver_dropped = 0

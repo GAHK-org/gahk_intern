@@ -27,7 +27,7 @@ from django_celery_beat.models import CrontabSchedule, IntervalSchedule, Periodi
 from core.models import WorkerJobLog
 from core.templatetags.ui_extras import ago, ahead
 from photo_album.models import Album, AlbumImport, Media
-from residents.models import Resident, Role
+from residents.models import Account, Role
 from residents.views_admin import (
     Job,
     JobFilters,
@@ -101,7 +101,7 @@ def test_the_chart_scale_is_a_round_number() -> None:
 
 @pytest.mark.django_db
 def test_photo_album_tasks_show_the_affected_media_and_import(
-    make_resident: Callable[..., Resident],
+    make_resident: Callable[..., Account],
 ) -> None:
     resident = make_resident()
     album = Album.objects.create(folder="2026", name="Sommerfest")
@@ -286,7 +286,7 @@ def _record(
     )
 
 
-def _admin(client: Client, make_resident: Callable[..., Resident]) -> None:
+def _admin(client: Client, make_resident: Callable[..., Account]) -> None:
     client.force_login(make_resident(roles=(Role.ADMINISTRATOR,)))
 
 
@@ -296,7 +296,7 @@ SENT = datetime(2026, 10, 14, 18, 5, 1, tzinfo=UTC)
 
 @pytest.mark.usefixtures("celery_tables")
 def test_a_job_never_finishes_before_it_was_sent_whichever_clock_stored_it(
-    client: Client, make_resident: Callable[..., Resident]
+    client: Client, make_resident: Callable[..., Account]
 ) -> None:
     """kombu's timestamp is local wall-clock time and Celery's date_done is UTC. Read as stored,
     a job taken at 20:05:01 local finished at 18:05:01."""
@@ -520,7 +520,7 @@ def test_a_job_page_lists_its_sub_jobs_with_those_still_queued() -> None:
 
 @pytest.mark.usefixtures("celery_tables")
 def test_a_job_page_puts_the_three_sources_together(
-    client: Client, make_resident: Callable[..., Resident]
+    client: Client, make_resident: Callable[..., Account]
 ) -> None:
     _publish("job", sent_at=SENT, taken_at=SENT + timedelta(seconds=1), parent_id="parent")
     _result("job", SENT + timedelta(seconds=3), "FAILURE", traceback="Traceback …\nExampleError")
@@ -546,7 +546,7 @@ def test_a_job_page_puts_the_three_sources_together(
 
 @pytest.mark.django_db
 def test_a_job_page_shows_a_job_known_only_from_its_record(
-    client: Client, make_resident: Callable[..., Resident]
+    client: Client, make_resident: Callable[..., Account]
 ) -> None:
     """Without the Celery tables (another broker, or a result already purged) the record is enough."""
     _record("only-a-record", SENT, finished_at=SENT + timedelta(seconds=1), task=IMPORT)
@@ -560,7 +560,7 @@ def test_a_job_page_shows_a_job_known_only_from_its_record(
 
 
 @pytest.mark.django_db
-def test_worker_jobs_requires_administrator(client: Client, make_resident: Callable[..., Resident]) -> None:
+def test_worker_jobs_requires_administrator(client: Client, make_resident: Callable[..., Account]) -> None:
     client.force_login(make_resident())
 
     assert client.get(reverse("siteadmin:worker_jobs")).status_code == 403
@@ -569,7 +569,7 @@ def test_worker_jobs_requires_administrator(client: Client, make_resident: Calla
 
 @pytest.mark.django_db
 def test_the_live_poll_answers_nobody_but_an_administrator_with_anything_to_swap_in(
-    client: Client, make_resident: Callable[..., Resident]
+    client: Client, make_resident: Callable[..., Account]
 ) -> None:
     live = reverse("siteadmin:worker_jobs_live")
 
@@ -584,7 +584,7 @@ def test_the_live_poll_answers_nobody_but_an_administrator_with_anything_to_swap
 
 
 @pytest.mark.usefixtures("celery_tables")
-def test_the_dashboard_shows_every_part(client: Client, make_resident: Callable[..., Resident]) -> None:
+def test_the_dashboard_shows_every_part(client: Client, make_resident: Callable[..., Account]) -> None:
     now = timezone.now()
     _result("done", now - timedelta(minutes=5))
     _record(
@@ -624,7 +624,7 @@ def test_the_dashboard_shows_every_part(client: Client, make_resident: Callable[
 
 @pytest.mark.django_db
 def test_the_dashboard_is_empty_rather_than_broken_without_the_celery_tables(
-    client: Client, make_resident: Callable[..., Resident]
+    client: Client, make_resident: Callable[..., Account]
 ) -> None:
     _admin(client, make_resident)
 
@@ -685,7 +685,7 @@ def test_jobs_whose_worker_died_under_them_are_closed_as_failed() -> None:
 
 @pytest.mark.usefixtures("celery_tables")
 def test_a_running_job_shows_how_far_it_has_got_and_its_log_so_far(
-    client: Client, make_resident: Callable[..., Resident]
+    client: Client, make_resident: Callable[..., Account]
 ) -> None:
     _admin(client, make_resident)
     now = timezone.now()
@@ -712,7 +712,7 @@ def test_a_running_job_shows_how_far_it_has_got_and_its_log_so_far(
 
 
 @pytest.mark.usefixtures("celery_tables")
-def test_a_finished_job_page_does_not_refresh(client: Client, make_resident: Callable[..., Resident]) -> None:
+def test_a_finished_job_page_does_not_refresh(client: Client, make_resident: Callable[..., Account]) -> None:
     _admin(client, make_resident)
     now = timezone.now()
     _result("done", now)

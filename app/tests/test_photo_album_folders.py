@@ -12,7 +12,7 @@ from django.utils import timezone
 from photo_album.forms import ZipAlbumImportForm
 from photo_album.models import NO_YEAR_FOLDER, Album, validate_folder
 from photo_album.views import album_folder_options
-from residents.models import Resident, Role
+from residents.models import Account, Role
 
 # "Uden årstal" as a Mac or Dropbox may send it: the "å" as an "a" and a combining ring.
 DECOMPOSED = unicodedata.normalize("NFD", NO_YEAR_FOLDER)
@@ -30,7 +30,7 @@ def test_a_folder_is_a_year_or_uden_aarstal() -> None:
 
 @pytest.mark.django_db
 def test_an_album_without_a_year_is_created_in_uden_aarstal_however_its_a_is_spelled(
-    client: Client, make_resident: Callable[..., Resident]
+    client: Client, make_resident: Callable[..., Account]
 ) -> None:
     client.force_login(make_resident(roles=(Role.ADMINISTRATOR,)))
     url = reverse("photo_album:create_album")
@@ -48,7 +48,7 @@ def test_an_album_without_a_year_is_created_in_uden_aarstal_however_its_a_is_spe
 
 @pytest.mark.django_db
 def test_the_folder_choice_lists_the_years_newest_first_then_uden_aarstal_and_starts_at_this_year(
-    client: Client, make_resident: Callable[..., Resident]
+    client: Client, make_resident: Callable[..., Account]
 ) -> None:
     Album.objects.create(folder="2004", name="Fest")
     Album.objects.create(folder="2019", name="Fest")

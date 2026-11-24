@@ -21,7 +21,7 @@ from django.views.decorators.http import require_POST
 
 from core.exports import csv_or_xlsx_response
 from core.uploads import attached_image
-from residents.models import Resident
+from residents.models import Account
 from residents.permissions import current_resident, role_required
 
 from .forms import InterestPolicyForm, PurchasePolicyForm, WarningForm
@@ -166,7 +166,7 @@ def admin(request: HttpRequest) -> HttpResponse:
         .select_related("resident")
         .order_by("resident__first_name")
     ]
-    residents_without_account = Resident.objects.filter(shopper_accounts__isnull=True).order_by(
+    residents_without_account = Account.objects.filter(shopper_accounts__isnull=True).order_by(
         "first_name", "last_name"
     )
     deposits = (
@@ -215,7 +215,7 @@ def activate_shopper(request: HttpRequest) -> HttpResponseRedirect:
 @require_POST
 @role_required("oelkaelder")
 def add_shopper(request: HttpRequest) -> HttpResponseRedirect:
-    resident = get_object_or_404(Resident, pk=request.POST.get("resident") or 0)
+    resident = get_object_or_404(Account, pk=request.POST.get("resident") or 0)
     _, created = Shopper.objects.get_or_create(resident=resident, defaults={"active": True})
     if created:
         messages.success(request, f"{resident.full_name} tilføjet som alumne.")
@@ -530,7 +530,7 @@ def person_history(request: HttpRequest) -> HttpResponse:
     """One resident's full ølkælder history — purchases, deposits and adjustments — so the ØK can see
     not just what somebody bought but why their balance is what it is."""
     residents = (
-        Resident.objects.filter(shopper_accounts__isnull=False).distinct().order_by("first_name", "last_name")
+        Account.objects.filter(shopper_accounts__isnull=False).distinct().order_by("first_name", "last_name")
     )
     chosen = None
     accounts: list[Shopper] = []

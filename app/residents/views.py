@@ -22,10 +22,12 @@ from core.danish import MONTHS
 from core.mentions import mentionable
 from core.models import Cleaning, Room, Workgroup
 
-from .forms import ProfileEditForm, ResidentEditForm, password_link_mail
+from .forms import ContactForm, PersonForm, ProfileEditForm, ResidentForm, password_link_mail
 from .models import (
     WORKGROUP_ROLE,
     WORKGROUP_ROLE_VALUES,
+    Account,
+    Person,
     Residency,
     Resident,
     Role,
@@ -75,11 +77,11 @@ DA_MONTHS = MONTHS
 
 # Sortable columns → the ORM fields to order by. Whitelisted, so ?sort= can't inject arbitrary paths.
 SORT_FIELDS = {
-    "navn": ("resident__first_name", "resident__last_name"),
+    "navn": ("resident__person__first_name", "resident__person__last_name"),
     "vaerelse": ("room__number",),
     "embedsgruppe": ("workgroup__name",),
     "rengoring": ("cleaning__name",),
-    "foedselsdag": ("resident__birthday",),
+    "foedselsdag": ("resident__person__birthday",),
     "indflyttet": ("resident__move_in_date",),
     "studie": ("resident__study",),
 }
@@ -135,16 +137,18 @@ def _directory_rows(
     order.append("resident_id")  # stable tiebreak for equal sort values
     qs = (
         Residency.objects.filter(year=year, month=month)
-        .select_related("resident", "resident__sponsor", "room", "workgroup", "cleaning")
+        .select_related(
+            "resident__person__account", "resident__sponsor__person", "room", "workgroup", "cleaning"
+        )
         .order_by(*order)
     )
     q = (query or "").strip()
     if q:
         qs = qs.filter(
-            Q(resident__first_name__icontains=q)
-            | Q(resident__last_name__icontains=q)
+            Q(resident__person__first_name__icontains=q)
+            | Q(resident__person__last_name__icontains=q)
             | Q(resident__study__icontains=q)
-            | Q(resident__email__icontains=q)
+            | Q(resident__person__account__email__icontains=q)
         )
     return qs
 
@@ -199,7 +203,9 @@ def _period_badges(year: int, month: int) -> dict[int, list[tuple[str, str]]]:
         if resident_id is not None:
             badges.setdefault(resident_id, []).append(badge)
 
-    by_birthday = list(residents.exclude(birthday=None).order_by("birthday").values_list("id", flat=True))
+    by_birthday = list(
+        residents.exclude(person__birthday=None).order_by("person__birthday").values_list("id", flat=True)
+    )
     if by_birthday:
         _add(by_birthday[0], BADGE_OLDEST)
         _add(by_birthday[-1], BADGE_YOUNGEST)
@@ -260,23 +266,36 @@ def directory_rows(request: HttpRequest) -> HttpResponse:
 
 @role_required("indstilling")
 def edit_resident(request: HttpRequest, pk: int) -> HttpResponse | HttpResponseRedirect:
-    """Indstilling edits a resident's core data (name, e-mail, phone, dates, studie, fylgje). Room,
-    embedsgruppe and rengøring are per-month and stay on the next-month list editor."""
-    resident = get_object_or_404(Resident, pk=pk)
+    """Indstilling edits a resident: the person (name, birthday, phone), their time here (dates,
+    studie, fylgje) and, when they have a login, its e-mail. Room, embedsgruppe and rengøring are
+    per-month and stay on the next-month list editor. `pk` is the resident's, as on the list."""
+    resident = get_object_or_404(Resident.objects.select_related("person"), pk=pk)
+    person, account = resident.person, resident.person.login
+    data = request.POST or None
+    forms_ = [
+        PersonForm(data, instance=person, prefix="person"),
+        ResidentForm(data, instance=resident, prefix="resident"),
+    ]
+    contact = ContactForm(data, instance=account, prefix="contact") if account else None
     if request.method == "POST":
-        form = ResidentEditForm(request.POST, instance=resident)
-        if form.is_valid():
+        if all(f.is_valid() for f in forms_) and (contact is None or contact.is_valid()):
             with trail.event("residents.resident.updated", subject=resident, only_if_changed=True):
-                form.save()
-            messages.success(request, f"{resident.full_name} er opdateret.")
+                if contact is not None:
+                    # Only the e-mail: the account's copy of the name is the person's to set.
+                    contact.save(commit=False).save(update_fields=["email"])
+                for f in forms_:
+                    f.save()
+            messages.success(request, f"{person.full_name} er opdateret.")
             nxt = request.GET.get("next", "")
             if nxt and url_has_allowed_host_and_scheme(nxt, allowed_hosts={request.get_host()}):
                 return redirect(nxt)  # back to the filtered alumneliste
             return redirect("directory")
         messages.error(request, "Ret fejlene og prøv igen.")
-    else:
-        form = ResidentEditForm(instance=resident)
-    return render(request, "alumneliste/edit_resident.html", {"form": form, "resident": resident})
+    return render(
+        request,
+        "alumneliste/edit_resident.html",
+        {"forms": forms_, "contact": contact, "resident": resident, "person": person, "account": account},
+    )
 
 
 def _iso(d: date | None) -> str:
@@ -344,9 +363,10 @@ def directory_export(request: HttpRequest) -> HttpResponse:
 
 # ---- Stamtræ: the fylgje lineage (F-011) ----
 def _fylgje_forest() -> list[dict[str, Resident | list]]:
-    """Build the sponsor (fylgje) tree from resolved Resident.sponsor links. Residents with no (resolved)
+    """Build the sponsor (fylgje) tree from resolved Resident.sponsor links: every resident, with a
+    login or not (kitchen staff and guests are people but no residents). Residents with no (resolved)
     sponsor are roots under "Hagemanns Ånd". Cycle-safe; siblings ordered by move-in then name."""
-    residents = list(Resident.objects.select_related("sponsor").all())
+    residents = list(Resident.objects.select_related("person__account").all())
     ids = {r.id for r in residents}
     children: dict[int | None, list[Resident]] = {}
     for r in residents:
@@ -370,13 +390,22 @@ def stamtree(request: HttpRequest) -> HttpResponse:
 
 
 # ---- Next month's list — indstilling's monthly update task (F-010) ----
+def _account_of(resident_id: int) -> int | None:
+    """The login of a resident on the list, if they have one: roles belong to accounts."""
+    return Account.objects.filter(person__resident__id=resident_id).values_list("pk", flat=True).first()
+
+
 def _sync_month_roles(
-    resident_id: int, workgroup: Workgroup | None, year: int, month: int, is_admin: bool
+    resident_id: int, workgroup: Workgroup | None, year: int, month: int, admins: set[int]
 ) -> None:
     """Privileged-workgroup roles are derived from the chosen embedsgruppe: drop the others, add this
     one. The `administrator` role is not a workgroup, so it is preserved/carried separately. A role
     that stays is left alone rather than deleted and made again, so the audit trail shows only real
-    changes."""
+    changes. `resident_id` is the list's; the roles go to their account (none without a login)."""
+    account_id = _account_of(resident_id)
+    if account_id is None:
+        return
+    resident_id, is_admin = account_id, account_id in admins
     role = WORKGROUP_ROLE.get(workgroup.name) if workgroup else None
     RoleAssignment.objects.filter(
         resident_id=resident_id, year=year, month=month, role__in=WORKGROUP_ROLE_VALUES
@@ -420,7 +449,7 @@ def _add_form_draft(request: HttpRequest, action: str) -> dict[str, object]:
     }
 
 
-def _send_welcome_email(request: HttpRequest, resident: Resident) -> bool:
+def _send_welcome_email(request: HttpRequest, resident: Account) -> bool:
     """Welcome a newly created resident with a link to set their password (F-014). Best-effort — a
     mail failure must not undo the creation — but it is logged and reported, never swallowed: the
     caller reports delivery to the user, and a wrong DEFAULT_FROM_EMAIL (one.com refuses senders the
@@ -476,9 +505,9 @@ def _place[T](mapping: dict[int, T], raw: str | None, inherited: T | None) -> T 
 
 
 def _drop_from_month(residency: Residency) -> None:
-    """Take a resident off a month's list, with the roles that month gave them."""
+    """Take a resident off a month's list, with the roles that month gave their account."""
     RoleAssignment.objects.filter(
-        resident_id=residency.resident_id, year=residency.year, month=residency.month
+        resident_id=_account_of(residency.resident_id) or 0, year=residency.year, month=residency.month
     ).delete()
     residency.delete()
 
@@ -530,7 +559,8 @@ def next_month_list(request: HttpRequest) -> HttpResponse | HttpResponseRedirect
                 "resident_id", flat=True
             )
         )
-        me = current_resident(request).pk
+        # The list names residents; the editor's own place on it is their account's resident.
+        me = getattr(current_resident(request).house, "pk", None)
 
         def _replace_error(replaced: Residency | None, newcomer_id: int | None) -> str | None:
             if request.POST.get("replaces") and replaced is None:
@@ -558,7 +588,7 @@ def next_month_list(request: HttpRequest) -> HttpResponse | HttpResponseRedirect
                             "cleaning_id": res.cleaning_id,
                         },
                     )
-                    _sync_month_roles(res.resident_id, res.workgroup, ny, nm, res.resident_id in admins)
+                    _sync_month_roles(res.resident_id, res.workgroup, ny, nm, admins)
             messages.success(request, f"Listen er kopieret til {ny}-{nm:02d}.")
             return redirect(f"{reverse('next_month_list')}?period={'current' if editing_current else 'next'}")
 
@@ -639,7 +669,9 @@ def next_month_list(request: HttpRequest) -> HttpResponse | HttpResponseRedirect
                     next_rows.append(res)
             else:
                 with trail.event("residents.month_list.saved", details={"period": f"{ny}-{nm:02d}"}):
-                    RoleAssignment.objects.filter(resident_id__in=removed, year=ny, month=nm).delete()
+                    RoleAssignment.objects.filter(
+                        resident__person__resident__id__in=removed, year=ny, month=nm
+                    ).delete()
                     Residency.objects.filter(resident_id__in=removed, year=ny, month=nm).delete()
                     # Row by row rather than one UPDATE each, so the trail sees what moved.
                     for residency in Residency.objects.filter(resident_id__in=intended, year=ny, month=nm):
@@ -647,7 +679,7 @@ def next_month_list(request: HttpRequest) -> HttpResponse | HttpResponseRedirect
                         residency.room, residency.workgroup, residency.cleaning = room, wg, cl
                         residency.save(update_fields=["room", "workgroup", "cleaning"])
                     for rid, (_room, wg, _cl) in intended.items():
-                        _sync_month_roles(rid, wg, ny, nm, rid in admins)
+                        _sync_month_roles(rid, wg, ny, nm, admins)
                 messages.success(request, "Ændringer gemt.")
                 return redirect(
                     f"{reverse('next_month_list')}?period={'current' if editing_current else 'next'}"
@@ -658,7 +690,10 @@ def next_month_list(request: HttpRequest) -> HttpResponse | HttpResponseRedirect
             # blocked by the exact group sizes, adding first by the room being taken (see save).
             replaced = _replaced_residency(request, ny, nm)
             room = _place(room_by_id, request.POST.get("room"), replaced.room if replaced else None)
-            resident = _pick({r.id: r for r in Resident.objects.all()}, request.POST.get("resident", ""))
+            # A resident, with a login or not: the list names residents.
+            resident = _pick(
+                {r.id: r for r in Resident.objects.select_related("person")}, request.POST.get("resident", "")
+            )
             replace_error = _replace_error(replaced, resident.id if resident else None)
             if not (resident and room):
                 messages.error(request, "Vælg både en beboer og et værelse.")
@@ -693,7 +728,7 @@ def next_month_list(request: HttpRequest) -> HttpResponse | HttpResponseRedirect
                             ),
                         },
                     )
-                    _sync_month_roles(resident.id, wg, ny, nm, resident.id in admins)
+                    _sync_month_roles(resident.id, wg, ny, nm, admins)
                 messages.success(request, _added_message(resident.full_name, replaced, ny, nm))
                 return redirect(
                     f"{reverse('next_month_list')}?period={'current' if editing_current else 'next'}"
@@ -712,13 +747,13 @@ def next_month_list(request: HttpRequest) -> HttpResponse | HttpResponseRedirect
                 birthday = date.fromisoformat(raw_birthday) if raw_birthday else None
             except ValueError:
                 birthday = None
-            if not (email and first and last and room):
-                messages.error(request, "Udfyld navn, e-mail og værelse for at tilføje en ny beboer.")
+            if not (first and last and room):
+                messages.error(request, "Udfyld navn og værelse for at tilføje en ny beboer.")
                 new_draft = _add_form_draft(request, "add_new")
             elif raw_birthday and (birthday is None or birthday > timezone.localdate()):
                 messages.error(request, "Fødselsdagen er ikke en gyldig dato.")
                 new_draft = _add_form_draft(request, "add_new")
-            elif Resident.objects.filter(email=email).exists():
+            elif email and Account.objects.filter(email__iexact=email).exists():
                 messages.error(request, "Der findes allerede en beboer med den e-mail.")
                 new_draft = _add_form_draft(request, "add_new")
             elif replace_error:
@@ -733,26 +768,27 @@ def next_month_list(request: HttpRequest) -> HttpResponse | HttpResponseRedirect
                 # knows who introduced them right then, and a separate trip through the edit form is
                 # exactly the step that gets skipped, leaving holes in the stamtræ (F-011).
                 sponsor = _pick({r.id: r for r in Resident.objects.all()}, request.POST.get("sponsor", ""))
-                r = Resident(
-                    email=email,
-                    first_name=first,
-                    last_name=last,
-                    phone=phone,
-                    birthday=birthday,
-                    sponsor=sponsor,
-                )
+                person = Person(first_name=first, last_name=last, phone=phone, birthday=birthday)
+                resident = Resident(sponsor=sponsor)
+                # A login only with an e-mail: someone without one is on the list all the same.
+                r = Account(email=email, first_name=first, last_name=last) if email else None
                 with trail.event(
                     "residents.resident.created",
-                    subject=r,
+                    subject=resident,
                     details={"period": f"{ny}-{nm:02d}"},
                     involve=[(replaced.resident if replaced else None, "replaced")],
                 ):
                     if replaced:
                         _drop_from_month(replaced)
-                    r.set_unusable_password()  # they set one via the welcome/password-reset link (F-014)
-                    r.save()
+                    person.save()
+                    resident.person = person
+                    resident.save()
+                    if r is not None:
+                        r.person = person
+                        r.set_unusable_password()  # they set one via the welcome/password-reset link (F-014)
+                        r.save()
                     Residency.objects.create(
-                        resident=r,
+                        resident=resident,
                         room=room,
                         workgroup=wg,
                         cleaning=_place(
@@ -761,13 +797,16 @@ def next_month_list(request: HttpRequest) -> HttpResponse | HttpResponseRedirect
                         year=ny,
                         month=nm,
                     )
-                    _sync_month_roles(r.id, wg, ny, nm, False)
-                sent = _send_welcome_email(request, r)
+                    _sync_month_roles(resident.id, wg, ny, nm, set())
+                sent = _send_welcome_email(request, r) if r is not None else False
                 base = f"{first} {last} oprettet. " + _added_message(f"{first} {last}", replaced, ny, nm)
-                messages.success(
-                    request, f"{base} Velkomstmailen er sat i kø og sendes om lidt." if sent else base
-                )
-                if not sent:
+                if r is None:
+                    messages.success(request, f"{base} Uden e-mail får de intet login.")
+                else:
+                    messages.success(
+                        request, f"{base} Velkomstmailen er sat i kø og sendes om lidt." if sent else base
+                    )
+                if r is not None and not sent:
                     messages.warning(
                         request,
                         "Velkomstmailen kunne ikke sendes — bed dem bruge “glemt kodeord”, "
@@ -788,8 +827,12 @@ def next_month_list(request: HttpRequest) -> HttpResponse | HttpResponseRedirect
         )
 
     in_next = {r.resident_id for r in next_rows}
+    # Every resident the house knows, with a login or not, who is not on the list yet.
     available = (
-        Resident.objects.filter(is_active=True).exclude(id__in=in_next).order_by("first_name", "last_name")
+        Resident.objects.exclude(id__in=in_next)
+        .exclude(person__account__is_active=False)
+        .select_related("person")
+        .order_by("person__first_name", "person__last_name")
     )
     return render(
         request,
@@ -806,7 +849,9 @@ def next_month_list(request: HttpRequest) -> HttpResponse | HttpResponseRedirect
             "editing_current": editing_current,
             # Fylgje picker on the "create a new resident" form, so lineage is recorded at the point
             # the person is added rather than in a follow-up edit nobody remembers to make.
-            "all_residents": Resident.objects.order_by("first_name", "last_name"),
+            "all_residents": Resident.objects.select_related("person").order_by(
+                "person__first_name", "person__last_name"
+            ),
             "priv_names": sorted(WORKGROUP_ROLE.keys()),
             "existing_draft": existing_draft,
             "new_draft": new_draft,
@@ -820,16 +865,16 @@ def next_month_list(request: HttpRequest) -> HttpResponse | HttpResponseRedirect
 @login_required
 def profile(request: HttpRequest, pk: int) -> HttpResponse:
     """Public profile page for a resident. Shows bio, social links, and recent notices."""
-    resident = get_object_or_404(Resident, pk=pk)
+    resident = get_object_or_404(Account, pk=pk)
     year, month = active_period()
     residency = (
-        Residency.objects.filter(resident=resident, year=year, month=month)
+        Residency.objects.filter(resident__person__account=resident, year=year, month=month)
         .select_related("room", "workgroup", "cleaning")
         .first()
     )
     recent_notices = resident.notices.select_related("author").order_by("-created_at")[:10]
     # Only shown when the resident is on the currently active alumneliste (same leaderboard as there).
-    badges = _period_badges(year, month).get(resident.pk, []) if residency else []
+    badges = _period_badges(year, month).get(residency.resident_id, []) if residency else []
     return render(
         request,
         "residents/profile.html",
@@ -848,8 +893,7 @@ def mention_lookup(request: HttpRequest) -> JsonResponse:
     groups = Workgroup.objects.filter(
         residency__year=year,
         residency__month=month,
-        residency__resident__is_active=True,
-        residency__resident__is_kitchen=False,
+        residency__resident__person__account__is_active=True,
     )
     for word in query.split()[:4]:
         residents = residents.filter(Q(first_name__icontains=word) | Q(last_name__icontains=word))

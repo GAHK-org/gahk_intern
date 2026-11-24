@@ -18,7 +18,7 @@ from tempfile import TemporaryDirectory
 from django.core.files.base import ContentFile
 from django.utils import timezone
 
-from residents.models import Resident
+from residents.models import Account
 
 from . import encoding, services
 from .dating import premiere_value
@@ -69,7 +69,7 @@ def _released_on(title: str, moment: datetime) -> str:
     return day.isoformat()
 
 
-def seed(residents: list[Resident], now: datetime, rng: random.Random) -> None:
+def seed(residents: list[Account], now: datetime, rng: random.Random) -> None:
     uploader, *others = residents
     series = Series.objects.create(
         title="Gangen", description="Hverdagen på 3. sal, fortalt af dem, der bor der.", created_by=uploader
@@ -139,7 +139,7 @@ def _sound_only(directory: Path, name: str) -> Path:
     return target
 
 
-def _upload(path: Path, title: str, uploader: Resident, rng: random.Random, state: str) -> VideoFile:
+def _upload(path: Path, title: str, uploader: Account, rng: random.Random, state: str) -> VideoFile:
     """A new draft with its file in storage, as a committed upload leaves it — but not sent to the
     worker: the demo decides which state each draft stays in."""
     video = Video.objects.create(title=title, uploaded_by=uploader)
@@ -159,7 +159,7 @@ def _upload(path: Path, title: str, uploader: Resident, rng: random.Random, stat
     return video_file
 
 
-def _processed(path: Path, title: str, uploader: Resident, rng: random.Random) -> Video:
+def _processed(path: Path, title: str, uploader: Account, rng: random.Random) -> Video:
     """A draft that has been through the real encode, with its thumbnail and banner picked."""
     video_file = _upload(path, title, uploader, rng, FileState.PROCESSING)
     services.process_file(video_file, rng)
@@ -196,9 +196,9 @@ def _premiere(moment: datetime, blur: str) -> dict[str, str]:
 def _seed_premieres(
     directory: Path,
     series: Series,
-    uploader: Resident,
-    beboer: Resident,
-    others: list[Resident],
+    uploader: Account,
+    beboer: Account,
+    others: list[Account],
     now: datetime,
     rng: random.Random,
 ) -> None:
@@ -244,7 +244,7 @@ def _seed_premieres(
         services.record_view(concert, viewer, premiere + timedelta(minutes=rng.randint(5, 150)))
 
 
-def _seed_drafts(directory: Path, beboer: Resident, now: datetime, rng: random.Random) -> None:
+def _seed_drafts(directory: Path, beboer: Account, now: datetime, rng: random.Random) -> None:
     """beboer@'s drafts, one of each kind `Mine videoer` and the upload page list: six of the ten
     allowed, so there is still room to try uploading several files at once."""
     today = timezone.localdate(now)

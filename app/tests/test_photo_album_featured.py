@@ -17,12 +17,12 @@ from photo_album.featured import (
     timeline_mosaic,
 )
 from photo_album.models import Album, DerivativeState, FeaturedMedia, Media, MediaStatus
-from residents.models import Resident
+from residents.models import Account
 
 DAY = date(2026, 10, 13)
 
 
-def _image(album: Album, resident: Resident, **fields: object) -> Media:
+def _image(album: Album, resident: Account, **fields: object) -> Media:
     defaults: dict[str, object] = {
         "title": "photo",
         "original": "a",
@@ -40,7 +40,7 @@ def album() -> Album:
 
 
 @pytest.mark.django_db
-def test_the_day_is_picked_once_and_then_fixed(album: Album, make_resident: Callable[..., Resident]) -> None:
+def test_the_day_is_picked_once_and_then_fixed(album: Album, make_resident: Callable[..., Account]) -> None:
     resident = make_resident()
     for _ in range(10):
         _image(album, resident)
@@ -52,7 +52,7 @@ def test_the_day_is_picked_once_and_then_fixed(album: Album, make_resident: Call
 
 
 @pytest.mark.django_db
-def test_only_what_everyone_may_see_is_picked(album: Album, make_resident: Callable[..., Resident]) -> None:
+def test_only_what_everyone_may_see_is_picked(album: Album, make_resident: Callable[..., Account]) -> None:
     resident = make_resident()
     shown = _image(album, resident)
     _image(album, resident, status=MediaStatus.PENDING)
@@ -66,7 +66,7 @@ def test_only_what_everyone_may_see_is_picked(album: Album, make_resident: Calla
 
 @pytest.mark.django_db
 def test_a_pick_binned_later_drops_out_without_a_replacement(
-    album: Album, make_resident: Callable[..., Resident]
+    album: Album, make_resident: Callable[..., Account]
 ) -> None:
     resident = make_resident()
     for _ in range(6):
@@ -79,7 +79,7 @@ def test_a_pick_binned_later_drops_out_without_a_replacement(
 
 @pytest.mark.django_db
 def test_recent_picks_sit_out_but_top_up_a_small_archive(
-    album: Album, make_resident: Callable[..., Resident]
+    album: Album, make_resident: Callable[..., Account]
 ) -> None:
     resident = make_resident()
     items = [_image(album, resident) for _ in range(5)]
@@ -92,7 +92,7 @@ def test_recent_picks_sit_out_but_top_up_a_small_archive(
 
 
 @pytest.mark.django_db
-def test_on_this_day_spreads_over_earlier_years(album: Album, make_resident: Callable[..., Resident]) -> None:
+def test_on_this_day_spreads_over_earlier_years(album: Album, make_resident: Callable[..., Account]) -> None:
     resident = make_resident()
     for year in (2023, 2024, 2025):
         for hour in range(4):
@@ -109,7 +109,7 @@ def test_on_this_day_spreads_over_earlier_years(album: Album, make_resident: Cal
 
 @pytest.mark.django_db
 def test_on_this_day_drops_a_pick_binned_while_it_was_drawn(
-    album: Album, make_resident: Callable[..., Resident], monkeypatch: pytest.MonkeyPatch
+    album: Album, make_resident: Callable[..., Account], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """It used to raise KeyError, and the dashboard with it."""
     from photo_album import featured
@@ -134,7 +134,7 @@ def test_on_this_day_drops_a_pick_binned_while_it_was_drawn(
 
 @pytest.mark.django_db
 def test_dashboard_links_each_picture_to_its_album(
-    client: Client, album: Album, make_resident: Callable[..., Resident], monkeypatch: pytest.MonkeyPatch
+    client: Client, album: Album, make_resident: Callable[..., Account], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     # Pinned: on any other day the picture below is not "on this day".
     monkeypatch.setattr("photo_album.templatetags.photo_album_extras.current_date", lambda: DAY)
@@ -149,9 +149,7 @@ def test_dashboard_links_each_picture_to_its_album(
 
 
 @pytest.mark.django_db
-def test_dashboard_has_no_strip_without_photos(
-    client: Client, make_resident: Callable[..., Resident]
-) -> None:
+def test_dashboard_has_no_strip_without_photos(client: Client, make_resident: Callable[..., Account]) -> None:
     client.force_login(make_resident())
     assert "Dagens billeder" not in client.get("/").content.decode()
 
@@ -164,7 +162,7 @@ def fresh_mosaic() -> None:
 @pytest.mark.django_db
 @pytest.mark.usefixtures("fresh_mosaic")
 def test_the_mosaic_draws_only_what_everyone_may_see(
-    album: Album, make_resident: Callable[..., Resident]
+    album: Album, make_resident: Callable[..., Account]
 ) -> None:
     resident = make_resident()
     shown = _image(album, resident)
@@ -179,7 +177,7 @@ def test_the_mosaic_draws_only_what_everyone_may_see(
 @pytest.mark.django_db
 @pytest.mark.usefixtures("fresh_mosaic")
 def test_the_mosaic_holds_its_draw_and_drops_a_binned_pick(
-    album: Album, make_resident: Callable[..., Resident]
+    album: Album, make_resident: Callable[..., Account]
 ) -> None:
     resident = make_resident()
     for _ in range(MOSAIC_SIZE + 3):
@@ -195,7 +193,7 @@ def test_the_mosaic_holds_its_draw_and_drops_a_binned_pick(
 @pytest.mark.django_db
 @pytest.mark.usefixtures("fresh_mosaic")
 def test_the_index_leads_with_the_timeline_mosaic(
-    client: Client, album: Album, make_resident: Callable[..., Resident]
+    client: Client, album: Album, make_resident: Callable[..., Account]
 ) -> None:
     resident = make_resident()
     item = _image(album, resident)
@@ -213,7 +211,7 @@ def test_the_index_leads_with_the_timeline_mosaic(
 @pytest.mark.django_db
 @pytest.mark.usefixtures("fresh_mosaic")
 def test_the_timeline_card_shows_without_photos(
-    client: Client, make_resident: Callable[..., Resident]
+    client: Client, make_resident: Callable[..., Account]
 ) -> None:
     client.force_login(make_resident())
     page = client.get(reverse("photo_album:index")).content.decode()

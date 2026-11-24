@@ -13,7 +13,7 @@ from django.utils import timezone
 
 from oelkaelder.models import Deposit, Shopper
 from oelkaelder.tasks import send_monthly_statements
-from residents.models import Resident
+from residents.models import Account
 
 
 def _last_month_instant() -> timezone.datetime:
@@ -25,7 +25,7 @@ def _last_month_instant() -> timezone.datetime:
 
 
 @pytest.mark.django_db
-def test_the_statement_month_is_danish(make_resident: Callable[..., Resident]) -> None:
+def test_the_statement_month_is_danish(make_resident: Callable[..., Account]) -> None:
     """`f"{start:%B %Y}"` is strftime, which reads the process's C locale — nothing sets one, so
     every statement went out to a Danish house with an English month in the subject line."""
     shopper = Shopper.objects.create(resident=make_resident(email="buyer@gahk.dk"))
@@ -53,7 +53,7 @@ def test_the_statement_month_is_danish(make_resident: Callable[..., Resident]) -
 
 @pytest.mark.django_db
 def test_the_statement_reports_the_balance_at_the_end_of_its_own_month(
-    make_resident: Callable[..., Resident],
+    make_resident: Callable[..., Account],
 ) -> None:
     """It used to print `shopper.balance_ore`, which is the balance RIGHT NOW. A statement for last
     month, sent on the 1st, therefore quoted a figure that already included this month's activity —

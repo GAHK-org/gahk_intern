@@ -10,7 +10,7 @@ from audit import trail
 from audit.models import AuditEvent
 from den_hurtige.models import QuickPost
 from oelkaelder.models import Shopper
-from residents.models import Resident, active_period
+from residents.models import Account, active_period
 from residents.permissions import real_roles
 
 
@@ -21,14 +21,14 @@ def test_seed_demo_populates_and_is_idempotent() -> None:
     # 12 seeded residents, one of whom then moves out and is replaced by a newly created one, so the
     # current month stays full (see _seed_residencies). That keeps a leaver for the regnskab page
     # without leaving the alumneliste a person short.
-    first_count = Resident.objects.count()
+    first_count = Account.objects.count()
     assert first_count == 13
     first_trail = AuditEvent.objects.count()
 
     # Re-running with --fresh must not duplicate or raise (idempotent).
     # --force because Django's test runner forces DEBUG=False, which the safety guard blocks.
     call_command("seed_demo", "--fresh", "--force", "--residents", "12", verbosity=0)
-    assert Resident.objects.count() == first_count
+    assert Account.objects.count() == first_count
     # The append-only trail too: emptied and written again, not doubled.
     assert AuditEvent.objects.count() == first_trail
 
@@ -40,13 +40,13 @@ def test_seed_demo_populates_and_is_idempotent() -> None:
     assert (year, month) == (today.year, today.month)
 
     # Documented logins exist with the expected roles and password.
-    formand = Resident.objects.get(email="formand@gahk.dk")
+    formand = Account.objects.get(email="formand@gahk.dk")
     assert "administrator" in real_roles(formand)
     assert formand.check_password("demo1234")
 
     # Two alumni in the current month lack an e-conomic kontonr., for trying the regnskab page's
     # "Mangler e-conomic kontonr." list; everyone else has one.
-    missing = Resident.objects.filter(economic_account_number__isnull=True)
+    missing = Account.objects.filter(economic_account_number__isnull=True)
     assert missing.count() == 2
     assert all(r.residencies.filter(year=year, month=month).exists() for r in missing)
 
@@ -60,7 +60,7 @@ def test_seed_demo_populates_and_is_idempotent() -> None:
 
     from residents.models import Residency
 
-    leavers = [r for r in Resident.objects.all() if r.move_out_date is not None]
+    leavers = [r for r in Account.objects.all() if r.move_out_date is not None]
     assert len(leavers) == 1
     leaver = leavers[0]
     assert not leaver.residencies.filter(year=year, month=month).exists(), "a leaver is off this month"
@@ -68,12 +68,12 @@ def test_seed_demo_populates_and_is_idempotent() -> None:
 
     this_month = Residency.objects.filter(year=year, month=month)
     # Everyone except the one leaver is on this month's list: a full alumneliste, not one short.
-    assert this_month.count() == Resident.objects.count() - 1
-    assert not this_month.filter(resident=leaver).exists()
+    assert this_month.count() == Account.objects.count() - 1
+    assert not this_month.filter(resident=leaver.house).exists()
     room_ids = list(this_month.values_list("room_id", flat=True))
     assert len(room_ids) == len(set(room_ids)), "one resident per room this month"
-    newcomer = Resident.objects.get(move_in_date=date(year, month, 1))
-    assert this_month.filter(resident=newcomer).exists()
+    newcomer = Account.objects.get(person__resident__move_in_date=date(year, month, 1))
+    assert this_month.filter(resident=newcomer.house).exists()
 
 
 @pytest.mark.django_db
@@ -129,7 +129,7 @@ def test_seed_demo_gives_the_logins_notifications_in_every_state() -> None:
     from notifications.models import Notification
 
     call_command("seed_demo", "--fresh", "--force", "--residents", "12", verbosity=0)
-    beboer = Resident.objects.get(email="beboer@gahk.dk")
+    beboer = Account.objects.get(email="beboer@gahk.dk")
     # Leave out what GAHKFlix tells beboer@ about their own uploads (gahkflix.demo): this test is about
     # the rows notifications.demo seeds.
     uploads = Notification.objects.filter(recipient=beboer, category=categories.GAHKFLIX_UPLOADS)
@@ -211,10 +211,10 @@ def test_seed_demo_writes_weeks_of_audit_history(settings: Any) -> None:  # noqa
         RoleAssignment.objects.filter(role=Role.ADMINISTRATOR).values_list("resident__email", flat=True)
     ) == {"formand@gahk.dk"}
     for email in ("ak@gahk.dk", "oel@gahk.dk"):
-        assert Resident.objects.get(email=email).check_password("demo1234")
+        assert Account.objects.get(email=email).check_password("demo1234")
 
     client = Client()
-    client.force_login(Resident.objects.get(email="formand@gahk.dk"))
+    client.force_login(Account.objects.get(email="formand@gahk.dk"))
     page = client.get("/admin/audit").content.decode()
     assert "Ældre" in page, "more than one page of history"
     assert "mislykket login" in page
@@ -244,7 +244,7 @@ def test_seed_demo_fills_the_outbox_with_every_kind_and_status(settings: object)
     assert django_mail.outbox == []
     assert {m.status for m in mails} == set(Status.values)
     assert {m.kind for m in mails} == set(Kind.values)
-    residents = set(Resident.objects.values_list("email", flat=True))
+    residents = set(Account.objects.values_list("email", flat=True))
     assert all(m.recipients in residents for m in mails.exclude(subject__contains="henvendelse"))
 
     # The bulk send under way: the window full, three overviews held back by it.
@@ -319,7 +319,7 @@ def test_seed_demo_gives_gahkflix_premieres_partial_dates_and_drafts_in_every_st
     assert precisions == {DatePrecision.DAY, DatePrecision.MONTH, DatePrecision.YEAR}
 
     # beboer@'s drafts, one of each kind, with room left to upload more.
-    beboer = Resident.objects.get(email="beboer@gahk.dk")
+    beboer = Account.objects.get(email="beboer@gahk.dk")
     drafts = Video.objects.drafts().filter(uploaded_by=beboer)
     assert 1 <= MAX_DRAFTS - drafts.count() < MAX_DRAFTS
     states = {draft.title: draft.files.get().state for draft in drafts}

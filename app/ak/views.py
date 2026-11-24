@@ -9,7 +9,7 @@ from django.shortcuts import get_object_or_404, redirect, render
 from django.utils import timezone
 from django.views.decorators.http import require_POST
 
-from residents.models import Resident, active_period, next_period
+from residents.models import Account, active_period, next_period
 from residents.permissions import current_resident, role_required
 from residents.views import DA_MONTHS
 
@@ -82,7 +82,9 @@ def _schedule_rows(active_month: int) -> list[dict]:
 def overview(request: HttpRequest) -> HttpResponse:
     ensure_previous_month_charged()  # backstop for the monthly cron job (DEPLOY.md §4b)
     year, month = active_period()
-    residents = Resident.objects.filter(residencies__year=year, residencies__month=month).distinct()
+    residents = Account.objects.filter(
+        person__resident__residencies__year=year, person__resident__residencies__month=month
+    ).distinct()
     balances = dict(
         AkEntry.objects.values_list("resident").annotate(b=Sum("delta")).values_list("resident", "b")
     )
@@ -126,7 +128,7 @@ def save_monthly_charges(request: HttpRequest) -> HttpResponseRedirect:
 
 @role_required("ak")
 def resident_log(request: HttpRequest, pk: int) -> HttpResponse:
-    resident = get_object_or_404(Resident, pk=pk)
+    resident = get_object_or_404(Account, pk=pk)
     return render(
         request,
         "ak/log.html",
@@ -141,7 +143,7 @@ def resident_log(request: HttpRequest, pk: int) -> HttpResponse:
 @require_POST
 @role_required("ak")
 def add_entry(request: HttpRequest, pk: int) -> HttpResponseRedirect:
-    resident = get_object_or_404(Resident, pk=pk)
+    resident = get_object_or_404(Account, pk=pk)
     try:
         delta = int(request.POST.get("delta", "0"))
     except ValueError:

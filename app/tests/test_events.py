@@ -42,7 +42,7 @@ from events.models import (
 )
 from notifications import categories
 from notifications.models import Notification
-from residents.models import Resident, Role
+from residents.models import Account, Role
 
 EVENTS = "/begivenheder/"
 
@@ -86,17 +86,17 @@ def rollout_limited(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 @pytest.fixture
-def beboer(make_resident: Callable[..., Resident]) -> Resident:
+def beboer(make_resident: Callable[..., Account]) -> Account:
     return make_resident(email="a@gahk.dk", first_name="Anton", last_name="Storgaard")
 
 
 @pytest.fixture
-def other(make_resident: Callable[..., Resident]) -> Resident:
+def other(make_resident: Callable[..., Account]) -> Account:
     return make_resident(email="b@gahk.dk", first_name="Mette", last_name="Hansen")
 
 
 @pytest.fixture
-def third(make_resident: Callable[..., Resident]) -> Resident:
+def third(make_resident: Callable[..., Account]) -> Account:
     return make_resident(email="c@gahk.dk", first_name="Anders", last_name="Bo")
 
 
@@ -122,7 +122,7 @@ def media_tmp(settings: object, tmp_path: Path) -> None:
     settings.MEDIA_ROOT = str(tmp_path)  # type: ignore[attr-defined]
 
 
-def subscribe(resident: Resident, endpoint: str) -> PushSubscription:
+def subscribe(resident: Account, endpoint: str) -> PushSubscription:
     """A device. There is no per-feature opt-in any more — one subscription carries everything, and
     owning one is also what puts a resident in notifications.services.everyone()."""
     return PushSubscription.objects.create(user=resident, endpoint=endpoint, auth="a", p256dh="p")
@@ -133,7 +133,7 @@ def told(category: str) -> list[tuple[int, str]]:
     return sorted(Notification.objects.filter(category=category).values_list("recipient_id", "title"))
 
 
-def make_event(organiser: Resident, **extra: object) -> Event:
+def make_event(organiser: Account, **extra: object) -> Event:
     """An event as the form would have produced it — minute precision, no stray microseconds.
 
     That matters for the edit tests: `datetime-local` only ever submits whole minutes, so an event
@@ -175,7 +175,7 @@ GATED_GET_ROUTES = ("", "opret", "kalender", "kalender/abonnement", "1", "1/redi
     ],
 )
 def test_every_route_is_closed_to_non_administrators(
-    client: Client, beboer: Resident, rollout_limited: None, path: str
+    client: Client, beboer: Account, rollout_limited: None, path: str
 ) -> None:
     """While ACCESS_ROLES is set, a plain resident must not reach any of it — not just the page.
 
@@ -191,7 +191,7 @@ def test_every_route_is_closed_to_non_administrators(
     assert response.status_code == 403
 
 
-def test_the_live_region_is_closed_quietly(client: Client, beboer: Resident, rollout_limited: None) -> None:
+def test_the_live_region_is_closed_quietly(client: Client, beboer: Account, rollout_limited: None) -> None:
     """The one route that answers the gate with 204 rather than 403: it is read in the background by
     a live signal (views.live_detail), and a 403 body would be read as the page. 204 leaves it be —
     and hands a gated resident no more than the 403 does."""
@@ -237,7 +237,7 @@ def test_an_anonymous_visitor_is_sent_to_the_login_page(client: Client) -> None:
 # --- creating and editing -------------------------------------------------------------------------
 
 
-def test_a_resident_creates_an_event(client: Client, beboer: Resident, pushes: list) -> None:
+def test_a_resident_creates_an_event(client: Client, beboer: Account, pushes: list) -> None:
     client.force_login(beboer)
     when = timezone.localtime(timezone.now() + datetime.timedelta(days=2)).strftime("%Y-%m-%dT%H:%M")
 
@@ -258,7 +258,7 @@ def test_a_resident_creates_an_event(client: Client, beboer: Resident, pushes: l
     assert event.visibility == Visibility.AABENT
 
 
-def test_an_event_cannot_start_in_the_past(client: Client, beboer: Resident) -> None:
+def test_an_event_cannot_start_in_the_past(client: Client, beboer: Account) -> None:
     client.force_login(beboer)
     when = timezone.localtime(timezone.now() - datetime.timedelta(days=1)).strftime("%Y-%m-%dT%H:%M")
 
@@ -270,7 +270,7 @@ def test_an_event_cannot_start_in_the_past(client: Client, beboer: Resident) -> 
     assert not Event.objects.exists()
 
 
-def test_an_organiser_can_set_a_svarfrist_from_the_form(client: Client, beboer: Resident) -> None:
+def test_an_organiser_can_set_a_svarfrist_from_the_form(client: Client, beboer: Account) -> None:
     """The deadline is a form field, not something only the admin can reach.
 
     It was missing from Meta.fields at first, which made the whole deadline half of the feature
@@ -297,7 +297,7 @@ def test_an_organiser_can_set_a_svarfrist_from_the_form(client: Client, beboer: 
     )
 
 
-def test_a_svarfrist_after_the_start_is_refused(client: Client, beboer: Resident) -> None:
+def test_a_svarfrist_after_the_start_is_refused(client: Client, beboer: Account) -> None:
     """Refused rather than ignored: answers close at the start regardless, so such a deadline would
     show "svar inden lørdag" on a page whose answers actually shut on Friday."""
     client.force_login(beboer)
@@ -318,7 +318,7 @@ def test_a_svarfrist_after_the_start_is_refused(client: Client, beboer: Resident
     assert not Event.objects.exists()
 
 
-def test_the_end_must_come_after_the_start(client: Client, beboer: Resident) -> None:
+def test_the_end_must_come_after_the_start(client: Client, beboer: Account) -> None:
     client.force_login(beboer)
     start = timezone.now() + datetime.timedelta(days=2)
     client.post(
@@ -333,13 +333,13 @@ def test_the_end_must_come_after_the_start(client: Client, beboer: Resident) -> 
     assert not Event.objects.exists()
 
 
-def test_only_a_host_can_edit(client: Client, beboer: Resident, other: Resident) -> None:
+def test_only_a_host_can_edit(client: Client, beboer: Account, other: Account) -> None:
     event = make_event(beboer)
     client.force_login(other)
     assert client.get(f"{EVENTS}{event.pk}/rediger").status_code == 403
 
 
-def test_a_co_organiser_can_edit(client: Client, beboer: Resident, other: Resident) -> None:
+def test_a_co_organiser_can_edit(client: Client, beboer: Account, other: Account) -> None:
     event = make_event(beboer)
     event.co_organisers.add(other)
     client.force_login(other)
@@ -347,7 +347,7 @@ def test_a_co_organiser_can_edit(client: Client, beboer: Resident, other: Reside
 
 
 def test_moving_the_start_bumps_sequence_and_notifies(
-    client: Client, beboer: Resident, other: Resident, third: Resident, pushes: list
+    client: Client, beboer: Account, other: Account, third: Account, pushes: list
 ) -> None:
     """One predicate drives both, so a calendar client and a phone cannot disagree about whether
     something changed. See services.significant_change.
@@ -376,7 +376,7 @@ def test_moving_the_start_bumps_sequence_and_notifies(
 
 
 def test_editing_only_the_description_notifies_nobody(
-    client: Client, beboer: Resident, other: Resident, pushes: list
+    client: Client, beboer: Account, other: Account, pushes: list
 ) -> None:
     """A typo fix must not buzz sixty phones or make every calendar re-notify."""
     event = make_event(beboer)
@@ -404,7 +404,7 @@ def test_editing_only_the_description_notifies_nobody(
 # --- rsvp: ja og nej ------------------------------------------------------------------------------
 
 
-def test_answering_ja_takes_a_seat(client: Client, beboer: Resident) -> None:
+def test_answering_ja_takes_a_seat(client: Client, beboer: Account) -> None:
     event = make_event(beboer)
     client.force_login(beboer)
 
@@ -415,7 +415,7 @@ def test_answering_ja_takes_a_seat(client: Client, beboer: Resident) -> None:
     assert [r.pk for r in services.seated(Event.objects.get())] == [rsvp.pk]
 
 
-def test_answering_returns_only_the_panel(client: Client, beboer: Resident) -> None:
+def test_answering_returns_only_the_panel(client: Client, beboer: Account) -> None:
     """The htmx swap target, so pressing Ja never re-renders the page under a reader's thumb."""
     event = make_event(beboer)
     client.force_login(beboer)
@@ -426,7 +426,7 @@ def test_answering_returns_only_the_panel(client: Client, beboer: Resident) -> N
     assert "<html" not in body
 
 
-def test_answering_twice_leaves_one_row(client: Client, beboer: Resident) -> None:
+def test_answering_twice_leaves_one_row(client: Client, beboer: Account) -> None:
     """uniq_rsvp_per_resident, and the double-tapped phone it exists for."""
     event = make_event(beboer)
     client.force_login(beboer)
@@ -437,7 +437,7 @@ def test_answering_twice_leaves_one_row(client: Client, beboer: Resident) -> Non
     assert Rsvp.objects.count() == 1
 
 
-def test_answering_notifies_nobody(client: Client, beboer: Resident, other: Resident, pushes: list) -> None:
+def test_answering_notifies_nobody(client: Client, beboer: Account, other: Account, pushes: list) -> None:
     """Sixty phones buzzing about somebody else's dinner plans is the noise this replaces — and it
     is what stops people answering at all. Same call NoticeReaction made."""
     event = make_event(beboer)
@@ -456,7 +456,7 @@ def test_answering_notifies_nobody(client: Client, beboer: Resident, other: Resi
 
 
 def test_the_first_person_over_the_cap_goes_on_the_waitlist(
-    beboer: Resident, other: Resident, third: Resident
+    beboer: Account, other: Account, third: Account
 ) -> None:
     event = make_event(beboer, capacity=2)
 
@@ -469,7 +469,7 @@ def test_the_first_person_over_the_cap_goes_on_the_waitlist(
     assert [r.resident_id for r in services.waitlist(event)] == [third.pk]
 
 
-def test_no_capacity_means_no_waitlist_ever(beboer: Resident, other: Resident, third: Resident) -> None:
+def test_no_capacity_means_no_waitlist_ever(beboer: Account, other: Account, third: Account) -> None:
     event = make_event(beboer)  # capacity is None
     for who in (beboer, other, third):
         services.set_answer(event.pk, who, Answer.JA)
@@ -478,7 +478,7 @@ def test_no_capacity_means_no_waitlist_ever(beboer: Resident, other: Resident, t
     assert services.waitlist(event) == []
 
 
-def test_capacity_zero_is_not_the_same_as_no_capacity(beboer: Resident) -> None:
+def test_capacity_zero_is_not_the_same_as_no_capacity(beboer: Account) -> None:
     """NULL means no cap; 0 is a real, if silly, state. They must stay distinguishable."""
     event = make_event(beboer, capacity=0)
     outcome = services.set_answer(event.pk, beboer, Answer.JA)
@@ -486,7 +486,7 @@ def test_capacity_zero_is_not_the_same_as_no_capacity(beboer: Resident) -> None:
 
 
 def test_withdrawing_promotes_the_next_in_line(
-    beboer: Resident, other: Resident, third: Resident, pushes: list
+    beboer: Account, other: Account, third: Account, pushes: list
 ) -> None:
     event = make_event(beboer, capacity=1)
     services.set_answer(event.pk, beboer, Answer.JA)
@@ -503,7 +503,7 @@ def test_withdrawing_promotes_the_next_in_line(
 
 
 def test_a_promotion_notifies_exactly_the_promoted_person(
-    beboer: Resident, other: Resident, third: Resident, pushes: list
+    beboer: Account, other: Account, third: Account, pushes: list
 ) -> None:
     """Personal, and high importance: a seat you were waiting for is a seat you now have to use."""
     event = make_event(beboer, capacity=1)
@@ -520,7 +520,7 @@ def test_a_promotion_notifies_exactly_the_promoted_person(
     assert [p[0] for p in pushes] == [[other.pk]]
 
 
-def test_a_promoted_attendee_is_distinguishable_from_a_direct_one(beboer: Resident, other: Resident) -> None:
+def test_a_promoted_attendee_is_distinguishable_from_a_direct_one(beboer: Account, other: Account) -> None:
     """`promoted_at` no longer decides anything — seating is derived — but it is still recorded, so
     the page can say "du er rykket op" and this can assert the notification had a reason."""
     event = make_event(beboer, capacity=1)
@@ -532,7 +532,7 @@ def test_a_promoted_attendee_is_distinguishable_from_a_direct_one(beboer: Reside
 
 
 def test_the_queue_is_ordered_by_the_current_commitment_not_first_contact(
-    beboer: Resident, other: Resident, third: Resident
+    beboer: Account, other: Account, third: Account
 ) -> None:
     """ja → nej → ja puts you at the back: you gave the seat up. `created_at` remembers first
     contact, `answered_at` remembers the commitment, and the queue reads the latter."""
@@ -547,7 +547,7 @@ def test_the_queue_is_ordered_by_the_current_commitment_not_first_contact(
 
 
 def test_saying_nej_from_the_waitlist_promotes_nobody(
-    beboer: Resident, other: Resident, third: Resident
+    beboer: Account, other: Account, third: Account
 ) -> None:
     event = make_event(beboer, capacity=1)
     services.set_answer(event.pk, beboer, Answer.JA)
@@ -561,7 +561,7 @@ def test_saying_nej_from_the_waitlist_promotes_nobody(
 
 
 def test_the_capacity_cannot_be_lowered_below_the_seated_count(
-    client: Client, beboer: Resident, other: Resident
+    client: Client, beboer: Account, other: Account
 ) -> None:
     """Refusing rather than silently demoting somebody who was told they had a seat."""
     event = make_event(beboer, capacity=3)
@@ -586,7 +586,7 @@ def test_the_capacity_cannot_be_lowered_below_the_seated_count(
 # --- the rsvp deadline ----------------------------------------------------------------------------
 
 
-def test_answers_are_open_just_before_the_deadline(beboer: Resident) -> None:
+def test_answers_are_open_just_before_the_deadline(beboer: Account) -> None:
     deadline = timezone.now() + datetime.timedelta(days=1)
     event = make_event(beboer, rsvp_deadline_at=deadline)
     just_before = deadline - datetime.timedelta(microseconds=1)
@@ -594,7 +594,7 @@ def test_answers_are_open_just_before_the_deadline(beboer: Resident) -> None:
     assert services.answers_locked(event, now=just_before) is False
 
 
-def test_answers_are_closed_at_the_deadline_instant(beboer: Resident) -> None:
+def test_answers_are_closed_at_the_deadline_instant(beboer: Account) -> None:
     """`<=`: Danish "svarfrist kl. 18.00" reads as *senest* 18.00."""
     deadline = timezone.now() + datetime.timedelta(days=1)
     event = make_event(beboer, rsvp_deadline_at=deadline)
@@ -602,7 +602,7 @@ def test_answers_are_closed_at_the_deadline_instant(beboer: Resident) -> None:
     assert services.answers_locked(event, now=deadline) is True
 
 
-def test_an_event_without_a_deadline_closes_when_it_starts(beboer: Resident) -> None:
+def test_an_event_without_a_deadline_closes_when_it_starts(beboer: Account) -> None:
     """The only defensible implicit rule, and what makes answers_locked total — there is no state
     in which this feature is open forever."""
     event = make_event(beboer, starts_at=timezone.now() + datetime.timedelta(hours=1))
@@ -611,7 +611,7 @@ def test_an_event_without_a_deadline_closes_when_it_starts(beboer: Resident) -> 
     assert services.answers_locked(event, now=event.starts_at) is True
 
 
-def test_the_service_refuses_a_late_answer_even_when_the_view_is_bypassed(beboer: Resident) -> None:
+def test_the_service_refuses_a_late_answer_even_when_the_view_is_bypassed(beboer: Account) -> None:
     """set_answer is the authority — not the view, and not the form. The same transition is
     reachable from five places."""
     event = make_event(beboer, rsvp_deadline_at=timezone.now() - datetime.timedelta(minutes=1))
@@ -620,7 +620,7 @@ def test_the_service_refuses_a_late_answer_even_when_the_view_is_bypassed(beboer
         services.set_answer(event.pk, beboer, Answer.JA)
 
 
-def test_a_locked_event_renders_no_answer_form(client: Client, beboer: Resident) -> None:
+def test_a_locked_event_renders_no_answer_form(client: Client, beboer: Account) -> None:
     """The POST target must be ABSENT, not disabled. A greyed-out button with a live endpoint
     behind it is a lie, so this asserts the URL is gone rather than that an attribute is present."""
     event = make_event(beboer, rsvp_deadline_at=timezone.now() - datetime.timedelta(minutes=1))
@@ -632,7 +632,7 @@ def test_a_locked_event_renders_no_answer_form(client: Client, beboer: Resident)
     assert f"{EVENTS}{event.pk}/svar" not in body
 
 
-def test_nobody_can_change_their_answer_after_the_deadline(beboer: Resident, other: Resident) -> None:
+def test_nobody_can_change_their_answer_after_the_deadline(beboer: Account, other: Account) -> None:
     """The guarantee the whole derived-seating design rests on.
 
     Seating is not stored anywhere — `seated` recomputes it from the ja rows every time — so the
@@ -656,7 +656,7 @@ def test_nobody_can_change_their_answer_after_the_deadline(beboer: Resident, oth
     assert [r.resident_id for r in services.waitlist(event)] == [other.pk]
 
 
-def test_the_seating_is_stable_across_reads_once_locked(beboer: Resident, other: Resident) -> None:
+def test_the_seating_is_stable_across_reads_once_locked(beboer: Account, other: Account) -> None:
     """Derived does not mean unstable: the same rows in the same order give the same answer."""
     event = make_event(beboer, capacity=1)
     services.set_answer(event.pk, beboer, Answer.JA)
@@ -673,7 +673,7 @@ def test_the_seating_is_stable_across_reads_once_locked(beboer: Resident, other:
 # --- aflys, and when delete is allowed --------------------------------------------------------------
 
 
-def test_an_event_nobody_answered_can_be_deleted(client: Client, beboer: Resident) -> None:
+def test_an_event_nobody_answered_can_be_deleted(client: Client, beboer: Account) -> None:
     event = make_event(beboer)
     client.force_login(beboer)
 
@@ -683,7 +683,7 @@ def test_an_event_nobody_answered_can_be_deleted(client: Client, beboer: Residen
 
 
 def test_an_event_someone_is_coming_to_cannot_be_deleted(
-    client: Client, beboer: Resident, other: Resident
+    client: Client, beboer: Account, other: Account
 ) -> None:
     """A hard delete vanishes from every subscribed calendar with no explanation, and the .ics
     already imported into other people's calendars stays there forever."""
@@ -696,7 +696,7 @@ def test_an_event_someone_is_coming_to_cannot_be_deleted(
 
 
 def test_cancelling_keeps_the_row_and_tells_the_people_coming(
-    client: Client, beboer: Resident, other: Resident, pushes: list
+    client: Client, beboer: Account, other: Account, pushes: list
 ) -> None:
     event = make_event(beboer)
     services.set_answer(event.pk, other, Answer.JA)
@@ -715,7 +715,7 @@ def test_cancelling_keeps_the_row_and_tells_the_people_coming(
 
 
 def test_the_organiser_is_told_when_a_co_organiser_cancels(
-    client: Client, beboer: Resident, other: Resident, pushes: list
+    client: Client, beboer: Account, other: Account, pushes: list
 ) -> None:
     """Unlike a change, a cancellation does not exclude the organiser: a co-organiser can aflys too,
     and services.cancel does not know who did it. An organiser who said ja must hear their own event
@@ -731,7 +731,7 @@ def test_the_organiser_is_told_when_a_co_organiser_cancels(
     assert told(categories.EVENTS_CHANGES) == [(beboer.pk, f"Aflyst: {event.title}")]
 
 
-def test_a_cancelled_event_takes_no_more_answers(beboer: Resident, other: Resident) -> None:
+def test_a_cancelled_event_takes_no_more_answers(beboer: Account, other: Account) -> None:
     event = make_event(beboer)
     services.cancel(event)
 
@@ -752,7 +752,7 @@ def test_an_event_is_kept_for_a_week_after_it_is_held() -> None:
     assert RETENTION_AFTER_END == datetime.timedelta(days=7)
 
 
-def test_an_event_survives_until_the_window_is_up(beboer: Resident) -> None:
+def test_an_event_survives_until_the_window_is_up(beboer: Account) -> None:
     now = timezone.now()
     ended = now - RETENTION_AFTER_END + datetime.timedelta(hours=1)  # an hour short of the cutoff
     make_event(beboer, starts_at=ended - datetime.timedelta(hours=3), ends_at=ended)
@@ -760,7 +760,7 @@ def test_an_event_survives_until_the_window_is_up(beboer: Resident) -> None:
     assert Event.objects.purge_expired() == 0
 
 
-def test_an_event_is_gone_once_the_window_is_up(beboer: Resident) -> None:
+def test_an_event_is_gone_once_the_window_is_up(beboer: Account) -> None:
     now = timezone.now()
     ended = now - RETENTION_AFTER_END - datetime.timedelta(hours=1)  # an hour past it
     make_event(beboer, starts_at=ended - datetime.timedelta(hours=3), ends_at=ended)
@@ -768,12 +768,12 @@ def test_an_event_is_gone_once_the_window_is_up(beboer: Resident) -> None:
     assert Event.objects.purge_expired() == 1
 
 
-def test_retention_falls_back_to_the_start_when_there_is_no_end(beboer: Resident) -> None:
+def test_retention_falls_back_to_the_start_when_there_is_no_end(beboer: Account) -> None:
     make_event(beboer, starts_at=timezone.now() - RETENTION_AFTER_END - datetime.timedelta(hours=1))
     assert Event.objects.purge_expired() == 1
 
 
-def test_a_cancelled_event_is_kept_for_its_own_grace_period(beboer: Resident) -> None:
+def test_a_cancelled_event_is_kept_for_its_own_grace_period(beboer: Account) -> None:
     """It never happens, so the held-and-done rule would either purge it the moment its start
     passed or hold it to a date that means nothing. Thirty days is what lets subscribed calendars
     poll and pick up STATUS:CANCELLED."""
@@ -786,8 +786,8 @@ def test_a_cancelled_event_is_kept_for_its_own_grace_period(beboer: Resident) ->
 
 
 def test_purging_takes_the_answers_and_the_image_with_it(
-    beboer: Resident,
-    other: Resident,
+    beboer: Account,
+    other: Account,
     media_tmp: None,
     django_capture_on_commit_callbacks: Callable,
 ) -> None:
@@ -809,7 +809,7 @@ def test_purging_takes_the_answers_and_the_image_with_it(
     assert not stored.exists(name)
 
 
-def test_the_list_purges_on_the_way_past(client: Client, beboer: Resident) -> None:
+def test_the_list_purges_on_the_way_past(client: Client, beboer: Account) -> None:
     """Traffic does the cleanup; the cron covers the quiet weeks. The den_hurtige idiom, and the
     backstop for a cron that has silently stopped."""
     stale = timezone.now() - RETENTION_AFTER_END - datetime.timedelta(hours=1)
@@ -821,7 +821,7 @@ def test_the_list_purges_on_the_way_past(client: Client, beboer: Resident) -> No
     assert not Event.objects.exists()
 
 
-def test_the_list_shows_only_what_is_coming(client: Client, beboer: Resident) -> None:
+def test_the_list_shows_only_what_is_coming(client: Client, beboer: Account) -> None:
     make_event(beboer, title="Snart", starts_at=timezone.now() + datetime.timedelta(days=1))
     make_event(beboer, title="Lige overstået", starts_at=timezone.now() - datetime.timedelta(hours=2))
     client.force_login(beboer)
@@ -836,7 +836,7 @@ def test_the_list_shows_only_what_is_coming(client: Client, beboer: Resident) ->
 
 
 def test_a_new_event_notifies_everyone_but_the_organiser(
-    client: Client, beboer: Resident, other: Resident, pushes: list
+    client: Client, beboer: Account, other: Account, pushes: list
 ) -> None:
     subscribe(beboer, "https://push.example/a")
     subscribe(other, "https://push.example/b")
@@ -853,7 +853,7 @@ def test_a_new_event_notifies_everyone_but_the_organiser(
 
 
 def test_the_notification_links_to_the_event_not_the_list(
-    client: Client, beboer: Resident, other: Resident, pushes: list
+    client: Client, beboer: Account, other: Account, pushes: list
 ) -> None:
     subscribe(other, "https://push.example/b")
     client.force_login(beboer)
@@ -872,7 +872,7 @@ def test_the_notification_links_to_the_event_not_the_list(
 
 
 def test_a_resident_without_a_phone_still_hears_about_a_new_event(
-    client: Client, beboer: Resident, other: Resident, pushes: list
+    client: Client, beboer: Account, other: Account, pushes: list
 ) -> None:
     """Push used to be the only channel, so a resident who never pressed a subscribe button never
     heard about anything. Living here is enough now: the row lands in the bell, and nothing is
@@ -907,7 +907,7 @@ PRIVATE_ROUTES = [
 ]
 
 
-def make_private(organiser: Resident, invitees: list[Resident], **extra: object) -> Event:
+def make_private(organiser: Account, invitees: list[Account], **extra: object) -> Event:
     event = make_event(organiser, visibility=Visibility.KUN_INVITEREDE, **extra)
     for who in invitees:
         EventInvite.objects.create(event=event, resident=who, invited_by=organiser)
@@ -916,7 +916,7 @@ def make_private(organiser: Resident, invitees: list[Resident], **extra: object)
 
 @pytest.mark.parametrize(("method", "suffix"), PRIVATE_ROUTES)
 def test_an_outsider_gets_404_on_every_route_of_a_private_event(
-    client: Client, beboer: Resident, other: Resident, method: str, suffix: str
+    client: Client, beboer: Account, other: Account, method: str, suffix: str
 ) -> None:
     """404, specifically — never 403. See access.py on why the two refusals mean different things."""
     event = make_private(beboer, [])
@@ -957,7 +957,7 @@ def test_the_private_route_table_covers_every_pk_route() -> None:
 
 
 def test_any_resident_who_can_see_the_event_may_comment(
-    client: Client, beboer: Resident, other: Resident
+    client: Client, beboer: Account, other: Account
 ) -> None:
     """Not gated on having answered: "kan man tage boern med?" is asked before you commit."""
     event = make_event(beboer)
@@ -972,7 +972,7 @@ def test_any_resident_who_can_see_the_event_may_comment(
     assert not event.rsvps.exists(), "commenting must not imply an answer"
 
 
-def test_commenting_lands_back_on_the_thread(client: Client, beboer: Resident) -> None:
+def test_commenting_lands_back_on_the_thread(client: Client, beboer: Account) -> None:
     """The page is long -- image, facts, description, answer panel, posts -- so a bare redirect to
     the top hides the comment that was just written. See views._comment_anchor."""
     event = make_event(beboer)
@@ -983,7 +983,7 @@ def test_commenting_lands_back_on_the_thread(client: Client, beboer: Resident) -
     assert response["Location"] == f"{EVENTS}{event.pk}#kommentarer"
 
 
-def test_a_blank_comment_is_refused(client: Client, beboer: Resident) -> None:
+def test_a_blank_comment_is_refused(client: Client, beboer: Account) -> None:
     """Whitespace only, and nothing attached. Django accepts a blank TextField and the form now
     strips rather than rejects, so the refusal is the view's — see test_neither_text_nor_photo_is_refused
     for the same rule stated from the photo side."""
@@ -996,7 +996,7 @@ def test_a_blank_comment_is_refused(client: Client, beboer: Resident) -> None:
     assert "Skriv en kommentar, eller vedhæft et billede." in response.content.decode()
 
 
-def test_the_thread_is_rendered_on_the_event_page(client: Client, beboer: Resident) -> None:
+def test_the_thread_is_rendered_on_the_event_page(client: Client, beboer: Account) -> None:
     event = make_event(beboer)
     EventComment.objects.create(event=event, author=beboer, body="Vi moedes i koekkenet")
     client.force_login(beboer)
@@ -1007,7 +1007,7 @@ def test_the_thread_is_rendered_on_the_event_page(client: Client, beboer: Reside
     assert "1 kommentar" in body
 
 
-def test_a_comment_is_plain_text_and_never_markup(client: Client, beboer: Resident) -> None:
+def test_a_comment_is_plain_text_and_never_markup(client: Client, beboer: Account) -> None:
     """Deliberately not Markdown (see EventComment), so a pasted tag is shown, not run."""
     event = make_event(beboer)
     EventComment.objects.create(event=event, author=beboer, body="<b>hej</b> **ikke fed**")
@@ -1021,7 +1021,7 @@ def test_a_comment_is_plain_text_and_never_markup(client: Client, beboer: Reside
 
 
 def test_a_comment_on_a_cancelled_event_is_still_allowed(
-    client: Client, beboer: Resident, other: Resident
+    client: Client, beboer: Account, other: Account
 ) -> None:
     """Aflyst freezes the ANSWER, not the conversation. "Hvorfor?" and "vi finder en ny dato" are
     the most predictable thread on the feature, and a comment re-notifies no calendar the way an
@@ -1036,7 +1036,7 @@ def test_a_comment_on_a_cancelled_event_is_still_allowed(
     assert EventComment.objects.count() == 1
 
 
-def test_its_author_deletes_their_own_comment(client: Client, beboer: Resident, other: Resident) -> None:
+def test_its_author_deletes_their_own_comment(client: Client, beboer: Account, other: Account) -> None:
     event = make_event(beboer)
     comment = EventComment.objects.create(event=event, author=other, body="Fortryder")
     client.force_login(other)
@@ -1047,7 +1047,7 @@ def test_its_author_deletes_their_own_comment(client: Client, beboer: Resident, 
     assert not EventComment.objects.exists()
 
 
-def test_a_host_deletes_somebody_elses_comment(client: Client, beboer: Resident, other: Resident) -> None:
+def test_a_host_deletes_somebody_elses_comment(client: Client, beboer: Account, other: Account) -> None:
     """The host runs the event and the thread is aimed at them, so they moderate it."""
     event = make_event(beboer)
     comment = EventComment.objects.create(event=event, author=other, body="Spam spam spam")
@@ -1060,9 +1060,9 @@ def test_a_host_deletes_somebody_elses_comment(client: Client, beboer: Resident,
 
 def test_a_co_organiser_may_also_delete_a_comment(
     client: Client,
-    beboer: Resident,
-    other: Resident,
-    make_resident: Callable[..., Resident],
+    beboer: Account,
+    other: Account,
+    make_resident: Callable[..., Account],
 ) -> None:
     """access.is_host, not just the organiser -- co-organisers run the event too."""
     helper = make_resident(email="medarrangoer@gahk.dk")
@@ -1077,7 +1077,7 @@ def test_a_co_organiser_may_also_delete_a_comment(
 
 
 def test_a_bystander_cannot_delete_somebody_elses_comment(
-    client: Client, beboer: Resident, other: Resident
+    client: Client, beboer: Account, other: Account
 ) -> None:
     """403, not 404: the comment is on an event `other` can see, so its existence is no secret.
     See access.py on the split between the two refusals."""
@@ -1092,7 +1092,7 @@ def test_a_bystander_cannot_delete_somebody_elses_comment(
 
 
 def test_inspektionen_may_not_delete_a_comment(
-    client: Client, beboer: Resident, make_resident: Callable[..., Resident]
+    client: Client, beboer: Account, make_resident: Callable[..., Account]
 ) -> None:
     """THE DELIBERATE DIVERGENCE from both sibling features, where a moderator may remove any
     comment. It cannot be that here: access.visible_to gives Inspektionen no read access to a
@@ -1111,7 +1111,7 @@ def test_inspektionen_may_not_delete_a_comment(
 
 
 def test_the_delete_button_is_only_rendered_for_someone_who_may_use_it(
-    client: Client, beboer: Resident, other: Resident
+    client: Client, beboer: Account, other: Account
 ) -> None:
     """The permission and the control have to agree, or the page offers a button that 403s."""
     event = make_event(beboer)
@@ -1125,7 +1125,7 @@ def test_the_delete_button_is_only_rendered_for_someone_who_may_use_it(
 
 
 def test_an_outsider_cannot_delete_a_comment_on_a_private_event(
-    client: Client, beboer: Resident, other: Resident
+    client: Client, beboer: Account, other: Account
 ) -> None:
     """404, and it is the reason views._visible_comment exists. A comment id is a side channel onto
     the event it hangs off: without the visible_to filter this would answer 403 ("exists, but not
@@ -1144,7 +1144,7 @@ def test_an_outsider_cannot_delete_a_comment_on_a_private_event(
     assert EventComment.objects.exists()
 
 
-def test_an_invitee_may_comment_on_a_private_event(client: Client, beboer: Resident, other: Resident) -> None:
+def test_an_invitee_may_comment_on_a_private_event(client: Client, beboer: Account, other: Account) -> None:
     """The positive control for the 404 above: the filter must not shut out the invite list."""
     event = make_private(beboer, [other])
     client.force_login(other)
@@ -1154,7 +1154,7 @@ def test_an_invitee_may_comment_on_a_private_event(client: Client, beboer: Resid
     assert EventComment.objects.count() == 1
 
 
-def test_comments_go_when_the_event_goes(beboer: Resident) -> None:
+def test_comments_go_when_the_event_goes(beboer: Account) -> None:
     """CASCADE is the retention. The module docstring commits to there being no record of what
     happened, so a thread outliving its event would be the archive it says belongs to opslagstavlen."""
     event = make_event(beboer)
@@ -1167,9 +1167,9 @@ def test_comments_go_when_the_event_goes(beboer: Resident) -> None:
 
 def test_a_comment_notifies_the_hosts_and_nobody_else(
     client: Client,
-    beboer: Resident,
-    other: Resident,
-    make_resident: Callable[..., Resident],
+    beboer: Account,
+    other: Account,
+    make_resident: Callable[..., Account],
     pushes: list,
 ) -> None:
     """The rule in services.py is that a notification is about a commitment with a clock on it,
@@ -1199,7 +1199,7 @@ def test_a_comment_notifies_the_hosts_and_nobody_else(
 
 
 def test_a_busy_thread_is_one_notification_per_host(
-    client: Client, beboer: Resident, other: Resident, third: Resident, pushes: list
+    client: Client, beboer: Account, other: Account, third: Account, pushes: list
 ) -> None:
     """Grouped per event: the second commenter rewrites the host's row ("Anders og Mette
     kommenterede", newest first) rather than stacking another one under it."""
@@ -1215,7 +1215,7 @@ def test_a_busy_thread_is_one_notification_per_host(
 
 
 def test_a_host_commenting_on_their_own_event_notifies_nobody(
-    client: Client, beboer: Resident, pushes: list
+    client: Client, beboer: Account, pushes: list
 ) -> None:
     """The author is excluded even when they are the only host -- otherwise an organiser answering
     a question would buzz their own phone."""
@@ -1230,7 +1230,7 @@ def test_a_host_commenting_on_their_own_event_notifies_nobody(
 
 
 def test_a_comment_on_a_private_event_reaches_its_host_and_nobody_else(
-    client: Client, beboer: Resident, other: Resident, third: Resident, pushes: list
+    client: Client, beboer: Account, other: Account, third: Account, pushes: list
 ) -> None:
     """The organiser is not on their own guest list, so routing hosts through `_audience` would drop
     them exactly when the event is private. They are told; the commenter and an outsider are not."""
@@ -1246,7 +1246,7 @@ def test_a_comment_on_a_private_event_reaches_its_host_and_nobody_else(
 
 
 def test_rendering_a_thread_costs_no_query_per_comment(
-    client: Client, beboer: Resident, other: Resident
+    client: Client, beboer: Account, other: Account
 ) -> None:
     """`can_delete` is the same answer for every row, so it is resolved once for the event. Asked
     per comment it calls access.is_host each time, which filters co_organisers -- twelve comments,
@@ -1277,7 +1277,7 @@ def test_rendering_a_thread_costs_no_query_per_comment(
 # picture did not count and why the comment did not land. See views.create_comment.
 
 
-def test_a_comment_can_carry_a_photo(client: Client, beboer: Resident, media_tmp: None) -> None:
+def test_a_comment_can_carry_a_photo(client: Client, beboer: Account, media_tmp: None) -> None:
     event = make_event(beboer)
     client.force_login(beboer)
     photo = SimpleUploadedFile("lokale.jpg", bytes.fromhex("ffd8ff") + b"x" * 512, content_type="image/jpeg")
@@ -1290,7 +1290,7 @@ def test_a_comment_can_carry_a_photo(client: Client, beboer: Resident, media_tmp
     assert comment.image.name.startswith("begivenheder/kommentarer/")
 
 
-def test_a_photo_on_its_own_is_a_whole_comment(client: Client, beboer: Resident, media_tmp: None) -> None:
+def test_a_photo_on_its_own_is_a_whole_comment(client: Client, beboer: Account, media_tmp: None) -> None:
     """ "Her, se" is an answer. The body is blank-able for exactly this."""
     event = make_event(beboer)
     client.force_login(beboer)
@@ -1305,7 +1305,7 @@ def test_a_photo_on_its_own_is_a_whole_comment(client: Client, beboer: Resident,
     assert comment.image
 
 
-def test_neither_text_nor_photo_is_refused(client: Client, beboer: Resident) -> None:
+def test_neither_text_nor_photo_is_refused(client: Client, beboer: Account) -> None:
     event = make_event(beboer)
     client.force_login(beboer)
 
@@ -1316,7 +1316,7 @@ def test_neither_text_nor_photo_is_refused(client: Client, beboer: Resident) -> 
 
 
 def test_a_refused_photo_does_not_throw_away_the_text_beside_it(
-    client: Client, beboer: Resident, media_tmp: None
+    client: Client, beboer: Account, media_tmp: None
 ) -> None:
     """An SVG is refused by core.uploads because it executes script when opened from our own
     /media/. Losing a typed comment to that would be the worse outcome, so the comment saves and the
@@ -1338,7 +1338,7 @@ def test_a_refused_photo_does_not_throw_away_the_text_beside_it(
 
 
 def test_a_refused_photo_with_no_text_reports_both_halves(
-    client: Client, beboer: Resident, media_tmp: None
+    client: Client, beboer: Account, media_tmp: None
 ) -> None:
     """core.uploads.attached_image returns None for "nothing attached" and "attached but refused"
     alike, so this lands in the empty branch — which is right, there is nothing to save. On its own
@@ -1356,7 +1356,7 @@ def test_a_refused_photo_with_no_text_reports_both_halves(
 
 
 def test_an_oversized_photo_is_refused(
-    client: Client, beboer: Resident, media_tmp: None, settings: object
+    client: Client, beboer: Account, media_tmp: None, settings: object
 ) -> None:
     settings.EVENT_IMAGE_MAX_MB = 1  # type: ignore[attr-defined]
     event = make_event(beboer)
@@ -1372,7 +1372,7 @@ def test_an_oversized_photo_is_refused(
 
 
 def test_the_comment_photo_is_rendered_on_the_event_page(
-    client: Client, beboer: Resident, media_tmp: None
+    client: Client, beboer: Account, media_tmp: None
 ) -> None:
     event = make_event(beboer)
     client.force_login(beboer)
@@ -1386,7 +1386,7 @@ def test_the_comment_photo_is_rendered_on_the_event_page(
 
 
 def test_deleting_a_comment_deletes_its_photo(
-    beboer: Resident, media_tmp: None, django_capture_on_commit_callbacks: Callable
+    beboer: Account, media_tmp: None, django_capture_on_commit_callbacks: Callable
 ) -> None:
     """The post_delete receiver, which keeps "the comment is gone" from leaving a paid-for file that
     nothing references.
@@ -1412,7 +1412,7 @@ def test_deleting_a_comment_deletes_its_photo(
 
 
 def test_a_photo_only_comment_notifies_with_a_body_rather_than_a_blank(
-    client: Client, beboer: Resident, other: Resident, pushes: list, media_tmp: None
+    client: Client, beboer: Account, other: Account, pushes: list, media_tmp: None
 ) -> None:
     """push.preview("") is "", and a notification with an empty body reads on a lock screen as
     though it failed to load."""
@@ -1431,7 +1431,7 @@ def test_a_photo_only_comment_notifies_with_a_body_rather_than_a_blank(
     assert "Billede" in pushes[0][1]["body"]
 
 
-def test_the_comment_form_carries_the_attachment_note_hooks(client: Client, beboer: Resident) -> None:
+def test_the_comment_form_carries_the_attachment_note_hooks(client: Client, beboer: Account) -> None:
     """The hooks frontend/src/feed.ts finds the note by. The BEHAVIOUR (thumbnail, filename, the
     remove button) is JavaScript and this project has no JS test runner, so what is asserted here is
     the contract between the template and that module: the note exists, it starts hidden, and it
@@ -1451,7 +1451,7 @@ def test_the_comment_form_carries_the_attachment_note_hooks(client: Client, bebo
 
 
 def test_a_private_event_is_absent_from_the_list_for_an_outsider(
-    client: Client, beboer: Resident, other: Resident
+    client: Client, beboer: Account, other: Account
 ) -> None:
     make_private(beboer, [], title="Hemmelig fest")
     client.force_login(other)
@@ -1460,7 +1460,7 @@ def test_a_private_event_is_absent_from_the_list_for_an_outsider(
 
 
 def test_an_invitee_sees_the_private_event_everywhere(
-    client: Client, beboer: Resident, other: Resident
+    client: Client, beboer: Account, other: Account
 ) -> None:
     """The positive control. Without it the whole section passes on a feature that shows nothing to
     anybody."""
@@ -1472,7 +1472,7 @@ def test_an_invitee_sees_the_private_event_everywhere(
 
 
 def test_a_co_organiser_sees_a_private_event_they_were_not_invited_to(
-    client: Client, beboer: Resident, other: Resident
+    client: Client, beboer: Account, other: Account
 ) -> None:
     event = make_private(beboer, [])
     event.co_organisers.add(other)
@@ -1482,7 +1482,7 @@ def test_a_co_organiser_sees_a_private_event_they_were_not_invited_to(
 
 
 def test_moderators_do_not_see_private_events(
-    client: Client, beboer: Resident, make_resident: Callable[..., Resident]
+    client: Client, beboer: Account, make_resident: Callable[..., Account]
 ) -> None:
     """Deliberate: "except Inspektionen" would make the privacy promise false in exactly the case
     anyone would care about. A reported private event is a superuser job in the Django admin."""
@@ -1493,7 +1493,7 @@ def test_moderators_do_not_see_private_events(
     assert client.get(f"{EVENTS}{event.pk}").status_code == 404
 
 
-def test_the_visibility_filter_never_duplicates_an_event(beboer: Resident, other: Resident) -> None:
+def test_the_visibility_filter_never_duplicates_an_event(beboer: Account, other: Account) -> None:
     """Subqueries rather than joins. `Q(invites__resident=r)` is multi-valued, so somebody who is
     BOTH a co-organiser and an invitee would come back twice — a duplicate card, and two VEVENTs
     sharing one UID in a calendar file, which some clients resolve by dropping both."""
@@ -1503,7 +1503,7 @@ def test_the_visibility_filter_never_duplicates_an_event(beboer: Resident, other
     assert access.visible_to(other).filter(pk=event.pk).count() == 1
 
 
-def test_the_visibility_filter_survives_an_annotation(beboer: Resident, other: Resident) -> None:
+def test_the_visibility_filter_survives_an_annotation(beboer: Account, other: Account) -> None:
     """`.distinct()` would paper over the duplicate above and then silently stop being enough here,
     because a join multiplies rows before an aggregate reaches them."""
     from django.db.models import Count
@@ -1517,7 +1517,7 @@ def test_the_visibility_filter_survives_an_annotation(beboer: Resident, other: R
 
 
 def test_a_private_event_notifies_only_its_invitees(
-    client: Client, beboer: Resident, other: Resident, third: Resident, pushes: list
+    client: Client, beboer: Account, other: Account, third: Account, pushes: list
 ) -> None:
     """Announcing a private event to the house IS the leak. The invite list is the audience."""
     for who in (beboer, other, third):
@@ -1578,7 +1578,7 @@ def _month_with_trailing_padding() -> tuple[datetime.date, datetime.date]:
 _room_seq = iter(range(1, 10_000))
 
 
-def _residency(resident: Resident) -> None:
+def _residency(resident: Account) -> None:
     """Put a resident on this month's list — only current residents are invitable.
 
     conftest.make_resident deliberately does NOT create a Residency row, so anything touching the
@@ -1590,11 +1590,11 @@ def _residency(resident: Resident) -> None:
     n = next(_room_seq)
     room = Room.objects.create(legacy_index=n, number=n, floor="stuen", side="mod gaden")
     year, month = active_period()
-    Residency.objects.get_or_create(resident=resident, room=room, year=year, month=month)
+    Residency.objects.get_or_create(resident=resident.house, room=room, year=year, month=month)
 
 
 def test_an_invite_only_event_needs_four_invitees(
-    client: Client, beboer: Resident, make_resident: Callable[..., Resident]
+    client: Client, beboer: Account, make_resident: Callable[..., Account]
 ) -> None:
     guests = [make_resident(email=f"g{i}@gahk.dk") for i in range(4)]
     for who in guests:
@@ -1627,7 +1627,7 @@ def test_an_invite_only_event_needs_four_invitees(
 
 
 def test_the_minimum_is_enforced_on_edit_too(
-    client: Client, beboer: Resident, make_resident: Callable[..., Resident]
+    client: Client, beboer: Account, make_resident: Callable[..., Account]
 ) -> None:
     """The create-only version of this check is the obvious bug: switching an existing open event to
     invite-only is exactly the transition it would miss."""
@@ -1647,7 +1647,7 @@ def test_the_minimum_is_enforced_on_edit_too(
     assert event.visibility == Visibility.AABENT
 
 
-def test_the_organiser_cannot_be_their_own_invitee(beboer: Resident, other: Resident) -> None:
+def test_the_organiser_cannot_be_their_own_invitee(beboer: Account, other: Account) -> None:
     """Otherwise the four-person minimum is satisfiable by inviting yourself."""
     from events.forms import invitable_residents
 
@@ -1658,7 +1658,7 @@ def test_the_organiser_cannot_be_their_own_invitee(beboer: Resident, other: Resi
     assert other.pk in {r.pk for r in invitable_residents(exclude=beboer)}
 
 
-def test_alumni_are_not_offered_as_invitees(beboer: Resident, other: Resident) -> None:
+def test_alumni_are_not_offered_as_invitees(beboer: Account, other: Account) -> None:
     """The resident table holds everyone who ever lived here. A picker offering four hundred names,
     most of whom moved out years ago, is not a picker."""
     from events.forms import invitable_residents
@@ -1669,7 +1669,7 @@ def test_alumni_are_not_offered_as_invitees(beboer: Resident, other: Resident) -
 
 
 def test_syncing_invites_adds_and_removes_without_churning_the_rest(
-    beboer: Resident, other: Resident, third: Resident
+    beboer: Account, other: Account, third: Account
 ) -> None:
     """Reconciled, not cleared-and-rewritten: a rewrite would make invited_at lie on every edit and
     would re-notify people who were on the list the whole time."""
@@ -1688,7 +1688,7 @@ def test_syncing_invites_adds_and_removes_without_churning_the_rest(
 # --- the calendar -----------------------------------------------------------------------------------
 
 
-def test_the_month_grid_shows_whole_weeks(client: Client, beboer: Resident) -> None:
+def test_the_month_grid_shows_whole_weeks(client: Client, beboer: Account) -> None:
     """Padded into the neighbouring months rather than left blank: a grid starting mid-row reads as
     broken, and an event on the 1st is worth seeing from the 30th."""
     client.force_login(beboer)
@@ -1700,7 +1700,7 @@ def test_the_month_grid_shows_whole_weeks(client: Client, beboer: Resident) -> N
     assert weeks[0][0]["date"].weekday() == 0  # Monday first, as a Danish calendar is printed
 
 
-def test_an_event_in_a_padding_day_actually_appears_there(client: Client, beboer: Resident) -> None:
+def test_an_event_in_a_padding_day_actually_appears_there(client: Client, beboer: Account) -> None:
     """The padding days are queried too, not just drawn.
 
     A month that does not end on a Sunday has its last row run into the next one — so an event on
@@ -1721,7 +1721,7 @@ def test_an_event_in_a_padding_day_actually_appears_there(client: Client, beboer
     assert "I paddingen" in body
 
 
-def test_a_junk_month_falls_back_to_this_one(client: Client, beboer: Resident) -> None:
+def test_a_junk_month_falls_back_to_this_one(client: Client, beboer: Account) -> None:
     """A mistyped URL should show a calendar, not a stack trace."""
     client.force_login(beboer)
     assert client.get(f"{EVENTS}kalender?maaned=noget-vrøvl").status_code == 200
@@ -1732,7 +1732,7 @@ def test_a_junk_month_falls_back_to_this_one(client: Client, beboer: Resident) -
 # parameter rather than JavaScript, which is also what makes it testable at all.
 
 
-def test_tapping_a_day_lists_that_days_events(client: Client, beboer: Resident) -> None:
+def test_tapping_a_day_lists_that_days_events(client: Client, beboer: Account) -> None:
     """The panel shows the tapped day and only the tapped day.
 
     Dates derived from today rather than written out: see `_future_month_first`. This test
@@ -1757,7 +1757,7 @@ def test_tapping_a_day_lists_that_days_events(client: Client, beboer: Resident) 
     assert [e.title for e in response.context["chosen_events"]] == ["Den dag"]
 
 
-def test_a_quiet_day_says_so_rather_than_rendering_nothing(client: Client, beboer: Resident) -> None:
+def test_a_quiet_day_says_so_rather_than_rendering_nothing(client: Client, beboer: Account) -> None:
     """An empty panel would read as a broken tap. "Der sker ikke noget den dag" is an answer."""
     client.force_login(beboer)
 
@@ -1767,7 +1767,7 @@ def test_a_quiet_day_says_so_rather_than_rendering_nothing(client: Client, beboe
     assert "Der sker ikke noget den dag" in response.content.decode()
 
 
-def test_no_day_panel_unless_a_day_was_asked_for(client: Client, beboer: Resident) -> None:
+def test_no_day_panel_unless_a_day_was_asked_for(client: Client, beboer: Account) -> None:
     """Not defaulted to today: it would be redundant beside the desktop chips, and "ingen
     begivenheder i dag" is not what someone opening a month wants to read first."""
     client.force_login(beboer)
@@ -1779,7 +1779,7 @@ def test_no_day_panel_unless_a_day_was_asked_for(client: Client, beboer: Residen
 
 
 @pytest.mark.parametrize("raw", ["noget-vrøvl", "2026-13-40", "", "2019-04-01"])
-def test_an_unusable_day_is_treated_as_absent(client: Client, beboer: Resident, raw: str) -> None:
+def test_an_unusable_day_is_treated_as_absent(client: Client, beboer: Account, raw: str) -> None:
     """Junk, and also a real date that is nowhere on the visible grid — `?dag=2019-04-01` would
     otherwise print a heading and a list for a day the page does not show, which reads as a bug."""
     client.force_login(beboer)
@@ -1790,7 +1790,7 @@ def test_an_unusable_day_is_treated_as_absent(client: Client, beboer: Resident, 
     assert response.context["chosen_day"] is None
 
 
-def test_a_day_in_the_padding_can_still_be_opened(client: Client, beboer: Resident) -> None:
+def test_a_day_in_the_padding_can_still_be_opened(client: Client, beboer: Account) -> None:
     """The grid draws the next month's 1st on this month's page, so tapping it there has to work —
     the span the day is validated against is the GRID's, not the month's."""
     month, padding_day = _month_with_trailing_padding()
@@ -1807,7 +1807,7 @@ def test_a_day_in_the_padding_can_still_be_opened(client: Client, beboer: Reside
 
 
 def test_a_private_event_is_absent_from_the_day_panel_for_an_outsider(
-    client: Client, beboer: Resident, other: Resident
+    client: Client, beboer: Account, other: Account
 ) -> None:
     """The panel reads the same `by_day` the grid does, so it inherits visible_to — but a leak here
     would be a leak with the title spelled out in full, which the grid's dots are not."""
@@ -1830,7 +1830,7 @@ def test_a_private_event_is_absent_from_the_day_panel_for_an_outsider(
 
 
 def test_a_private_event_is_absent_from_the_calendar_for_an_outsider(
-    client: Client, beboer: Resident, other: Resident
+    client: Client, beboer: Account, other: Account
 ) -> None:
     when = timezone.now() + datetime.timedelta(days=3)
     make_private(beboer, [], title="Hemmelig fest", starts_at=when)
@@ -1850,7 +1850,7 @@ def test_a_private_event_is_absent_from_the_calendar_for_an_outsider(
 # form, a push, or a line in anybody's .ics.
 
 
-def _celebrant(make_resident: Callable[..., Resident], born: datetime.date, **extra: object) -> Resident:
+def _celebrant(make_resident: Callable[..., Account], born: datetime.date, **extra: object) -> Account:
     """A resident on this month's list with a date of birth. Both halves are needed: `birthdays`
     only considers the active residency list, which conftest.make_resident does not create."""
     extra.setdefault("email", f"f{born:%m%d}{next(_room_seq)}@gahk.dk")
@@ -1860,7 +1860,7 @@ def _celebrant(make_resident: Callable[..., Resident], born: datetime.date, **ex
 
 
 def test_a_birthday_is_a_note_on_the_day_not_an_event(
-    client: Client, beboer: Resident, make_resident: Callable[..., Resident]
+    client: Client, beboer: Account, make_resident: Callable[..., Account]
 ) -> None:
     """The whole point of the feature, in one assertion pair: the name is on the calendar, and
     nothing was written to Event. If this ever fails the other way round, birthdays have acquired
@@ -1875,7 +1875,7 @@ def test_a_birthday_is_a_note_on_the_day_not_an_event(
 
 
 def test_the_birthday_lands_in_its_own_cell(
-    client: Client, beboer: Resident, make_resident: Callable[..., Resident]
+    client: Client, beboer: Account, make_resident: Callable[..., Account]
 ) -> None:
     _celebrant(make_resident, datetime.date(2001, 9, 12), first_name="Mette", last_name="Hansen")
     client.force_login(beboer)
@@ -1892,7 +1892,7 @@ def test_the_birthday_lands_in_its_own_cell(
 
 
 def test_an_alumne_is_not_on_the_calendar(
-    client: Client, beboer: Resident, make_resident: Callable[..., Resident]
+    client: Client, beboer: Account, make_resident: Callable[..., Account]
 ) -> None:
     """The directory holds every resident the ETL has ever imported. Without the residency filter a
     calendar belonging to sixty people would carry several hundred names a year."""
@@ -1906,7 +1906,7 @@ def test_an_alumne_is_not_on_the_calendar(
 
 
 def test_the_calendar_flags_exactly_the_people_on_the_active_alumneliste(
-    client: Client, beboer: Resident, make_resident: Callable[..., Resident]
+    client: Client, beboer: Account, make_resident: Callable[..., Account]
 ) -> None:
     """The condition, asserted against the alumneliste's OWN query rather than against a
     hand-written idea of it — so the two cannot drift apart without this failing.
@@ -1927,7 +1927,7 @@ def test_the_calendar_flags_exactly_the_people_on_the_active_alumneliste(
     make_resident(email="aldrig@gahk.dk", first_name="Aldrig", birthday=born)
     gone = _celebrant(make_resident, born, first_name="Fraflyttet", last_name="Person")
     year, month = active_period()
-    Residency.objects.filter(resident=gone).update(year=year - 1)
+    Residency.objects.filter(resident=gone.house).update(year=year - 1)
 
     client.force_login(beboer)
     response = client.get(f"{EVENTS}kalender?maaned=2026-09&dag=2026-09-12")
@@ -1938,17 +1938,17 @@ def test_the_calendar_flags_exactly_the_people_on_the_active_alumneliste(
         for row in on_the_list
         if row.resident.birthday and (row.resident.birthday.month, row.resident.birthday.day) == (9, 12)
     }
-    assert {b.resident.pk for b in response.context["chosen_birthdays"]} == expected == {here.pk}
+    assert {b.resident.house.pk for b in response.context["chosen_birthdays"]} == expected == {here.house.pk}
 
     body = response.content.decode()
     assert "Aldrig" not in body
     assert "Fraflyttet" not in body
     # Not deleted — merely off this month's list, and still on the one they were on.
-    assert Residency.objects.filter(resident=gone, year=year - 1).exists()
+    assert Residency.objects.filter(resident=gone.house, year=year - 1).exists()
 
 
 def test_a_resident_without_a_birthday_is_simply_absent(
-    client: Client, beboer: Resident, make_resident: Callable[..., Resident]
+    client: Client, beboer: Account, make_resident: Callable[..., Account]
 ) -> None:
     """Most of the legacy import has one; some rows do not, and a null must not reach the grid."""
     resident = make_resident(email="ukendt@gahk.dk", first_name="Ukendt")
@@ -1962,7 +1962,7 @@ def test_a_resident_without_a_birthday_is_simply_absent(
 
 
 def test_a_birthday_in_a_padding_day_appears_there_too(
-    client: Client, beboer: Resident, make_resident: Callable[..., Resident]
+    client: Client, beboer: Account, make_resident: Callable[..., Account]
 ) -> None:
     """Same rule the events already follow: August 2026's grid runs to 6 September, so the query
     covers the GRID's span. A name that shows up only after you click through to the next month is
@@ -1976,7 +1976,7 @@ def test_a_birthday_in_a_padding_day_appears_there_too(
 
 
 def test_the_day_panel_names_the_celebrant_and_the_age(
-    client: Client, beboer: Resident, make_resident: Callable[..., Resident]
+    client: Client, beboer: Account, make_resident: Callable[..., Account]
 ) -> None:
     _celebrant(make_resident, datetime.date(2001, 9, 12), first_name="Mette", last_name="Hansen")
     client.force_login(beboer)
@@ -1990,7 +1990,7 @@ def test_the_day_panel_names_the_celebrant_and_the_age(
 
 
 def test_a_day_with_only_a_birthday_does_not_say_nothing_happens(
-    client: Client, beboer: Resident, make_resident: Callable[..., Resident]
+    client: Client, beboer: Account, make_resident: Callable[..., Account]
 ) -> None:
     """A flag on the cell and "der sker ikke noget den dag" underneath it reads as a bug — which is
     why the empty message tests BOTH lists rather than the events' own {% empty %} clause."""
@@ -2003,7 +2003,7 @@ def test_a_day_with_only_a_birthday_does_not_say_nothing_happens(
 
 
 def test_a_day_with_neither_still_says_nothing_happens(
-    client: Client, beboer: Resident, make_resident: Callable[..., Resident]
+    client: Client, beboer: Account, make_resident: Callable[..., Account]
 ) -> None:
     """The other half of the pair — the message has to survive the extra condition."""
     _celebrant(make_resident, datetime.date(2001, 9, 12), first_name="Mette", last_name="Hansen")
@@ -2015,7 +2015,7 @@ def test_a_day_with_neither_still_says_nothing_happens(
 
 
 def test_a_birthday_only_day_can_still_be_tapped_open(
-    client: Client, beboer: Resident, make_resident: Callable[..., Resident]
+    client: Client, beboer: Account, make_resident: Callable[..., Account]
 ) -> None:
     """On a phone the flag is the entire marking, so a marked cell that does not open is a cell
     that looks broken. The tap link used to be rendered only for days carrying events."""
@@ -2028,7 +2028,7 @@ def test_a_birthday_only_day_can_still_be_tapped_open(
 
 
 def test_a_birthday_never_reaches_a_subscribed_calendar(
-    client: Client, beboer: Resident, make_resident: Callable[..., Resident]
+    client: Client, beboer: Account, make_resident: Callable[..., Account]
 ) -> None:
     """The .ics feed is the one place where "it is only a note" stops being a rendering detail: an
     entry that lands there is copied into Google and Apple and outlives anything done here."""
@@ -2041,7 +2041,7 @@ def test_a_birthday_never_reaches_a_subscribed_calendar(
 
 
 def test_an_unbelievable_birth_year_shows_no_age(
-    client: Client, beboer: Resident, make_resident: Callable[..., Resident]
+    client: Client, beboer: Account, make_resident: Callable[..., Account]
 ) -> None:
     """The legacy import carried a few placeholder years. "Fylder 126" on the kollegium's calendar
     is worse than saying nothing about the age at all — the name still shows."""
@@ -2076,7 +2076,7 @@ def test_the_29th_of_february_is_celebrated_on_the_1st_of_march_in_ordinary_year
 
 
 def test_a_span_that_crosses_new_year_finds_birthdays_on_both_sides(
-    make_resident: Callable[..., Resident],
+    make_resident: Callable[..., Account],
 ) -> None:
     """December's grid pads into January, so a span is not confined to one month or even one year —
     which is why the lookup asks per year IN THE SPAN rather than per date of birth."""
@@ -2096,7 +2096,7 @@ def test_a_span_that_crosses_new_year_finds_birthdays_on_both_sides(
 # --- ics: one event ---------------------------------------------------------------------------------
 
 
-def test_the_file_uses_crlf_and_wraps_in_a_vcalendar(beboer: Resident) -> None:
+def test_the_file_uses_crlf_and_wraps_in_a_vcalendar(beboer: Account) -> None:
     event = make_event(beboer)
     body = icalendar_mod.one_event(event)
 
@@ -2105,7 +2105,7 @@ def test_the_file_uses_crlf_and_wraps_in_a_vcalendar(beboer: Resident) -> None:
     assert "\n" not in body.replace("\r\n", "")
 
 
-def test_a_long_danish_title_folds_without_splitting_a_character(beboer: Resident) -> None:
+def test_a_long_danish_title_folds_without_splitting_a_character(beboer: Account) -> None:
     """Folding is by OCTET, not character. `æ ø å` are two bytes each, so counting characters
     overshoots and slicing bytes naively splits a continuation byte into mojibake."""
     title = "Fællesspisning med grøn karry, vårruller og hjemmebagt brød på tværs af hele gården"
@@ -2121,7 +2121,7 @@ def test_a_long_danish_title_folds_without_splitting_a_character(beboer: Residen
     assert f"SUMMARY:{title.replace(',', r'\,')}" in unfolded
 
 
-def test_text_escaping_happens_in_the_right_order(beboer: Resident) -> None:
+def test_text_escaping_happens_in_the_right_order(beboer: Account) -> None:
     """Backslash first, or every other escape gets double-escaped."""
     event = make_event(beboer, title=r"Fest; med, komma og \backslash")
 
@@ -2130,7 +2130,7 @@ def test_text_escaping_happens_in_the_right_order(beboer: Resident) -> None:
     assert r"SUMMARY:Fest\; med\, komma og \\backslash" in unfolded
 
 
-def test_newlines_in_a_description_become_escaped_n(beboer: Resident) -> None:
+def test_newlines_in_a_description_become_escaped_n(beboer: Account) -> None:
     """A raw newline inside a value ends the property early and orphans the rest of the text."""
     event = make_event(beboer, description="Første linje\n\nAnden linje")
 
@@ -2144,7 +2144,7 @@ def test_newlines_in_a_description_become_escaped_n(beboer: Resident) -> None:
     assert "\n" not in body.replace("\r\n", "")
 
 
-def test_a_summer_and_a_winter_event_both_land_on_the_right_utc_hour(beboer: Resident) -> None:
+def test_a_summer_and_a_winter_event_both_land_on_the_right_utc_hour(beboer: Account) -> None:
     """The test that justifies emitting no VTIMEZONE. 17.00 local is 15:00Z in July (CEST) and
     16:00Z in January (CET); a hand-rolled VTIMEZONE is where this normally goes wrong."""
     summer = make_event(beboer, starts_at=_local(datetime.datetime(2026, 7, 15, 17, 0)), title="Sommer")
@@ -2155,7 +2155,7 @@ def test_a_summer_and_a_winter_event_both_land_on_the_right_utc_hour(beboer: Res
     assert "VTIMEZONE" not in icalendar_mod.one_event(summer)
 
 
-def test_an_event_with_no_end_gets_a_real_duration(beboer: Resident) -> None:
+def test_an_event_with_no_end_gets_a_real_duration(beboer: Account) -> None:
     """A VEVENT with neither DTEND nor DURATION is an instant, which clients render as a
     one-minute sliver you cannot read."""
     event = make_event(beboer, ends_at=None)
@@ -2165,7 +2165,7 @@ def test_an_event_with_no_end_gets_a_real_duration(beboer: Resident) -> None:
     assert body.count("DTSTART:") == 1
 
 
-def test_the_uid_is_stable_and_identical_in_download_and_feed(beboer: Resident) -> None:
+def test_the_uid_is_stable_and_identical_in_download_and_feed(beboer: Account) -> None:
     """A client keys on the UID, so an edit must update the entry rather than create a second one."""
     event = make_event(beboer)
     services.set_answer(event.pk, beboer, Answer.JA)
@@ -2184,7 +2184,7 @@ def test_the_uid_is_stable_and_identical_in_download_and_feed(beboer: Resident) 
 
 
 def test_the_url_follows_the_intranet_host_but_the_uid_keeps_gahk_dk(
-    beboer: Resident, settings: object
+    beboer: Account, settings: object
 ) -> None:
     """The intranet moved from gahk.dk/intern/ to intern.gahk.dk. The URL is where the event opens,
     so it moves with it; the UID is what every subscribed calendar keys on, so it must not."""
@@ -2197,7 +2197,7 @@ def test_the_url_follows_the_intranet_host_but_the_uid_keeps_gahk_dk(
     assert "/intern/" not in unfolded
 
 
-def test_editing_the_time_increments_sequence_in_the_file(beboer: Resident) -> None:
+def test_editing_the_time_increments_sequence_in_the_file(beboer: Account) -> None:
     event = make_event(beboer)
     assert "SEQUENCE:0" in icalendar_mod.one_event(event)
 
@@ -2205,13 +2205,13 @@ def test_editing_the_time_increments_sequence_in_the_file(beboer: Resident) -> N
     assert "SEQUENCE:1" in icalendar_mod.one_event(event)
 
 
-def test_no_method_property_is_emitted(beboer: Resident) -> None:
+def test_no_method_property_is_emitted(beboer: Account) -> None:
     """METHOD:PUBLISH turns the file into an iTIP message, and Outlook then treats a subscribed
     feed as an invitation to accept — which produces ghost and duplicate entries."""
     assert "METHOD" not in icalendar_mod.one_event(make_event(beboer))
 
 
-def test_no_attendee_or_organizer_leaks_an_email_address(beboer: Resident, other: Resident) -> None:
+def test_no_attendee_or_organizer_leaks_an_email_address(beboer: Account, other: Account) -> None:
     """A security decision, not a simplification: these files land on Google's and Apple's servers.
     The guest list stays on the kollegium's own site."""
     event = make_event(beboer)
@@ -2225,7 +2225,7 @@ def test_no_attendee_or_organizer_leaks_an_email_address(beboer: Resident, other
     assert other.email not in body
 
 
-def test_a_cancelled_event_still_emits_as_cancelled(beboer: Resident) -> None:
+def test_a_cancelled_event_still_emits_as_cancelled(beboer: Account) -> None:
     """The reason Aflys exists rather than delete: once the row is gone there is nothing left to
     retract the entry with."""
     event = make_event(beboer)
@@ -2234,7 +2234,7 @@ def test_a_cancelled_event_still_emits_as_cancelled(beboer: Resident) -> None:
     assert "STATUS:CANCELLED" in icalendar_mod.one_event(event)
 
 
-def test_the_output_parses_with_an_independent_implementation(beboer: Resident) -> None:
+def test_the_output_parses_with_an_independent_implementation(beboer: Account) -> None:
     """Hand-rolled in production, checked in CI by somebody else's parser — a better answer than
     either alone. `icalendar` is a dev-only dependency for exactly this."""
     import icalendar as oracle
@@ -2252,11 +2252,11 @@ def test_the_output_parses_with_an_independent_implementation(beboer: Resident) 
 # --- the subscribable feed --------------------------------------------------------------------------
 
 
-def _feed_url(resident: Resident) -> str:
+def _feed_url(resident: Account) -> str:
     return f"/kalender/{CalendarFeedToken.for_resident(resident).token}.ics"
 
 
-def test_the_feed_needs_no_session(client: Client, beboer: Resident) -> None:
+def test_the_feed_needs_no_session(client: Client, beboer: Account) -> None:
     """The whole point. Google's servers fetch this, not the subscriber's browser — no cookies, no
     login form, no redirect to follow. Behind @login_required this would 200 with the login page's
     HTML and Google would show an empty calendar with no error anywhere."""
@@ -2269,7 +2269,7 @@ def test_the_feed_needs_no_session(client: Client, beboer: Resident) -> None:
     assert response["Content-Type"] == "text/calendar; charset=utf-8"
 
 
-def test_the_feed_contains_only_what_i_said_ja_to(client: Client, beboer: Resident) -> None:
+def test_the_feed_contains_only_what_i_said_ja_to(client: Client, beboer: Account) -> None:
     mine = make_event(beboer, title="Jeg kommer")
     make_event(beboer, title="Ikke svaret")
     declined = make_event(beboer, title="Sagt nej")
@@ -2283,7 +2283,7 @@ def test_the_feed_contains_only_what_i_said_ja_to(client: Client, beboer: Reside
     assert "Sagt nej" not in body
 
 
-def test_a_waitlisted_event_is_tentative_and_transparent(beboer: Resident, other: Resident) -> None:
+def test_a_waitlisted_event_is_tentative_and_transparent(beboer: Account, other: Account) -> None:
     """It shows in the calendar but does not block the time — queuing for a trip should not make you
     look busy for an afternoon you may not get."""
     event = make_event(beboer, capacity=1, title="Fuld tur")
@@ -2297,7 +2297,7 @@ def test_a_waitlisted_event_is_tentative_and_transparent(beboer: Resident, other
 
 
 def test_the_feed_never_contains_a_private_event_i_was_not_invited_to(
-    beboer: Resident, other: Resident
+    beboer: Account, other: Account
 ) -> None:
     """The leak that would matter most, because the file leaves the building."""
     event = make_private(other, [], title="Hemmelig fest")
@@ -2308,7 +2308,7 @@ def test_the_feed_never_contains_a_private_event_i_was_not_invited_to(
     assert "Hemmelig fest" not in body
 
 
-def test_the_calendar_declares_a_name_and_a_refresh_interval(beboer: Resident) -> None:
+def test_the_calendar_declares_a_name_and_a_refresh_interval(beboer: Account) -> None:
     """Both spellings of the name: NAME is RFC 7986, X-WR-CALNAME is what Apple and Google read.
     Without them the subscription is called "gahk.dk"."""
     body = Client().get(_feed_url(beboer)).content.decode()
@@ -2322,7 +2322,7 @@ def test_an_unknown_token_is_404_not_403(client: Client) -> None:
     assert Client().get("/kalender/ikke-et-rigtigt-token.ics").status_code == 404
 
 
-def test_a_rotated_token_stops_working_and_the_new_one_works(beboer: Resident) -> None:
+def test_a_rotated_token_stops_working_and_the_new_one_works(beboer: Account) -> None:
     old_url = _feed_url(beboer)
     CalendarFeedToken.for_resident(beboer).rotate()
 
@@ -2330,7 +2330,7 @@ def test_a_rotated_token_stops_working_and_the_new_one_works(beboer: Resident) -
     assert Client().get(_feed_url(beboer)).status_code == 200
 
 
-def test_the_feed_response_refuses_to_be_cached_or_indexed(beboer: Resident) -> None:
+def test_the_feed_response_refuses_to_be_cached_or_indexed(beboer: Account) -> None:
     """The URL is a bearer credential, so it must not sit in a proxy or turn up in a crawler."""
     response = Client().get(_feed_url(beboer))
 
@@ -2342,7 +2342,7 @@ def test_the_feed_response_refuses_to_be_cached_or_indexed(beboer: Resident) -> 
     assert response["Content-Disposition"].startswith("inline")
 
 
-def test_last_used_is_recorded_at_most_once_an_hour(beboer: Resident) -> None:
+def test_last_used_is_recorded_at_most_once_an_hour(beboer: Account) -> None:
     """A write on every GET turns a read endpoint into a write storm — sixty phones, hourly."""
     url = _feed_url(beboer)
     Client().get(url)
@@ -2353,7 +2353,7 @@ def test_last_used_is_recorded_at_most_once_an_hour(beboer: Resident) -> None:
     assert CalendarFeedToken.objects.get(resident=beboer).last_used_at == first
 
 
-def test_the_token_appears_on_no_page_but_the_subscription_page(client: Client, beboer: Resident) -> None:
+def test_the_token_appears_on_no_page_but_the_subscription_page(client: Client, beboer: Account) -> None:
     make_event(beboer)
     token = CalendarFeedToken.for_resident(beboer).token
     client.force_login(beboer)
@@ -2363,7 +2363,7 @@ def test_the_token_appears_on_no_page_but_the_subscription_page(client: Client, 
         assert token not in client.get(path).content.decode()
 
 
-def test_deleting_a_resident_deletes_their_token(beboer: Resident) -> None:
+def test_deleting_a_resident_deletes_their_token(beboer: Account) -> None:
     CalendarFeedToken.for_resident(beboer)
     beboer.delete()
     assert not CalendarFeedToken.objects.exists()
@@ -2373,7 +2373,7 @@ def test_deleting_a_resident_deletes_their_token(beboer: Resident) -> None:
 
 
 def test_the_reminder_goes_only_to_people_who_have_not_answered(
-    beboer: Resident, other: Resident, third: Resident, pushes: list
+    beboer: Account, other: Account, third: Account, pushes: list
 ) -> None:
     event = make_event(beboer, rsvp_deadline_at=timezone.now() + datetime.timedelta(hours=2))
     for who in (beboer, other, third):
@@ -2391,7 +2391,7 @@ def test_the_reminder_goes_only_to_people_who_have_not_answered(
 
 
 def test_the_reminder_is_personal_and_expires_at_the_deadline(
-    beboer: Resident, other: Resident, third: Resident, pushes: list
+    beboer: Account, other: Account, third: Account, pushes: list
 ) -> None:
     """A reminder is moot once the deadline has passed, so it leaves the bell then and the push
     service is told to drop it rather than deliver it late. The count is everyone REACHED, in-app
@@ -2414,9 +2414,7 @@ def test_the_reminder_is_personal_and_expires_at_the_deadline(
     assert [p[0] for p in pushes] == [[other.pk]]
 
 
-def test_running_the_reminder_twice_sends_one_reminder(
-    beboer: Resident, other: Resident, pushes: list
-) -> None:
+def test_running_the_reminder_twice_sends_one_reminder(beboer: Account, other: Account, pushes: list) -> None:
     """Claimed with a conditional UPDATE whose rowcount decides, so two overlapping cron runs send
     one reminder between them. DEPLOY.md §4b requires every scheduled command to be idempotent."""
     event = make_event(beboer, rsvp_deadline_at=timezone.now() + datetime.timedelta(hours=2))
@@ -2432,7 +2430,7 @@ def test_running_the_reminder_twice_sends_one_reminder(
     assert len(pushes) == 1
 
 
-def test_the_reminder_is_claimed_before_it_is_sent(beboer: Resident, other: Resident) -> None:
+def test_the_reminder_is_claimed_before_it_is_sent(beboer: Account, other: Account) -> None:
     """Order matters: a crash between claim and send costs one reminder, and the other order would
     push the whole house twice."""
     event = make_event(beboer, rsvp_deadline_at=timezone.now() + datetime.timedelta(hours=2))
@@ -2442,20 +2440,20 @@ def test_the_reminder_is_claimed_before_it_is_sent(beboer: Resident, other: Resi
     assert event.reminder_sent_at is not None
 
 
-def test_a_cancelled_event_sends_no_reminder(beboer: Resident) -> None:
+def test_a_cancelled_event_sends_no_reminder(beboer: Account) -> None:
     event = make_event(beboer, rsvp_deadline_at=timezone.now() + datetime.timedelta(hours=2))
     services.cancel(event)
 
     assert services.events_needing_reminder() == []
 
 
-def test_a_deadline_outside_the_window_sends_nothing_yet(beboer: Resident) -> None:
+def test_a_deadline_outside_the_window_sends_nothing_yet(beboer: Account) -> None:
     make_event(beboer, rsvp_deadline_at=timezone.now() + datetime.timedelta(days=5))
     assert services.events_needing_reminder() == []
 
 
 def test_a_private_events_reminder_stays_with_its_invitees(
-    beboer: Resident, other: Resident, third: Resident, pushes: list
+    beboer: Account, other: Account, third: Account, pushes: list
 ) -> None:
     event = make_private(beboer, [other], rsvp_deadline_at=timezone.now() + datetime.timedelta(hours=2))
     for who in (other, third):
@@ -2470,7 +2468,7 @@ def test_a_private_events_reminder_stays_with_its_invitees(
 
 
 def test_the_lazy_backstop_sends_a_missed_reminder_on_page_load(
-    client: Client, beboer: Resident, other: Resident, pushes: list
+    client: Client, beboer: Account, other: Account, pushes: list
 ) -> None:
     """The AK idiom. A missed purge is wrong for nobody for months; a missed reminder is
     unrecoverable — the deadline passes and nobody learns why the event was under-attended."""
@@ -2490,7 +2488,7 @@ def test_the_lazy_backstop_sends_a_missed_reminder_on_page_load(
 
 
 def test_the_backstop_never_breaks_the_page(
-    client: Client, beboer: Resident, monkeypatch: pytest.MonkeyPatch
+    client: Client, beboer: Account, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """A page load must never fail because push is misconfigured."""
     make_event(beboer, rsvp_deadline_at=timezone.now() + datetime.timedelta(hours=2))
@@ -2505,7 +2503,7 @@ def test_the_backstop_never_breaks_the_page(
 
 
 def test_the_command_delivers_inline(
-    beboer: Resident, other: Resident, pushes: list, monkeypatch: pytest.MonkeyPatch
+    beboer: Account, other: Account, pushes: list, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """core.push defers to a daemon thread by default, and a management command's daemon threads are
     killed at interpreter shutdown — mid-fan-out, silently, a different number every night.
@@ -2534,7 +2532,7 @@ def test_the_command_delivers_inline(
     assert "påmindelse sendt til 1 beboer(e)" in out.getvalue()
 
 
-def test_the_command_dry_run_changes_nothing(beboer: Resident, pushes: list) -> None:
+def test_the_command_dry_run_changes_nothing(beboer: Account, pushes: list) -> None:
     from django.core.management import call_command
 
     event = make_event(beboer, rsvp_deadline_at=timezone.now() + datetime.timedelta(hours=2))
@@ -2575,7 +2573,7 @@ def test_views_never_reach_event_objects_directly() -> None:
     assert uses == [], "views must go through access.visible_to:\n" + "\n".join(uses)
 
 
-def test_event_pages_leak_no_template_syntax(client: Client, beboer: Resident) -> None:
+def test_event_pages_leak_no_template_syntax(client: Client, beboer: Account) -> None:
     """Django's {# … #} is single-line only, and an unclosed {% comment %} swallows the rest of the
     page silently. This has bitten three templates in this project already."""
     event = make_event(beboer, description="**Hej**", location="Køkkenet")
@@ -2596,7 +2594,7 @@ def test_event_pages_leak_no_template_syntax(client: Client, beboer: Resident) -
             assert leaked not in body, f"{path} leaked {leaked!r}"
 
 
-def test_a_calendar_token_is_minted_lazily_and_is_unique(beboer: Resident, other: Resident) -> None:
+def test_a_calendar_token_is_minted_lazily_and_is_unique(beboer: Account, other: Account) -> None:
     """Never backfilled by a migration: sixty secrets for people who may never use the feature, and
     a RunPython calling secrets.token_urlsafe bakes a non-deterministic step into the history."""
     assert not CalendarFeedToken.objects.exists()
@@ -2609,7 +2607,7 @@ def test_a_calendar_token_is_minted_lazily_and_is_unique(beboer: Resident, other
     assert CalendarFeedToken.for_resident(beboer).pk == mine.pk  # get_or_create, not a second row
 
 
-def test_rotating_a_token_changes_it(beboer: Resident) -> None:
+def test_rotating_a_token_changes_it(beboer: Account) -> None:
     token = CalendarFeedToken.for_resident(beboer)
     before = token.token
 
@@ -2622,7 +2620,7 @@ def test_rotating_a_token_changes_it(beboer: Resident) -> None:
 # --- the other end of the link, on the event page ----------------------------------------------------
 
 
-def _notice(author: Resident, event: Event) -> object:
+def _notice(author: Account, event: Event) -> object:
     from opslagstavle.models import Category, Notice
 
     return Notice.objects.create(
@@ -2638,7 +2636,7 @@ def board_open(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(board_access, "ACCESS_ROLES", None)
 
 
-def test_the_event_page_lists_the_posts_about_it(client: Client, beboer: Resident, board_open: None) -> None:
+def test_the_event_page_lists_the_posts_about_it(client: Client, beboer: Account, board_open: None) -> None:
     event = make_event(beboer)
     _notice(beboer, event)
     client.force_login(beboer)
@@ -2656,7 +2654,7 @@ def test_the_event_page_lists_the_posts_about_it(client: Client, beboer: Residen
 
 
 def test_no_board_link_for_somebody_who_cannot_open_the_board(
-    client: Client, beboer: Resident, monkeypatch: pytest.MonkeyPatch
+    client: Client, beboer: Account, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Opslagstavlen is behind a role trial. Pointing a resident at a page that will 403 them is
     worse than not mentioning it — so the section is gated on the READER, not on the event."""

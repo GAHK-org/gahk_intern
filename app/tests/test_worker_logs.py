@@ -28,7 +28,7 @@ from core.tasks import (
 )
 from photo_album.models import AlbumImport
 from photo_album.tasks import process_album_import
-from residents.models import Resident, Role
+from residents.models import Account, Role
 
 from .media_samples import jpeg_bytes
 
@@ -56,7 +56,7 @@ def _zip(*members: tuple[str, bytes]) -> SimpleUploadedFile:
 
 
 @pytest.mark.django_db
-def test_an_import_job_keeps_the_list_of_left_out_files(make_resident: Callable[..., Resident]) -> None:
+def test_an_import_job_keeps_the_list_of_left_out_files(make_resident: Callable[..., Account]) -> None:
     album_import = AlbumImport.objects.create(
         requested_by=make_resident(),
         folder="2026",
@@ -79,7 +79,7 @@ def test_an_import_job_keeps_the_list_of_left_out_files(make_resident: Callable[
 
 
 @pytest.mark.django_db
-def test_a_refused_import_logs_every_reason(make_resident: Callable[..., Resident]) -> None:
+def test_a_refused_import_logs_every_reason(make_resident: Callable[..., Account]) -> None:
     album_import = AlbumImport.objects.create(
         requested_by=make_resident(),
         folder="2026",
@@ -164,7 +164,7 @@ def test_a_long_log_keeps_its_first_lines_and_counts_the_rest(monkeypatch: pytes
 
 @pytest.mark.django_db
 def test_worker_job_page_shows_the_log_even_after_the_result_is_gone(
-    client: Client, make_resident: Callable[..., Resident]
+    client: Client, make_resident: Callable[..., Account]
 ) -> None:
     # The test database has no celery_taskmeta at all: the result is as gone as it gets.
     WorkerJobLog.objects.create(

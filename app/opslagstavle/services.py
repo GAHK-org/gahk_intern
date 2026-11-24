@@ -31,7 +31,7 @@ from . import access
 if TYPE_CHECKING:
     from collections.abc import Collection
 
-    from residents.models import Resident
+    from residents.models import Account
 
     from .models import Notice, NoticeComment
 
@@ -108,7 +108,7 @@ def notify_new_comment(comment: "NoticeComment") -> None:
     )
 
 
-def notify_reaction(notice: "Notice", reactor: "Resident", emoji: str) -> None:
+def notify_reaction(notice: "Notice", reactor: "Account", emoji: str) -> None:
     """Somebody reacted to `notice`. Called on a NEW reaction only (core.reactions.apply_toggle)."""
     if not _author_can_open(notice):
         return

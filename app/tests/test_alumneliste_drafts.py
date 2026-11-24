@@ -41,23 +41,25 @@ def test_save_keeps_edits_and_removals_when_rooms_clash(
     b = make_resident(email="draft-b@gahk.dk", first_name="Bodil")
     c = make_resident(email="draft-c@gahk.dk", first_name="Carla")
     for res, room in zip((a, b, c), rooms, strict=True):
-        Residency.objects.create(resident=res, room=room, year=y, month=m)
+        Residency.objects.create(resident=res.house, room=room, year=y, month=m)
 
     resp = indstilling.post(
         URL,
         {
             "action": "save",
             "period": "current",
-            f"room_{a.id}": rooms[0].id,
-            f"room_{b.id}": rooms[0].id,  # the one mistake: same room as Anna
-            f"room_{c.id}": rooms[2].id,
-            f"remove_{c.id}": "1",
+            f"room_{a.house.pk}": rooms[0].id,
+            f"room_{b.house.pk}": rooms[0].id,  # the one mistake: same room as Anna
+            f"room_{c.house.pk}": rooms[2].id,
+            f"remove_{c.house.pk}": "1",
         },
     )
     assert resp.status_code == 200  # rendered in place, not redirected away
     drafted = {r.resident.first_name: r.room_id for r in resp.context["next_rows"]}
     assert drafted == {"Anna": rooms[0].id, "Bodil": rooms[0].id}  # edit kept, Carla still removed
-    assert dict(Residency.objects.filter(year=y, month=m).values_list("resident__first_name", "room_id")) == {
+    assert dict(
+        Residency.objects.filter(year=y, month=m).values_list("resident__person__first_name", "room_id")
+    ) == {
         "Anna": rooms[0].id,
         "Bodil": rooms[1].id,
         "Carla": rooms[2].id,
@@ -68,10 +70,12 @@ def test_save_keeps_edits_and_removals_when_rooms_clash(
 def test_add_new_keeps_what_was_typed_when_the_room_is_taken(
     make_resident: Callable, indstilling: Client, rooms: list
 ) -> None:
-    from residents.models import Residency, Resident, active_period
+    from residents.models import Account, Residency, active_period
 
     y, m = active_period()
-    Residency.objects.create(resident=make_resident(email="occupant@gahk.dk"), room=rooms[0], year=y, month=m)
+    Residency.objects.create(
+        resident=(make_resident(email="occupant@gahk.dk")).house, room=rooms[0], year=y, month=m
+    )
     sponsor = make_resident(email="fylgje@gahk.dk", first_name="Fylgje")
 
     resp = indstilling.post(
@@ -83,7 +87,7 @@ def test_add_new_keeps_what_was_typed_when_the_room_is_taken(
             "last_name": "Nyborg",
             "email": "nikoline@gahk.dk",
             "room": rooms[0].id,  # the one mistake
-            "sponsor": sponsor.id,
+            "sponsor": sponsor.house.pk,
         },
     )
     assert resp.status_code == 200
@@ -91,10 +95,10 @@ def test_add_new_keeps_what_was_typed_when_the_room_is_taken(
     assert draft["first_name"] == "Nikoline"
     assert draft["last_name"] == "Nyborg"
     assert draft["email"] == "nikoline@gahk.dk"
-    assert draft["sponsor"] == sponsor.id
+    assert draft["sponsor"] == sponsor.house.pk
     html = resp.content.decode()
     assert 'value="Nikoline"' in html and 'value="nikoline@gahk.dk"' in html
-    assert not Resident.objects.filter(email="nikoline@gahk.dk").exists()  # nothing created
+    assert not Account.objects.filter(email="nikoline@gahk.dk").exists()  # nothing created
 
 
 @pytest.mark.django_db
@@ -126,7 +130,7 @@ def test_add_existing_keeps_its_selections_when_the_room_is_taken(
 
     y, m = active_period()
     Residency.objects.create(
-        resident=make_resident(email="occupant2@gahk.dk"), room=rooms[0], year=y, month=m
+        resident=(make_resident(email="occupant2@gahk.dk")).house, room=rooms[0], year=y, month=m
     )
     newcomer = make_resident(email="tilfoej@gahk.dk")
     wg = Workgroup.objects.create(name="Haven")
@@ -136,15 +140,15 @@ def test_add_existing_keeps_its_selections_when_the_room_is_taken(
         {
             "action": "add_existing",
             "period": "current",
-            "resident": newcomer.id,
+            "resident": newcomer.house.pk,
             "room": rooms[0].id,  # the one mistake
             "workgroup": wg.id,
         },
     )
     assert resp.status_code == 200
     draft = resp.context["existing_draft"]
-    assert (draft["resident"], draft["room"], draft["workgroup"]) == (newcomer.id, rooms[0].id, wg.id)
-    assert not Residency.objects.filter(resident=newcomer, year=y, month=m).exists()
+    assert (draft["resident"], draft["room"], draft["workgroup"]) == (newcomer.house.pk, rooms[0].id, wg.id)
+    assert not Residency.objects.filter(resident=newcomer.house, year=y, month=m).exists()
 
     # Marked selected in the rendered form — and only in that form. Both add-forms post a field
     # called `room`, so the draft must not bleed into the "opret ny beboer" one beside it.
@@ -162,11 +166,13 @@ def test_a_successful_add_still_redirects(make_resident: Callable, indstilling: 
     from residents.models import Residency, active_period
 
     y, m = active_period()
-    Residency.objects.create(resident=make_resident(email="anchor@gahk.dk"), room=rooms[0], year=y, month=m)
+    Residency.objects.create(
+        resident=(make_resident(email="anchor@gahk.dk")).house, room=rooms[0], year=y, month=m
+    )
     newcomer = make_resident(email="ok@gahk.dk")
     resp = indstilling.post(
         URL,
-        {"action": "add_existing", "period": "current", "resident": newcomer.id, "room": rooms[1].id},
+        {"action": "add_existing", "period": "current", "resident": newcomer.house.pk, "room": rooms[1].id},
     )
     assert resp.status_code == 302
-    assert Residency.objects.filter(resident=newcomer, year=y, month=m).exists()
+    assert Residency.objects.filter(resident=newcomer.house, year=y, month=m).exists()

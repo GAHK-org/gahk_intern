@@ -4,7 +4,12 @@ from pathlib import Path
 
 import pytest
 
-from residents.models import Resident, RoleAssignment, active_period
+from residents.models import Account, Person, Resident, RoleAssignment, active_period
+
+# What make_resident puts on the person, and on the resident, rather than the account.
+PERSON_FACTS = ("birthday", "phone")
+RESIDENT_FACTS = ("move_in_date", "move_out_date", "study", "sponsor", "fylgje_raw")
+_MISSING = object()
 
 
 def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
@@ -111,20 +116,29 @@ def mail_stays_queued(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 @pytest.fixture
-def make_resident(db: None) -> Callable[[str, str, bool, tuple], Resident]:
+def make_resident(db: None) -> Callable[[str, str, bool, tuple], Account]:
     def _make(
         email: str = "r@gahk.dk",
         password: str = "hemmelig",
         legacy: bool = False,
         roles: tuple = (),
         **extra: object,
-    ) -> Resident:
-        r = Resident(
-            email=email,
-            first_name=extra.pop("first_name", "Test"),
-            last_name=extra.pop("last_name", "Beboer"),
-            **extra,
-        )
+    ) -> Account:
+        first_name, last_name = extra.pop("first_name", "Test"), extra.pop("last_name", "Beboer")
+        # The human behind the account (residents.Person) and, unless it is the kitchen's, their
+        # membership of the house (residents.Resident), with the facts about each. `person=None`
+        # makes an account with no person, as the photo import script's is.
+        person = extra.pop("person", _MISSING)
+        if person is _MISSING:
+            person_facts = {key: extra.pop(key) for key in PERSON_FACTS if key in extra}
+            resident_facts = {key: extra.pop(key) for key in RESIDENT_FACTS if key in extra}
+            sponsor = resident_facts.get("sponsor")
+            if isinstance(sponsor, Account):  # a test names a fylgje by their account
+                resident_facts["sponsor"] = sponsor.house
+            person = Person.objects.create(first_name=first_name, last_name=last_name, **person_facts)
+            if not extra.get("is_kitchen"):
+                Resident.objects.create(person=person, **resident_facts)
+        r = Account(email=email, first_name=first_name, last_name=last_name, person=person, **extra)
         if legacy:
             r.password = "gahk_sha256$$" + hashlib.sha256(password.encode()).hexdigest()
         else:
@@ -134,7 +148,7 @@ def make_resident(db: None) -> Callable[[str, str, bool, tuple], Resident]:
         for role in roles:
             RoleAssignment.objects.create(resident=r, role=role, year=year, month=month)
         if roles:
-            Resident.objects.filter(id=r.id).update(is_staff=True)
+            Account.objects.filter(id=r.id).update(is_staff=True)
         return r
 
     return _make

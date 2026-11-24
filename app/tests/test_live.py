@@ -40,7 +40,7 @@ from notifications.models import Notification
 from opslagstavle import access as board_access
 from opslagstavle.models import Category, Notice, NoticeComment
 from reparationer.models import RepairTask
-from residents.models import Resident, Role
+from residents.models import Account, Role
 
 FEED_URL = "/den-hurtige/"
 BOARD = "/opslagstavle/"
@@ -54,7 +54,7 @@ def _open_rollouts(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 @pytest.fixture
-def beboer(make_resident: Callable[..., Resident]) -> Resident:
+def beboer(make_resident: Callable[..., Account]) -> Account:
     return make_resident(email="beboer@gahk.dk")
 
 
@@ -84,7 +84,7 @@ def features(sent: list[tuple[str, dict[str, object]]]) -> list[tuple[str, dict[
     return [(topic, data) for topic, data in sent if not topic.startswith("notifikationer.")]
 
 
-def as_request(user: Resident | AnonymousUser) -> HttpRequest:
+def as_request(user: Account | AnonymousUser) -> HttpRequest:
     request = HttpRequest()
     request.user = user
     request.session = SessionStore()
@@ -94,7 +94,7 @@ def as_request(user: Resident | AnonymousUser) -> HttpRequest:
 # --- who may listen ----------------------------------------------------------------------------
 
 
-def test_a_resident_may_listen_to_a_channel_and_the_board(beboer: Resident) -> None:
+def test_a_resident_may_listen_to_a_channel_and_the_board(beboer: Account) -> None:
     request = as_request(beboer)
 
     assert live.may_subscribe(request, "den-hurtige.generelt")
@@ -112,7 +112,7 @@ def test_a_resident_may_listen_to_a_channel_and_the_board(beboer: Resident) -> N
         "a." + "b" * 100,  # longer than a group name may be
     ],
 )
-def test_a_topic_that_does_not_exist_is_refused(beboer: Resident, topic: str) -> None:
+def test_a_topic_that_does_not_exist_is_refused(beboer: Account, topic: str) -> None:
     assert not live.may_subscribe(as_request(beboer), topic)
 
 
@@ -122,7 +122,7 @@ def test_nobody_logged_out_may_listen(db: None) -> None:
 
 
 def test_a_restricted_channel_is_refused_like_its_page(
-    monkeypatch: pytest.MonkeyPatch, beboer: Resident, make_resident: Callable[..., Resident]
+    monkeypatch: pytest.MonkeyPatch, beboer: Account, make_resident: Callable[..., Account]
 ) -> None:
     """The channel's own roles stack on the feature gate, exactly as views._channel_or_404 has it —
     a socket must not hear about messages in a channel whose page would 404."""
@@ -134,7 +134,7 @@ def test_a_restricted_channel_is_refused_like_its_page(
     assert live.may_subscribe(as_request(inspektion), "den-hurtige.internt")
 
 
-def test_the_rollout_gates_close_the_topics_too(monkeypatch: pytest.MonkeyPatch, beboer: Resident) -> None:
+def test_the_rollout_gates_close_the_topics_too(monkeypatch: pytest.MonkeyPatch, beboer: Account) -> None:
     monkeypatch.setattr(dh_access, "ACCESS_ROLES", (Role.ADMINISTRATOR,))
     monkeypatch.setattr(board_access, "ACCESS_ROLES", (Role.ADMINISTRATOR,))
 
@@ -191,7 +191,7 @@ def test_every_channel_slug_makes_a_valid_topic() -> None:
 
 
 def test_one_notification_signals_every_inbox_in_one_hand_over(
-    monkeypatch: pytest.MonkeyPatch, beboer: Resident, make_resident: Callable[..., Resident]
+    monkeypatch: pytest.MonkeyPatch, beboer: Account, make_resident: Callable[..., Account]
 ) -> None:
     """A house-wide notification reaches ~100 inboxes. One synchronous round trip to the channel
     layer for each, one after another on the author's request, is what this batches away."""
@@ -211,7 +211,7 @@ def test_one_notification_signals_every_inbox_in_one_hand_over(
 # --- Den Hurtige: every write signals its message -----------------------------------------------
 
 
-def test_a_new_message_signals_its_channel(client: Client, beboer: Resident, signals: list) -> None:
+def test_a_new_message_signals_its_channel(client: Client, beboer: Account, signals: list) -> None:
     client.force_login(beboer)
 
     client.post(FEED_URL + "opret", {"content": "Kaffe?", "duration": 60, "kanal": "tv-rezz"})
@@ -221,7 +221,7 @@ def test_a_new_message_signals_its_channel(client: Client, beboer: Resident, sig
 
 
 def test_a_reply_a_reaction_and_a_tombstone_signal_their_message(
-    client: Client, beboer: Resident, signals: list
+    client: Client, beboer: Account, signals: list
 ) -> None:
     post = QuickPost.objects.create(author=beboer, content="Kaffe?")
     client.force_login(beboer)
@@ -236,7 +236,7 @@ def test_a_reply_a_reaction_and_a_tombstone_signal_their_message(
 
 
 def test_a_message_deleted_outright_signals_the_pk_it_had(
-    client: Client, beboer: Resident, signals: list
+    client: Client, beboer: Account, signals: list
 ) -> None:
     """delete() clears the instance's pk, so the signal must have taken it first — or every page
     would be told that message None was deleted."""
@@ -250,7 +250,7 @@ def test_a_message_deleted_outright_signals_the_pk_it_had(
     assert features(signals) == [("den-hurtige.generelt", {"kind": "deleted", "pk": pk})]
 
 
-def test_a_refused_write_signals_nothing(client: Client, beboer: Resident, signals: list) -> None:
+def test_a_refused_write_signals_nothing(client: Client, beboer: Account, signals: list) -> None:
     client.force_login(beboer)
 
     client.post(FEED_URL + "opret", {"content": "Ingen varighed"})
@@ -261,7 +261,7 @@ def test_a_refused_write_signals_nothing(client: Client, beboer: Resident, signa
 # --- opslagstavlen: every write signals its notice ----------------------------------------------
 
 
-def test_a_new_notice_signals_with_its_category(client: Client, beboer: Resident, signals: list) -> None:
+def test_a_new_notice_signals_with_its_category(client: Client, beboer: Account, signals: list) -> None:
     """The category is what lets a board filtered to another one ignore it."""
     client.force_login(beboer)
 
@@ -274,7 +274,7 @@ def test_a_new_notice_signals_with_its_category(client: Client, beboer: Resident
 
 
 def test_notice_writes_each_signal_their_notice(
-    client: Client, beboer: Resident, make_resident: Callable[..., Resident], signals: list
+    client: Client, beboer: Account, make_resident: Callable[..., Account], signals: list
 ) -> None:
     notice = Notice.objects.create(author=beboer, body="Hej", category=Category.NYT)
     client.force_login(beboer)
@@ -291,7 +291,7 @@ def test_notice_writes_each_signal_their_notice(
     assert features(signals) == [changed] * 5
 
 
-def test_a_deleted_notice_signals_the_pk_it_had(client: Client, beboer: Resident, signals: list) -> None:
+def test_a_deleted_notice_signals_the_pk_it_had(client: Client, beboer: Account, signals: list) -> None:
     notice = Notice.objects.create(author=beboer, body="Hej", category=Category.NYT)
     pk = notice.pk
     client.force_login(beboer)
@@ -304,7 +304,7 @@ def test_a_deleted_notice_signals_the_pk_it_had(client: Client, beboer: Resident
 # --- what a signal re-fetches -------------------------------------------------------------------
 
 
-def test_live_cards_draws_the_asked_for_cards_and_drops_the_gone(client: Client, beboer: Resident) -> None:
+def test_live_cards_draws_the_asked_for_cards_and_drops_the_gone(client: Client, beboer: Account) -> None:
     """A card missing from the answer is how a board learns it was deleted while it was not
     listening — so a gone or junk id is left out, never an error."""
     kept = Notice.objects.create(author=beboer, body="Bliver", category=Category.NYT)
@@ -319,7 +319,7 @@ def test_live_cards_draws_the_asked_for_cards_and_drops_the_gone(client: Client,
     assert "<html" not in body
 
 
-def test_live_fragments_are_quiet_for_a_logged_out_page(client: Client, beboer: Resident) -> None:
+def test_live_fragments_are_quiet_for_a_logged_out_page(client: Client, beboer: Account) -> None:
     """204, not a redirect: fetch would follow it and hand the board a login page to read cards out
     of — and a card missing from that answer reads as deleted."""
     notice = Notice.objects.create(author=beboer, body="Hej", category=Category.NYT)
@@ -328,9 +328,7 @@ def test_live_fragments_are_quiet_for_a_logged_out_page(client: Client, beboer: 
     assert client.get(f"{BOARD}{notice.pk}/indhold").status_code == 204
 
 
-def test_live_detail_is_the_post_and_its_comments_and_404s_when_gone(
-    client: Client, beboer: Resident
-) -> None:
+def test_live_detail_is_the_post_and_its_comments_and_404s_when_gone(client: Client, beboer: Account) -> None:
     notice = Notice.objects.create(author=beboer, body="Hej", category=Category.NYT)
     NoticeComment.objects.create(notice=notice, author=beboer, body="Et svar")
     client.force_login(beboer)
@@ -345,7 +343,7 @@ def test_live_detail_is_the_post_and_its_comments_and_404s_when_gone(
     assert client.get(f"{BOARD}999999/indhold").status_code == 404
 
 
-def test_live_fragments_do_not_eat_flash_messages(client: Client, beboer: Resident) -> None:
+def test_live_fragments_do_not_eat_flash_messages(client: Client, beboer: Account) -> None:
     """A signal can fire between a POST and the page its redirect lands on. A fragment that drew
     the message queue would consume "Kommentaren er slettet." before that page could show it."""
     notice = Notice.objects.create(author=beboer, body="Hej", category=Category.NYT)
@@ -359,7 +357,7 @@ def test_live_fragments_do_not_eat_flash_messages(client: Client, beboer: Reside
     assert "Kommentaren er slettet." in client.get(f"{BOARD}{notice.pk}").content.decode()
 
 
-def test_the_pages_declare_their_topics(client: Client, beboer: Resident) -> None:
+def test_the_pages_declare_their_topics(client: Client, beboer: Account) -> None:
     notice = Notice.objects.create(author=beboer, body="Hej", category=Category.NYT)
     client.force_login(beboer)
 
@@ -368,7 +366,7 @@ def test_the_pages_declare_their_topics(client: Client, beboer: Resident) -> Non
     assert 'data-live="opslagstavle"' in client.get(f"{BOARD}{notice.pk}").content.decode()
 
 
-def test_the_feed_polls_fast_only_without_a_live_connection(client: Client, beboer: Resident) -> None:
+def test_the_feed_polls_fast_only_without_a_live_connection(client: Client, beboer: Account) -> None:
     client.force_login(beboer)
     post = QuickPost.objects.create(author=beboer, content="Kaffe")
 
@@ -393,7 +391,7 @@ class Socket(ApplicationCommunicator):  # type: ignore[misc]
     it these tests use, on asgiref's communicator, which is what Channels' own is built on.
     """
 
-    def __init__(self, topics: list[str], user: Resident | AnonymousUser) -> None:
+    def __init__(self, topics: list[str], user: Account | AnonymousUser) -> None:
         query = "&".join(f"t={topic}" for topic in topics)
         scope = {
             "type": "websocket",
@@ -441,7 +439,7 @@ def test_a_refused_socket_is_closed_with_the_refusal_code() -> None:
 
 
 @pytest.mark.django_db(transaction=True)
-def test_a_new_message_reaches_a_listening_socket(make_resident: Callable[..., Resident]) -> None:
+def test_a_new_message_reaches_a_listening_socket(make_resident: Callable[..., Account]) -> None:
     """End to end: the composer's POST, through publish and the channel layer, out of the socket."""
     author = make_resident(email="a@gahk.dk")
     client = Client()
@@ -464,7 +462,7 @@ def test_a_new_message_reaches_a_listening_socket(make_resident: Callable[..., R
 
 @pytest.mark.django_db(transaction=True)
 def test_one_socket_joins_every_topic_it_may_and_skips_the_rest(
-    make_resident: Callable[..., Resident],
+    make_resident: Callable[..., Account],
 ) -> None:
     """A page asks for several topics on one socket. One it may not hear (somebody else's inbox) is
     left out, while the others stay live — and nothing published there reaches this socket.
@@ -499,7 +497,7 @@ def test_one_socket_joins_every_topic_it_may_and_skips_the_rest(
 # --- the bell -----------------------------------------------------------------------------------
 
 
-def test_only_your_own_inbox_may_be_heard(beboer: Resident, make_resident: Callable[..., Resident]) -> None:
+def test_only_your_own_inbox_may_be_heard(beboer: Account, make_resident: Callable[..., Account]) -> None:
     other = make_resident(email="anden@gahk.dk")
 
     assert live.may_subscribe(as_request(beboer), f"notifikationer.{beboer.pk}")
@@ -508,7 +506,7 @@ def test_only_your_own_inbox_may_be_heard(beboer: Resident, make_resident: Calla
 
 
 def test_the_bell_hears_a_notification_arrive_and_be_read(
-    beboer: Resident, make_resident: Callable[..., Resident], signals: list
+    beboer: Account, make_resident: Callable[..., Account], signals: list
 ) -> None:
     """Arriving and being read both move the badge — reading on the phone clears the laptop's."""
     other = make_resident(email="anden@gahk.dk")
@@ -522,13 +520,13 @@ def test_the_bell_hears_a_notification_arrive_and_be_read(
     assert signals == [(f"notifikationer.{beboer.pk}", {"kind": "changed", "pk": None})]
 
 
-def test_marking_nothing_seen_signals_nothing(beboer: Resident, signals: list) -> None:
+def test_marking_nothing_seen_signals_nothing(beboer: Account, signals: list) -> None:
     notification_services.mark_seen(Notification.objects.filter(recipient=beboer))
 
     assert signals == []
 
 
-def test_the_bell_declares_its_topic_and_its_badge_can_be_reread(client: Client, beboer: Resident) -> None:
+def test_the_bell_declares_its_topic_and_its_badge_can_be_reread(client: Client, beboer: Account) -> None:
     client.force_login(beboer)
     page = client.get(BOARD).content.decode()
     notification_services.notify([beboer.pk], category=categories.GENERAL, title="Hej", url="/")
@@ -548,7 +546,7 @@ REPAIRS = "/reparationer/"
 
 
 def test_every_repair_write_signals_the_board(
-    client: Client, make_resident: Callable[..., Resident], signals: list
+    client: Client, make_resident: Callable[..., Account], signals: list
 ) -> None:
     client.force_login(make_resident(email="rep@gahk.dk", roles=(Role.REPPER,)))
     client.post(REPAIRS + "opret", {"title": "Utæt vandhane", "location": "", "description": ""})
@@ -569,7 +567,7 @@ def test_every_repair_write_signals_the_board(
     ]
 
 
-def test_the_board_answers_htmx_with_the_board_alone(client: Client, beboer: Resident) -> None:
+def test_the_board_answers_htmx_with_the_board_alone(client: Client, beboer: Account) -> None:
     """What a live signal re-reads: the same view and filters, without the page or its messages."""
     task = RepairTask.objects.create(reported_by=beboer, title="Utæt vandhane")
     client.force_login(beboer)
@@ -589,7 +587,7 @@ def test_the_board_answers_htmx_with_the_board_alone(client: Client, beboer: Res
 EVENTS = "/begivenheder/"
 
 
-def make_event(organiser: Resident, **extra: object) -> Event:
+def make_event(organiser: Account, **extra: object) -> Event:
     starts = (timezone.now() + datetime.timedelta(days=3)).replace(second=0, microsecond=0)
     return Event.objects.create(organiser=organiser, title="Fællesspisning", starts_at=starts, **extra)
 
@@ -601,7 +599,7 @@ def _open_events(monkeypatch: pytest.MonkeyPatch) -> None:
 
 @pytest.mark.usefixtures("_open_events")
 def test_an_event_topic_is_heard_by_exactly_who_may_see_the_event(
-    beboer: Resident, make_resident: Callable[..., Resident]
+    beboer: Account, make_resident: Callable[..., Account]
 ) -> None:
     """visible_to decides, as it does for the page: a private event's signals reach its invitees
     and hosts, and nobody else learns that anything is happening on it."""
@@ -619,7 +617,7 @@ def test_an_event_topic_is_heard_by_exactly_who_may_see_the_event(
 
 @pytest.mark.usefixtures("_open_events")
 def test_answering_and_commenting_signal_the_event(
-    client: Client, beboer: Resident, make_resident: Callable[..., Resident], signals: list
+    client: Client, beboer: Account, make_resident: Callable[..., Account], signals: list
 ) -> None:
     event = make_event(make_resident(email="host@gahk.dk"))
     client.force_login(beboer)
@@ -632,7 +630,7 @@ def test_answering_and_commenting_signal_the_event(
 
 
 @pytest.mark.usefixtures("_open_events")
-def test_cancelling_and_deleting_signal_the_event(client: Client, beboer: Resident, signals: list) -> None:
+def test_cancelling_and_deleting_signal_the_event(client: Client, beboer: Account, signals: list) -> None:
     cancelled = make_event(beboer)
     deleted = make_event(beboer)
     pk = deleted.pk
@@ -648,7 +646,7 @@ def test_cancelling_and_deleting_signal_the_event(client: Client, beboer: Reside
 
 
 @pytest.mark.usefixtures("_open_events")
-def test_the_event_page_is_one_live_region(client: Client, beboer: Resident) -> None:
+def test_the_event_page_is_one_live_region(client: Client, beboer: Account) -> None:
     event = make_event(beboer)
     client.force_login(beboer)
 
@@ -669,7 +667,7 @@ def test_the_event_page_is_one_live_region(client: Client, beboer: Resident) -> 
 # --- Den Hurtige's channel picker ---------------------------------------------------------------
 
 
-def test_the_channel_menu_listens_to_every_channel_it_lists(client: Client, beboer: Resident) -> None:
+def test_the_channel_menu_listens_to_every_channel_it_lists(client: Client, beboer: Account) -> None:
     QuickPost.objects.create(author=beboer, content="Fodbold?", channel="sportsmann")
     client.force_login(beboer)
 
@@ -685,7 +683,7 @@ def test_the_channel_menu_listens_to_every_channel_it_lists(client: Client, bebo
 
 
 def test_the_channel_menu_leaves_out_a_channel_this_reader_may_not_open(
-    monkeypatch: pytest.MonkeyPatch, client: Client, beboer: Resident
+    monkeypatch: pytest.MonkeyPatch, client: Client, beboer: Account
 ) -> None:
     """Its topic would be refused anyway; it must not be asked for, nor its count shown."""
     secret = Channel(slug="internt", name="Internt", icon="lock", description="", roles=(Role.INSPEKTION,))
@@ -707,7 +705,7 @@ def test_kanaler_can_never_be_a_channel_slug() -> None:
 # --- review follow-ups --------------------------------------------------------------------------
 
 
-def test_the_repair_board_varies_on_hx_request(client: Client, beboer: Resident) -> None:
+def test_the_repair_board_varies_on_hx_request(client: Client, beboer: Account) -> None:
     """One URL answers with the page or the bare board. Without Vary a browser can serve the cached
     bare board on Back: an unstyled kanban with nothing around it."""
     client.force_login(beboer)
@@ -716,7 +714,7 @@ def test_the_repair_board_varies_on_hx_request(client: Client, beboer: Resident)
         assert "HX-Request" in response.headers.get("Vary", "")
 
 
-def test_the_channel_menu_is_held_until_the_picker_opens(client: Client, beboer: Resident) -> None:
+def test_the_channel_menu_is_held_until_the_picker_opens(client: Client, beboer: Account) -> None:
     """Rendered with data-live-busy, so a closed picker holds signals instead of fetching counts
     nobody can see; feed.ts lifts it on open."""
     client.force_login(beboer)
@@ -727,7 +725,7 @@ def test_the_channel_menu_is_held_until_the_picker_opens(client: Client, beboer:
     assert "data-live-busy" in menu
 
 
-def test_live_cards_says_what_was_posted_since_a_cursor(client: Client, beboer: Resident) -> None:
+def test_live_cards_says_what_was_posted_since_a_cursor(client: Client, beboer: Account) -> None:
     """A board that slept through new posts was never signalled them; on reconnect it asks."""
     old = Notice.objects.create(author=beboer, body="Gammel", category=Category.NYT)
     news = Notice.objects.create(author=beboer, body="Ny", category=Category.NYT)
@@ -745,7 +743,7 @@ def test_live_cards_says_what_was_posted_since_a_cursor(client: Client, beboer: 
     assert "js-board-new-since" not in plain, "only a resync asks"
 
 
-def test_a_card_says_its_category(client: Client, beboer: Resident) -> None:
+def test_a_card_says_its_category(client: Client, beboer: Account) -> None:
     """How the board tells a re-fetched card has moved off a filtered view (opslagstavle-live.ts)."""
     notice = Notice.objects.create(author=beboer, body="Hej", category=Category.BEGIVENHED)
     client.force_login(beboer)

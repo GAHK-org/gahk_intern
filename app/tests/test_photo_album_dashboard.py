@@ -36,7 +36,7 @@ from photo_album.models import (
 from photo_album.services import apply_sidecars, check_file_time_sources, import_zip_album, store_upload
 from photo_album.storage import PhotoAlbumS3Storage
 from photo_album.tasks import measure_photo_album_storage, settle_media_dates
-from residents.models import Resident, Role
+from residents.models import Account, Role
 
 from .media_samples import image_upload, jpeg_bytes
 
@@ -63,7 +63,7 @@ def _appledouble(moment: datetime) -> bytes:
     )
 
 
-def _item(album: Album, resident: Resident, filename: str, **fields: object) -> Media:
+def _item(album: Album, resident: Account, filename: str, **fields: object) -> Media:
     defaults: dict[str, object] = {
         "title": filename,
         "filename": filename,
@@ -75,7 +75,7 @@ def _item(album: Album, resident: Resident, filename: str, **fields: object) -> 
     return Media.objects.create(album=album, requested_by=resident, **{**defaults, **fields})
 
 
-def _settled(album: Album, resident: Resident, filename: str, source: DateSource, at: datetime) -> Media:
+def _settled(album: Album, resident: Account, filename: str, source: DateSource, at: datetime) -> Media:
     """An item without a date of its own, as settle_dates leaves it."""
     media = _item(album, resident, filename)
     Media.objects.filter(pk=media.pk).update(sort_at=at, date_source=source)
@@ -83,13 +83,13 @@ def _settled(album: Album, resident: Resident, filename: str, source: DateSource
 
 
 @pytest.fixture
-def admin_client(client: Client, make_resident: Callable[..., Resident]) -> Client:
+def admin_client(client: Client, make_resident: Callable[..., Account]) -> Client:
     client.force_login(make_resident(email="admin@gahk.dk", roles=(Role.ADMINISTRATOR,)))
     return client
 
 
 @pytest.fixture
-def archive(make_resident: Callable[..., Resident]) -> dict[str, Media]:
+def archive(make_resident: Callable[..., Account]) -> dict[str, Media]:
     """2004 with a sub-album, and the folder without a year: an item of every kind of date, one binned."""
     resident = make_resident(email="foto@gahk.dk")
     fest = Album.objects.create(folder="2004", name="Fest")
@@ -126,9 +126,7 @@ def archive(make_resident: Callable[..., Resident]) -> dict[str, Media]:
 
 
 @pytest.mark.django_db
-def test_only_administrators_see_the_dashboard(
-    client: Client, make_resident: Callable[..., Resident]
-) -> None:
+def test_only_administrators_see_the_dashboard(client: Client, make_resident: Callable[..., Account]) -> None:
     pages = [reverse(URL), reverse(DATES), _list("afventer"), _list("filer-uden-billede")]
     assert [client.get(page).status_code for page in pages] == [302] * 4  # to the login
     client.force_login(make_resident(roles=(Role.FOTO,)))  # Fotogruppen curates, but this is the admin's
@@ -211,7 +209,7 @@ def test_the_overview_sums_the_dating_up_and_the_dating_page_has_the_rest(
 
 @pytest.mark.django_db
 def test_a_list_pages_on_and_keeps_the_rest_of_the_query(
-    admin_client: Client, make_resident: Callable[..., Resident]
+    admin_client: Client, make_resident: Callable[..., Account]
 ) -> None:
     resident = make_resident(email="foto@gahk.dk")
     album = Album.objects.create(folder="2004", name="Fest")
@@ -228,7 +226,7 @@ def test_a_list_pages_on_and_keeps_the_rest_of_the_query(
 
 
 @pytest.mark.django_db
-def test_it_counts_what_needs_looking_after(make_resident: Callable[..., Resident]) -> None:
+def test_it_counts_what_needs_looking_after(make_resident: Callable[..., Account]) -> None:
     resident = make_resident(email="foto@gahk.dk")
     album = Album.objects.create(folder="2004", name="Fest")
     _item(album, resident, "a.jpg", sha256="1" * 64, size=10, status=MediaStatus.PENDING)
@@ -261,7 +259,7 @@ def test_it_counts_what_needs_looking_after(make_resident: Callable[..., Residen
 
 @pytest.mark.django_db
 def test_each_count_opens_a_list_of_its_items_with_their_details(
-    admin_client: Client, make_resident: Callable[..., Resident]
+    admin_client: Client, make_resident: Callable[..., Account]
 ) -> None:
     resident = make_resident(email="foto@gahk.dk", first_name="Fie", last_name="Foto")
     album = Album.objects.create(folder="2004", name="Fest")
@@ -315,7 +313,7 @@ def test_each_count_opens_a_list_of_its_items_with_their_details(
 
 @pytest.mark.django_db
 def test_the_files_no_item_points_at_are_listed_from_the_latest_measurement(
-    admin_client: Client, make_resident: Callable[..., Resident]
+    admin_client: Client, make_resident: Callable[..., Account]
 ) -> None:
     album = Album.objects.create(folder="2004", name="Fest")
     StorageReport.objects.create(
@@ -354,7 +352,7 @@ def test_the_files_no_item_points_at_are_listed_from_the_latest_measurement(
 
 @pytest.mark.django_db
 def test_an_upload_records_its_file_time_as_the_uploaders(
-    client: Client, make_resident: Callable[..., Resident]
+    client: Client, make_resident: Callable[..., Account]
 ) -> None:
     client.force_login(make_resident(roles=(Role.ADMINISTRATOR,)))
     album = Album.objects.create(folder="2004", name="Fest")
@@ -373,7 +371,7 @@ def test_an_upload_records_its_file_time_as_the_uploaders(
 
 @pytest.mark.django_db
 def test_an_import_records_whether_a_file_time_is_its_sidecars_or_the_zips(
-    make_resident: Callable[..., Resident],
+    make_resident: Callable[..., Account],
 ) -> None:
     buffer = BytesIO()
     with zipfile.ZipFile(buffer, "w") as archive:
@@ -397,7 +395,7 @@ def test_an_import_records_whether_a_file_time_is_its_sidecars_or_the_zips(
 
 @pytest.mark.django_db
 def test_sidecar_dates_sent_later_are_recorded_as_the_sidecars(
-    make_resident: Callable[..., Resident],
+    make_resident: Callable[..., Account],
 ) -> None:
     resident = make_resident()
     album = Album.objects.create(folder="2004", name="Fest")
@@ -421,7 +419,7 @@ def test_sidecar_dates_sent_later_are_recorded_as_the_sidecars(
 
 @pytest.mark.django_db
 def test_the_night_reads_sidecars_to_tell_where_older_file_times_are_from(
-    make_resident: Callable[..., Resident],
+    make_resident: Callable[..., Account],
 ) -> None:
     resident = make_resident()
     album = Album.objects.create(folder="2004", name="Fest")
@@ -452,7 +450,7 @@ def test_the_night_reads_sidecars_to_tell_where_older_file_times_are_from(
 
 @pytest.mark.django_db
 def test_the_migration_tells_imported_file_times_from_uploaded_ones(
-    make_resident: Callable[..., Resident],
+    make_resident: Callable[..., Account],
 ) -> None:
     resident = make_resident()
     album = Album.objects.create(folder="2004", name="Fest")
@@ -494,7 +492,7 @@ def test_the_migration_tells_imported_file_times_from_uploaded_ones(
 @pytest.mark.django_db
 def test_the_storage_is_measured_from_the_files_themselves(
     admin_client: Client,
-    make_resident: Callable[..., Resident],
+    make_resident: Callable[..., Account],
     django_capture_on_commit_callbacks: Callable[..., Any],
 ) -> None:
     resident = make_resident(email="foto@gahk.dk")

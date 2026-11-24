@@ -13,7 +13,7 @@ from django.db import models
 from django.db.models import Q, Sum
 from django.utils import timezone
 
-from residents.models import Resident
+from residents.models import Account
 
 
 class AkEntry(models.Model):
@@ -23,7 +23,7 @@ class AkEntry(models.Model):
         ADJUSTMENT = "adjustment", "Manuel justering"
         OPENING = "opening", "Startsaldo (migreret)"
 
-    resident = models.ForeignKey("residents.Resident", on_delete=models.CASCADE, related_name="ak_entries")
+    resident = models.ForeignKey("residents.Account", on_delete=models.CASCADE, related_name="ak_entries")
     delta = models.IntegerField()  # krydser; negative allowed (debt), positive = credit
     kind = models.CharField(max_length=12, choices=Kind.choices, default=Kind.ADJUSTMENT)
     reason = models.CharField(max_length=255, blank=True)  # legacy `comment`
@@ -35,7 +35,7 @@ class AkEntry(models.Model):
     created_at = models.DateTimeField(default=timezone.now)
     # the officer who made the change; null for system/monthly/migrated entries
     created_by = models.ForeignKey(
-        "residents.Resident",
+        "residents.Account",
         null=True,
         blank=True,
         on_delete=models.SET_NULL,
@@ -58,7 +58,7 @@ class AkEntry(models.Model):
         return f"{self.resident.full_name}: {self.delta:+d} ({self.get_kind_display()})"
 
     @staticmethod
-    def balance_for(resident: Resident) -> int:
+    def balance_for(resident: Account) -> int:
         return AkEntry.objects.filter(resident=resident).aggregate(b=Sum("delta"))["b"] or 0
 
 
@@ -77,7 +77,7 @@ class AkMonthlyCharge(models.Model):
     active = models.BooleanField(default=True)
     updated_at = models.DateTimeField(auto_now=True)
     updated_by = models.ForeignKey(
-        "residents.Resident",
+        "residents.Account",
         null=True,
         blank=True,
         on_delete=models.SET_NULL,

@@ -44,10 +44,10 @@ class Command(BaseCommand):
             return super().execute(*args, **options)
 
     def handle(self, *args, **opts) -> None:  # noqa: ANN002, ANN003
-        from residents.models import Resident
+        from residents.models import Account
 
         remap = resident_id_remap()
-        resident_ids = set(Resident.objects.values_list("id", flat=True))
+        resident_ids = set(Account.objects.values_list("id", flat=True))
         by_index = {r.legacy_index: r for r in Room.objects.all()}
         by_number = {r.number: r for r in Room.objects.all()}
 

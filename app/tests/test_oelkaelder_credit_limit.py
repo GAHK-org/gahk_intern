@@ -16,7 +16,7 @@ from django.urls import reverse
 
 from oelkaelder.models import Deposit, Product, PurchasePolicy, PurchaseShare, Shopper
 from oelkaelder.services import bulk_balances, record_purchase
-from residents.models import Resident
+from residents.models import Account
 
 # The Django test client's REMOTE_ADDR is 127.0.0.1; whitelisting it opens the IP-gated kiosk.
 ON_TILL = override_settings(OELKAELDER_KIOSK_IPS=["127.0.0.1"])
@@ -24,7 +24,7 @@ ON_TILL = override_settings(OELKAELDER_KIOSK_IPS=["127.0.0.1"])
 pytestmark = pytest.mark.django_db
 
 
-def indebted(make_resident: Callable[..., Resident], email: str, debt_ore: int) -> Shopper:
+def indebted(make_resident: Callable[..., Account], email: str, debt_ore: int) -> Shopper:
     """A shopper who owes `debt_ore`, created the honest way — a purchase they never paid for."""
     shopper = Shopper.objects.create(resident=make_resident(email=email))
     if debt_ore:
@@ -43,7 +43,7 @@ def limit(*, active: bool, kr: int = -100) -> PurchasePolicy:
 # --- the reported bug ----------------------------------------------------------------------------
 
 
-def test_debt_alone_does_not_block_a_purchase(make_resident: Callable[..., Resident]) -> None:
+def test_debt_alone_does_not_block_a_purchase(make_resident: Callable[..., Account]) -> None:
     """The reported bug: -150 kr made the till refuse to sell. Out of the box it must not — the
     policy is off, so debt means warning mails and interest, exactly as in the legacy system."""
     shopper = indebted(make_resident, "skyldner@gahk.dk", 15000)
@@ -57,7 +57,7 @@ def test_debt_alone_does_not_block_a_purchase(make_resident: Callable[..., Resid
 
 @ON_TILL
 def test_the_till_offers_a_debtor_the_buy_buttons_by_default(
-    make_resident: Callable[..., Resident],
+    make_resident: Callable[..., Account],
 ) -> None:
     shopper = indebted(make_resident, "skyldner@gahk.dk", 15000)
 
@@ -72,7 +72,7 @@ def test_the_till_offers_a_debtor_the_buy_buttons_by_default(
 # --- the limit, once ØK turns it on ----------------------------------------------------------------
 
 
-def test_a_shopper_below_the_limit_is_refused_by_name(make_resident: Callable[..., Resident]) -> None:
+def test_a_shopper_below_the_limit_is_refused_by_name(make_resident: Callable[..., Account]) -> None:
     limit(active=True, kr=-100)
     shopper = indebted(make_resident, "skyldner@gahk.dk", 15000)
     beer = Product.objects.create(name="Fadøl", price_ore=1000, active=True)
@@ -84,7 +84,7 @@ def test_a_shopper_below_the_limit_is_refused_by_name(make_resident: Callable[..
     assert not PurchaseShare.objects.filter(shopper=shopper, transaction__is_valid=True).count() > 1
 
 
-def test_exactly_at_the_limit_is_still_allowed(make_resident: Callable[..., Resident]) -> None:
+def test_exactly_at_the_limit_is_still_allowed(make_resident: Callable[..., Account]) -> None:
     """`blocks` is strictly-below, so a limit of -100 kr does not refuse someone sitting on -100.00."""
     limit(active=True, kr=-100)
     shopper = indebted(make_resident, "lige@gahk.dk", 10000)
@@ -97,7 +97,7 @@ def test_exactly_at_the_limit_is_still_allowed(make_resident: Callable[..., Resi
 
 
 def test_a_split_purchase_cannot_smuggle_in_a_blocked_shopper(
-    make_resident: Callable[..., Resident],
+    make_resident: Callable[..., Account],
 ) -> None:
     """Whole sale refused, not a partial charge — half a basket paid for is worse than none."""
     limit(active=True, kr=-100)
@@ -113,7 +113,7 @@ def test_a_split_purchase_cannot_smuggle_in_a_blocked_shopper(
     assert blocked.balance_ore == -20000
 
 
-def test_a_deposit_reopens_the_account(make_resident: Callable[..., Resident]) -> None:
+def test_a_deposit_reopens_the_account(make_resident: Callable[..., Account]) -> None:
     limit(active=True, kr=-100)
     shopper = indebted(make_resident, "skyldner@gahk.dk", 15000)
     beer = Product.objects.create(name="Fadøl", price_ore=1000, active=True)
@@ -126,7 +126,7 @@ def test_a_deposit_reopens_the_account(make_resident: Callable[..., Resident]) -
 
 @ON_TILL
 def test_the_till_explains_a_block_instead_of_just_greying_it_out(
-    make_resident: Callable[..., Resident],
+    make_resident: Callable[..., Account],
 ) -> None:
     """The old UI greyed the row and swallowed taps with no reason given, and the alumne-number path
     reported 'Forkert nummer' — sending people to check their ID rather than their balance."""
@@ -144,7 +144,7 @@ def test_the_till_explains_a_block_instead_of_just_greying_it_out(
 
 @ON_TILL
 def test_the_till_shows_the_configured_limit_not_a_hardcoded_one(
-    make_resident: Callable[..., Resident],
+    make_resident: Callable[..., Account],
 ) -> None:
     limit(active=True, kr=-250)
     indebted(make_resident, "skyldner@gahk.dk", 30000)
@@ -157,7 +157,7 @@ def test_the_till_shows_the_configured_limit_not_a_hardcoded_one(
 # --- supporting machinery ---------------------------------------------------------------------------
 
 
-def test_bulk_balances_matches_the_per_shopper_property(make_resident: Callable[..., Resident]) -> None:
+def test_bulk_balances_matches_the_per_shopper_property(make_resident: Callable[..., Account]) -> None:
     """The till reads every balance; bulk_balances replaces three aggregate queries per shopper with
     three in total, so it has to agree with Shopper.balance_ore exactly — including for a shopper
     with no rows at all."""
@@ -172,7 +172,7 @@ def test_bulk_balances_matches_the_per_shopper_property(make_resident: Callable[
     assert bulk_balances([]) == {}
 
 
-def test_officers_can_change_the_limit(client: Client, make_resident: Callable[..., Resident]) -> None:
+def test_officers_can_change_the_limit(client: Client, make_resident: Callable[..., Account]) -> None:
     client.force_login(make_resident(email="oek@gahk.dk", roles=("oelkaelder",)))
 
     response = client.post(
@@ -186,7 +186,7 @@ def test_officers_can_change_the_limit(client: Client, make_resident: Callable[.
 
 
 def test_the_limit_is_not_editable_without_the_oelkaelder_role(
-    client: Client, make_resident: Callable[..., Resident]
+    client: Client, make_resident: Callable[..., Account]
 ) -> None:
     client.force_login(make_resident(email="beboer@gahk.dk"))
 

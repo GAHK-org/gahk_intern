@@ -20,7 +20,7 @@ from django.utils import timezone
 
 from cms.models import CmsImage, Event, NewsItem, Page, PageVersion
 from core.models import Room
-from residents.models import Resident
+from residents.models import Account
 from rooms.models import RoomCondition, RoomConditionScore, RoomCriterion
 
 pytestmark = pytest.mark.django_db
@@ -98,7 +98,7 @@ def test_source_4_markdown_in_an_opslag(media_tmp: Path, make_resident: object) 
     """Recovered by walking the token stream, so a code fence is correctly not a reference."""
     from opslagstavle.models import Notice
 
-    author: Resident = make_resident(email="a@gahk.dk")  # type: ignore[operator]
+    author: Account = make_resident(email="a@gahk.dk")  # type: ignore[operator]
     name = drop_a_file(media_tmp, "opslag/2026/09/fest.jpg")
     Notice.objects.create(author=author, category="nyt", body=f"Fest!\n\n![](/media/{name})")
 

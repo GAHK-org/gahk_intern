@@ -6,7 +6,7 @@ from django.core.files.uploadedfile import UploadedFile
 from pypdf import PdfReader
 from pypdf.errors import PyPdfError
 
-from residents.models import Resident
+from residents.models import Account
 
 from .models import AlumneregningSettings
 
@@ -16,7 +16,7 @@ class EconomicAccountNumberForm(forms.ModelForm):
     automation, F-010 regnskab role)."""
 
     class Meta:
-        model = Resident
+        model = Account
         fields = ["economic_account_number"]
         labels = {"economic_account_number": "E-conomic kontonr."}
 

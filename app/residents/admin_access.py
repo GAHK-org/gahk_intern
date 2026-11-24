@@ -15,13 +15,13 @@ from django.utils import timezone
 
 from audit import trail
 
-from .models import AdminAccessGrant, Resident, Role, active_period
+from .models import Account, AdminAccessGrant, Role, active_period
 
 
-def approvers() -> QuerySet[Resident]:
+def approvers() -> QuerySet[Account]:
     """Residents who may decide a grant: accepted administrators for the active period, or superusers."""
     year, month = active_period()
-    return Resident.objects.filter(
+    return Account.objects.filter(
         Q(is_superuser=True)
         | Q(
             role_assignments__role=Role.ADMINISTRATOR,
@@ -33,7 +33,7 @@ def approvers() -> QuerySet[Resident]:
     ).distinct()
 
 
-def can_decide(user: Resident, grant: AdminAccessGrant) -> bool:
+def can_decide(user: Account, grant: AdminAccessGrant) -> bool:
     """Both halves of the two-person rule: an approver, and not the two people already involved."""
     if user.pk in {grant.resident_id, grant.requested_by_id}:
         return False
@@ -46,7 +46,7 @@ def pending() -> QuerySet[AdminAccessGrant]:
     )
 
 
-def decide(grant: AdminAccessGrant, decided_by: Resident, *, approve: bool) -> None:
+def decide(grant: AdminAccessGrant, decided_by: Account, *, approve: bool) -> None:
     action = "residents.admin_access.approved" if approve else "residents.admin_access.denied"
     with trail.event(action, actor=decided_by, subject=grant, involve=[(grant.resident, "resident")]):
         grant.status = AdminAccessGrant.Status.APPROVED if approve else AdminAccessGrant.Status.DENIED

@@ -20,7 +20,7 @@ from datetime import datetime, timedelta
 
 from django.urls import reverse
 
-from residents.models import Resident
+from residents.models import Account
 
 from . import categories
 from .categories import Importance
@@ -40,7 +40,7 @@ class _Row:
     seen: bool = False
     expired: bool = False
     group_key: str = ""
-    actors: tuple[Resident, ...] = ()
+    actors: tuple[Account, ...] = ()
 
 
 def _links(now: datetime) -> tuple[str, str, str, str, str, str]:
@@ -73,7 +73,7 @@ def _links(now: datetime) -> tuple[str, str, str, str, str, str]:
     )
 
 
-def seed(residents: list[Resident], now: datetime, rng: random.Random) -> int:
+def seed(residents: list[Account], now: datetime, rng: random.Random) -> int:
     logins = [r for r in residents if r.email in LOGINS]
     others = [r for r in residents if r.email not in LOGINS]
     if not logins or len(others) < 3:
