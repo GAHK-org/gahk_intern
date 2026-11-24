@@ -1,5 +1,14 @@
 # Feature: Søg værelse — room-application "kvotient" lottery (internal area)
 
+## Audit trail (today)
+
+- Recorded (audit-trail.md): an application sent, edited and withdrawn by its applicant, or deleted
+  by Indstillingen with the reason; an offer made and closed (with how many applications it
+  cleared); a tie decided; and the round ended, with every move, every carried-forward place and
+  every cleared application and offer in that one event.
+- An application's rooms are replaced only when they changed, so an edit of the study end does not
+  read as every room dropped and chosen again.
+
 - **Feature ID:** F-004
 - **Source file(s):** `application/controllers/intern/soegvaerelse.php`,
   models `application/models/{kvotient_model,kvotientoffer_model,kvotient_priority_model,kvotient_orlov_model,adminuser_model}.php`,

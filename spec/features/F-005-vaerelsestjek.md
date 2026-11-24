@@ -1,5 +1,14 @@
 # Feature: Værelsestjek — room move-in/move-out condition inspection
 
+## Audit trail (today)
+
+- Recorded (audit-trail.md): each room check as one event by the resident who did it, with every
+  answer and photo, naming the report it replaced. Changes to the checkpoints themselves (Django
+  admin) are recorded too.
+- Left out: that the replaced report stopped being the newest (bookkeeping), and the copy of the
+  checker's name on the report (the event's person says it).
+- Importing the old reports is not in the trail.
+
 - **Feature ID:** F-005
 - **Source file(s):** `application/controllers/intern/vaerelsestjek.php`,
   `application/models/roomcondition_model.php`, `application/models/roomcriteria_model.php`,

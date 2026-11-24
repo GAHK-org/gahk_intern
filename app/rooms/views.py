@@ -22,11 +22,11 @@ from typing import TypedDict
 from django.conf import settings
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
-from django.db import transaction
 from django.http import HttpRequest, HttpResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.utils import timezone
 
+from audit import trail
 from core.exports import csv_or_xlsx_response
 from core.models import Room
 from core.uploads import prepare_image_upload
@@ -119,7 +119,11 @@ def besvar(request: HttpRequest, room_id: int) -> HttpResponse:
     criteria = list(RoomCriterion.objects.order_by("code"))
 
     if request.method == "POST":
-        with transaction.atomic():
+        with trail.event("rooms.condition.recorded") as event:
+            # The reports this one replaces take part without changing in the trail: is_current is
+            # bookkeeping of which report is newest (rooms.auditing).
+            for previous in RoomCondition.objects.filter(room=rm, is_current=True):
+                event.involve(previous, "replaced")
             RoomCondition.objects.filter(room=rm, is_current=True).update(is_current=False)
             cond = RoomCondition.objects.create(
                 room=rm,
@@ -160,6 +164,7 @@ def besvar(request: HttpRequest, room_id: int) -> HttpResponse:
                         comment=comment,
                         photo=photo or "",
                     )
+            event.involve(cond, "subject")
         return redirect("vaerelsestjek:room", room_id=rm.number)
 
     # History: prefill from an earlier report when ?rapport=<id> selects one, else the current state.

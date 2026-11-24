@@ -12,6 +12,7 @@ from django.core.management.base import BaseCommand
 from django.utils import timezone
 
 from admissions.models import Application
+from audit import trail
 
 
 class Command(BaseCommand):
@@ -27,5 +28,10 @@ class Command(BaseCommand):
         if opts["dry_run"]:
             self.stdout.write(f"[dry-run] would delete {n} applications older than {cutoff:%Y-%m-%d}.")
             return
-        qs.delete()
+        # One event for the purge (each application in it by kind and number only, as always).
+        if n:
+            with trail.event(
+                "admissions.application.purged", actor=None, details={"count": n, "before": cutoff.date()}
+            ):
+                qs.delete()
         self.stdout.write(self.style.SUCCESS(f"Deleted {n} applications older than {cutoff:%Y-%m-%d}."))

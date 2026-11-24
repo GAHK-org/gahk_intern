@@ -11,7 +11,6 @@ from typing import NamedTuple, TypedDict
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.core.exceptions import PermissionDenied
-from django.db import transaction
 from django.http import HttpRequest, HttpResponse, HttpResponseRedirect
 from django.shortcuts import get_object_or_404, redirect, render
 from django.utils import timezone
@@ -182,7 +181,7 @@ def soeg(request: HttpRequest) -> HttpResponse:
         move_in = month_index(resident.move_in_date.year, resident.move_in_date.month)
         done = month_index(dy, dm)
         k = compute_k(move_in, done, target, orlov_months)
-        with transaction.atomic():
+        with trail.event("rooms.application.submitted") as event:
             # One application per resident per round: overwrite the existing one instead of stacking a
             # duplicate. apply_datetime is left out of defaults, so an edit keeps the original
             # submission time (on first create the model default stamps it).
@@ -191,16 +190,23 @@ def soeg(request: HttpRequest) -> HttpResponse:
                 move_month=target,
                 defaults={"move_in_month": move_in, "done_studying_month": done, "k": k},
             )
+            event.involve(app, "subject")
+            if not created:
+                event.action = "rooms.application.updated"
             # Replace the priority + orlov rows wholesale (simpler than diffing; keeps the unique
-            # (application, priority) constraint satisfied).
-            app.priorities.all().delete()
-            app.orlov_periods.all().delete()
-            for i, rid in enumerate(room_ids, start=1):
-                KvotientPriority.objects.create(application=app, room_id=rid, priority=i, month=target)
-            if orlov_months > 0:
-                KvotientOrlov.objects.create(
-                    application=app, start_month=target, end_month=target + orlov_months
-                )
+            # (application, priority) constraint satisfied) — but only when they changed, so an edit
+            # of the study end alone does not read as five rooms dropped and chosen again.
+            if [p.room_id for p in app.priorities.order_by("priority")] != room_ids:
+                app.priorities.all().delete()
+                for i, rid in enumerate(room_ids, start=1):
+                    KvotientPriority.objects.create(application=app, room_id=rid, priority=i, month=target)
+            orlov_wanted = [orlov_months] if orlov_months > 0 else []
+            if [o.number_of_months for o in app.orlov_periods.all()] != orlov_wanted:
+                app.orlov_periods.all().delete()
+                if orlov_months > 0:
+                    KvotientOrlov.objects.create(
+                        application=app, start_month=target, end_month=target + orlov_months
+                    )
         messages.success(request, f"Ansøgning {'sendt' if created else 'opdateret'} (K={k}).")
         return redirect("soegvaerelse:my")
     return render(request, "soegvaerelse/apply.html", ctx)
@@ -266,7 +272,8 @@ def delete_application(request: HttpRequest, pk: int) -> HttpResponseRedirect:
     Nobody else may delete another's. Cascades priorities + orlov."""
     app = get_object_or_404(KvotientApplication, pk=pk)
     if app.resident_id == current_resident(request).pk:
-        app.delete()
+        with trail.event("rooms.application.withdrawn", subject=app):
+            app.delete()
         messages.success(request, "Din ansøgning er trukket tilbage.")
         return redirect("soegvaerelse:my")
     if not request_has_role(request, "indstilling"):
@@ -275,7 +282,8 @@ def delete_application(request: HttpRequest, pk: int) -> HttpResponseRedirect:
     # 200 leaves room for the sentence in front of it in the notification body (300 at most).
     reason = (request.POST.get("reason") or "").strip()[:200]
     notify_application_deleted(app, reason)
-    app.delete()
+    with trail.event("rooms.application.deleted", subject=app, details={"reason": reason}):
+        app.delete()
     messages.success(request, f"Ansøgningen fra {name} er slettet, og {name} har fået besked.")
     return redirect("soegvaerelse:admin")
 
@@ -307,7 +315,9 @@ def create_offer(request: HttpRequest) -> HttpResponseRedirect:
     target = month_index(*next_period())  # offers are always for the upcoming month
     try:
         room = Room.objects.get(number=int(request.POST["room"]))
-        RoomOffer.objects.get_or_create(room=room, month=target)
+        with trail.event("rooms.offer.created", only_if_changed=True) as event:
+            offer, _ = RoomOffer.objects.get_or_create(room=room, month=target)
+            event.involve(offer, "subject")
         messages.success(request, f"Tilbud oprettet: {room} ({month_label(target)}).")
     except (KeyError, ValueError, Room.DoesNotExist):
         messages.error(request, "Ugyldigt værelse.")
@@ -341,7 +351,7 @@ def applicants(request: HttpRequest, offer_id: int) -> HttpResponse:
 @role_required("indstilling")
 def close_offer(request: HttpRequest, offer_id: int) -> HttpResponseRedirect:
     offer = get_object_or_404(RoomOffer, pk=offer_id)
-    with transaction.atomic():
+    with trail.event("rooms.offer.closed", subject=offer) as event:
         # scoped to THIS offer's month only (fixes the legacy cross-month cascade delete)
         app_ids = list(
             KvotientApplication.objects.filter(priorities__room=offer.room, move_month=offer.month)
@@ -350,6 +360,7 @@ def close_offer(request: HttpRequest, offer_id: int) -> HttpResponseRedirect:
         )
         KvotientApplication.objects.filter(id__in=app_ids).delete()  # cascades priorities + orlov
         offer.delete()
+        event.details["applications_cleared"] = len(app_ids)
     messages.success(request, f"Tilbud lukket; {len(app_ids)} ansøgning(er) i måneden ryddet.")
     return redirect("soegvaerelse:admin")
 
@@ -364,8 +375,9 @@ def resolve_tie(request: HttpRequest, offer_id: int) -> HttpResponseRedirect:
     app = get_object_or_404(
         KvotientApplication, pk=request.POST.get("application") or 0, move_month=offer.month
     )
-    offer.awarded_application = app
-    offer.save(update_fields=["awarded_application"])
+    with trail.event("rooms.offer.tie_resolved", subject=offer, involve=[(app, "winner")]):
+        offer.awarded_application = app
+        offer.save(update_fields=["awarded_application"])
     messages.success(request, f"{app.resident.full_name} valgt som vinder af {offer.room}.")
     return redirect("soegvaerelse:applicants", offer_id=offer.id)
 

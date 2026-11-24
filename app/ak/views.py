@@ -9,6 +9,7 @@ from django.shortcuts import get_object_or_404, redirect, render
 from django.utils import timezone
 from django.views.decorators.http import require_POST
 
+from audit import trail
 from residents.models import Resident, active_period, next_period
 from residents.permissions import current_resident, role_required
 from residents.views import DA_MONTHS
@@ -47,14 +48,16 @@ def add_self_entry(request: HttpRequest) -> HttpResponseRedirect:
     elif not reason:
         messages.error(request, "Skriv en beskrivelse af det udførte arbejde.")
     else:
-        AkEntry.objects.create(
-            resident=resident,
-            delta=krydser,
-            kind=AkEntry.Kind.LABOUR,
-            reason=reason,
-            created_by=resident,
-            created_at=timezone.now(),
-        )
+        with trail.event("ak.labour.logged") as event:
+            entry = AkEntry.objects.create(
+                resident=resident,
+                delta=krydser,
+                kind=AkEntry.Kind.LABOUR,
+                reason=reason,
+                created_by=resident,
+                created_at=timezone.now(),
+            )
+            event.involve(entry, "subject")
         messages.success(request, f"{krydser} kryds registreret.")
     return redirect("ak:index")
 
@@ -105,17 +108,18 @@ def save_monthly_charges(request: HttpRequest) -> HttpResponseRedirect:
     is charged once it is over, on the 1st of the next, with the schedule as it stands then. Months
     already charged are never touched, so settled balances are safe."""
     officer = current_resident(request)
-    for m in range(1, 13):
-        active = request.POST.get(f"active_{m}") == "1"
-        try:
-            krydser = int(request.POST.get(f"krydser_{m}", "2"))
-        except ValueError:
-            krydser = 2
-        krydser = max(1, krydser)  # a charged month deducts at least 1
-        AkMonthlyCharge.objects.update_or_create(
-            month=m,
-            defaults={"active": active, "krydser": krydser, "updated_by": officer},
-        )
+    with trail.event("ak.schedule.saved", only_if_changed=True):
+        for m in range(1, 13):
+            active = request.POST.get(f"active_{m}") == "1"
+            try:
+                krydser = int(request.POST.get(f"krydser_{m}", "2"))
+            except ValueError:
+                krydser = 2
+            krydser = max(1, krydser)  # a charged month deducts at least 1
+            AkMonthlyCharge.objects.update_or_create(
+                month=m,
+                defaults={"active": active, "krydser": krydser, "updated_by": officer},
+            )
     _year, month = next_period(charge_period())
     messages.success(
         request,
@@ -147,19 +151,24 @@ def add_entry(request: HttpRequest, pk: int) -> HttpResponseRedirect:
     except ValueError:
         delta = 0
     if delta:
-        AkEntry.objects.create(
-            resident=resident,
-            delta=delta,
-            kind=AkEntry.Kind.LABOUR if delta > 0 else AkEntry.Kind.ADJUSTMENT,
-            reason=request.POST.get("reason", "").strip(),
-            created_by=current_resident(request),
-            created_at=timezone.now(),
-        )
+        with trail.event("ak.entry.added", involve=[(resident, "resident")]) as event:
+            entry = AkEntry.objects.create(
+                resident=resident,
+                delta=delta,
+                kind=AkEntry.Kind.LABOUR if delta > 0 else AkEntry.Kind.ADJUSTMENT,
+                reason=request.POST.get("reason", "").strip(),
+                created_by=current_resident(request),
+                created_at=timezone.now(),
+            )
+            event.involve(entry, "subject")
     return redirect("ak:log", pk=pk)
 
 
 @require_POST
 @role_required("ak")
 def delete_entry(request: HttpRequest, pk: int, entry_id: int) -> HttpResponseRedirect:
-    AkEntry.objects.filter(id=entry_id, resident_id=pk).delete()
+    entry = AkEntry.objects.filter(id=entry_id, resident_id=pk).select_related("resident").first()
+    if entry is not None:
+        with trail.event("ak.entry.deleted", subject=entry, involve=[(entry.resident, "resident")]):
+            entry.delete()
     return redirect("ak:log", pk=pk)

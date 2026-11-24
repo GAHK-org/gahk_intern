@@ -18,6 +18,7 @@ from django.shortcuts import get_object_or_404, redirect, render
 from django.utils import timezone
 from django.views.decorators.http import require_POST
 
+from audit import trail
 from residents.permissions import current_resident, role_required
 
 from .models import Application
@@ -238,9 +239,10 @@ def export_applications(request: HttpRequest) -> HttpResponse:
 def mark_received(request: HttpRequest, pk: int) -> HttpResponseRedirect:
     app = get_object_or_404(Application, pk=pk)
     if not app.received_by_id:
-        app.received_by = current_resident(request)
-        app.received_at = timezone.now()
-        app.save(update_fields=["received_by", "received_at"])
+        with trail.event("admissions.application.marked_received", subject=app):
+            app.received_by = current_resident(request)
+            app.received_at = timezone.now()
+            app.save(update_fields=["received_by", "received_at"])
     return redirect("admissions:show", pk=pk)
 
 
@@ -250,11 +252,15 @@ def toggle_discarded(request: HttpRequest, pk: int) -> HttpResponseRedirect:
     """Discard an application ("Kasseret"), or undo it. Toggling keeps it reversible; a discarded
     application is hidden from the list/search unless the "vis kasserede" toggle is on."""
     app = get_object_or_404(Application, pk=pk)
-    if app.discarded_by_id:
-        app.discarded_by = None
-        app.discarded_at = None
-    else:
-        app.discarded_by = current_resident(request)
-        app.discarded_at = timezone.now()
-    app.save(update_fields=["discarded_by", "discarded_at"])
+    action = (
+        "admissions.application.undiscarded" if app.discarded_by_id else "admissions.application.discarded"
+    )
+    with trail.event(action, subject=app):
+        if app.discarded_by_id:
+            app.discarded_by = None
+            app.discarded_at = None
+        else:
+            app.discarded_by = current_resident(request)
+            app.discarded_at = timezone.now()
+        app.save(update_fields=["discarded_by", "discarded_at"])
     return redirect("admissions:show", pk=pk)
