@@ -15,10 +15,10 @@
         {% if video.is_draft %}<span class="flix-state is-draft">Kladde</span>{% endif %}
         {% if video.is_binned %}<span class="flix-state is-binned">I papirkurven</span>{% endif %}
         {% if video.episode_label %}<span>{{ video.episode_label }}</span>{% endif %}
-        <span>{{ video.date_label }}</span>
+        {% if video.premiere_to_come %}<span class="flix-state is-premiere">Premiere {{ video.premiere_label }}</span>{% else %}<span>{{ video.date_label }}</span>{% endif %}
         {% if video.file.duration %}<span>{{ video.file.duration|duration }}</span>{% endif %}
         {% if video.file.full_hd %}<span class="flix-chip">Full HD</span>{% elif video.file %}<span class="flix-chip">HD</span>{% endif %}
-        {% if video.is_published %}<span>{{ views }} visning{{ views|pluralize:"er" }} · {{ viewers }} seer{{ viewers|pluralize:"e" }}</span>{% endif %}
+        {% if video.is_released %}<span>{{ views }} visning{{ views|pluralize:"er" }} · {{ viewers }} seer{{ viewers|pluralize:"e" }}</span>{% endif %}
       </div>
       <div class="flix-hero-actions">
         {% if video.file %}
@@ -44,7 +44,7 @@
         {% if can_view_history %}
           <a class="flix-icon-btn" href="{% url 'gahkflix:history' video.pk %}" title="Historik" aria-label="Historik"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 2.6-6.4L3 8"/><path d="M3 3v5h5"/><path d="M12 7v5l3 2"/></svg></a>
         {% endif %}
-        {% if video.is_published and not video.is_binned %}{% board_share_url video as share_url %}{% if share_url %}
+        {% if video.is_released and not video.is_binned %}{% board_share_url video as share_url %}{% if share_url %}
           <a class="flix-icon-btn" href="{{ share_url }}" title="Del på opslagstavlen" aria-label="Del på opslagstavlen"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 15V3M7 8l5-5 5 5"/><path d="M5 12v7a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-7"/></svg></a>
         {% endif %}{% endif %}
       </div>
@@ -53,6 +53,8 @@
 
   {% if video.is_draft %}
     <p class="flix-banner-note">Kladde: kun du og administratorerne kan se videoen. <a href="{% url 'gahkflix:edit' video.pk %}">Gør den færdig og udgiv den</a>.</p>
+  {% elif video.is_upcoming %}
+    <p class="flix-banner-note">Premiere {{ video.premiere_label }}. Indtil da kan kun du og administratorerne åbne siden; alle andre ser titlen, {% if video.series %}serien, {% endif %}tidspunktet og miniaturen ({{ video.get_premiere_blur_display|lower }}). <a href="{% url 'gahkflix:edit' video.pk %}">Rediger</a></p>
   {% elif video.is_binned %}
     <div class="flix-banner-note">
       Videoen ligger i papirkurven og slettes helt {{ video.purge_at|date:"j. F Y" }}.
