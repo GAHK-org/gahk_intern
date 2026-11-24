@@ -195,6 +195,16 @@ New post → all board subscribers except the author. New comment → **the post
 thread with twenty replies must not be twenty dorm-wide pushes, which is why there is no "underret
 alle" checkbox here). Reactions → nobody, ever. The notification links to the individual post.
 
+## Audit trail
+
+- Posting, editing and deleting a post, pinning and unpinning it, posting and deleting a comment, and
+  uploading a picture are in the audit trail (audit-trail.md), with what the post or comment said
+  before and after. A moderator deleting somebody's post is recorded as the moderator's doing.
+- An edit saved without a change records nothing; the "Redigeret" stamp is the event's own time.
+- The nightly sweep of unused uploads is one event, by nobody, with how many pictures it removed.
+- Left out: reactions (as everywhere), and which post a picture belongs to, which follows the post's
+  text and is recorded there.
+
 ## Decisions and rejected alternatives
 
 Each of these is something a future contributor will reasonably want to "improve". They were

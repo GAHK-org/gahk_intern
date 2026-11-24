@@ -18,13 +18,13 @@ from django.conf import settings
 from django.contrib import messages
 from django.core.exceptions import PermissionDenied, ValidationError
 from django.core.paginator import Paginator
-from django.db import transaction
 from django.db.models import Max, Prefetch
 from django.http import Http404, HttpRequest, HttpResponse, HttpResponseRedirect, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.utils import timezone
 from django.views.decorators.http import require_POST
 
+from audit import trail
 from core.emoji import EMOJI_SHORTLIST
 from core.markdown import embed_references, image_sources, render_markdown
 from core.reactions import CREATED, apply_toggle, reaction_rows
@@ -289,10 +289,11 @@ def create(request: HttpRequest) -> HttpResponse:
     if shared:
         form.fields["body"].widget.attrs["autofocus"] = True
     if request.method == "POST" and form.is_valid():
-        with transaction.atomic():
+        with trail.event("opslagstavle.notice.posted") as event:
             notice = form.save(commit=False)
             notice.author = current_resident(request)
             notice.save()
+            event.involve(notice, "subject")
             sync_images(notice)
         mentioned = services.notify_mentions_in_notice(notice)
         services.notify_new_notice(notice, skip=mentioned)
@@ -311,7 +312,7 @@ def edit(request: HttpRequest, pk: int) -> HttpResponse:
     old_body = notice.body
     form = NoticeForm(request.POST or None, instance=notice, events_allowed=events_allowed(request))
     if request.method == "POST" and form.is_valid():
-        with transaction.atomic():
+        with trail.event("opslagstavle.notice.edited", subject=notice, only_if_changed=True):
             notice = form.save(commit=False)
             # Set explicitly, never auto_now: pinning also saves the row, and stamping "Redigeret"
             # with Inspektionen's action would be a lie to every reader.
@@ -347,7 +348,8 @@ def delete(request: HttpRequest, pk: int) -> HttpResponseRedirect:
     if not can_delete(request, notice):
         raise PermissionDenied
     notice_pk = notice.pk  # delete() clears it
-    notice.delete()  # images follow by CASCADE + the post_delete receiver
+    with trail.event("opslagstavle.notice.deleted", subject=notice):
+        notice.delete()  # images follow by CASCADE + the post_delete receiver
     live.notice_deleted(notice_pk)
     messages.success(request, "Opslaget er slettet.")
     return redirect("opslagstavle:board")
@@ -369,9 +371,10 @@ def toggle_pin(request: HttpRequest, pk: int) -> HttpResponseRedirect:
     notice = get_object_or_404(_visible(request), pk=pk)
 
     if notice.is_pinned:
-        notice.pinned_at = None
-        notice.pinned_by = None
-        notice.save(update_fields=["pinned_at", "pinned_by"])
+        with trail.event("opslagstavle.notice.unpinned", subject=notice):
+            notice.pinned_at = None
+            notice.pinned_by = None
+            notice.save(update_fields=["pinned_at", "pinned_by"])
         live.notice_changed(notice.pk)
         messages.success(request, "Opslaget er ikke længere fastgjort.")
     else:
@@ -381,9 +384,10 @@ def toggle_pin(request: HttpRequest, pk: int) -> HttpResponseRedirect:
                 f"Der kan højst være {MAX_PINNED} fastgjorte opslag. Frigør et andet først.",
             )
             return redirect("opslagstavle:detail", pk=notice.pk)
-        notice.pinned_at = timezone.now()
-        notice.pinned_by = current_resident(request)
-        notice.save(update_fields=["pinned_at", "pinned_by"])
+        with trail.event("opslagstavle.notice.pinned", subject=notice):
+            notice.pinned_at = timezone.now()
+            notice.pinned_by = current_resident(request)
+            notice.save(update_fields=["pinned_at", "pinned_by"])
         live.notice_changed(notice.pk)
         messages.success(request, "Opslaget er fastgjort.")
     return redirect("opslagstavle:detail", pk=notice.pk)
@@ -422,7 +426,8 @@ def create_comment(request: HttpRequest, pk: int) -> HttpResponseRedirect:
     comment.author = current_resident(request)
     if image is not None:
         comment.image = image
-    comment.save()
+    with trail.event("opslagstavle.comment.posted", subject=comment, involve=[(notice, "notice")]):
+        comment.save()
     services.notify_new_comment(comment)
     live.notice_changed(notice.pk)
     return redirect("opslagstavle:detail", pk=notice.pk)
@@ -435,7 +440,8 @@ def delete_comment(request: HttpRequest, pk: int) -> HttpResponseRedirect:
     if not can_delete_comment(request, comment):
         raise PermissionDenied
     notice_pk = comment.notice_id
-    comment.delete()
+    with trail.event("opslagstavle.comment.deleted", subject=comment, involve=[(comment.notice, "notice")]):
+        comment.delete()
     live.notice_changed(notice_pk)
     messages.success(request, "Kommentaren er slettet.")
     return redirect("opslagstavle:detail", pk=notice_pk)
@@ -547,10 +553,12 @@ def upload_image(request: HttpRequest) -> JsonResponse:
     except ValidationError as exc:
         return JsonResponse({"error": " ".join(exc.messages)}, status=400)
 
-    image = NoticeImage.objects.create(
+    image = NoticeImage(
         file=upload,
         alt=(request.POST.get("alt") or "").strip(),
         uploaded_by=current_resident(request),
     )
+    with trail.event("opslagstavle.image.uploaded", subject=image):
+        image.save()
     # notice stays NULL until a save claims it — see images.sync_images.
     return JsonResponse({"url": image.url, "alt": image.alt}, status=201)

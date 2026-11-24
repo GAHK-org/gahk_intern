@@ -37,6 +37,7 @@ from django.utils.dateparse import parse_datetime
 from django.utils.formats import date_format
 from django.views.decorators.http import require_POST
 
+from audit import trail
 from core.clock import current_date, current_datetime
 from core.reactions import CREATED, apply_toggle, reaction_rows
 from core.uploads import attached_image
@@ -688,13 +689,16 @@ def create_post(request: HttpRequest) -> HttpResponseRedirect:
     if minutes not in VALID_DURATIONS:
         return _reject(request, channel, content, "Vælg hvor længe beskeden skal være relevant.")
 
-    post = QuickPost.objects.create(
-        author=author,
-        channel=channel.slug,
-        content=content,
-        image=_validated_image(request) or "",
-        expires_at=current_datetime() + timedelta(minutes=minutes),
-    )
+    image = _validated_image(request)
+    with trail.event("den_hurtige.message.posted") as event:
+        post = QuickPost.objects.create(
+            author=author,
+            channel=channel.slug,
+            content=content,
+            image=image or "",
+            expires_at=current_datetime() + timedelta(minutes=minutes),
+        )
+        event.involve(post, "subject")
     services.notify_new_post(post)
     live.message_changed(post.channel, post.pk, "created")
     # No success message on purpose: the message appearing at the bottom of the feed *is* the
@@ -770,13 +774,15 @@ def create_comment(request: HttpRequest, pk: int) -> HttpResponse:
         messages.error(request, "Skriv et svar, eller vedhæft et billede.")
         return _comment_response(request, post, back)
 
-    comment = QuickComment.objects.create(
-        post=post,
-        author=author,
-        content=content,
-        image=image or "",
-        notify_everyone=request.POST.get("notify") == "alle",
-    )
+    with trail.event("den_hurtige.reply.posted", involve=[(post, "message")]) as event:
+        comment = QuickComment.objects.create(
+            post=post,
+            author=author,
+            content=content,
+            image=image or "",
+            notify_everyone=request.POST.get("notify") == "alle",
+        )
+        event.involve(comment, "subject")
     services.notify_new_comment(comment)
     live.message_changed(post.channel, post.pk)
     return _comment_response(request, post, back)
@@ -872,10 +878,11 @@ def delete_post(request: HttpRequest, pk: int) -> HttpResponseRedirect:
     back = _channel_of(post)
     if post.within_delete_grace:
         pk = post.pk  # delete() clears it
-        post.delete()
+        with trail.event("den_hurtige.message.deleted", subject=post):
+            post.delete()
         live.message_changed(post.channel, pk, "deleted")
         messages.success(request, "Opslaget er slettet.")
-    elif post.soft_delete():
+    elif _blank(post):
         live.message_changed(post.channel, post.pk)
         # Spelled out because it is the half people do not expect: the words are gone, the bubble
         # is not.
@@ -885,3 +892,13 @@ def delete_post(request: HttpRequest, pk: int) -> HttpResponseRedirect:
         # a request arriving a moment earlier would have taken instead.
         messages.error(request, "Beskeden er allerede slettet.")
     return redirect(back)
+
+
+def _blank(post: QuickPost) -> bool:
+    """Make the message a tombstone, in the trail as such. Nothing is recorded when a concurrent
+    delete got there first."""
+    with trail.event("den_hurtige.message.blanked", subject=post) as event:
+        blanked = post.soft_delete()
+        if not blanked:
+            event.cancel()
+    return blanked

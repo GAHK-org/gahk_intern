@@ -36,6 +36,7 @@ import argparse
 from django.core.management.base import BaseCommand
 from django.utils import timezone
 
+from audit import trail
 from opslagstavle.models import ORPHAN_IMAGE_GRACE, NoticeImage
 
 
@@ -54,5 +55,8 @@ class Command(BaseCommand):
             self.stdout.write(f"[dry-run] would clear {n_orphans} unused image upload(s).")
             return
 
-        orphans.delete()
+        if n_orphans:
+            # One audit event for the whole sweep, by nobody, with how many went.
+            with trail.event("opslagstavle.image.purged", actor=None, details={"count": n_orphans}):
+                orphans.delete()
         self.stdout.write(self.style.SUCCESS(f"Opslagstavlen: {n_orphans} ubrugte billeder ryddet."))

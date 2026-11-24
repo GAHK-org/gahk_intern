@@ -48,7 +48,7 @@ class Command(BaseCommand):
             )
             return
 
-        expired.delete()
+        Event.objects.purge_expired(now)
         self.stdout.write(
             self.style.SUCCESS(f"Begivenheder: {n_held} afholdt(e) og {n_cancelled} aflyst(e) slettet.")
         )
