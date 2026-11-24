@@ -788,7 +788,9 @@ def test_the_board_looks_up_no_embedsgruppe_at_all(
         page = client.get(BOARD).content.decode()
 
     assert page.count("chip-embedsgruppe") == 6  # one pill per post, all six rendered
-    assert [q["sql"] for q in captured.captured_queries if "core_workgroup" in q["sql"]] == []
+    # The reader's own roles read their embedsgruppe once (access.roles); no post looks one up.
+    lookups = [q["sql"] for q in captured.captured_queries if "core_workgroup" in q["sql"]]
+    assert [sql for sql in lookups if "access_grant" not in sql] == []
 
 
 def test_the_backfill_reads_the_month_each_post_was_actually_written_in(

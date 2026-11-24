@@ -7,8 +7,10 @@ from django.core import mail
 from django.test import Client
 from django.urls import reverse
 
+from access.models import Grant
 from residents.admin_access import can_decide, decide
-from residents.models import AdminAccessGrant, Resident, Role, RoleAssignment, active_period
+from residents.models import AdminAccessGrant, Resident, Role, active_period
+from tests.role_support import give
 
 
 def _grant(resident: Resident) -> AdminAccessGrant:
@@ -76,23 +78,23 @@ def test_approvers_are_mailed_when_a_grant_opens(
 
 @pytest.mark.django_db
 def test_monthly_roll_forward_does_not_reopen_an_approved_grant(make_resident: Callable) -> None:
-    """A continuing administrator gets a fresh RoleAssignment every month; re-approving them twelve
-    times a year would train the group to click accept without reading."""
+    """Given administrator again (a second grant, say after a gap); re-approving them each time would
+    train the group to click accept without reading."""
     admin = _approved_admin(make_resident, "fortsaetter@gahk.dk")
     y, m = active_period()
     ny, nm = (y + 1, 1) if m == 12 else (y, m + 1)
-    RoleAssignment.objects.create(resident=admin, role=Role.ADMINISTRATOR, year=ny, month=nm)
+    give(admin, Role.ADMINISTRATOR, (ny, nm))
     assert _grant(admin).status == AdminAccessGrant.Status.APPROVED
 
 
 @pytest.mark.django_db
 def test_leaving_netvaerk_entirely_requires_a_fresh_approval(make_resident: Callable) -> None:
     admin = _approved_admin(make_resident, "forlader@gahk.dk")
-    RoleAssignment.objects.filter(resident=admin, role=Role.ADMINISTRATOR).delete()
+    for grant in Grant.objects.filter(resident=admin, role=Role.ADMINISTRATOR):
+        grant.delete()
     assert AdminAccessGrant.objects.filter(resident=admin).exists() is False
 
-    y, m = active_period()
-    RoleAssignment.objects.create(resident=admin, role=Role.ADMINISTRATOR, year=y, month=m)
+    give(admin, Role.ADMINISTRATOR)
     assert _grant(admin).status == AdminAccessGrant.Status.PENDING
     assert Resident.objects.get(pk=admin.pk).has_perm("residents.delete_resident") is False
 

@@ -37,7 +37,8 @@ from reparationer.models import (
     RepairImage,
     RepairTask,
 )
-from residents.models import WORKGROUP_ROLE, Resident, Role, RoleAssignment, active_period
+from residents.models import WORKGROUP_ROLE, Resident, Role, active_period
+from tests.role_support import give
 
 BOARD = "/reparationer/"
 pytestmark = pytest.mark.django_db
@@ -168,8 +169,8 @@ def test_a_vicevaert_without_a_device_still_sees_a_new_repair_in_app(
 def test_administrators_and_superusers_hear_about_every_repair(
     client: Client, beboer: Resident, vicevaert: Resident, make_resident: Callable[..., Resident]
 ) -> None:
-    """administrator implies every role (residents.permissions.real_roles), and a superuser may hold
-    it with no RoleAssignment at all — so both are part of either crew's audience."""
+    """Administrators are told along with either crew, and a superuser is an administrator with no
+    grant at all — so both are part of either crew's audience."""
     admin = make_resident(email="admin@gahk.dk", roles=(Role.ADMINISTRATOR,))
     superuser = make_resident(email="super@gahk.dk", is_superuser=True)
     login(client, beboer)
@@ -185,7 +186,7 @@ def test_only_the_current_role_holders_are_told(
     """Someone who was a Vicevært last year and rotated off must not keep getting paged."""
     former = make_resident(email="former@gahk.dk")
     year, month = active_period()
-    RoleAssignment.objects.create(resident=former, role=Role.VICEVAERT, year=year - 1, month=month)
+    give(former, Role.VICEVAERT, (year - 1, month))
     login(client, beboer)
 
     client.post(f"{BOARD}opret", {"title": "Utæt vandhane", "location": "", "description": ""})
@@ -608,10 +609,8 @@ def test_column_age_follows_the_dev_clock(client: Client, beboer: Resident, vice
     task = make_task(beboer)
     future = timezone.localdate() + timedelta(days=OVERDUE_AFTER_DAYS + 1)
     DevClock.objects.update_or_create(pk=1, defaults={"simulated_date": future})
-    # Roles are per month, so the Vicevært needs one in the simulated month too.
-    RoleAssignment.objects.create(
-        resident=vicevaert, role=Role.VICEVAERT, year=future.year, month=future.month
-    )
+    # The Vicevært's role is given for this month; they need it in the simulated month too.
+    give(vicevaert, Role.VICEVAERT, (future.year, future.month))
     with override_settings(DEBUG=True):
         assert RepairTask.objects.get(pk=task.pk).column_age == "overdue"
         login(client, vicevaert).post(f"{BOARD}{task.pk}/status", {"status": RepairTask.Status.I_GANG})

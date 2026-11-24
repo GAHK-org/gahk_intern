@@ -26,11 +26,8 @@ from core.models import Cleaning, Room, Workgroup
 from .forms import ProfileEditForm, ResidentEditForm, password_link_mail
 from .models import (
     WORKGROUP_ROLE,
-    WORKGROUP_ROLE_VALUES,
     Residency,
     Resident,
-    Role,
-    RoleAssignment,
     active_period,
     next_period,
 )
@@ -377,25 +374,6 @@ def stamtree(request: HttpRequest) -> HttpResponse:
 
 
 # ---- Next month's list — indstilling's monthly update task (F-010) ----
-def _sync_month_roles(
-    resident_id: int, workgroup: Workgroup | None, year: int, month: int, is_admin: bool
-) -> None:
-    """Privileged-workgroup roles are derived from the chosen embedsgruppe: drop the others, add this
-    one. The `administrator` role is not a workgroup, so it is preserved/carried separately. A role
-    that stays is left alone rather than deleted and made again, so the audit trail shows only real
-    changes."""
-    role = WORKGROUP_ROLE.get(workgroup.name) if workgroup else None
-    RoleAssignment.objects.filter(
-        resident_id=resident_id, year=year, month=month, role__in=WORKGROUP_ROLE_VALUES
-    ).exclude(role=role or "").delete()
-    if role:
-        RoleAssignment.objects.get_or_create(resident_id=resident_id, role=role, year=year, month=month)
-    if is_admin:
-        RoleAssignment.objects.get_or_create(
-            resident_id=resident_id, role=Role.ADMINISTRATOR, year=year, month=month
-        )
-
-
 def _pick[T](mapping: dict[int, T], raw: str | None) -> T | None:
     """Look up an id (from a POST field) in an {id: obj} map; None if blank/invalid."""
     return mapping.get(int(raw)) if raw and raw.isdigit() else None
@@ -483,10 +461,7 @@ def _place[T](mapping: dict[int, T], raw: str | None, inherited: T | None) -> T 
 
 
 def _drop_from_month(residency: Residency) -> None:
-    """Take a resident off a month's list, with the roles that month gave them."""
-    RoleAssignment.objects.filter(
-        resident_id=residency.resident_id, year=residency.year, month=residency.month
-    ).delete()
+    """Take a resident off a month's list (with it go the roles its embedsgruppe gave them)."""
     residency.delete()
 
 
@@ -512,11 +487,12 @@ def _target_period(request: HttpRequest, current: tuple[int, int]) -> tuple[int,
 def next_month_list(request: HttpRequest) -> HttpResponse | HttpResponseRedirect:
     """Indstilling (and admin) edit an alumneliste: copy the list forward, then set each resident's
     room, embedsgruppe (workgroup) and cleaning, and add/remove people. A privileged embedsgruppe
-    grants the matching role for that month; `administrator` is carried forward.
+    gives the matching role for that month (read from the list, access.roles); administrator is a
+    grant of its own and needs no carrying forward.
 
     Works on **next month** by default, and on the **current** one when asked (?period=current), so a
     mistake in the live list can be fixed instead of waiting for the month to roll over. Editing the
-    live list takes effect immediately — including role assignments — which is why the template says
+    live list takes effect immediately — including the roles it gives — which is why the template says
     so plainly and why self-removal is refused below."""
     cy, cm = active_period()
     ny, nm = _target_period(request, (cy, cm))
@@ -532,11 +508,6 @@ def next_month_list(request: HttpRequest) -> HttpResponse | HttpResponseRedirect
 
     if request.method == "POST":
         action = request.POST.get("action")
-        admins = set(
-            RoleAssignment.objects.filter(year=cy, month=cm, role=Role.ADMINISTRATOR).values_list(
-                "resident_id", flat=True
-            )
-        )
         me = current_resident(request).pk
 
         def _replace_error(replaced: Residency | None, newcomer_id: int | None) -> str | None:
@@ -565,7 +536,6 @@ def next_month_list(request: HttpRequest) -> HttpResponse | HttpResponseRedirect
                             "cleaning_id": res.cleaning_id,
                         },
                     )
-                    _sync_month_roles(res.resident_id, res.workgroup, ny, nm, res.resident_id in admins)
             messages.success(request, f"Listen er kopieret til {ny}-{nm:02d}.")
             return redirect(f"{reverse('next_month_list')}?period={'current' if editing_current else 'next'}")
 
@@ -646,15 +616,12 @@ def next_month_list(request: HttpRequest) -> HttpResponse | HttpResponseRedirect
                     next_rows.append(res)
             else:
                 with trail.event("residents.month_list.saved", details={"period": f"{ny}-{nm:02d}"}):
-                    RoleAssignment.objects.filter(resident_id__in=removed, year=ny, month=nm).delete()
                     Residency.objects.filter(resident_id__in=removed, year=ny, month=nm).delete()
                     # Row by row rather than one UPDATE each, so the trail sees what moved.
                     for residency in Residency.objects.filter(resident_id__in=intended, year=ny, month=nm):
                         room, wg, cl = intended[residency.resident_id]
                         residency.room, residency.workgroup, residency.cleaning = room, wg, cl
                         residency.save(update_fields=["room", "workgroup", "cleaning"])
-                    for rid, (_room, wg, _cl) in intended.items():
-                        _sync_month_roles(rid, wg, ny, nm, rid in admins)
                 messages.success(request, "Ændringer gemt.")
                 return redirect(
                     f"{reverse('next_month_list')}?period={'current' if editing_current else 'next'}"
@@ -700,7 +667,6 @@ def next_month_list(request: HttpRequest) -> HttpResponse | HttpResponseRedirect
                             ),
                         },
                     )
-                    _sync_month_roles(resident.id, wg, ny, nm, resident.id in admins)
                 messages.success(request, _added_message(resident.full_name, replaced, ny, nm))
                 return redirect(
                     f"{reverse('next_month_list')}?period={'current' if editing_current else 'next'}"
@@ -768,7 +734,6 @@ def next_month_list(request: HttpRequest) -> HttpResponse | HttpResponseRedirect
                         year=ny,
                         month=nm,
                     )
-                    _sync_month_roles(r.id, wg, ny, nm, False)
                 sent = _send_welcome_email(request, r)
                 base = f"{first} {last} oprettet. " + _added_message(f"{first} {last}", replaced, ny, nm)
                 messages.success(

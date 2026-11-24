@@ -20,7 +20,7 @@ from django.contrib.auth.views import redirect_to_login
 from django.core.exceptions import PermissionDenied
 from django.core.paginator import Paginator
 from django.db import DatabaseError, connection, transaction
-from django.db.models import Avg, F
+from django.db.models import Avg, F, Q
 from django.http import Http404, HttpRequest, HttpResponse, HttpResponseRedirect, QueryDict
 from django.http.response import HttpResponseBase
 from django.shortcuts import redirect, render
@@ -45,12 +45,13 @@ from access.api import (
 )
 from audit import trail
 from config.celery import app as celery_app
+from core.clock import current_date
 from core.models import WorkerJobLog
 from core.tasks import task_time_limit
 from core.worker_logs import SENT_AT_HEADER, parse_sent_at
 
 from . import admin_access
-from .models import AdminAccessGrant, Resident, Role, RoleAssignment, active_period
+from .models import WORKGROUP_ROLE, AdminAccessGrant, Residency, Resident, Role, active_period
 from .permissions import View, current_resident
 
 
@@ -1188,20 +1189,31 @@ def worker_job_detail(request: HttpRequest, task_id: str) -> HttpResponse:
 
 
 def roles(request: HttpRequest) -> HttpResponse:
+    """Roles given by hand, from today until removed (access.models.Grant). An embedsgruppe's role
+    comes from the month's list and is changed there; this page shows it but cannot take it away."""
+    from access.models import Grant
+
     year, month = active_period()
+    today = current_date()
     if request.method == "POST":
         rid = request.POST.get("resident")
         role = request.POST.get("role")
         action = request.POST.get("action")
         resident = Resident.objects.filter(pk=rid or 0).first() if (rid or "").isdecimal() else None
         if resident is not None and role in Role.values:
-            details = {"role": role, "period": f"{year}-{month:02d}"}
+            details = {"role": role}
             if action == "add":
                 with trail.event("residents.role.added", subject=resident, details=details):
-                    RoleAssignment.objects.get_or_create(resident=resident, role=role, year=year, month=month)
-                    Resident.objects.filter(id=resident.pk).update(is_staff=True)
+                    if not Grant.objects.active().filter(resident=resident, role=role).exists():
+                        Grant.objects.create(
+                            resident=resident,
+                            role=role,
+                            reason="Givet på rollesiden",
+                            starts_on=today,
+                            granted_by=current_resident(request),
+                        )
                     # Stamp the granter so they cannot also be the approver (residents.admin_access).
-                    # The grant itself is opened by the signal, which covers the other three doors.
+                    # The approval itself is opened by the signal, which covers the other doors.
                     if role == Role.ADMINISTRATOR:
                         grant = AdminAccessGrant.objects.filter(
                             resident=resident, status=AdminAccessGrant.Status.PENDING, requested_by=None
@@ -1210,21 +1222,32 @@ def roles(request: HttpRequest) -> HttpResponse:
                             grant.requested_by = current_resident(request)
                             grant.save(update_fields=["requested_by"])
             elif action == "remove":
+                yesterday = today - datetime.timedelta(days=1)
                 with trail.event("residents.role.removed", subject=resident, details=details):
-                    RoleAssignment.objects.filter(
-                        resident=resident, role=role, year=year, month=month
-                    ).delete()
+                    for current in Grant.objects.active().filter(resident=resident, role=role):
+                        if current.starts_on > yesterday:
+                            current.delete()
+                        else:
+                            current.ends_on = yesterday
+                            current.save(update_fields=["ends_on"])
         return redirect("siteadmin:roles")
 
+    given: dict[int, list[str]] = {}
+    for resident_id, role in (
+        Grant.objects.active().filter(role__in=Role.values).values_list("resident_id", "role")
+    ):
+        given.setdefault(resident_id, []).append(role)
+    listed: dict[int, str] = {}
+    for residency in Residency.objects.filter(year=year, month=month).select_related("workgroup"):
+        role = WORKGROUP_ROLE.get(residency.workgroup.name) if residency.workgroup else None
+        if role:
+            listed[residency.resident_id] = role
     residents = (
-        Resident.objects.filter(residencies__year=year, residencies__month=month)
+        Resident.objects.filter(Q(residencies__year=year, residencies__month=month) | Q(pk__in=given))
         .distinct()
         .order_by("first_name", "last_name")
     )
-    role_map: dict[int, list[str]] = {}
-    for ra in RoleAssignment.objects.filter(year=year, month=month):
-        role_map.setdefault(ra.resident_id, []).append(ra.role)
-    rows = [(r, role_map.get(r.id, [])) for r in residents]
+    rows = [(r, listed.get(r.id), sorted(given.get(r.id, []))) for r in residents]
     return render(
         request,
         "siteadmin/roles.html",
@@ -1296,7 +1319,6 @@ def preview_set(request: HttpRequest) -> HttpResponseRedirect:
 def dev_clock_set(request: HttpRequest) -> HttpResponseRedirect:
     if not settings.DEBUG:
         raise Http404
-    from core.clock import current_date
     from core.models import DevClock
 
     action = request.POST.get("action")

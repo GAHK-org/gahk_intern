@@ -17,7 +17,8 @@ from core.models import Room
 from events.models import CalendarFeedToken
 from notifications import services as notifications
 from notifications.models import Notification
-from residents.models import Residency, Resident, Role, RoleAssignment, active_period
+from residents.models import Residency, Resident, Role, active_period
+from tests.role_support import give
 
 pytestmark = [pytest.mark.django_db, pytest.mark.real_stages]
 
@@ -108,13 +109,12 @@ def test_sql_and_python_agree_on_who_holds_what(house: dict[str, Resident]) -> N
         assert set(holding({role}).values_list("pk", flat=True)) == expected, role
 
 
-def test_a_group_or_superuser_makes_someone_a_resident(
+def test_an_administrator_or_superuser_is_a_resident(
     house: dict[str, Resident], make_resident: Callable[..., Resident]
 ) -> None:
-    year, month = active_period()
-    RoleAssignment.objects.create(resident=house["over_a_year"], role=Role.REGNSKAB, year=year, month=month)
+    give(house["over_a_year"], Role.ADMINISTRATOR)
     superuser = make_resident(email="super@gahk.dk", is_superuser=True)
-    assert real_roles(Resident.objects.get(pk=house["over_a_year"].pk)) == {RESIDENT, Role.REGNSKAB}
+    assert real_roles(Resident.objects.get(pk=house["over_a_year"].pk)) == {RESIDENT, Role.ADMINISTRATOR}
     assert Role.ADMINISTRATOR in real_roles(superuser) and RESIDENT in real_roles(superuser)
     assert house["over_a_year"] in holders("dashboard.view")
 

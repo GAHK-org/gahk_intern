@@ -2,22 +2,24 @@
 {% block title %}Roller - GAHK Admin{% endblock %}
 {% block content %}
   <h1>Roller / embedsgrupper</h1>
-  <p class="muted mb-4">Aktiv periode {{ period }}. Roller gælder kun for denne måned.</p>
+  <p class="muted mb-4">En embedsgruppes rolle følger alumnelisten for {{ period }} og ændres dér. Andre roller gives her og gælder fra i dag, til de fjernes.</p>
   <table class="w-full border-collapse">
-    <thead><tr class="border-b border-line"><th class="p-2">Beboer</th><th class="p-2">Roller</th><th class="p-2">Tildel</th></tr></thead>
+    <thead><tr class="border-b border-line"><th class="p-2">Beboer</th><th class="p-2">Roller</th><th class="p-2">Giv</th></tr></thead>
     <tbody>
-    {% for resident, roles in rows %}
+    {% for resident, listed, given in rows %}
       <tr class="border-b border-line align-top">
         <td class="p-2">{{ resident.full_name }}</td>
         <td class="p-2">
-          {% for r in roles %}
+          {% if listed %}<span class="chip" title="Fra alumnelisten">{{ listed }}</span>{% endif %}
+          {% for r in given %}
             <form method="post" class="inline">{% csrf_token %}
               <input type="hidden" name="resident" value="{{ resident.id }}">
               <input type="hidden" name="role" value="{{ r }}">
               <input type="hidden" name="action" value="remove">
               <button type="submit" class="btn btn-secondary text-xs px-2 py-1 mr-1">{{ r }} ✕</button>
             </form>
-          {% empty %}<span class="muted">—</span>{% endfor %}
+          {% endfor %}
+          {% if not listed and not given %}<span class="muted">—</span>{% endif %}
         </td>
         <td class="p-2">
           <form method="post" class="flex gap-1">{% csrf_token %}

@@ -1,6 +1,6 @@
 from django.contrib import admin
 
-from .models import Residency, Resident, RoleAssignment
+from .models import Residency, Resident
 
 
 @admin.register(Resident)
@@ -17,11 +17,4 @@ class ResidentAdmin(admin.ModelAdmin):
 class ResidencyAdmin(admin.ModelAdmin):
     list_display = ("resident", "year", "month", "room", "workgroup", "cleaning")
     list_filter = ("year", "month")
-    search_fields = ("resident__email", "resident__first_name", "resident__last_name")
-
-
-@admin.register(RoleAssignment)
-class RoleAssignmentAdmin(admin.ModelAdmin):
-    list_display = ("resident", "role", "year", "month")
-    list_filter = ("role", "year", "month")
     search_fields = ("resident__email", "resident__first_name", "resident__last_name")

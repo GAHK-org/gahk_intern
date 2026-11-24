@@ -21,6 +21,7 @@ Deterministic logins (all password `demo1234`):
 """
 
 import argparse
+import datetime
 import random
 import unicodedata
 from collections import Counter
@@ -33,6 +34,7 @@ from django.core.management.base import BaseCommand, CommandError
 from django.db import connection, models, transaction
 from django.utils import timezone
 
+from access.models import Grant
 from admissions.models import Application
 from ak.models import AkEntry, AkMonthlyCharge
 from ak.services import apply_monthly_charge
@@ -76,7 +78,6 @@ from residents.models import (
     Residency,
     Resident,
     Role,
-    RoleAssignment,
 )
 from rooms.models import (
     KvotientApplication,
@@ -149,7 +150,7 @@ WIPE_ORDER: list[type[models.Model]] = [
     RoomOffer,
     AkEntry,
     Application,
-    RoleAssignment,
+    Grant,
     Residency,
     ContentChange,
     PageVersion,
@@ -517,13 +518,14 @@ class Command(BaseCommand):
             "oel@gahk.dk": [Role.OELKAELDER],
             "regnskab@gahk.dk": [Role.REGNSKAB],
         }
-        assigned = set()
+        # Given by hand (access.models.Grant), from the 1st of this month: a demo's embedsgrupper on
+        # the list are random, so the documented accounts get theirs this way.
+        starts_on = datetime.date(self.year, self.month, 1)
         for email, roles in fixed.items():
             for role in roles:
-                RoleAssignment.objects.get_or_create(
-                    resident=by_email[email], role=role, year=self.year, month=self.month
+                Grant.objects.get_or_create(
+                    resident=by_email[email], role=role, defaults={"reason": "Demo", "starts_on": starts_on}
                 )
-                assigned.add(by_email[email].pk)
 
         # Sprinkle the remaining privileged roles across other residents for the current month.
         pool = [r for r in residents if r.email not in fixed and not r.email.startswith(("admin", "beboer"))]
@@ -536,10 +538,9 @@ class Command(BaseCommand):
             Role.REGNSKAB,
         ]:
             for r in self.rng.sample(pool, k=min(3, len(pool))):
-                RoleAssignment.objects.get_or_create(resident=r, role=role, year=self.year, month=self.month)
-                assigned.add(r.pk)
-
-        Resident.objects.filter(pk__in=assigned).update(is_staff=True)
+                Grant.objects.get_or_create(
+                    resident=r, role=role, defaults={"reason": "Demo", "starts_on": starts_on}
+                )
 
     def _seed_profile_pictures(self, residents: list[Resident]) -> None:
         for index, resident in enumerate(residents[:8]):

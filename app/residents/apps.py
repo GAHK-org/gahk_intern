@@ -8,7 +8,7 @@ class ResidentsConfig(AppConfig):
     def ready(self) -> None:
         from core.media import register_cacheable
 
-        from . import auth, signals  # noqa: F401  (failed-login log; RoleAssignment → is_staff sync)
+        from . import auth, signals  # noqa: F401  (failed-login log; administrator grant → is_staff sync)
 
         # Avatars come from the server's disk, every one of them: a thumbnail is only ever named by
         # the resident it is the avatar of, and a replaced one is deleted, and its copy with it

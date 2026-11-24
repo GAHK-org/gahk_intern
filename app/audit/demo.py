@@ -43,7 +43,9 @@ from django.test import RequestFactory
 from django.urls import reverse
 from django.utils import timezone
 
-from residents.models import AdminAccessGrant, Residency, Resident, Role, RoleAssignment
+from access.api import holding
+from access.models import Grant
+from residents.models import AdminAccessGrant, Residency, Resident, Role
 
 from . import trail
 from .models import AuditEvent
@@ -157,15 +159,10 @@ def _cast(residents: list[Resident], now: datetime) -> _Cast | None:
     others = sorted((r for r in residents if r.email not in skip), key=lambda r: r.pk)
     if len(others) < 3:
         return None
-    holder = (
-        RoleAssignment.objects.filter(role=Role.INDSTILLING, year=today.year, month=today.month)
-        .select_related("resident")
-        .order_by("pk")
-        .first()
-    )
+    holder = holding({Role.INDSTILLING}).exclude(is_superuser=True).order_by("pk").first()
     return _Cast(
         by_email=by_email,
-        indstilling=holder.resident if holder else by_email["formand@gahk.dk"],
+        indstilling=holder or by_email["formand@gahk.dk"],
         others=others,
         leaver=leaver,
         newcomer=newcomer,
@@ -335,15 +332,18 @@ def _role_event(
 ) -> Callable[[], None]:
     """What the roles page does (residents.views_admin.roles), with an administrator's grant opened
     when the history says."""
-    year, month = period
-    details = {"role": role, "period": f"{year}-{month:02d}"}
+    details = {"role": role}
 
     def play() -> None:
         with trail.event(action, actor=by, subject=resident, details=details):
             if action == "residents.role.removed":
-                RoleAssignment.objects.filter(resident=resident, role=role, year=year, month=month).delete()
+                Grant.objects.filter(resident=resident, role=role).delete()
                 return
-            RoleAssignment.objects.get_or_create(resident=resident, role=role, year=year, month=month)
+            Grant.objects.get_or_create(
+                resident=resident,
+                role=role,
+                defaults={"reason": "Givet på rollesiden", "starts_on": at.date(), "granted_by": by},
+            )
             if role == Role.ADMINISTRATOR:  # the granter is stamped, so they cannot also approve
                 grant = AdminAccessGrant.objects.filter(resident=resident, requested_by=None).first()
                 if grant is not None:
@@ -379,12 +379,7 @@ def _roles(cast: _Cast, spare: list[Resident], now: datetime) -> list[Moment]:
 
     moments = []
     # Given: one of the kitchen roles the seed gave, taken back first so the event gives it again.
-    kitchen = (
-        RoleAssignment.objects.filter(role=Role.KOKKENGRUPPE, year=cast.year, month=cast.month)
-        .select_related("resident")
-        .order_by("pk")
-        .first()
-    )
+    kitchen = Grant.objects.filter(role=Role.KOKKENGRUPPE).select_related("resident").order_by("pk").first()
     if kitchen is not None:
         kitchen.delete()
         moments.append(
@@ -394,15 +389,11 @@ def _roles(cast: _Cast, spare: list[Resident], now: datetime) -> list[Moment]:
         )
 
     # Removed: an inspektion role the seed never gave, so taking it away leaves the seeded roles.
-    held = set(
-        RoleAssignment.objects.filter(role=Role.INSPEKTION, year=cast.year, month=cast.month).values_list(
-            "resident_id", flat=True
-        )
-    )
+    held = set(holding({Role.INSPEKTION}).values_list("pk", flat=True))
     taken_from = next((r for r in spare[5:] if r.pk not in held), None)
     if taken_from is not None:
-        RoleAssignment.objects.create(
-            resident=taken_from, role=Role.INSPEKTION, year=cast.year, month=cast.month
+        Grant.objects.create(
+            resident=taken_from, role=Role.INSPEKTION, reason="Demo", starts_on=date(cast.year, cast.month, 1)
         )
         moments.append(
             by_formand("residents.role.removed", taken_from, Role.INSPEKTION, this_month(now, 3, 16, 40))

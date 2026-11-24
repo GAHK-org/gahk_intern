@@ -33,7 +33,8 @@ from core.models import PushSubscription, Room
 from notifications import categories, services, tasks
 from notifications.categories import Importance
 from notifications.models import Notification, NotificationPreference, NotificationSettings
-from residents.models import Residency, Resident, Role, RoleAssignment, active_period
+from residents.models import Residency, Resident, Role, active_period
+from tests.role_support import give
 
 pytestmark = pytest.mark.django_db
 
@@ -1211,7 +1212,7 @@ def test_everyone_is_residents_role_holders_device_owners_and_superusers(
     living = make_resident(email="living@gahk.dk")
     Residency.objects.create(resident=living, room=room, year=year, month=month)
     role = make_resident(email="role@gahk.dk")
-    RoleAssignment.objects.create(resident=role, role=Role.AK, year=year, month=month)
+    give(role, Role.AK)
     owner = make_resident(email="device@gahk.dk")
     device(owner)
     superuser = make_resident(email="super@gahk.dk", is_superuser=True)
@@ -1224,9 +1225,9 @@ def test_everyone_is_residents_role_holders_device_owners_and_superusers(
         year=prev_year,
         month=prev_month,
     )
-    RoleAssignment.objects.create(resident=moved_out, role=Role.AK, year=prev_year, month=prev_month)
+    give(moved_out, Role.AK, (prev_year, prev_month))
     deactivated = make_resident(email="inactive@gahk.dk", is_active=False)
-    RoleAssignment.objects.create(resident=deactivated, role=Role.AK, year=year, month=month)
+    give(deactivated, Role.AK)
     make_resident(email="nobody@gahk.dk")
 
     assert active_period() == (year, month)
@@ -1237,7 +1238,7 @@ def test_everyone_is_residents_role_holders_device_owners_and_superusers(
         "super@gahk.dk",
     }
     # And it is a usable audience as-is: no duplicates for a resident matching several rules.
-    RoleAssignment.objects.create(resident=living, role=Role.AK, year=year, month=month)
+    give(living, Role.AK)
     device(living)
     assert services.everyone().filter(pk=living.pk).count() == 1
     assert {owner.pk, superuser.pk} <= set(services.everyone().values_list("pk", flat=True))

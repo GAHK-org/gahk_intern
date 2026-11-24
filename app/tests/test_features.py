@@ -413,35 +413,35 @@ def test_pr_embedsgruppe_grants_cms_access(make_resident: Callable) -> None:
     """Being on the "PR-gruppen" embedsgruppe next month grants the pr role, hence CMS editing."""
     from core.models import Room, Workgroup
     from residents.models import Residency, active_period
-    from residents.views import _sync_month_roles
 
     pr_group = Workgroup.objects.create(name="PR-gruppen")
     r = make_resident(email="prmember@gahk.dk")
     y, m = active_period()
     room = Room.objects.create(legacy_index=140, number=140, floor="stuen", side="mod gaden")
     Residency.objects.create(resident=r, room=room, workgroup=pr_group, year=y, month=m)
-    _sync_month_roles(r.id, pr_group, y, m, is_admin=False)  # what the next-month editor runs
 
     assert r.has_role("pr", (y, m))
     assert user_can(r, "website.manage")
 
 
 @pytest.mark.django_db
-def test_is_staff_synced_with_roles(make_resident: Callable) -> None:
-    from residents.models import RoleAssignment, active_period
+def test_is_staff_synced_with_the_administrator_role(make_resident: Callable) -> None:
+    from tests.role_support import give
 
     r = make_resident(email="plain@gahk.dk")  # no roles → not staff
     assert r.is_staff is False
-    y, m = active_period()
-    ra = RoleAssignment.objects.create(resident=r, role=Role.AK, year=y, month=m)
+    give(r, Role.AK)
     r.refresh_from_db()
-    assert r.is_staff is True  # gained a role → staff
-    ra.delete()
+    assert r.is_staff is False  # an embedsgruppe's role opens no Django admin
+    grant = give(r, Role.ADMINISTRATOR)
     r.refresh_from_db()
-    assert r.is_staff is False  # lost last role → no longer staff
+    assert r.is_staff is True  # given administrator → staff
+    grant.delete()
+    r.refresh_from_db()
+    assert r.is_staff is False  # lost it → no longer staff
 
     su = make_resident(email="su@gahk.dk", is_superuser=True, is_staff=True)
-    RoleAssignment.objects.create(resident=su, role=Role.AK, year=y, month=m).delete()
+    give(su, Role.ADMINISTRATOR).delete()
     su.refresh_from_db()
     assert su.is_staff is True  # superuser stays staff regardless
 
@@ -453,7 +453,9 @@ def test_administrator_has_full_admin_permissions_while_in_role(make_resident: C
 
     Approval (the two-person rule) is covered in test_admin_access; here it is granted outright so
     this test stays about the *period* half of the condition."""
-    from residents.models import AdminAccessGrant, RoleAssignment, active_period
+    from access.models import Grant
+    from residents.models import AdminAccessGrant, active_period
+    from tests.role_support import give
 
     y, m = active_period()
     admin = make_resident(email="netvaerk@gahk.dk", roles=[Role.ADMINISTRATOR])
@@ -467,13 +469,13 @@ def test_administrator_has_full_admin_permissions_while_in_role(make_resident: C
     assert other.has_perm("residents.delete_resident") is False
     assert other.has_module_perms("oelkaelder") is False
 
-    RoleAssignment.objects.filter(resident=admin, role=Role.ADMINISTRATOR).delete()
+    Grant.objects.filter(resident=admin, role=Role.ADMINISTRATOR).delete()
     admin = Resident.objects.get(pk=admin.pk)  # fresh instance: real_roles memoises per instance
     assert admin.has_perm("residents.delete_resident") is False
 
     # Held last month only -> expired, even though is_staff (any period) is still True.
     prev = (y - 1, 12) if m == 1 else (y, m - 1)
-    RoleAssignment.objects.create(resident=admin, role=Role.ADMINISTRATOR, year=prev[0], month=prev[1])
+    give(admin, Role.ADMINISTRATOR, prev)
     admin = Resident.objects.get(pk=admin.pk)
     assert admin.is_staff is True
     assert admin.has_perm("residents.delete_resident") is False
