@@ -84,6 +84,7 @@ INSTALLED_APPS = [
     "notifications",
     "gahkflix",
     "regnskab",
+    "postkasser",
 ]
 
 MIDDLEWARE = [
@@ -487,6 +488,26 @@ CELERY_BEAT_SCHEDULE = {
         "task": "core.tasks.send_admin_monthly_summary",
         "schedule": crontab(minute=5, hour=9, day_of_month=1),
     },
+    # The groups' shared one.com mailboxes: refresh the cached headers of every folder (but drafts, trash and
+    # junk) and thread the mail into sager (postkasser.services.sync). Skips a mailbox another sync or a
+    # move is working on.
+    # Two minutes is the freshness a shared inbox wants; "Hent ny post" in the UI syncs on demand.
+    "sync-mailboxes": {
+        "task": "postkasser.tasks.sync_mailboxes",
+        "schedule": crontab(minute="*/2"),
+    },
+    # Time rules ("sager in <column> with no activity for N days move to <column>"). Hourly at :17, which no
+    # other job uses (the 15-minute jobs sit at :05/:07/:10/:13 + n*15, the other hourly one at :35).
+    "apply-mail-time-rules": {
+        "task": "postkasser.tasks.apply_time_rules",
+        "schedule": crontab(minute=17),
+    },
+    # Kladder (half-written mails, kept in the intranet only) untouched for 30 days. 03:45 is free: the
+    # other 03:xx jobs sit at :05/:20/:30/:40/:50, and the 15-minute jobs never land on :45.
+    "purge-mail-drafts": {
+        "task": "postkasser.tasks.purge_drafts",
+        "schedule": crontab(minute=45, hour=3),
+    },
 }
 
 STATIC_URL = "static/"
@@ -634,6 +655,14 @@ EMAIL_PORT = int(os.environ.get("SMTP_PORT", "587"))
 # Port 465 = implicit TLS/SMTPS (e.g. one.com's send.one.com); 587 = STARTTLS. Django forbids both.
 EMAIL_USE_SSL = EMAIL_PORT == 465
 EMAIL_USE_TLS = not EMAIL_USE_SSL
+# Fernet key for the postkasser mailbox passwords (postkasser.crypto). Required when DEBUG is off; in
+# DEBUG a key is derived from SECRET_KEY. Changing it makes every stored password undecryptable.
+MAILBOX_ENCRYPTION_KEY = os.environ.get("MAILBOX_ENCRYPTION_KEY", "")
+# Backend for mail the postkasser send as a group (postkasser.services.send). Defaults to EMAIL_BACKEND;
+# its own knob so a developer can send a real reply from a group mailbox without switching the WHOLE
+# site to SMTP — which would also mail seeded residents from every other feature. Empty = follow
+# EMAIL_BACKEND at send time (read then, not copied here, so a test's locmem override still applies).
+POSTKASSER_EMAIL_BACKEND = os.environ.get("POSTKASSER_EMAIL_BACKEND", "")
 # Sender addresses. one.com rejects any From the SMTP_USER account is not itself or an alias of
 # ("550 5.7.1 [M9] User [x] not authorized to send on behalf of <y>"), so every *_FROM_EMAIL below
 # must be aliased onto SMTP_USER in the one.com control panel — otherwise nothing is delivered.

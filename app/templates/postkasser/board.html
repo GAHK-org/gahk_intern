@@ -1,0 +1,114 @@
+{% extends "base.html" %}
+{% block title %}{{ mailbox.name }} - Postkasser{% endblock %}
+{% block content_width %}max-w-6xl{% endblock %}
+
+{% block content %}
+  <div class="page-head">
+    <div>
+      <p class="eyebrow">Grupper & konti · Postkasser</p>
+      <h1>{{ mailbox.name }}</h1>
+      <p class="muted">{{ mailbox.address }}{% if unread_count %} · {{ unread_count }} ulæst{{ unread_count|pluralize:"e" }}{% endif %}</p>
+    </div>
+    <div class="head-actions">
+      <a class="btn" href="{% url 'postkasser:compose' mailbox.slug %}">Ny mail</a>
+      <form method="post" action="{% url 'postkasser:refresh' mailbox.slug %}" class="inline">
+        {% csrf_token %}
+        <button type="submit" class="btn btn-secondary">Hent ny post</button>
+      </form>
+      {% if draft_count %}<a class="btn btn-secondary" href="{% url 'postkasser:drafts' mailbox.slug %}">Mine kladder ({{ draft_count }})</a>{% endif %}
+      <a class="btn btn-secondary" href="{% url 'postkasser:archive' mailbox.slug %}{% if query or tag_filter %}?{% if tag_filter %}tag={{ tag_filter }}{% endif %}{% if query and tag_filter %}&amp;{% endif %}{% if query %}q={{ query|urlencode }}{% endif %}{% endif %}">Arkiv</a>
+      <a class="btn btn-secondary" href="{% url 'postkasser:columns' mailbox.slug %}">Kolonner</a>
+      <a class="btn btn-secondary" href="{% url 'postkasser:tags' mailbox.slug %}">Tags</a>
+      <a class="btn btn-secondary" href="{% url 'postkasser:automation' mailbox.slug %}">Automatisering</a>
+    </div>
+  </div>
+
+  {% if mailboxes|length > 1 %}
+    <p class="mb-3 text-sm">
+      {% for other in mailboxes %}
+        {% if other.pk == mailbox.pk %}<strong>{{ other.name }}</strong>{% else %}<a href="{% url 'postkasser:board' other.slug %}">{{ other.name }}</a>{% endif %}{% if not forloop.last %} · {% endif %}
+      {% endfor %}
+    </p>
+  {% endif %}
+
+  {% if mailbox.last_sync_error %}
+    <div class="errorlist mb-3">Sidste hentning fra one.com fejlede: {{ mailbox.last_sync_error }}</div>
+  {% endif %}
+  <p class="muted text-sm mb-3">
+    {% if mailbox.last_synced_at %}Sidst hentet {{ mailbox.last_synced_at|timesince }} siden.{% else %}Er endnu ikke hentet.{% endif %}
+  </p>
+
+  {% comment %}
+    Plain GET, like the reparationer board: the result is bookmarkable and back/forward works. The
+    folder is a FILTER ("sager med mail i denne mappe") — a card does not live in a folder, and
+    moving one on the board changes nothing at one.com. `ansvarlig` rides along as a hidden field so
+    searching does not drop it; its own chips below keep the search.
+  {% endcomment %}
+  <form method="get" class="board-search mb-3" role="search">
+    <input type="search" name="q" value="{{ query }}" placeholder="Søg i emne og afsender…" aria-label="Søg i postkassen">
+    <select name="mappe" aria-label="Mappe">
+      <option value="">Alle mapper</option>
+      {% for folder in folders %}
+        <option value="{{ folder.pk }}"{% if folder.pk == folder_filter %} selected{% endif %}>{{ folder.indent }}{{ folder.display_name }}{% if folder.unread %} ({{ folder.unread }}){% endif %}</option>
+      {% endfor %}
+    </select>
+    {% if tags %}
+      <select name="tag" aria-label="Tag">
+        <option value="">Alle tags</option>
+        {% for tag in tags %}
+          <option value="{{ tag.pk }}"{% if tag.pk == tag_filter %} selected{% endif %}>{{ tag.name }}</option>
+        {% endfor %}
+      </select>
+    {% endif %}
+    {% if owner %}<input type="hidden" name="ansvarlig" value="{{ owner }}">{% endif %}
+    <button type="submit" class="btn btn-secondary">Søg</button>
+    {% if filtered %}<a href="{% url 'postkasser:board' mailbox.slug %}" class="btn btn-secondary">Ryd</a>{% endif %}
+  </form>
+  <nav class="board-filters" aria-label="Filtrér efter ansvarlig">
+    <a class="chip{% if not owner %} is-active{% endif %}" href="{% querystring ansvarlig=None %}">Alle</a>
+    <a class="chip{% if owner == 'mig' %} is-active{% endif %}" href="{% querystring ansvarlig='mig' %}">Mine</a>
+    <a class="chip{% if owner == 'ingen' %} is-active{% endif %}" href="{% querystring ansvarlig='ingen' %}">Ufordelte</a>
+  </nav>
+
+  {% comment %}
+    Dragging a card is wired up by frontend/src/reparationer.ts, shared with the repair board: it
+    binds to [data-kanban], POSTs `status` (here: the column's pk) to each card's data-move-url and
+    reads {ok, error, status} back. Not live (no data-live): a mail board is refreshed by the sync,
+    not by other people's moves. The sag page has plain buttons for the same move, so the drag is
+    never the only way.
+  {% endcomment %}
+  <div class="kanban" id="js-kanban" data-kanban data-can-move="1" data-can-manage="1">
+    <div hidden>{% csrf_token %}</div>
+    {% for column, cards in columns %}
+      <div class="kanban-col" id="kanban-col-{{ column.pk }}" data-status="{{ column.pk }}">
+        <div class="kanban-col-head">
+          <span>{{ column.name }}</span>
+          <span class="chip chip-quiet" data-count>{{ cards|length }}</span>
+        </div>
+        <div class="kanban-col-body" data-drop>
+          {% for card in cards %}
+            <div class="kanban-card" id="kanban-task-{{ card.pk }}" data-task-id="{{ card.pk }}"
+                 data-move-url="{% url 'postkasser:set_status' mailbox.slug card.pk %}">
+              <h3><a href="{% url 'postkasser:thread' mailbox.slug card.pk %}"{% if card.unread_count %} class="font-bold"{% endif %}>{{ card.subject|default:"(intet emne)" }}</a></h3>
+              <p class="muted">
+                {{ card.latest_sender|default:"(ukendt afsender)" }} · {{ card.last_message_at|date:"j. M" }}
+                · {{ card.message_count }} mail{{ card.message_count|pluralize:"s" }}
+                {% if card.attachment_count %}<span title="Har vedhæftninger">📎</span>{% endif %}
+              </p>
+              <p>
+                {% if card.unread_count %}<span class="chip">Ulæst</span>{% endif %}
+                {% if card.draft_authors %}<span class="chip chip-quiet" title="Kladde af {{ card.draft_authors|join:', ' }}">✎ Kladde</span>{% endif %}
+                {% if card.assignee %}<span class="chip chip-quiet">{{ card.assignee.full_name }}</span>{% endif %}
+                {% for name in card.folder_chips %}<span class="chip chip-quiet">{{ name }}</span>{% endfor %}
+                {% for tag in card.tags.all %}{% include "postkasser/_tag.html" %}{% endfor %}
+              </p>
+            </div>
+          {% endfor %}
+          <p class="muted kanban-empty" data-empty {% if cards %}hidden{% endif %}>Ingen sager her.</p>
+        </div>
+      </div>
+    {% endfor %}
+  </div>
+  {% comment %} Where a refused or failed drop says so; aria-live so it is not a silent snap-back. {% endcomment %}
+  <p class="kanban-note muted mt-2" data-kanban-message role="status" aria-live="polite" hidden></p>
+{% endblock %}

@@ -68,6 +68,7 @@ POSTGRES_PASSWORD=<pw>                            # for the compose postgres ser
 OELKAELDER_KIOSK_IPS=<the till's server-observed source IP>   # confirm from access logs, NOT ipconfig
 VAPID_PUBLIC_KEY=…  VAPID_PRIVATE_KEY=…           # Web Push for Den Hurtige — see below
 VAPID_ADMIN_EMAIL=autosvar@gahk.dk                # real address: push services report failures here
+MAILBOX_ENCRYPTION_KEY=<Fernet key>                # postkasser mailbox passwords — see below
 S3_BUCKET=…  S3_LOCATION=fsn1  S3_ACCESS_KEY=…  S3_SECRET_KEY=…   # media object storage — see §4c
 AWS_REQUEST_CHECKSUM_CALCULATION=when_required    # ⚠ required with the above — see §4c
 AWS_RESPONSE_CHECKSUM_VALIDATION=when_required
@@ -95,6 +96,14 @@ installed, since a new id splits installed apps; its start_url, `/den-hurtige/`,
 (public) has the steps per platform, the old app on gahk.dk shows a notice linking there, and
 logged-in residents on a phone get a banner pointing to it until they install or close it
 (spec/features/gahk-intern-app.md).
+
+**Postkasser (group mailboxes).** `MAILBOX_ENCRYPTION_KEY` encrypts the one.com passwords stored per
+mailbox (`postkasser.Mailbox`, added in `/django-admin/`); generate it with
+`python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"`. It is
+required when `DJANGO_DEBUG=0`, and **changing it makes every stored password undecryptable** — each
+one must be re-entered in the admin. Mail is read over IMAP (imap.one.com:993) and sent over SMTP
+(send.one.com:465) with each mailbox's own login; the Beat job `postkasser.tasks.sync_mailboxes`
+(every 2 minutes, §4b) caches the headers of every folder but drafts, trash and junk and threads the mail into sager (cases on a board), and bodies are fetched live and never stored. Mail can be moved between the mailbox's one.com folders from the intranet (IMAP `UID MOVE`, or `COPY` + `UID EXPUNGE` where the server has UIDPLUS; never a plain `EXPUNGE`).
 
 **Email — verify the senders, don't assume.** one.com authenticates as `SMTP_USER` and rejects any
 From address that account is not itself or an alias of:
@@ -280,6 +289,9 @@ idempotent, so a retry or an overlapping run is harmless.
 | `gahkflix.tasks.warn_expiring_drafts` | Daily 10:15 | The day before an unpublished draft is deleted, warns its uploader and the administrators — once. |
 | `events.tasks.remind_rsvp_deadlines` | Daily 17:00 | Sends due RSVP reminders. |
 | `oelkaelder.tasks.send_monthly_statements` | Day 1, 06:10 | Mails every active ølkælder account its previous calendar month, like the AK charge above. **Sends real mail to residents** — the only task here that does. |
+| `postkasser.tasks.sync_mailboxes` | Every 2 min | Refreshes the cached headers (sender, subject, flags — never bodies) of every folder of every active group mailbox except drafts, trash and junk, from one.com over IMAP, and threads the mail into sager (the cards of the board), so the board renders without waiting on one.com. A mailbox that fails (changed password) stores the error on itself and does not stop the others. A sync or a move on a mailbox holds `Mailbox.sync_started_at` while it runs (a database compare-and-swap, so it holds between the Celery worker and web requests); a run that finds it held skips that mailbox, and a running sync or move renews it as it goes, and a claim not renewed for 3 minutes is taken over, so a killed worker does not block it for long. New incoming mail runs the mailbox's rules (tags, column, assignee) and notifies the group / the assignee. |
+| `postkasser.tasks.apply_time_rules` | Hourly, at :17 | Moves the sager that have had no activity for N days from one column to another, by each mailbox's time rules (edited on the Automatisering page). Takes the same per-mailbox claim and skips a mailbox that is busy. `manage.py apply_mail_time_rules [--dry-run]` does the same by hand. |
+| `postkasser.tasks.purge_drafts` | Daily, 03:45 | Deletes the kladder (half-written mails, kept only in the intranet database, never at one.com) that have not been touched for 30 days. `manage.py purge_mail_drafts [--dry-run]` does the same by hand. |
 | `core.tasks.send_admin_monthly_summary` | Day 1, 09:05 | Mails everyone with Django-admin access (superusers and accepted administrators) a summary: how many jobs ran and failed in the month that just ended, failures by type, and who holds superuser, administrator and the other roles now, with the Django-admin grants decided during the month. Replaced the twice-daily test mail that proved Beat and the worker were alive; core migration 0016 deletes that mail's stored Beat row. |
 
 **Delete the matching Coolify Scheduled Tasks in the same deploy, not afterwards.** Coolify runs

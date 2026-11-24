@@ -1,0 +1,57 @@
+{% extends "base.html" %}
+{% block title %}Arkiv - {{ mailbox.name }}{% endblock %}
+{% block content_width %}max-w-4xl{% endblock %}
+
+{% block content %}
+  <div class="page-head">
+    <div>
+      <p class="eyebrow">Grupper & konti · Postkasser · {{ mailbox.name }}</p>
+      <h1>Arkiv</h1>
+      <p class="muted">Færdige sager, hvor sidste mail er over 30 dage gammel.</p>
+    </div>
+    <div class="head-actions">
+      <a class="btn btn-secondary" href="{% url 'postkasser:board' mailbox.slug %}">‹ Til tavlen</a>
+    </div>
+  </div>
+
+  <form method="get" class="board-search mb-4" role="search">
+    <input type="search" name="q" value="{{ query }}" placeholder="Søg i emne og afsender…" aria-label="Søg i arkivet">
+    {% if tags %}
+      <select name="tag" aria-label="Tag">
+        <option value="">Alle tags</option>
+        {% for tag in tags %}
+          <option value="{{ tag.pk }}"{% if tag.pk == tag_filter %} selected{% endif %}>{{ tag.name }}</option>
+        {% endfor %}
+      </select>
+    {% endif %}
+    <button type="submit" class="btn btn-secondary">Søg</button>
+    {% if query or tag_filter %}<a href="{% url 'postkasser:archive' mailbox.slug %}" class="btn btn-secondary">Ryd</a>{% endif %}
+  </form>
+
+  <div class="board-list">
+    {% for card in page %}
+      <a class="card-flat card-pad block" href="{% url 'postkasser:thread' mailbox.slug card.pk %}">
+        <div class="flex gap-2 justify-between">
+          <span>{{ card.subject|default:"(intet emne)" }}</span>
+          <span class="muted text-sm">{{ card.last_message_at|date:"j. M Y" }}</span>
+        </div>
+        <div class="muted text-sm">{{ card.latest_sender }} · {{ card.message_count }} mail{{ card.message_count|pluralize:"s" }}
+          {% for tag in card.tags.all %}{% include "postkasser/_tag.html" %}{% endfor %}</div>
+      </a>
+    {% empty %}
+      <p class="muted">{% if query or tag_filter %}Ingen sager matcher.{% else %}Arkivet er tomt.{% endif %}</p>
+    {% endfor %}
+  </div>
+
+  {% if page.has_other_pages %}
+    <nav class="flex gap-2 mt-4 items-center" aria-label="Sider">
+      {% if page.has_previous %}
+        <a class="btn btn-secondary" href="?side={{ page.previous_page_number }}{% if query %}&q={{ query|urlencode }}{% endif %}{% if tag_filter %}&tag={{ tag_filter }}{% endif %}">‹ Nyere</a>
+      {% endif %}
+      <span class="muted text-sm">Side {{ page.number }} af {{ page.paginator.num_pages }}</span>
+      {% if page.has_next %}
+        <a class="btn btn-secondary" href="?side={{ page.next_page_number }}{% if query %}&q={{ query|urlencode }}{% endif %}{% if tag_filter %}&tag={{ tag_filter }}{% endif %}">Ældre ›</a>
+      {% endif %}
+    </nav>
+  {% endif %}
+{% endblock %}

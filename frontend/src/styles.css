@@ -173,6 +173,10 @@
   .eyebrow a:hover { text-decoration:underline; }
   .page-head h1 { font-size:26px; font-weight:750; margin:4px 0 0; }
   .head-actions { display:flex; gap:10px; flex-wrap:wrap; }
+  /* A header with many buttons (postkasser's single-mail page): the title keeps a sensible width and the
+     buttons wrap as a group beneath it, instead of the last one being left alone under the title. */
+  .page-head-wrap { flex-wrap:wrap; }
+  .page-head-wrap > :first-child { flex:1 1 22rem; min-width:0; }
 
   /* --- dashboard pieces --- */
   .glance { display:flex; flex-wrap:wrap; align-items:center; gap:10px 26px; padding:15px 20px; background:var(--surface); border:1px solid var(--border); border-radius:var(--radius); box-shadow:var(--shadow-sm); margin-bottom:22px; }
@@ -1241,6 +1245,8 @@
     .content { padding:20px 18px 40px; }
     .grid2 { grid-template-columns:1fr; }
     .page-head { flex-direction:column; align-items:flex-start; }
+    /* In a column the 22rem basis would become a HEIGHT and open a gap under the title. */
+    .page-head-wrap > :first-child { flex:0 0 auto; }
   }
   @media (prefers-reduced-motion:reduce) { * { transition:none !important; } }
 
@@ -2879,4 +2885,17 @@
     fill:none; stroke:currentColor; stroke-width:1.8; stroke-linecap:round; stroke-linejoin:round; }
   .install-done { margin:16px 0; padding:10px 14px; border:1px solid var(--green-100); border-radius:10px;
     background:var(--green-050); color:var(--green-700); font-weight:600; }
+}
+
+/* ---- Postkasser tags (categories on sager): a fixed palette, each a light background with a dark ink
+   of its own, so a tag reads the same wherever it sits. Values match postkasser.models.TagColor. ---- */
+@layer components {
+  .chip-tag-graa { background:#ECEBE6; color:#464B46; border-color:#D6D4CB; }
+  .chip-tag-roed { background:#F6E7E5; color:#8E2B2B; border-color:#E7C7C3; }
+  .chip-tag-orange { background:#FBE9D7; color:#82440B; border-color:#EBCDA9; }
+  .chip-tag-gul { background:#F5EEDD; color:#6E5410; border-color:#E7D8B0; }
+  .chip-tag-groen { background:#E1F0E5; color:#1B5A35; border-color:#BFDCC8; }
+  .chip-tag-blaa { background:#E1ECF7; color:#1F4E80; border-color:#BDD3EA; }
+  .chip-tag-lilla { background:#ECE5F5; color:#5A3A86; border-color:#D3C5E6; }
+  .chip-tag-pink { background:#F8E4EE; color:#8A2A5B; border-color:#EBC2D7; }
 }

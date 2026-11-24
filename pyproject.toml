@@ -23,6 +23,7 @@ dependencies = [
     # older 0.2 wheels do not accept — and a fresh resolve on one would TypeError at import in
     # production only, where DEBUG is off and the traceback is least visible.
     "nh3>=0.3", # HTML sanitization of admin-edited CMS content and resident-authored markdown
+    "cryptography>=43",  # Fernet encryption of postkasser mailbox passwords
     # The [linkify] extra is not optional polish: it pulls linkify-it-py, which is what finds a
     # bare pasted URL in a body or a chat message. Without it `_MD.enable("linkify")` raises at
     # import, and core/links.py has no URL scanner at all — see that module on why the rules are
