@@ -47,6 +47,7 @@ from notifications.categories import Importance
 from notifications.models import Notification
 from residents.models import Resident, Role
 
+from .audit_support import actions, changes, events
 from .media_samples import broken_audio_mpg_bytes, jpeg_bytes, mp4_bytes, subtitled_mkv_bytes
 
 if TYPE_CHECKING:
@@ -1640,6 +1641,92 @@ def test_the_history_says_who_did_what_and_when(
     assert "2015" in page
     assert f"<b>{admin2.full_name}</b> lagde videoen i papirkurven" in page
     assert "før GAHKFlix begyndte at gemme historik" not in page
+
+
+def test_the_audit_trail_has_every_step_and_outlives_the_video(
+    admin: Resident, admin2: Resident, django_capture_on_commit_callbacks: Callable[..., Any]
+) -> None:
+    client = client_for(admin)
+    with django_capture_on_commit_callbacks(execute=True):
+        upload(client, mp4_bytes())
+    video = Video.objects.get()
+    client.post(reverse("gahkflix:edit", args=[video.pk]), details(video, title="Revyen", tags=["revy"]))
+    video.refresh_from_db()
+    services.bin_video(video, admin2)
+    services.delete_permanently(video)
+
+    assert actions("gahkflix.") == [
+        "gahkflix.video.uploaded",
+        "gahkflix.video.processed",
+        "gahkflix.video.edited",
+        "gahkflix.video.binned",
+        "gahkflix.video.deleted",
+    ]
+    edited = events("gahkflix.video.edited").get()
+    assert edited.actor_id == admin.pk
+    assert changes(edited)["title"] == ["revy", "Revyen"]
+    assert changes(edited)["tags"][0] == [] and len(changes(edited)["tags"][1]) == 1
+    assert (
+        events("gahkflix.video.edited")
+        .get()
+        .entities.filter(kind="gahkflix.tag", operation="created")
+        .exists()
+    )
+    deleted = events("gahkflix.video.deleted").get()
+    gone = deleted.entities.get(role="subject")
+    assert (gone.name, gone.operation) == ("Revyen", "deleted")
+    assert not Video.objects.exists()  # the video and its own history are gone; the trail is not
+
+
+def test_a_vote_is_one_event_named_for_its_outcome(
+    admin: Resident, admin2: Resident, member: Resident
+) -> None:
+    video = make_video(member, days_old=40)
+    change = services.propose(video, {"title": "Ny titel"}, member)
+    services.vote(change, admin, approve=True)
+    other = services.propose(video, {"title": "Andet"}, member)
+    services.vote(other, admin2, approve=False, comment="Nej tak")
+
+    assert actions("gahkflix.change.") == [
+        "gahkflix.change.proposed",
+        "gahkflix.change.approved",
+        "gahkflix.change.proposed",
+        "gahkflix.change.rejected",
+    ]
+    approved = events("gahkflix.change.approved").get()
+    # The vote, the closed request and the edit it carried out are one event, by the voter.
+    assert approved.actor_id == admin.pk
+    assert changes(approved, "gahkflix.video")["title"] == ["Revy 2026", "Ny titel"]
+    assert approved.entities.filter(kind="gahkflix.change_vote", operation="created").exists()
+
+
+def test_a_premiere_set_announced_and_taken_back_is_in_the_trail(
+    admin: Resident, django_capture_on_commit_callbacks: Callable[..., Any]
+) -> None:
+    video = make_video(admin, title="Julerevyen", published=False)
+    client = client_for(admin)
+    with django_capture_on_commit_callbacks(execute=True):
+        client.post(reverse("gahkflix:publish", args=[video.pk]), details(video, premiere_at=evening(1)))
+    before, after = changes(events("gahkflix.video.edited").get())["premiere_at"]
+    assert before is None and after
+    assert events("gahkflix.video.published").get().actor_id == admin.pk
+
+    # A day on, its minute comes: the worker announces it, as nobody's action.
+    Video.objects.filter(pk=video.pk).update(
+        published_at=timezone.now() - timedelta(days=1), premiere_at=timezone.now() - timedelta(seconds=30)
+    )
+    with django_capture_on_commit_callbacks(execute=True):
+        assert tasks.announce_released() == 1
+    premiered = events("gahkflix.video.premiered").get()
+    assert premiered.actor_id is None
+    assert "announced_at" not in changes(premiered), "bookkeeping the event itself says"
+
+    with django_capture_on_commit_callbacks(execute=True):
+        client.post(reverse("gahkflix:unpublish", args=[video.pk]))
+    unpublished = events("gahkflix.video.unpublished").get()
+    assert unpublished.actor_id == admin.pk
+    assert changes(unpublished)["published_at"][1] is None
+    assert set(changes(unpublished)) == {"published_at"}
 
 
 def test_an_approved_proposal_is_in_the_history_as_the_proposers(

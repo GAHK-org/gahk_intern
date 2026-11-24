@@ -51,7 +51,8 @@ from den_hurtige.demo import seed as seed_den_hurtige
 from den_hurtige.models import QuickComment, QuickPost, QuickReaction
 from events.demo import seed as seed_events
 from events.models import CalendarFeedToken, Event, EventInvite, Rsvp
-from gahkflix.demo import seed as seed_gahkflix
+from gahkflix.demo import history as gahkflix_history
+from gahkflix.demo import seed as seed_gahkflix_premieres
 from gahkflix.models import ChangeRequest as GahkflixRequest
 from gahkflix.models import Series as GahkflixSeries
 from gahkflix.models import Tag as GahkflixTag
@@ -223,7 +224,10 @@ class Command(BaseCommand):
             with trail.unaudited():
                 residents = self._seed_data(opts)
             # Then, on purpose and audited, the weeks of history before today, for the audit page.
-            seed_audit_trail(residents, self.now, self.rng, cms_history)
+            # GAHKFlix's films are made in it: their uploads are part of that history.
+            seed_audit_trail(residents, self.now, self.rng, cms_history, gahkflix_history)
+            with trail.unaudited():
+                self._seed_after_history(residents)
 
         self._report(residents)
 
@@ -248,15 +252,18 @@ class Command(BaseCommand):
         seed_opslagstavle(residents, self.now, self.rng)
         seed_events(residents, self.now, self.rng)
         seed_photo_album(residents, self.now, self.rng)
-        seed_gahkflix(residents, self.now, self.rng)
-        # After both: these posts embed an album and a film seeded just above.
+        return residents
+
+    def _seed_after_history(self, residents: list[Resident]) -> None:
+        # The premieres and drafts join the history's series and films.
+        seed_gahkflix_premieres(residents, self.now)
+        # After the albums and the history's films: these posts embed one of each.
         seed_opslagstavle_embeds(residents, self.now)
         seed_den_hurtige(residents, self.now, self.rng)
         # Last: its rows link to the events, opslag and Den Hurtige posts seeded above.
         seed_notifications(residents, self.now, self.rng)
         # After the ølkælder and admissions: its mails are theirs (core.demo).
         seed_mail(residents, self.now, self.rng)
-        return residents
 
     # ---------------------------------------------------------------- wipe
     def _wipe(self) -> None:

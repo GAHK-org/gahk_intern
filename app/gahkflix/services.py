@@ -23,6 +23,7 @@ from django.db.models import Avg, Count, F, Max, Q, QuerySet, Sum
 from django.db.models.functions import Coalesce, Greatest, Lower, TruncDate
 from django.utils import timezone
 
+from audit import trail
 from core.job_directories import job_directory
 from core.job_progress import report_progress
 from photo_album.models import validate_tag_name
@@ -295,7 +296,8 @@ def commit_upload(ticket: UploadTicket, resident: Resident, stored_size: int | N
         raise ValidationError("Filen nåede ikke frem. Prøv igen.")
     if stored_size != ticket.size:
         raise refuse("Filen kom ikke helt frem. Prøv igen.")
-    with transaction.atomic():
+    action = "gahkflix.video.new_version" if ticket.video is not None else "gahkflix.video.uploaded"
+    with trail.event(action, actor=resident, details={"file": ticket.name, "size": ticket.size}) as event:
         # Locked, so two tabs committing at once cannot both get past the limit on drafts.
         Resident.objects.select_for_update().filter(pk=resident.pk).first()
         revised = None
@@ -327,6 +329,7 @@ def commit_upload(ticket: UploadTicket, resident: Resident, stored_size: int | N
         )
         video_file.original.name = ticket.key
         video_file.save()
+        event.involve(video, "subject")
         record_event(
             video,
             VideoEvent.Kind.NEW_VERSION if ticket.video is not None else VideoEvent.Kind.UPLOADED,
@@ -388,9 +391,17 @@ def _fail(video_file: VideoFile, reason: str, *, delete_original: bool = False) 
 
 def record_failure(video_file: VideoFile, reason: str) -> None:
     """Tell the uploader an upload could not be processed, and put it in the video's history."""
-    record_event(
-        video_file.video, VideoEvent.Kind.FAILED, changes={"file": video_file.original_name, "error": reason}
-    )
+    with trail.event(
+        "gahkflix.video.failed",
+        actor=None,
+        subject=video_file.video,
+        details={"file": video_file.original_name, "error": reason},
+    ):
+        record_event(
+            video_file.video,
+            VideoEvent.Kind.FAILED,
+            changes={"file": video_file.original_name, "error": reason},
+        )
     notify.processing_failed(video_file.video, reason)
 
 
@@ -501,7 +512,9 @@ def process_file(video_file: VideoFile, rng: random.Random | None = None) -> boo
         beat(0.95, force=True)
         frames = encoding.draw_frames(source, info.duration, work, FRAMES_PER_DRAW, rng or random.Random())  # noqa: S311  # nosec B311
         _store_frames(video, frames)
-    with transaction.atomic():
+    with trail.event(
+        "gahkflix.video.processed", actor=None, subject=video, details={"file": video_file.original_name}
+    ):
         video_file.state = FileState.READY
         video_file.progress = 100
         video_file.error = ""
@@ -740,7 +753,7 @@ def set_picture(
     try:
         if needs_approval:
             return Outcome(proposal=propose(video, change, resident))
-        with transaction.atomic():
+        with trail.event("gahkflix.video.edited", actor=resident, subject=video):
             apply_changes(video, change, resident)
     except Exception:
         # Stored before anything referred to it, so nothing else will ever delete it.
@@ -929,7 +942,7 @@ def edit_video(
         return Outcome()
     if needs_approval:
         return Outcome(proposal=propose(video, changes, resident))
-    with transaction.atomic():
+    with trail.event("gahkflix.video.edited", actor=resident, subject=video):
         notes = apply_changes(video, changes, resident)
     return Outcome(applied=True, notes=notes)
 
@@ -943,8 +956,9 @@ def edit_series(
         return Outcome()
     if needs_approval:
         return Outcome(proposal=propose(series, changes, resident))
-    _apply_series(series, changes)
-    return Outcome(applied=True)
+    with trail.event("gahkflix.series.edited", actor=resident, subject=series, only_if_changed=True):
+        notes = _apply_series(series, changes)
+    return Outcome(applied=True, notes=notes)
 
 
 def _apply_series(series: Series, changes: dict[str, Any]) -> list[str]:
@@ -984,13 +998,14 @@ def publish(video: Video, resident: Resident) -> None:
     upcoming, and announced at its premiere (announce_released)."""
     if missing := missing_for_publishing(video):
         raise ValidationError(missing)
-    video.published_at = _now()
-    video.save(update_fields=["published_at"])
-    record_event(video, VideoEvent.Kind.PUBLISHED, resident)
-    if video.is_released:
-        _announce(video)
-    else:
-        _line_up(video)
+    with trail.event("gahkflix.video.published", actor=resident, subject=video):
+        video.published_at = _now()
+        video.save(update_fields=["published_at"])
+        record_event(video, VideoEvent.Kind.PUBLISHED, resident)
+        if video.is_released:
+            _announce(video)
+        else:
+            _line_up(video)
 
 
 def _announce(video: Video) -> None:
@@ -1013,12 +1028,13 @@ def unpublish(video: Video, resident: Resident) -> None:
         raise ValidationError(
             "Videoen har været ude i mere end et døgn og kan ikke gøres til en kladde igen."
         )
-    video.published_at = None
-    video.announced_at = None
-    video.draft_since = _now()
-    video.draft_warned_at = None
-    video.save(update_fields=["published_at", "announced_at", "draft_since", "draft_warned_at"])
-    record_event(video, VideoEvent.Kind.UNPUBLISHED, resident)
+    with trail.event("gahkflix.video.unpublished", actor=resident, subject=video):
+        video.published_at = None
+        video.announced_at = None
+        video.draft_since = _now()
+        video.draft_warned_at = None
+        video.save(update_fields=["published_at", "announced_at", "draft_since", "draft_warned_at"])
+        record_event(video, VideoEvent.Kind.UNPUBLISHED, resident)
     transaction.on_commit(lambda: notify.withdraw_announcement(video))
 
 
@@ -1069,9 +1085,12 @@ def announce_released(now: datetime | None = None) -> int:
             )
             if video is None or (video.premiere_at is not None and video.premiere_at > now):
                 continue  # announced, binned or moved later meanwhile
-            if video.comes_out_at_premiere:
-                record_event(video, VideoEvent.Kind.PREMIERED, None)
-            _announce(video)
+            premiered = video.comes_out_at_premiere
+            action = "gahkflix.video.premiered" if premiered else "gahkflix.video.announced"
+            with trail.event(action, actor=None, subject=video):
+                if premiered:
+                    record_event(video, VideoEvent.Kind.PREMIERED, None)
+                _announce(video)
             count += 1
     return count
 
@@ -1091,7 +1110,7 @@ def _pending_pictures(changes: dict[str, Any]) -> list[str]:
 def propose(target: Video | Series, changes: dict[str, Any], resident: Resident) -> ChangeRequest:
     """An edit for another administrator to accept. The resident's own open proposal is extended
     rather than a second one opened; somebody else's has to be decided first."""
-    with transaction.atomic():
+    with trail.event("gahkflix.change.proposed", actor=resident, involve=[(target, "target")]) as event:
         existing = open_request(target, ChangeRequest.Kind.EDIT)
         if existing is not None and existing.requested_by_id != resident.pk:
             raise ValidationError(
@@ -1105,12 +1124,14 @@ def propose(target: Video | Series, changes: dict[str, Any], resident: Resident)
             ]
             existing.changes = {**existing.changes, **changes}
             existing.save(update_fields=["changes"])
+            event.involve(existing, "subject")
             _delete_keys(superseded)
             return existing
         lookup = {"video": target} if isinstance(target, Video) else {"series": target}
         change = ChangeRequest.objects.create(
             kind=ChangeRequest.Kind.EDIT, requested_by=resident, changes=changes, **lookup
         )
+        event.involve(change, "subject")
         transaction.on_commit(lambda: notify.request_opened(change))
     return change
 
@@ -1120,10 +1141,13 @@ def request_deletion(video: Video, resident: Resident, reason: str) -> ChangeReq
         raise ValidationError("Der er allerede en anmodning om at slette videoen.")
     if not reason.strip():
         raise ValidationError("Skriv, hvorfor videoen skal slettes.")
-    with transaction.atomic():
+    with trail.event(
+        "gahkflix.change.deletion_requested", actor=resident, involve=[(video, "target")]
+    ) as event:
         change = ChangeRequest.objects.create(
             kind=ChangeRequest.Kind.DELETE, video=video, requested_by=resident, reason=reason.strip()
         )
+        event.involve(change, "subject")
         transaction.on_commit(lambda: notify.request_opened(change))
     return change
 
@@ -1139,7 +1163,7 @@ def _close(change: ChangeRequest, state: str, note: str = "") -> None:
 
 def vote(change: ChangeRequest, voter: Resident, *, approve: bool, comment: str = "") -> ChangeRequest:
     """One administrator's vote. A rejection closes the request; enough approvals carry it out."""
-    with transaction.atomic():
+    with trail.event("gahkflix.change.voted", actor=voter, subject=change) as event:
         # Only the request row is locked: video and series are nullable joins, which FOR UPDATE refuses.
         change = (
             ChangeRequest.objects.select_for_update(of=("self",))
@@ -1157,11 +1181,14 @@ def vote(change: ChangeRequest, voter: Resident, *, approve: bool, comment: str 
                 )
         except IntegrityError as exc:
             raise ValidationError("Du har allerede stemt.") from exc
+        event.involve(change.video or change.series, "target")
         if not approve:
             _close(change, ChangeRequest.State.REJECTED, comment)
+            event.action = "gahkflix.change.rejected"
         elif change.votes.filter(approve=True).count() >= change.approvals_needed:
             notes = _carry_out(change)
             _close(change, ChangeRequest.State.APPROVED, " ".join(notes))
+            event.action = "gahkflix.change.approved"
         if not change.is_open:
             _tell_requester(change)
     return change
@@ -1187,7 +1214,7 @@ def _carry_out(change: ChangeRequest) -> list[str]:
 
 
 def withdraw(change: ChangeRequest) -> None:
-    with transaction.atomic():
+    with trail.event("gahkflix.change.withdrawn", subject=change, only_if_changed=True):
         change = ChangeRequest.objects.select_for_update().get(pk=change.pk)
         if change.is_open:
             _close(change, ChangeRequest.State.WITHDRAWN)
@@ -1199,7 +1226,7 @@ def expire_requests(now: datetime | None = None) -> int:
     )
     count = 0
     for change in expired.select_related("video", "series", "requested_by"):
-        with transaction.atomic():
+        with trail.event("gahkflix.change.expired", actor=None, subject=change):
             _close(change, ChangeRequest.State.EXPIRED, "Ingen nåede at tage stilling inden for 30 dage.")
             _tell_requester(change)
         count += 1
@@ -1211,21 +1238,23 @@ def expire_requests(now: datetime | None = None) -> int:
 
 def bin_video(video: Video, resident: Resident, *, closing: ChangeRequest | None = None) -> None:
     """Move a published video to the bin. Proposals about it are moot now, and are closed."""
-    video.deleted_at = _now()
-    video.deleted_by = resident
-    video.save(update_fields=["deleted_at", "deleted_by"])
-    record_event(video, VideoEvent.Kind.BINNED, resident, request=closing)
-    for change in video.change_requests.filter(state=ChangeRequest.State.OPEN).exclude(
-        pk=closing.pk if closing else 0
-    ):
-        _close(change, ChangeRequest.State.WITHDRAWN, "Videoen blev slettet.")
+    with trail.event("gahkflix.video.binned", actor=resident, subject=video, involve=[(closing, "request")]):
+        video.deleted_at = _now()
+        video.deleted_by = resident
+        video.save(update_fields=["deleted_at", "deleted_by"])
+        record_event(video, VideoEvent.Kind.BINNED, resident, request=closing)
+        for change in video.change_requests.filter(state=ChangeRequest.State.OPEN).exclude(
+            pk=closing.pk if closing else 0
+        ):
+            _close(change, ChangeRequest.State.WITHDRAWN, "Videoen blev slettet.")
 
 
 def restore(video: Video, resident: Resident) -> None:
-    video.deleted_at = None
-    video.deleted_by = None
-    video.save(update_fields=["deleted_at", "deleted_by"])
-    record_event(video, VideoEvent.Kind.RESTORED, resident)
+    with trail.event("gahkflix.video.restored", actor=resident, subject=video):
+        video.deleted_at = None
+        video.deleted_by = None
+        video.save(update_fields=["deleted_at", "deleted_by"])
+        record_event(video, VideoEvent.Kind.RESTORED, resident)
 
 
 def delete_permanently(video: Video) -> None:
@@ -1238,7 +1267,8 @@ def delete_permanently(video: Video) -> None:
         keys += _pending_pictures(change.changes)
     for changes in video.events.filter(kind=VideoEvent.Kind.EDITED).values_list("changes", flat=True):
         keys += _event_pictures(changes)
-    with transaction.atomic():
+    # Who: the resident deleting a draft, or nobody when the nightly purge does it.
+    with trail.event("gahkflix.video.deleted", subject=video):
         Video.objects.filter(pk=video.pk).update(file=None, thumbnail_frame=None, banner_frame=None)
         video.delete()
         _delete_keys(keys)

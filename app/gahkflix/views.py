@@ -32,6 +32,7 @@ from django.utils import timezone
 from django.utils.http import urlencode
 from django.views.decorators.http import require_GET, require_POST
 
+from audit import trail
 from core.downloads import content_disposition
 from core.media import REDIRECT_CACHE_CONTROL
 from residents.models import Resident
@@ -199,7 +200,8 @@ def series_create(request: HttpRequest) -> HttpResponse:
     if request.method == "POST" and form.is_valid():
         series = form.save(commit=False)
         series.created_by = current_resident(request)
-        series.save()
+        with trail.event("gahkflix.series.created", subject=series):
+            series.save()
         if wants_json:
             return JsonResponse({"id": series.pk, "title": series.title}, status=201)
         back = request.POST.get("next", "")
@@ -254,7 +256,8 @@ def series_delete(request: HttpRequest, pk: int) -> HttpResponse:
     if not access.can_delete_series(request, series):
         messages.error(request, "En serie kan kun slettes, når der ingen videoer er i den.")
         return redirect("gahkflix:series", series.pk)
-    series.delete()
+    with trail.event("gahkflix.series.deleted", subject=series):
+        series.delete()
     messages.success(request, "Serien er slettet.")
     return redirect("gahkflix:series_list")
 
