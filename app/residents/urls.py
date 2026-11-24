@@ -5,7 +5,7 @@ from django.urls import include, path, reverse_lazy
 
 from access.policy import Feature, in_feature
 
-from . import views
+from . import auth, views
 from .forms import EmailAuthenticationForm, ResidentPasswordResetForm
 
 # Each view's feature decides which access levels reach it (access.policy). A view in no
@@ -45,7 +45,7 @@ urlpatterns = [
         "login",
         in_feature(
             Feature.ACCOUNT,
-            auth_views.LoginView.as_view(
+            auth.LoginView.as_view(
                 template_name="registration/login.html",
                 authentication_form=EmailAuthenticationForm,
             ),
@@ -57,7 +57,7 @@ urlpatterns = [
         "password-change",
         in_feature(
             Feature.ACCOUNT,
-            auth_views.PasswordChangeView.as_view(
+            auth.PasswordChangeView.as_view(
                 template_name="registration/password_change.html",
                 success_url=reverse_lazy("password_change_done"),
             ),
@@ -79,7 +79,7 @@ urlpatterns = [
         "password-reset",
         in_feature(
             Feature.ACCOUNT,
-            auth_views.PasswordResetView.as_view(
+            auth.PasswordResetView.as_view(
                 form_class=ResidentPasswordResetForm,  # also reaches residents who never set a password
                 template_name="registration/password_reset_form.html",
                 email_template_name="registration/password_reset_email.html",
@@ -101,7 +101,7 @@ urlpatterns = [
         "password-reset/<uidb64>/<token>/",
         in_feature(
             Feature.ACCOUNT,
-            auth_views.PasswordResetConfirmView.as_view(
+            auth.PasswordResetConfirmView.as_view(
                 template_name="registration/password_reset_confirm.html",
                 success_url=reverse_lazy("password_reset_complete"),
             ),

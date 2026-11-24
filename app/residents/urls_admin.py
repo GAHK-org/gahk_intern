@@ -3,6 +3,7 @@
 from django.urls import path
 
 from access.policy import Feature, in_feature
+from audit import views as audit_views
 from notifications import views_admin as notifications_admin
 from photo_album import views_admin as photo_album_admin
 
@@ -29,6 +30,7 @@ urlpatterns = [
         name="notification_device_cancel",
     ),
     path("adminadgang", views_admin.admin_access_view, name="admin_access"),
+    path("audit", audit_views.audit_trail, name="audit"),
     # For every level: an administrator previewing one must be able to end it (the view checks the role).
     path("preview", in_feature(Feature.ACCOUNT, views_admin.preview), name="preview"),
     path("preview/set", in_feature(Feature.ACCOUNT, views_admin.preview_set), name="preview_set"),

@@ -477,6 +477,15 @@ def test_the_indstilling_can_override_the_level_until_a_last_day(person: Callabl
     assert _stored(guest) == L.MOVED_OUT_3_TO_12_MONTHS
     assert _client(guest).get("/den-hurtige/").status_code == 200
 
+    from audit.models import AuditChange, AuditEvent
+
+    given = AuditEvent.objects.get(action="residents.resident.access_level_overridden")
+    assert given.actor_id != guest.pk, "the Indstilling's act, named as such"
+    assert set(AuditChange.objects.filter(entity__event=given).values_list("field", flat=True)) == {
+        "access_level_override",
+        "access_level_override_until",
+    }
+
     # Past its last day, the night ends it and clears it.
     Resident.objects.filter(pk=guest.pk).update(
         access_level_override_until=current_date() - timedelta(days=1)
@@ -485,6 +494,13 @@ def test_the_indstilling_can_override_the_level_until_a_last_day(person: Callabl
     guest.refresh_from_db()
     assert guest.access_level == L.NO_ACCESS
     assert guest.access_level_override == "" and guest.access_level_override_until is None
+    ended = AuditEvent.objects.get(action="residents.resident.access_level_override_expired")
+    assert ended.actor_id is None, "nobody's act"
+    assert dict(AuditChange.objects.filter(entity__event=ended).values_list("field", "after")) == {
+        "access_level_override": "",
+        "access_level_override_until": None,
+    }
+    assert not AuditEvent.objects.filter(action__endswith=".updated", unclaimed=True).exists()
 
 
 def test_an_override_does_not_beat_a_role_or_the_kitchen(person: Callable[..., Resident]) -> None:

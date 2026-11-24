@@ -9,7 +9,6 @@ from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.contrib.auth.tokens import default_token_generator
 from django.core.mail import send_mail
-from django.db import transaction
 from django.db.models import Count, Q, QuerySet
 from django.http import HttpRequest, HttpResponse, HttpResponseRedirect, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
@@ -19,6 +18,7 @@ from django.utils.encoding import force_bytes
 from django.utils.http import url_has_allowed_host_and_scheme, urlsafe_base64_encode
 
 from access.levels import refreshed_once
+from audit import trail
 from core.danish import MONTHS
 from core.mentions import mentionable
 from core.models import Cleaning, Room, Workgroup
@@ -267,7 +267,13 @@ def edit_resident(request: HttpRequest, pk: int) -> HttpResponse | HttpResponseR
     if request.method == "POST":
         form = ResidentEditForm(request.POST, instance=resident)
         if form.is_valid():
-            form.save()
+            # Giving someone a level the alumneliste does not is its own act, named as such.
+            overridden = {"access_level_override", "access_level_override_until"} & set(form.changed_data)
+            action = (
+                "residents.resident.access_level_overridden" if overridden else "residents.resident.updated"
+            )
+            with trail.event(action, subject=resident, only_if_changed=True):
+                form.save()
             messages.success(request, f"{resident.full_name} er opdateret.")
             nxt = request.GET.get("next", "")
             if nxt and url_has_allowed_host_and_scheme(nxt, allowed_hosts={request.get_host()}):
@@ -373,12 +379,14 @@ def stamtree(request: HttpRequest) -> HttpResponse:
 def _sync_month_roles(
     resident_id: int, workgroup: Workgroup | None, year: int, month: int, is_admin: bool
 ) -> None:
-    """Privileged-workgroup roles are derived from the chosen embedsgruppe: clear then re-add. The
-    `administrator` role is not a workgroup, so it is preserved/carried separately."""
+    """Privileged-workgroup roles are derived from the chosen embedsgruppe: drop the others, add this
+    one. The `administrator` role is not a workgroup, so it is preserved/carried separately. A role
+    that stays is left alone rather than deleted and made again, so the audit trail shows only real
+    changes."""
+    role = WORKGROUP_ROLE.get(workgroup.name) if workgroup else None
     RoleAssignment.objects.filter(
         resident_id=resident_id, year=year, month=month, role__in=WORKGROUP_ROLE_VALUES
-    ).delete()
-    role = WORKGROUP_ROLE.get(workgroup.name) if workgroup else None
+    ).exclude(role=role or "").delete()
     if role:
         RoleAssignment.objects.get_or_create(resident_id=resident_id, role=role, year=year, month=month)
     if is_admin:
@@ -545,7 +553,7 @@ def next_month_list(request: HttpRequest) -> HttpResponse | HttpResponseRedirect
         cl_by_id = {c.id: c for c in cleanings}
 
         if action == "copy":  # seed next month from the current list
-            with transaction.atomic():
+            with trail.event("residents.month_list.copied", details={"period": f"{ny}-{nm:02d}"}):
                 for res in Residency.objects.filter(year=cy, month=cm).select_related("workgroup"):
                     Residency.objects.update_or_create(
                         resident_id=res.resident_id,
@@ -637,13 +645,15 @@ def next_month_list(request: HttpRequest) -> HttpResponse | HttpResponseRedirect
 
                     next_rows.append(res)
             else:
-                with transaction.atomic():
+                with trail.event("residents.month_list.saved", details={"period": f"{ny}-{nm:02d}"}):
                     RoleAssignment.objects.filter(resident_id__in=removed, year=ny, month=nm).delete()
                     Residency.objects.filter(resident_id__in=removed, year=ny, month=nm).delete()
-                    for rid, (room, wg, cl) in intended.items():
-                        Residency.objects.filter(resident_id=rid, year=ny, month=nm).update(
-                            room=room, workgroup=wg, cleaning=cl
-                        )
+                    # Row by row rather than one UPDATE each, so the trail sees what moved.
+                    for residency in Residency.objects.filter(resident_id__in=intended, year=ny, month=nm):
+                        room, wg, cl = intended[residency.resident_id]
+                        residency.room, residency.workgroup, residency.cleaning = room, wg, cl
+                        residency.save(update_fields=["room", "workgroup", "cleaning"])
+                    for rid, (_room, wg, _cl) in intended.items():
                         _sync_month_roles(rid, wg, ny, nm, rid in admins)
                 messages.success(request, "Ændringer gemt.")
                 return redirect(
@@ -668,7 +678,12 @@ def next_month_list(request: HttpRequest) -> HttpResponse | HttpResponseRedirect
                 existing_draft = _add_form_draft(request, "add_existing")
             else:
                 wg = _place(wg_by_id, request.POST.get("workgroup"), replaced.workgroup if replaced else None)
-                with transaction.atomic():
+                with trail.event(
+                    "residents.month_list.added",
+                    subject=resident,
+                    details={"period": f"{ny}-{nm:02d}"},
+                    involve=[(replaced.resident if replaced else None, "replaced")],
+                ):
                     if replaced:
                         _drop_from_month(replaced)
                     Residency.objects.update_or_create(
@@ -725,17 +740,22 @@ def next_month_list(request: HttpRequest) -> HttpResponse | HttpResponseRedirect
                 # knows who introduced them right then, and a separate trip through the edit form is
                 # exactly the step that gets skipped, leaving holes in the stamtræ (F-011).
                 sponsor = _pick({r.id: r for r in Resident.objects.all()}, request.POST.get("sponsor", ""))
-                with transaction.atomic():
+                r = Resident(
+                    email=email,
+                    first_name=first,
+                    last_name=last,
+                    phone=phone,
+                    birthday=birthday,
+                    sponsor=sponsor,
+                )
+                with trail.event(
+                    "residents.resident.created",
+                    subject=r,
+                    details={"period": f"{ny}-{nm:02d}"},
+                    involve=[(replaced.resident if replaced else None, "replaced")],
+                ):
                     if replaced:
                         _drop_from_month(replaced)
-                    r = Resident(
-                        email=email,
-                        first_name=first,
-                        last_name=last,
-                        phone=phone,
-                        birthday=birthday,
-                        sponsor=sponsor,
-                    )
                     r.set_unusable_password()  # they set one via the welcome/password-reset link (F-014)
                     r.save()
                     Residency.objects.create(
@@ -858,7 +878,8 @@ def edit_profile(request: HttpRequest) -> HttpResponse | HttpResponseRedirect:
     if request.method == "POST":
         form = ProfileEditForm(request.POST, request.FILES, instance=resident)
         if form.is_valid():
-            form.save()
+            with trail.event("residents.profile.updated", subject=form.instance, only_if_changed=True):
+                form.save()
             messages.success(request, "Din profil er opdateret.")
             return redirect("resident_profile", pk=resident.pk)
         messages.error(request, "Ret fejlene og prøv igen.")

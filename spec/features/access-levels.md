@@ -68,6 +68,10 @@ Hjemmeside, Regnskab, Site-admin, Django admin) are for residents only.
   with the account, the wiki and the admin lists can read it, and an exception is a field beside it.
   The rule still decides it, so the stored level is kept current from the same rule by signals, a
   nightly run and every migrate; a page that writes a whole month's list works it out once at the end.
+- **The audit trail keeps the causes, not the level.** The stored level follows the alumneliste, the
+  roles and the date, which the trail already records, so it is left out like `is_staff`. Setting an
+  override is the Indstilling's act (`residents.resident.access_level_overridden`), and its expiry
+  is recorded as nobody's (`residents.resident.access_level_override_expired`).
 - **Not Django groups and permissions.** They would replace only the table and the stored column:
   the gate and the notification filtering stay. The table would become database rows changed by data
   migrations rather than code, and Django would not keep an account in one level only.

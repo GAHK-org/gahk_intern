@@ -18,6 +18,7 @@ from django.utils import timezone
 from django.views.decorators.http import require_POST
 
 from access.levels import refreshed_once
+from audit import trail
 from core.models import Room
 from residents.models import Residency, Resident, RoleAssignment, active_period, next_period, prev_period
 from residents.permissions import current_resident, request_has_role, role_required
@@ -419,7 +420,7 @@ def end_round(request: HttpRequest) -> HttpResponseRedirect:
     left: list[_Leaver] = []  # departing occupants removed from a won room
     unresolved_rooms: list[int] = []  # rooms still tied, left for manual resolution
     assigned = unresolved = evicted = 0
-    with transaction.atomic():
+    with trail.event("rooms.round.ended") as event:
         for month in months:
             year, month0 = divmod(month, 12)  # inverse of month_index -> target (year, month)
             target_month = month0 + 1
@@ -476,6 +477,9 @@ def end_round(request: HttpRequest) -> HttpResponseRedirect:
             else:
                 RoomOffer.objects.filter(month=month, room_id__in=settled_rooms).delete()
                 _clear_settled_applications(month, alloc)
+        event.details.update(
+            {"assigned": assigned, "unresolved": unresolved, "evicted": evicted, "moves": moves, "left": left}
+        )
     if unresolved:
         msg = (
             f"{assigned} værelse(r) tildelt, {unresolved} uafgjort (K-lige) — "

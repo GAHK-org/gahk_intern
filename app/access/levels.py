@@ -29,6 +29,7 @@ from dataclasses import dataclass, field
 from django.db.models import Case, F, IntegerField, Max, When
 from django.http import HttpRequest
 
+from audit import trail
 from core.clock import current_date
 from residents.models import Residency, Resident, RoleAssignment, active_period
 from residents.permissions import PREVIEW_SESSION_KEY, can_preview, is_kitchen
@@ -141,10 +142,19 @@ def refresh_access_levels(resident_ids: Iterable[int] | None = None) -> dict[int
 
 
 def forget_expired_overrides() -> int:
-    """Clear the overrides whose last day has passed, so the edit page does not show them as set."""
-    return Resident.objects.filter(access_level_override_until__lt=current_date()).update(
-        access_level_override="", access_level_override_until=None
-    )
+    """Clear the overrides whose last day has passed, so the edit page does not show them as set.
+    Nobody's act, but a change to what the Indstilling set: one audit event per account."""
+    expired = list(Resident.objects.filter(access_level_override_until__lt=current_date()))
+    for resident in expired:
+        with trail.event(
+            "residents.resident.access_level_override_expired", subject=resident, actor=None
+        ) as event:
+            event.change(resident, "access_level_override", resident.access_level_override, "")
+            event.change(resident, "access_level_override_until", resident.access_level_override_until, None)
+            Resident.objects.filter(pk=resident.pk).update(
+                access_level_override="", access_level_override_until=None
+            )
+    return len(expired)
 
 
 # ---- working it out once for many rows ---------------------------------------------------------------
