@@ -1,14 +1,19 @@
 """The declared lifecycle rule set, and the merge that must not eat anybody else's rules.
 
-No bucket here: these assert on the DECLARATION, which is where the mistakes live. The three that
-have actually bitten this project were all visible in the data - an `Expiration` with no noncurrent
-half on a versioned bucket, a prefix that did not cover what it looked like it covered, and a
-`put_` call that replaced the whole configuration.
+No real bucket here: these assert on the DECLARATION, which is where the mistakes live, and the
+merge runs against a stand-in. The three that have actually bitten this project were all visible in
+the data - an `Expiration` with no noncurrent half on a versioned bucket, a prefix that did not
+cover what it looked like it covered, and a `put_` call that replaced the whole configuration.
 """
+
+from io import StringIO
+from types import SimpleNamespace
+from typing import Any
 
 import pytest
 
-from core.management.commands.sync_bucket_lifecycle import OWNED, RULES
+from core.management.commands import sync_bucket_lifecycle
+from core.management.commands.sync_bucket_lifecycle import ARKIV_PREFIXES, OWNED, RETIRED, RULES
 
 
 def test_every_rule_has_a_unique_id() -> None:
@@ -42,14 +47,12 @@ def test_backups_are_never_expired_on_a_clock() -> None:
             )
 
 
-def test_the_archive_prefixes_are_listed_separately() -> None:
-    """Prefix matching is literal: `arkiv/` does not cover `arkiv-thumb/`. A single bare `arkiv`
-    prefix would cover all four AND overlap the zip rules, where providers differ on how overlaps
-    resolve."""
+def test_every_kept_prefix_has_a_rule() -> None:
+    """Prefix matching is literal: `photo-album/` does not cover `photo-album-zips/`, so each prefix
+    with a lifetime of its own needs a rule that names it exactly."""
     prefixes = {r["Filter"].get("Prefix") for r in RULES}
-    for needed in ("arkiv/", "arkiv-thumb/", "arkiv-preview/", "arkiv-zip/", "media/", "data/"):
+    for needed in ("photo-album-zips/", "media/", "data/"):
         assert needed in prefixes, f"no rule covers {needed}"
-    assert "arkiv" not in prefixes, "a bare 'arkiv' prefix would overlap every other arkiv rule"
 
 
 def test_days_and_delete_marker_are_never_in_one_expiration() -> None:
@@ -67,3 +70,51 @@ def test_the_command_refuses_without_a_bucket() -> None:
 
     with pytest.raises(CommandError, match="No bucket configured"):
         call_command("sync_bucket_lifecycle")
+
+
+def test_a_retired_id_is_never_declared_again() -> None:
+    """A retired ID that came back would be removed and re-added by the same run."""
+    assert not RETIRED & OWNED
+
+
+def test_every_arkiv_prefix_is_emptied_and_its_markers_cleared() -> None:
+    """Arkiv is gone, so each of its prefixes expires everything (with the noncurrent half, or it
+    would free nothing) and then clears the delete markers that leaves."""
+    for prefix in ARKIV_PREFIXES:
+        rules = [r for r in RULES if r["Filter"].get("Prefix") == prefix]
+        assert any("Days" in r.get("Expiration", {}) and "NoncurrentVersionExpiration" in r for r in rules), (
+            prefix
+        )
+        assert any(r.get("Expiration", {}).get("ExpiredObjectDeleteMarker") for r in rules), prefix
+
+
+class _Bucket:
+    """Just the two lifecycle calls the command makes."""
+
+    def __init__(self, rules: list[dict[str, Any]]) -> None:
+        self.rules = rules
+
+    def get_bucket_lifecycle_configuration(self, Bucket: str) -> dict[str, Any]:
+        return {"Rules": self.rules}
+
+    def put_bucket_lifecycle_configuration(self, Bucket: str, LifecycleConfiguration: dict) -> None:
+        self.rules = LifecycleConfiguration["Rules"]
+
+
+def test_the_merge_keeps_hand_added_rules_and_removes_retired_ones(monkeypatch: pytest.MonkeyPatch) -> None:
+    from django.core.management import call_command
+
+    hand_added = {"ID": "somebody-elses", "Status": "Enabled", "Filter": {"Prefix": "x/"}}
+    retired = {"ID": "expire-built-zips", "Status": "Enabled", "Filter": {"Prefix": "arkiv-zip/"}}
+    bucket = _Bucket([hand_added, retired])
+    storage = SimpleNamespace(
+        bucket_name="b", connection=SimpleNamespace(meta=SimpleNamespace(client=bucket))
+    )
+    monkeypatch.setattr(sync_bucket_lifecycle, "storages", {"default": storage})
+
+    call_command("sync_bucket_lifecycle", stdout=StringIO())
+
+    ids = [r["ID"] for r in bucket.rules]
+    assert "somebody-elses" in ids
+    assert "expire-built-zips" not in ids
+    assert set(ids) == OWNED | {"somebody-elses"}
