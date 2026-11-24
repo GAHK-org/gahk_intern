@@ -490,6 +490,7 @@ than a snippet somebody pastes into a shell.
 | `expire-photo-album-zips` | `photo-album-zips/` | marks built zips at 7 days, purges the version a day later |
 | `expire-photo-album-zip-markers` | `photo-album-zips/` | clears the delete markers that leaves |
 | `expire-noncurrent-drive` | `drive/` | Drive's deleted files actually go, 30 days later |
+| `expire-drive-markers` | `drive/` | clears the delete markers that leaves |
 | `expire-noncurrent-versions` | `media/` | 30 days |
 | `expire-noncurrent-backups` | `data/` | makes Coolify's own deletions free the bytes, after 7 days |
 | `expire-backup-markers` | `data/` | clears those delete markers |
