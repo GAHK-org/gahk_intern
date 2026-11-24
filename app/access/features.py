@@ -10,7 +10,7 @@ A permission is named `<feature>.<action>`. The actions every feature has are it
 
 A higher grade includes the lower ones. A feature may also name extra actions (EXTRAS) for a power
 between use and manage that one group needs alone, like Viceværterne moving a repair; manage includes
-every extra of its feature.
+every extra of its feature, and an extra opens its feature for use.
 
 Every page is in exactly one feature, marked in the URLconf with `in_feature`. The gate
 (access.middleware) refuses a page in no feature to everyone, and a test fails while one exists, so
@@ -59,6 +59,9 @@ class Feature(StrEnum):
     WEBSITE = "website"  # Hjemmeside, gahk.dk's editor
     ACCOUNTING = "accounting"  # Regnskab
     SITE_ADMIN = "site_admin"  # /admin/: worker jobs, roles, the audit trail, "Se side som"
+    # Who has which roles: hand-made grants (the Indstilling), the kitchen staff's accounts (extra
+    # "kitchen_staff": Køkkengruppen too).
+    ACCESS = "access"
     DJANGO_ADMIN = "django_admin"
 
 
@@ -76,7 +79,18 @@ GRADE_ACTIONS = {"view": Grade.VIEW, "use": Grade.USE, "manage": Grade.MANAGE, "
 EXTRAS: dict[Feature, frozenset[str]] = {
     # Viceværterne triage repairs: move a ticket on, or hand it to the Repperne.
     Feature.REPARATIONER: frozenset({"move"}),
+    # Køkkengruppen add and end the kitchen staff's accounts.
+    Feature.ACCESS: frozenset({"kitchen_staff"}),
 }
+
+# Where an account without the dashboard lands (access.middleware): its first of these it may open.
+HOME_FEATURES = (
+    Feature.DEN_HURTIGE,
+    Feature.OPSLAGSTAVLE,
+    Feature.EVENTS,
+    Feature.PHOTO_ALBUM,
+    Feature.STAMTREE,
+)
 
 # The features any account reaches, whatever it is: it must be able to log out.
 ALWAYS = frozenset({Feature.ACCOUNT, Feature.PUBLIC})

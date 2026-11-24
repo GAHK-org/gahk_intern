@@ -11,18 +11,18 @@ from django.shortcuts import render
 from django.urls import reverse
 
 from .api import FRAGMENT_ATTRIBUTE, audit_denied
-from .features import ANONYMOUS, Feature, Grade, feature_of
+from .features import ANONYMOUS, HOME_FEATURES, Feature, Grade, feature_of
 from .permissions import SAFE_METHODS
 from .roles import request_permissions
 
-# Where an account without the dashboard lands: its first feature in this order.
-HOMES = (
-    (Feature.DEN_HURTIGE, "den_hurtige:feed"),
-    (Feature.OPSLAGSTAVLE, "opslagstavle:board"),
-    (Feature.EVENTS, "events:index"),
-    (Feature.PHOTO_ALBUM, "photo_album:index"),
-    (Feature.STAMTREE, "stamtree"),
-)
+# The page of each home feature (access.features.HOME_FEATURES).
+HOME_PAGES = {
+    Feature.DEN_HURTIGE: "den_hurtige:feed",
+    Feature.OPSLAGSTAVLE: "opslagstavle:board",
+    Feature.EVENTS: "events:index",
+    Feature.PHOTO_ALBUM: "photo_album:index",
+    Feature.STAMTREE: "stamtree",
+}
 
 
 class AccessGate:
@@ -63,7 +63,7 @@ class AccessGate:
             return HttpResponse(status=204)
         name = request.resolver_match.view_name if request.resolver_match else ""
         if name == "dashboard":
-            home = next((url for f, url in HOMES if permissions.grade(f) >= Grade.VIEW), None)
+            home = next((HOME_PAGES[f] for f in HOME_FEATURES if permissions.grade(f) >= Grade.VIEW), None)
             if home is None:
                 return render(request, "no_access.html", status=403)
             return HttpResponseRedirect(reverse(home))

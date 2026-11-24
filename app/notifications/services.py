@@ -30,6 +30,7 @@ from django.db.models import Q, QuerySet
 from django.urls import reverse
 from django.utils.http import url_has_allowed_host_and_scheme
 
+from access.api import KITCHEN, holding, may_open_many
 from core import push
 from core.clock import current_datetime
 from core.models import PushSubscription
@@ -80,16 +81,18 @@ def everyone() -> QuerySet[Resident]:
     living = Residency.objects.filter(year=year, month=month).values("resident_id")
     roles = RoleAssignment.objects.filter(year=year, month=month).values("resident_id")
     devices = PushSubscription.objects.values("user_id")
-    # Not the kitchen account: its push device would otherwise put it in every feature's audience.
-    return Resident.objects.filter(is_active=True, is_kitchen=False).filter(
-        Q(pk__in=living) | Q(pk__in=roles) | Q(pk__in=devices) | Q(is_superuser=True)
+    # Not the kitchen staff: a push device would otherwise put them in every feature's audience.
+    return (
+        Resident.objects.filter(is_active=True)
+        .filter(Q(pk__in=living) | Q(pk__in=roles) | Q(pk__in=devices) | Q(is_superuser=True))
+        .exclude(pk__in=kitchen().values("pk"))
     )
 
 
 def kitchen() -> QuerySet[Resident]:
-    """The kitchen account, which everyone() leaves out. Added back by the audiences it can open:
-    its Den Hurtige channel and the admin broadcast."""
-    return Resident.objects.filter(is_active=True, is_kitchen=True)
+    """The kitchen staff, whom everyone() leaves out. Added back by the audiences they can open:
+    their Den Hurtige channel and the admin broadcast."""
+    return holding({KITCHEN})
 
 
 @dataclass(frozen=True)
@@ -193,7 +196,9 @@ def notify(
     expires_at = expires_at or _default_expiry(now)
     if expires_at <= now:
         return 0
-    ids = [rid for rid in _ids(recipients) if rid != exclude]
+    # Nobody is told about a page they cannot open: someone who once commented on a post in a
+    # feature they have since lost (moving out) gets no replies from it.
+    ids = may_open_many([rid for rid in _ids(recipients) if rid != exclude], url)
     if not ids:
         return 0
 
@@ -288,6 +293,8 @@ def notify_grouped(
     if expires_at <= now:
         return None
 
+    if not may_open_many([recipient_id], url):
+        return None
     decision = _decisions([recipient_id], cat, level)[recipient_id]
     pushed = decision.push and recipient_id in _with_devices([recipient_id])
     if not (decision.in_app or pushed):

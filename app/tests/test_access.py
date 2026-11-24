@@ -47,7 +47,7 @@ def test_every_page_is_in_a_feature() -> None:
 _ASKED = re.compile(
     r"""(?:permission_required|holders|user_can\([^,]+,|can\(request,)\s*\(?\s*["']([a-z_]+\.[a-z_]+)["']"""
 )
-_IN_TEMPLATES = re.compile(r"\baccess\.([a-z_]+)\.([a-z_]+)")
+_IN_TEMPLATES = re.compile(r"{%[^%]*\baccess\.([a-z_]+)\.([a-z_]+)")
 
 
 def test_every_permission_the_code_asks_for_exists() -> None:

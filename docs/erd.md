@@ -128,6 +128,17 @@ erDiagram
         text error
     }
 
+    access_Grant {
+        int id PK
+        int resident_id FK
+        string role
+        string reason
+        date starts_on
+        date ends_on
+        int granted_by_id FK
+        datetime created_at
+    }
+
     residents_Resident {
         int id PK
         string password
@@ -151,7 +162,6 @@ erDiagram
         string instagram_handle
         bool is_active
         bool is_staff
-        bool is_kitchen
         datetime date_joined
     }
 
@@ -1022,6 +1032,8 @@ erDiagram
     audit_AuditEntity }o--|| audit_AuditEvent : "event"
     audit_AuditChange }o--|| audit_AuditEntity : "entity"
     core_PushSubscription }o--|| residents_Resident : "user"
+    access_Grant }o--|| residents_Resident : "resident"
+    access_Grant }o--|o residents_Resident : "granted_by"
     residents_Resident }o--|o residents_Resident : "sponsor"
     residents_Residency }o--|| residents_Resident : "resident"
     residents_Residency }o--|| core_Room : "room"
@@ -1138,6 +1150,27 @@ erDiagram
     regnskab_EconomicLedgerEntry }o--|| residents_Resident : "resident"
     regnskab_AlumneregningSend }o--|| residents_Resident : "resident"
     regnskab_AlumneregningSend }o--|o core_OutgoingMail : "mail"
+```
+
+## access
+
+```mermaid
+erDiagram
+    access_Grant {
+        int id PK
+        int resident_id FK
+        string role
+        string reason
+        date starts_on
+        date ends_on
+        int granted_by_id FK
+        datetime created_at
+    }
+
+    residents_Resident { }
+
+    access_Grant }o--|| residents_Resident : "resident"
+    access_Grant }o--|o residents_Resident : "granted_by"
 ```
 
 ## admissions
@@ -2267,7 +2300,6 @@ erDiagram
         string instagram_handle
         bool is_active
         bool is_staff
-        bool is_kitchen
         datetime date_joined
     }
 

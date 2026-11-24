@@ -277,7 +277,13 @@ def edit_resident(request: HttpRequest, pk: int) -> HttpResponse | HttpResponseR
         messages.error(request, "Ret fejlene og prøv igen.")
     else:
         form = ResidentEditForm(instance=resident)
-    return render(request, "alumneliste/edit_resident.html", {"form": form, "resident": resident})
+    from access.views import person_context
+
+    return render(
+        request,
+        "alumneliste/edit_resident.html",
+        {"form": form, "resident": resident, **person_context(request, resident)},
+    )
 
 
 def _iso(d: date | None) -> str:
@@ -850,7 +856,6 @@ def mention_lookup(request: HttpRequest) -> JsonResponse:
         residency__year=year,
         residency__month=month,
         residency__resident__is_active=True,
-        residency__resident__is_kitchen=False,
     )
     for word in query.split()[:4]:
         residents = residents.filter(Q(first_name__icontains=word) | Q(last_name__icontains=word))

@@ -1,0 +1,69 @@
+{% extends "base.html" %}
+{% block title %}Adgang - GAHK Intern{% endblock %}
+{% block content %}
+  <h1>Adgang</h1>
+  <p class="muted mb-4">Hvem der kan hvad, følger alumnelisten og embedsgrupperne. Her er dem, der har fået adgang på anden vis.</p>
+
+  {% if kitchen_form %}
+    <div class="card">
+      <h2>Køkkenpersonale</h2>
+      <p class="muted">Hver i køkkenet har sin egen konto. De ser køkkenets kanal på Den Hurtige, deres egne opslag og Reparationer.</p>
+      <table class="w-full border-collapse mt-2">
+        <tbody>
+        {% for grant in kitchen %}
+          <tr class="border-b border-line">
+            <td class="p-2">{{ grant.resident.full_name }}</td>
+            <td class="p-2 muted">{{ grant.resident.email }}</td>
+            <td class="p-2 muted">{{ grant.reason }}</td>
+            <td class="p-2 text-right">
+              <form method="post" action="{% url 'access:grant_end' grant.pk %}">{% csrf_token %}
+                <button type="submit" class="btn btn-secondary">Afslut adgang</button>
+              </form>
+            </td>
+          </tr>
+        {% empty %}
+          <tr><td class="p-2 muted">Ingen endnu.</td></tr>
+        {% endfor %}
+        </tbody>
+      </table>
+      <form method="post" action="{% url 'access:kitchen_staff_add' %}" class="mt-4">
+        {% csrf_token %}
+        <h3>Ny i køkkenet</h3>
+        {% for field in kitchen_form %}
+          <div class="mb-3">
+            <label for="{{ field.id_for_label }}" class="font-semibold block mb-1">{{ field.label }}</label>
+            {{ field }}
+          </div>
+        {% endfor %}
+        <button type="submit" class="btn">Opret konto</button>
+      </form>
+    </div>
+  {% endif %}
+
+  {% if can_manage %}
+    <div class="card">
+      <h2>Givet i hånden</h2>
+      <p class="muted">Roller, Indstillingen har givet nogen, som alumnelisten ikke beskriver. Gives fra beboerens side.</p>
+      <table class="w-full border-collapse mt-2">
+        <thead><tr class="border-b border-line"><th class="p-2">Hvem</th><th class="p-2">Rolle</th><th class="p-2">Hvorfor</th><th class="p-2">Periode</th><th class="p-2"></th></tr></thead>
+        <tbody>
+        {% for grant, label in others %}
+          <tr class="border-b border-line">
+            <td class="p-2"><a href="{% url 'edit_resident' grant.resident_id %}">{{ grant.resident.full_name }}</a></td>
+            <td class="p-2">{{ label }}</td>
+            <td class="p-2">{{ grant.reason }}</td>
+            <td class="p-2">{{ grant.starts_on|date:"j. M Y" }} – {% if grant.ends_on %}{{ grant.ends_on|date:"j. M Y" }}{% else %}indtil videre{% endif %}</td>
+            <td class="p-2 text-right">
+              <form method="post" action="{% url 'access:grant_end' grant.pk %}">{% csrf_token %}
+                <button type="submit" class="btn btn-secondary">Afslut</button>
+              </form>
+            </td>
+          </tr>
+        {% empty %}
+          <tr><td class="p-2 muted" colspan="5">Ingen.</td></tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  {% endif %}
+{% endblock %}

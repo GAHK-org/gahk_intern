@@ -110,6 +110,18 @@ def mail_stays_queued(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(outbox, "_schedule_delivery", lambda mail_kind: None)
 
 
+@pytest.fixture(autouse=True)
+def _accounts_live_here(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A test's account needs no months on the alumneliste to use the site: one never on a list
+    counts as living here (access.stages.NEVER_LISTED). A test of the stages themselves is marked
+    `real_stages` and gets production's rule, where such an account has no access."""
+    if request.node.get_closest_marker("real_stages") is None:
+        from access import stages
+        from access.stages import Stage
+
+        monkeypatch.setattr(stages, "NEVER_LISTED", Stage.RESIDENT)
+
+
 @pytest.fixture
 def make_resident(db: None) -> Callable[[str, str, bool, tuple], Resident]:
     def _make(
@@ -119,6 +131,8 @@ def make_resident(db: None) -> Callable[[str, str, bool, tuple], Resident]:
         roles: tuple = (),
         **extra: object,
     ) -> Resident:
+        # One of the kitchen staff: an account holding the kitchen role by a grant.
+        kitchen = bool(extra.pop("is_kitchen", False))
         r = Resident(
             email=email,
             first_name=extra.pop("first_name", "Test"),
@@ -135,6 +149,13 @@ def make_resident(db: None) -> Callable[[str, str, bool, tuple], Resident]:
             RoleAssignment.objects.create(resident=r, role=role, year=year, month=month)
         if roles:
             Resident.objects.filter(id=r.id).update(is_staff=True)
+        if kitchen:
+            from access.models import Grant
+            from core.clock import current_date
+
+            Grant.objects.create(
+                resident=r, role="kitchen", reason="Køkkenpersonale", starts_on=current_date()
+            )
         return r
 
     return _make

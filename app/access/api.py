@@ -10,7 +10,7 @@ The gate (access.middleware) has already checked the page's feature by the time 
 for a request that changes nothing, use for one that may. A view only asks for more than that.
 """
 
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from functools import wraps
 
 from django.contrib.auth.views import redirect_to_login
@@ -20,27 +20,36 @@ from django.http.response import HttpResponseBase
 
 from .features import Feature, Grade, feature_of, feature_of_url, in_feature, parse
 from .permissions import Permissions, permissions_of
-from .policy import ADMINISTRATOR, KITCHEN, RESIDENT, ROLE_LABELS
+from .policy import ADMINISTRATOR, GROUPS, KITCHEN, RESIDENT, ROLE_LABELS, STAGES
 from .roles import (
+    NO_STAGE,
     PREVIEW_SESSION_KEY,
     can_preview,
     forget,
     holders,
+    holding,
     previewed_roles,
     real_roles,
     request_permissions,
     request_roles,
+    roles_of_many,
 )
+from .stages import STAGE_LABELS, Stage
 
 __all__ = [
     "ADMINISTRATOR",
+    "GROUPS",
     "KITCHEN",
+    "NO_STAGE",
     "PREVIEW_SESSION_KEY",
     "RESIDENT",
     "ROLE_LABELS",
+    "STAGES",
+    "STAGE_LABELS",
     "Feature",
     "Grade",
     "Permissions",
+    "Stage",
     "can",
     "can_preview",
     "feature_of",
@@ -48,15 +57,18 @@ __all__ = [
     "forget",
     "fragment",
     "holders",
+    "holding",
     "in_feature",
     "is_kitchen",
     "may_open",
+    "may_open_many",
     "permission_required",
     "permissions_of",
     "previewed_roles",
     "real_roles",
     "request_permissions",
     "request_roles",
+    "roles_of_many",
     "user_can",
     "user_permissions",
 ]
@@ -91,7 +103,7 @@ def may_open(user_or_request: object, url: str) -> bool:
         if isinstance(user_or_request, HttpRequest)
         else user_permissions(user_or_request)
     )
-    return permissions.grade(feature_of_url(url)) >= Grade.VIEW
+    return permissions.opens(feature_of_url(url))
 
 
 FRAGMENT_ATTRIBUTE = "access_fragment"
@@ -103,6 +115,16 @@ def fragment(view: View) -> View:
     into the page or read as an empty answer. Outermost, so the URLconf sees it."""
     setattr(view, FRAGMENT_ATTRIBUTE, True)
     return view
+
+
+def may_open_many(resident_ids: Iterable[int], url: str) -> list[int]:
+    """Those of `resident_ids` whose own roles open the page at `url`, in their order. Nobody is
+    told about a page they cannot open: what a notification's recipients are narrowed by."""
+    feature = feature_of_url(url)
+    roles = roles_of_many(resident_ids)
+    return [
+        pk for pk in dict.fromkeys(resident_ids) if pk in roles and permissions_of(roles[pk]).opens(feature)
+    ]
 
 
 def permission_required(permission: str) -> Callable[[View], View]:

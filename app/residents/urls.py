@@ -11,6 +11,7 @@ from .forms import EmailAuthenticationForm, ResidentPasswordResetForm
 urlpatterns = [
     path("", in_feature(Feature.DASHBOARD, views.dashboard), name="dashboard"),
     path("regnskab/", in_feature(Feature.ACCOUNTING, include("regnskab.urls"))),
+    path("access/", in_feature(Feature.ACCESS, include("access.urls"))),
     path("alumneliste/", in_feature(Feature.DIRECTORY, views.directory), name="directory"),
     path("alumneliste/rows", in_feature(Feature.DIRECTORY, views.directory_rows), name="directory_rows"),
     path(

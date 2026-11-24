@@ -125,6 +125,8 @@ def _nav_intern(
     administration: list[NavItem] = []
     if opens(Feature.ADMISSIONS):
         administration.append((reverse("admissions:list"), "Ansøgninger", "inbox"))
+    if opens(Feature.ACCESS):
+        administration.append((reverse("access:index"), "Adgang", "users"))
     if opens(Feature.WEBSITE):
         administration.append((reverse("cms:overview"), "Hjemmeside", "globe"))
     if opens(Feature.SITE_ADMIN):
@@ -185,6 +187,8 @@ def _active_nav_url(sections: list[NavSection], path: str) -> str:
 
 def _preview_label(roles: frozenset[str]) -> str:
     """How the preview banner names what the site is shown as."""
+    if not roles:
+        return "aldrig på alumnelisten (ingen adgang)"
     named = sorted(ROLE_LABELS[role] for role in roles - {RESIDENT})
     return ", ".join(named) if named else "beboer (ingen rolle)"
 

@@ -560,8 +560,9 @@ def test_the_poll_resolves_roles_once_per_request(
 ) -> None:
     """The access gate, the sidebar's effective_roles and can_preview all ask for the role set. Each
     used to hit the DB, so this endpoint — which every open tab calls every 20 seconds — cost three
-    RoleAssignment queries and three active_period lookups. residents.permissions.real_roles now
-    memoises per request; this pins that down, since the regression would be silent."""
+    RoleAssignment queries and three active_period lookups. access.roles.real_roles now memoises per
+    request, and reads the account's months, groups and grants in one query after active_period's;
+    this pins that down, since the regression would be silent."""
     author = make_resident(email="a@gahk.dk")
     QuickPost.objects.create(author=author, content="Kaffe")
     client.force_login(author)
@@ -572,7 +573,8 @@ def test_the_poll_resolves_roles_once_per_request(
 
     sql = [q["sql"] for q in captured.captured_queries]
     assert sum("residents_roleassignment" in s for s in sql) == 1
-    assert sum("residents_residency" in s for s in sql) == 1
+    # active_period, and the months inside the one query for the roles.
+    assert sum("residents_residency" in s for s in sql) == 2
 
 
 def test_feed_items_returns_only_the_post_list(
