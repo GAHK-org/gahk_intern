@@ -55,7 +55,7 @@ def _one_page_pdf(text: str) -> bytes:
 
 def _give_residency(resident: Resident, year: int, month: int, room_index: int) -> None:
     room = Room.objects.create(legacy_index=room_index, number=room_index, floor="stuen", side="mod gaden")
-    Residency.objects.create(resident=resident, room=room, year=year, month=month)
+    Residency.objects.create(resident=resident.person, room=room, year=year, month=month)
 
 
 def _mock_entries(

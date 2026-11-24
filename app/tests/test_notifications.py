@@ -1210,7 +1210,7 @@ def test_everyone_is_residents_role_holders_device_owners_and_superusers(
     year, month = active_period()
     room = Room.objects.create(legacy_index=90, number=90, floor="stuen", side="mod gaden")
     living = make_resident(email="living@gahk.dk")
-    Residency.objects.create(resident=living, room=room, year=year, month=month)
+    Residency.objects.create(resident=living.person, room=room, year=year, month=month)
     role = make_resident(email="role@gahk.dk")
     give(role, Role.AK)
     owner = make_resident(email="device@gahk.dk")
@@ -1220,7 +1220,7 @@ def test_everyone_is_residents_role_holders_device_owners_and_superusers(
     moved_out = make_resident(email="former@gahk.dk")
     prev_year, prev_month = (year, month - 1) if month > 1 else (year - 1, 12)
     Residency.objects.create(
-        resident=moved_out,
+        resident=moved_out.person,
         room=Room.objects.create(legacy_index=91, number=91, floor="stuen", side="mod gaden"),
         year=prev_year,
         month=prev_month,

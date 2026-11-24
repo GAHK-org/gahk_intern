@@ -49,7 +49,7 @@
         <tbody>
         {% for grant, label in others %}
           <tr class="border-b border-line">
-            <td class="p-2"><a href="{% url 'edit_resident' grant.resident_id %}">{{ grant.resident.full_name }}</a></td>
+            <td class="p-2"><a href="{% url 'access:person' grant.resident_id %}">{{ grant.resident.full_name }}</a></td>
             <td class="p-2">{{ label }}</td>
             <td class="p-2">{{ grant.reason }}</td>
             <td class="p-2">{{ grant.starts_on|date:"j. F Y" }} – {% if grant.ends_on %}{{ grant.ends_on|date:"j. F Y" }}{% else %}indtil videre{% endif %}</td>

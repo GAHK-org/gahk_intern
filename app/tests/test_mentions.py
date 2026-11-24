@@ -43,7 +43,9 @@ def live_here(make_resident: Callable[..., Resident]) -> Callable[..., Resident]
         n = next(rooms)
         room = Room.objects.create(legacy_index=n, number=n, floor="stuen", side="mod gaden")
         year, month = active_period()
-        Residency.objects.create(resident=resident, room=room, year=year, month=month, workgroup=workgroup)
+        Residency.objects.create(
+            resident=resident.person, room=room, year=year, month=month, workgroup=workgroup
+        )
         return resident
 
     return _make
@@ -331,8 +333,10 @@ def test_a_group_mention_skips_last_months_members(
     moved = live_here("c@gahk.dk", workgroup=other_group)
     year, month = active_period()
     last_year, last_month = (year, month - 1) if month > 1 else (year - 1, 12)
-    room = Residency.objects.get(resident=moved).room
-    Residency.objects.create(resident=moved, room=room, year=last_year, month=last_month, workgroup=group)
+    room = Residency.objects.get(resident=moved.person).room
+    Residency.objects.create(
+        resident=moved.person, room=room, year=last_year, month=last_month, workgroup=group
+    )
 
     client.force_login(author)
     client.post("/opslagstavle/opret", {"category": Category.NYT, "body": f"@[Testgruppen](g{group.pk})"})

@@ -83,7 +83,9 @@ def _schedule_rows(active_month: int) -> list[dict]:
 def overview(request: HttpRequest) -> HttpResponse:
     ensure_previous_month_charged()  # backstop for the monthly cron job (DEPLOY.md §4b)
     year, month = active_period()
-    residents = Resident.objects.filter(residencies__year=year, residencies__month=month).distinct()
+    residents = Resident.objects.filter(
+        person__residencies__year=year, person__residencies__month=month
+    ).distinct()
     balances = dict(
         AkEntry.objects.values_list("resident").annotate(b=Sum("delta")).values_list("resident", "b")
     )

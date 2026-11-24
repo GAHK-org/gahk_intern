@@ -1244,11 +1244,13 @@ def roles(request: HttpRequest) -> HttpResponse:
         if role:
             listed[residency.resident_id] = role
     residents = (
-        Resident.objects.filter(Q(residencies__year=year, residencies__month=month) | Q(pk__in=given))
+        Resident.objects.filter(
+            Q(person__residencies__year=year, person__residencies__month=month) | Q(pk__in=given)
+        )
         .distinct()
         .order_by("first_name", "last_name")
     )
-    rows = [(r, listed.get(r.id), sorted(given.get(r.id, []))) for r in residents]
+    rows = [(r, listed.get(r.person_id or 0), sorted(given.get(r.id, []))) for r in residents]
     return render(
         request,
         "siteadmin/roles.html",

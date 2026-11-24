@@ -1,7 +1,7 @@
 """ETL: legacy intern_alumne / gahk_admin_user / intern_alumne_liste -> clean residents domain.
 
 Applies the decided transforms (02-schema-etl.md §5, 99-index.md F-010):
-  * dedupe by lower/trim email, keeping the highest legacy ID; empty-email rows dropped.
+  * dedupe by lower/trim email, keeping the highest legacy ID; a person with no e-mail is kept, with no account.
   * duplicate accounts are *merged*: their residencies/roles re-point to the kept resident.
   * legacy unsalted sha256 password imported as `gahk_sha256$$<hex>` (upgrade-on-login).
   * roles (gahk_admin_user flags) seeded for the *active* (newest) month only — roles are monthly.
@@ -15,13 +15,14 @@ import datetime
 from typing import Any
 
 from django.core.management.base import BaseCommand, CommandError
-from django.db import transaction
+from django.core.management.color import no_style
+from django.db import connection, transaction
 
 from access.models import Grant
 from audit import trail
 from core.etl import decode_month_number, fetch_all
 from core.models import Cleaning, Room, Workgroup
-from residents.models import WORKGROUP_ROLE_VALUES, Residency, Resident, Role
+from residents.models import WORKGROUP_ROLE_VALUES, Person, Residency, Resident, Role
 
 # What the grants this command makes say, so a rerun replaces only its own.
 ETL_REASON = "Fra det gamle intern"
@@ -58,15 +59,16 @@ class Command(BaseCommand):
         # ---- 1. dedupe/merge residents by normalized email -------------------------------------
         rows = fetch_all("SELECT * FROM intern_alumne")
         by_email: dict[str, list[dict[str, Any]]] = {}
-        dropped_empty = 0
+        no_login: list[dict[str, Any]] = []  # people with no e-mail: kept as people, with no account
         for r in rows:
             key = (r["email"] or "").strip().lower()
             if not key:
-                dropped_empty += 1
+                no_login.append(r)
                 continue
             by_email.setdefault(key, []).append(r)
 
-        id_remap = {}  # every legacy ID -> the kept resident's ID (duplicates merge into the newest)
+        # Every legacy ID -> the kept person's ID (duplicate accounts merge into the newest).
+        id_remap = {r["ID"]: r["ID"] for r in no_login}
         kept = []
         for group in by_email.values():
             group.sort(key=lambda r: r["ID"])
@@ -74,7 +76,22 @@ class Command(BaseCommand):
             kept.append(keep)
             for r in group:
                 id_remap[r["ID"]] = keep["ID"]
-        merged = len(rows) - dropped_empty - len(kept)
+        merged = len(rows) - len(no_login) - len(kept)
+
+        # Every person keeps their legacy ID, and so does the account of each one with an e-mail.
+        for r in [*kept, *no_login]:
+            Person.objects.update_or_create(
+                id=r["ID"],
+                defaults={
+                    "first_name": (r["firstName"] or "").strip(),
+                    "last_name": (r["lastName"] or "").strip(),
+                    "birthday": _date(r["birthday"]),
+                    "move_in_date": _date(r["moveInDay"]),
+                    "move_out_date": _date(r["moveOutDay"]),
+                    "study": (r["study"] or "").strip(),
+                    "fylgje_raw": (r["fylgje"] or "").strip(),
+                },
+            )
 
         for r in kept:
             pw = (r["password"] or "").strip()
@@ -86,16 +103,16 @@ class Command(BaseCommand):
                     "first_name": (r["firstName"] or "").strip(),
                     "last_name": (r["lastName"] or "").strip(),
                     "phone": (r["phone"] or "").strip(),
-                    "birthday": _date(r["birthday"]),
-                    "move_in_date": _date(r["moveInDay"]),
-                    "move_out_date": _date(r["moveOutDay"]),
-                    "study": (r["study"] or "").strip(),
-                    "fylgje_raw": (r["fylgje"] or "").strip(),
+                    "person_id": r["ID"],
                     "password": password,
                     "is_active": True,
                     "is_staff": False,
                 },
             )
+
+        with connection.cursor() as cursor:
+            for sql in connection.ops.sequence_reset_sql(no_style(), [Person, Resident]):
+                cursor.execute(sql)
 
         # ---- 2. active period (newest published month) -----------------------------------------
         mn = fetch_all("SELECT MAX(monthNumber) AS m FROM intern_alumne_liste")[0]["m"]
@@ -156,21 +173,21 @@ class Command(BaseCommand):
 
         # ---- 5. fylgje -> sponsor (unambiguous full-name match) --------------------------------
         name_index: dict[str, list[int]] = {}
-        for rid_, fn, ln in Resident.objects.values_list("id", "first_name", "last_name"):
+        for rid_, fn, ln in Person.objects.values_list("id", "first_name", "last_name"):
             name_index.setdefault(f"{fn} {ln}".strip().lower(), []).append(rid_)
         sponsor_set = sponsor_ambiguous = 0
-        for res in Resident.objects.exclude(fylgje_raw="").only("id", "fylgje_raw"):
+        for res in Person.objects.exclude(fylgje_raw="").only("id", "fylgje_raw"):
             matches = name_index.get(res.fylgje_raw.strip().lower(), [])
             matches = [m for m in matches if m != res.id]
             if len(matches) == 1:
-                Resident.objects.filter(id=res.id).update(sponsor_id=matches[0])
+                Person.objects.filter(id=res.id).update(sponsor_id=matches[0])
                 sponsor_set += 1
             elif len(matches) > 1:
                 sponsor_ambiguous += 1
 
         self.stdout.write(
             self.style.SUCCESS(
-                f"Residents: {len(kept)} kept (merged {merged} dup, dropped {dropped_empty} empty-email). "
+                f"Residents: {len(kept)} kept (merged {merged} dup, {len(no_login)} without e-mail kept as people). "
                 f"Active period {active_year}-{active_month:02d}: "
                 f"{Grant.objects.filter(reason=ETL_REASON).count()} roles given by hand. Residencies: {residencies} "
                 f"(orphan-resident {orphan_resident}, unmapped-room {orphan_room}). "

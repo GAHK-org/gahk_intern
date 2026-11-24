@@ -80,7 +80,7 @@ def roles_of_many(resident_ids: Iterable[int]) -> dict[int, frozenset[str]]:
     if not ids:
         return {}
     year, month = active_period()
-    workgroup = Residency.objects.filter(resident_id=OuterRef("pk"), year=year, month=month).values(
+    workgroup = Residency.objects.filter(resident_id=OuterRef("person_id"), year=year, month=month).values(
         "workgroup__name"
     )[:1]
     granted = Grant.objects.active().filter(resident_id=OuterRef("pk"))
@@ -176,7 +176,7 @@ def holding(roles: Iterable[str]) -> QuerySet[Resident]:
     names = workgroups_of(wanted & GROUPS)
     if names:
         listed = Residency.objects.filter(year=year, month=month, workgroup__name__in=names)
-        match |= Q(pk__in=listed.values("resident_id"))
+        match |= Q(person_id__in=listed.values("resident_id"))  # the list names people
     if ADMINISTRATOR in wanted or RESIDENT in wanted:
         # Administrators are residents, whatever their months say.
         match |= administrators

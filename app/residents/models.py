@@ -101,13 +101,17 @@ PROFILE_THUMBNAIL_REQUEUE_SECONDS = 3600
 logger = logging.getLogger(__name__)
 
 
-class Resident(AbstractBaseUser, PermissionsMixin):
-    # identity / login (legacy intern_alumne.email becomes the unique login id)
-    email = models.EmailField(unique=True)
+class Person(models.Model):
+    """A human the house knows about: who lived here, when, and who brought them in.
+
+    Separate from the login (Resident, the account): a person may have no account (an alumne from
+    before the intranet, a fylgje who never had an e-mail on file), and an account may have no person
+    (the photo import script's). Facts about the human point here: their months on the alumneliste
+    (Residency), their fylgje, the Stamtræ. What they do on the site points at their account.
+    """
+
     first_name = models.CharField(max_length=100)
-    last_name = models.CharField(max_length=100)
-    phone = models.CharField(max_length=40, blank=True)
-    # residency facts
+    last_name = models.CharField(max_length=100, blank=True)
     birthday = models.DateField(null=True, blank=True)
     move_in_date = models.DateField(null=True, blank=True)
     move_out_date = models.DateField(null=True, blank=True)
@@ -117,6 +121,58 @@ class Resident(AbstractBaseUser, PermissionsMixin):
         "self", null=True, blank=True, on_delete=models.SET_NULL, related_name="proteges"
     )
     fylgje_raw = models.CharField(max_length=255, blank=True)  # original free-text, kept if unresolved
+
+    class Meta:
+        ordering = ["first_name", "last_name"]
+
+    def __str__(self) -> str:
+        return self.full_name
+
+    def save(self, *args: Any, **kwargs: Any) -> None:  # noqa: ANN401
+        """The account keeps a copy of the name, for display, search and ordering wherever the
+        account is what is at hand (a post's author, a shopper); this is what keeps it current."""
+        super().save(*args, **kwargs)
+        Resident.objects.filter(person=self).exclude(
+            first_name=self.first_name, last_name=self.last_name
+        ).update(first_name=self.first_name, last_name=self.last_name)
+
+    @property
+    def full_name(self) -> str:
+        return f"{self.first_name} {self.last_name}".strip()
+
+    @property
+    def login(self) -> "Resident | None":
+        """The person's account, or None for someone with no login."""
+        try:
+            return self.account
+        except Resident.DoesNotExist:
+            return None
+
+    # What the alumneliste shows of a person's contact details: their account's.
+    @property
+    def email(self) -> str:
+        account = self.login
+        return account.email if account is not None else ""
+
+    @property
+    def phone(self) -> str:
+        account = self.login
+        return account.phone if account is not None else ""
+
+
+class Resident(AbstractBaseUser, PermissionsMixin):
+    """An account: a login, its contact details and its profile on the site. The human behind it,
+    if any, is its `person`."""
+
+    # identity / login (legacy intern_alumne.email becomes the unique login id)
+    email = models.EmailField(unique=True)
+    person = models.OneToOneField(
+        Person, null=True, blank=True, on_delete=models.SET_NULL, related_name="account"
+    )
+    # The person's name, copied (Person.save keeps it current); an account with no person has its own.
+    first_name = models.CharField(max_length=100)
+    last_name = models.CharField(max_length=100)
+    phone = models.CharField(max_length=40, blank=True)
     # e-conomic's chart-of-accounts accountNumber for this alumne (F-010 regnskab role; alumneregning automation).
     economic_account_number = models.PositiveIntegerField(null=True, blank=True, unique=True)
     # profile
@@ -247,6 +303,37 @@ class Resident(AbstractBaseUser, PermissionsMixin):
     def full_name(self) -> str:
         return f"{self.first_name} {self.last_name}".strip()
 
+    # The person's facts, read through the account where the account is what is at hand (a profile
+    # page, a mail). Written on the person.
+    @property
+    def birthday(self) -> datetime.date | None:
+        person = self.person
+        return person.birthday if person is not None else None
+
+    @property
+    def move_in_date(self) -> datetime.date | None:
+        person = self.person
+        return person.move_in_date if person is not None else None
+
+    @property
+    def move_out_date(self) -> datetime.date | None:
+        person = self.person
+        return person.move_out_date if person is not None else None
+
+    @property
+    def study(self) -> str:
+        person = self.person
+        return person.study if person is not None else ""
+
+    @property
+    def residencies(self) -> "models.QuerySet[Residency]":
+        """The person's months on the alumneliste (none for an account with no person)."""
+        return (
+            Residency.objects.filter(resident_id=self.person_id)
+            if self.person_id
+            else Residency.objects.none()
+        )
+
     def has_role(self, role: str, period: tuple[int, int] | None = None) -> bool:
         """Whether the account held `role` in a month (the month in effect by default): from its
         embedsgruppe on that month's list, or by a grant that held on any of the month's days."""
@@ -290,7 +377,8 @@ class Resident(AbstractBaseUser, PermissionsMixin):
 class Residency(models.Model):
     """One row per resident per month (legacy intern_alumne_liste): which room + chore groups."""
 
-    resident = models.ForeignKey(Resident, on_delete=models.CASCADE, related_name="residencies")
+    # The person on the list (residents.Person), whether or not they have an account.
+    resident = models.ForeignKey(Person, on_delete=models.CASCADE, related_name="residencies")
     room = models.ForeignKey("core.Room", on_delete=models.PROTECT, related_name="residencies")
     workgroup = models.ForeignKey("core.Workgroup", null=True, blank=True, on_delete=models.SET_NULL)
     cleaning = models.ForeignKey("core.Cleaning", null=True, blank=True, on_delete=models.SET_NULL)
@@ -382,7 +470,7 @@ def embedsgruppe_of(resident: "Resident", period: tuple[int, int] | None = None)
     """
     year, month = period or active_period()
     name = (
-        Residency.objects.filter(resident=resident, year=year, month=month)
+        Residency.objects.filter(resident_id=resident.person_id, year=year, month=month)
         .values_list("workgroup__name", flat=True)
         .first()
     )

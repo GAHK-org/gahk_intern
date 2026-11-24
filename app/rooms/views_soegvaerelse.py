@@ -429,19 +429,23 @@ def end_round(request: HttpRequest) -> HttpResponseRedirect:
             _carry_roster_forward(sy, sm, year, target_month)
             alloc = allocate_round(month)
             settled_rooms = set(alloc.winners)
-            winner_resident_ids = {a.resident_id for a in alloc.winners.values()}
+            # An application is an account's; the list names its person.
+            winner_resident_ids = {a.resident.person_id for a in alloc.winners.values()}
             # Place every winner first. This is musical chairs: a winner is an existing resident moving
             # into the room they won, which frees their old room for the next round. update_or_create is
             # keyed on (resident, year, month), so it MOVES the winner's carried-forward row into the
             # won room rather than duplicating it — the old room is vacated automatically.
             for room_id, app in alloc.winners.items():
                 Residency.objects.update_or_create(
-                    resident_id=app.resident_id, year=year, month=target_month, defaults={"room_id": room_id}
+                    resident_id=app.resident.person_id,
+                    year=year,
+                    month=target_month,
+                    defaults={"room_id": room_id},
                 )
                 moves.append(
                     {
                         "name": app.resident.full_name,
-                        "from": prev_rooms.get(app.resident_id),  # None = new resident
+                        "from": prev_rooms.get(app.resident.person_id or 0),  # None = new resident
                         "to": room_num[room_id],
                     }
                 )

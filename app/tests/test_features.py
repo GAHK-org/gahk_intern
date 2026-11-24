@@ -418,7 +418,7 @@ def test_pr_embedsgruppe_grants_cms_access(make_resident: Callable) -> None:
     r = make_resident(email="prmember@gahk.dk")
     y, m = active_period()
     room = Room.objects.create(legacy_index=140, number=140, floor="stuen", side="mod gaden")
-    Residency.objects.create(resident=r, room=room, workgroup=pr_group, year=y, month=m)
+    Residency.objects.create(resident=r.person, room=room, workgroup=pr_group, year=y, month=m)
 
     assert r.has_role("pr", (y, m))
     assert user_can(r, "website.manage")
@@ -955,8 +955,8 @@ def test_room_clash_warning_is_indstilling_only(make_resident: Callable) -> None
     room = Room.objects.create(legacy_index=98, number=98, floor="stuen", side="mod gaden")
     a = make_resident(email="clash-a@gahk.dk")
     b = make_resident(email="clash-b@gahk.dk")
-    Residency.objects.create(resident=a, room=room, year=y, month=m)
-    Residency.objects.create(resident=b, room=room, year=y, month=m)  # same room, same month
+    Residency.objects.create(resident=a.person, room=room, year=y, month=m)
+    Residency.objects.create(resident=b.person, room=room, year=y, month=m)  # same room, same month
 
     plain = Client()
     plain.force_login(a)
@@ -997,13 +997,13 @@ def test_alumneliste_default_sort_is_alphabetical_and_sortable(make_resident: Ca
     r_hi = Room.objects.create(legacy_index=201, number=201, floor="2. sal", side="mod gaden")
     r_lo = Room.objects.create(legacy_index=1, number=1, floor="stuen", side="mod gaden")
     Residency.objects.create(
-        resident=make_resident(email="aaron@gahk.dk", first_name="Aaron", last_name="A"),
+        resident=(make_resident(email="aaron@gahk.dk", first_name="Aaron", last_name="A")).person,
         room=r_hi,
         year=y,
         month=m,
     )
     Residency.objects.create(
-        resident=make_resident(email="zoe@gahk.dk", first_name="Zoe", last_name="Z"),
+        resident=(make_resident(email="zoe@gahk.dk", first_name="Zoe", last_name="Z")).person,
         room=r_lo,
         year=y,
         month=m,
@@ -1036,7 +1036,7 @@ def test_directory_rows_fragment_has_sortable_headers(make_resident: Callable) -
     y, m = active_period()
     room = Room.objects.create(legacy_index=1, number=1, floor="stuen", side="mod gaden")
     Residency.objects.create(
-        resident=make_resident(email="frag@gahk.dk", first_name="Frag", last_name="Menter"),
+        resident=(make_resident(email="frag@gahk.dk", first_name="Frag", last_name="Menter")).person,
         room=room,
         year=y,
         month=m,

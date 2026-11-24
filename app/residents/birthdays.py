@@ -91,7 +91,9 @@ def residents_with_birthdays() -> list[Resident]:
     """
     year, month = active_period()
     return list(
-        Resident.objects.filter(residencies__year=year, residencies__month=month, birthday__isnull=False)
+        Resident.objects.filter(
+            person__residencies__year=year, person__residencies__month=month, person__birthday__isnull=False
+        )
         .distinct()
         .order_by("first_name", "last_name", "pk")
     )

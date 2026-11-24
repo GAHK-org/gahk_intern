@@ -18,7 +18,9 @@ pytestmark = pytest.mark.django_db
 def _place(resident: Resident, period: tuple[int, int], workgroup: str | None, number: int) -> None:
     room = Room.objects.create(legacy_index=number, number=number, floor="stuen", side="mod gaden")
     group = Workgroup.objects.get_or_create(name=workgroup)[0] if workgroup else None
-    Residency.objects.create(resident=resident, room=room, workgroup=group, year=period[0], month=period[1])
+    Residency.objects.create(
+        resident=resident.person, room=room, workgroup=group, year=period[0], month=period[1]
+    )
 
 
 def test_an_embedsgruppe_gives_its_role_in_the_month_in_effect_only(

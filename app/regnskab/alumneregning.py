@@ -102,7 +102,8 @@ def residents_in_period(date_from: date, date_to: date) -> QuerySet[Resident]:
         .values_list("resident_id", flat=True)
         .distinct()
     )
-    return Resident.objects.filter(pk__in=resident_ids).order_by("first_name", "last_name")
+    # The list names people; what is billed is their accounts.
+    return Resident.objects.filter(person_id__in=resident_ids).order_by("first_name", "last_name")
 
 
 def residents_billable_for(date_from: date, date_to: date) -> QuerySet[Resident]:

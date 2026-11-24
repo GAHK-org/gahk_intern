@@ -50,10 +50,15 @@ def overview(request: HttpRequest) -> HttpResponse:
     alumneregning_from = date(year, month, 1)
     alumneregning_to = date(year, month, calendar.monthrange(year, month)[1])
 
-    prior = Residency.objects.filter(year=py, month=pm).select_related("resident", "room")
+    prior = Residency.objects.filter(year=py, month=pm).select_related("resident__account", "room")
     still_here = set(Residency.objects.filter(year=year, month=month).values_list("resident_id", flat=True))
+    # The list names people; what is settled is their accounts (a person with no login has none).
     leavers = sorted(
-        (_row(r.resident, r.room.number) for r in prior if r.resident_id not in still_here),
+        (
+            _row(r.resident.login, r.room.number)
+            for r in prior
+            if r.resident_id not in still_here and r.resident.login is not None
+        ),
         key=lambda row: row.resident.full_name,
     )
 

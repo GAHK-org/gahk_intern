@@ -24,7 +24,7 @@ from audit import trail
 from core.clock import current_date
 from core.danish import genitive
 from residents.forms import password_link_mail
-from residents.models import Resident
+from residents.models import Person, Resident
 from residents.permissions import current_resident
 
 from .api import KITCHEN, ROLE_LABELS, can, can_preview, permission_required, real_roles
@@ -126,6 +126,8 @@ def kitchen_staff_add(request: HttpRequest) -> HttpResponseRedirect:
     data = form.cleaned_data
     account = Resident(email=data["email"], first_name=data["first_name"], last_name=data["last_name"])
     with transaction.atomic(), trail.event("access.kitchen_staff.added", subject=account):
+        # A person as well as a login: they are people the house knows, never on its list.
+        account.person = Person.objects.create(first_name=data["first_name"], last_name=data["last_name"])
         account.set_unusable_password()  # they set one from the welcome mail's link
         account.save()
         Grant.objects.create(

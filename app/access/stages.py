@@ -87,7 +87,8 @@ def with_stage(accounts: QuerySet[Resident], now: int | None = None) -> QuerySet
     """`accounts` annotated with `access_stage`: the stage's value, or None when never on a list.
     For filtering in SQL; the same rule as from_months. `now`: the month in effect's index."""
     now = now_index() if now is None else now
-    months = Residency.objects.filter(resident_id=OuterRef("pk")).annotate(month_index=_MONTH)
+    # The account's person's months: an account with no person was never on a list.
+    months = Residency.objects.filter(resident_id=OuterRef("person_id")).annotate(month_index=_MONTH)
     last_past = months.filter(month_index__lte=now).order_by("-month_index").values("month_index")[:1]
     last = months.order_by("-month_index").values("month_index")[:1]
     annotated = accounts.annotate(

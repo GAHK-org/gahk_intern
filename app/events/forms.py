@@ -36,7 +36,7 @@ def invitable_residents(exclude: Resident | None = None) -> object:
     """
     year, month = active_period()
     living_here = Residency.objects.filter(year=year, month=month).values("resident_id")
-    qs = Resident.objects.filter(pk__in=living_here).order_by("first_name", "last_name")
+    qs = Resident.objects.filter(person_id__in=living_here).order_by("first_name", "last_name")
     return qs.exclude(pk=exclude.pk) if exclude else qs
 
 

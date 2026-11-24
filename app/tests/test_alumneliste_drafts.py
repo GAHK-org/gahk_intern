@@ -41,17 +41,17 @@ def test_save_keeps_edits_and_removals_when_rooms_clash(
     b = make_resident(email="draft-b@gahk.dk", first_name="Bodil")
     c = make_resident(email="draft-c@gahk.dk", first_name="Carla")
     for res, room in zip((a, b, c), rooms, strict=True):
-        Residency.objects.create(resident=res, room=room, year=y, month=m)
+        Residency.objects.create(resident=res.person, room=room, year=y, month=m)
 
     resp = indstilling.post(
         URL,
         {
             "action": "save",
             "period": "current",
-            f"room_{a.id}": rooms[0].id,
-            f"room_{b.id}": rooms[0].id,  # the one mistake: same room as Anna
-            f"room_{c.id}": rooms[2].id,
-            f"remove_{c.id}": "1",
+            f"room_{a.person_id}": rooms[0].id,
+            f"room_{b.person_id}": rooms[0].id,  # the one mistake: same room as Anna
+            f"room_{c.person_id}": rooms[2].id,
+            f"remove_{c.person_id}": "1",
         },
     )
     assert resp.status_code == 200  # rendered in place, not redirected away
@@ -71,7 +71,9 @@ def test_add_new_keeps_what_was_typed_when_the_room_is_taken(
     from residents.models import Residency, Resident, active_period
 
     y, m = active_period()
-    Residency.objects.create(resident=make_resident(email="occupant@gahk.dk"), room=rooms[0], year=y, month=m)
+    Residency.objects.create(
+        resident=(make_resident(email="occupant@gahk.dk")).person, room=rooms[0], year=y, month=m
+    )
     sponsor = make_resident(email="fylgje@gahk.dk", first_name="Fylgje")
 
     resp = indstilling.post(
@@ -83,7 +85,7 @@ def test_add_new_keeps_what_was_typed_when_the_room_is_taken(
             "last_name": "Nyborg",
             "email": "nikoline@gahk.dk",
             "room": rooms[0].id,  # the one mistake
-            "sponsor": sponsor.id,
+            "sponsor": sponsor.person_id,
         },
     )
     assert resp.status_code == 200
@@ -91,7 +93,7 @@ def test_add_new_keeps_what_was_typed_when_the_room_is_taken(
     assert draft["first_name"] == "Nikoline"
     assert draft["last_name"] == "Nyborg"
     assert draft["email"] == "nikoline@gahk.dk"
-    assert draft["sponsor"] == sponsor.id
+    assert draft["sponsor"] == sponsor.person_id
     html = resp.content.decode()
     assert 'value="Nikoline"' in html and 'value="nikoline@gahk.dk"' in html
     assert not Resident.objects.filter(email="nikoline@gahk.dk").exists()  # nothing created
@@ -126,7 +128,7 @@ def test_add_existing_keeps_its_selections_when_the_room_is_taken(
 
     y, m = active_period()
     Residency.objects.create(
-        resident=make_resident(email="occupant2@gahk.dk"), room=rooms[0], year=y, month=m
+        resident=(make_resident(email="occupant2@gahk.dk")).person, room=rooms[0], year=y, month=m
     )
     newcomer = make_resident(email="tilfoej@gahk.dk")
     wg = Workgroup.objects.create(name="Haven")
@@ -136,15 +138,15 @@ def test_add_existing_keeps_its_selections_when_the_room_is_taken(
         {
             "action": "add_existing",
             "period": "current",
-            "resident": newcomer.id,
+            "resident": newcomer.person_id,
             "room": rooms[0].id,  # the one mistake
             "workgroup": wg.id,
         },
     )
     assert resp.status_code == 200
     draft = resp.context["existing_draft"]
-    assert (draft["resident"], draft["room"], draft["workgroup"]) == (newcomer.id, rooms[0].id, wg.id)
-    assert not Residency.objects.filter(resident=newcomer, year=y, month=m).exists()
+    assert (draft["resident"], draft["room"], draft["workgroup"]) == (newcomer.person_id, rooms[0].id, wg.id)
+    assert not Residency.objects.filter(resident=newcomer.person, year=y, month=m).exists()
 
     # Marked selected in the rendered form — and only in that form. Both add-forms post a field
     # called `room`, so the draft must not bleed into the "opret ny beboer" one beside it.
@@ -162,11 +164,13 @@ def test_a_successful_add_still_redirects(make_resident: Callable, indstilling: 
     from residents.models import Residency, active_period
 
     y, m = active_period()
-    Residency.objects.create(resident=make_resident(email="anchor@gahk.dk"), room=rooms[0], year=y, month=m)
+    Residency.objects.create(
+        resident=(make_resident(email="anchor@gahk.dk")).person, room=rooms[0], year=y, month=m
+    )
     newcomer = make_resident(email="ok@gahk.dk")
     resp = indstilling.post(
         URL,
-        {"action": "add_existing", "period": "current", "resident": newcomer.id, "room": rooms[1].id},
+        {"action": "add_existing", "period": "current", "resident": newcomer.person_id, "room": rooms[1].id},
     )
     assert resp.status_code == 302
-    assert Residency.objects.filter(resident=newcomer, year=y, month=m).exists()
+    assert Residency.objects.filter(resident=newcomer.person, year=y, month=m).exists()

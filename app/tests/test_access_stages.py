@@ -37,7 +37,7 @@ def _on_list(resident: Resident, *offsets: int) -> Resident:
         n = next(_numbers)
         room = Room.objects.create(legacy_index=n, number=n, floor="stuen", side="mod gaden")
         year, month = _month(offset)
-        Residency.objects.create(resident=resident, room=room, year=year, month=month)
+        Residency.objects.create(resident=resident.person, room=room, year=year, month=month)
     return resident
 
 
@@ -245,7 +245,7 @@ def test_the_indstilling_gives_a_role_from_the_edit_page(
 ) -> None:
     c = _with_role(make_resident, "ind@gahk.dk", Role.INDSTILLING)
     gone = house["1_to_3"]
-    page = c.get(f"/beboer/{gone.pk}/rediger").content.decode()
+    page = c.get(f"/beboer/{gone.person_id}/rediger").content.decode()
     assert "Fraflyttet for 1–3 måneder siden" in page and "Giv en rolle" in page
     c.post(
         f"/access/grants/{gone.pk}/add",

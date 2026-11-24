@@ -69,11 +69,11 @@ def test_seed_demo_populates_and_is_idempotent() -> None:
     this_month = Residency.objects.filter(year=year, month=month)
     # Everyone except the one leaver is on this month's list: a full alumneliste, not one short.
     assert this_month.count() == Resident.objects.count() - 1
-    assert not this_month.filter(resident=leaver).exists()
+    assert not this_month.filter(resident=leaver.person).exists()
     room_ids = list(this_month.values_list("room_id", flat=True))
     assert len(room_ids) == len(set(room_ids)), "one resident per room this month"
-    newcomer = Resident.objects.get(move_in_date=date(year, month, 1))
-    assert this_month.filter(resident=newcomer).exists()
+    newcomer = Resident.objects.get(person__move_in_date=date(year, month, 1))
+    assert this_month.filter(resident=newcomer.person).exists()
 
 
 @pytest.mark.django_db
