@@ -10,14 +10,15 @@ import uuid
 
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
-from django.db import transaction
 from django.http import HttpRequest, HttpResponse, HttpResponseRedirect
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
 from django.views.decorators.http import require_POST
 
+from audit import trail
 from core import push
 from gahkflix import access as gahkflix_access
+from residents.models import Resident
 from residents.permissions import current_resident, is_kitchen
 
 from . import categories, services
@@ -132,7 +133,9 @@ def preferences(request: HttpRequest) -> HttpResponse:
         return not kitchen or category.key in categories.KITCHEN_CATEGORIES
 
     if request.method == "POST":
-        with transaction.atomic():
+        # The resident itself, not request.user's lazy wrapper, whose type the trail does not know.
+        whose = Resident.objects.get(pk=resident.pk)
+        with trail.event("notifications.settings.updated", subject=whose, only_if_changed=True):
             for category in filter(shown, categories.CATEGORIES):
                 # A category without an optional in-app row is stored as on whatever is posted.
                 optional = category.in_app and category.in_app_optional

@@ -75,6 +75,12 @@ ran and how it went, and what is scheduled next. Under Administration → Worker
   job is kept until there are more than 1000 of the same type and status; then the oldest beyond the
   1000 go once they are 60 days old.
 
+## Audit trail
+
+- A job's own record here, and the workers' heartbeats, are not in the audit trail (audit-trail.md):
+  they are the worker's bookkeeping. What a job changes is, as done by nobody, under the job's own
+  name.
+
 ## Decisions
 
 - **The worker keeps its own record of every job**, not only of the jobs that log something. The

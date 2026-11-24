@@ -343,7 +343,10 @@ def alumneregning_settings_view(request: HttpRequest) -> HttpResponse:
     if request.method == "POST":
         form = AlumneregningSettingsForm(request.POST, request.FILES, instance=instance)
         if form.is_valid():
-            form.save()
+            with trail.event(
+                "regnskab.alumneregning_settings.updated", subject=instance, only_if_changed=True
+            ):
+                form.save()
             messages.success(request, "Alumneregning-indstillinger er opdateret.")
             return redirect("regnskab:alumneregning_settings")
         messages.error(request, "Ret fejlene og prøv igen.")

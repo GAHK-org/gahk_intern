@@ -3,6 +3,8 @@ from datetime import date
 
 from celery import Task, shared_task
 
+from audit import trail
+
 from . import alumneregning
 
 logger = logging.getLogger(__name__)
@@ -32,6 +34,21 @@ def send_alumneregninger_task(self: Task, date_from_iso: str, date_to_iso: str) 
     date_from, date_to = date.fromisoformat(date_from_iso), date.fromisoformat(date_to_iso)
     results = alumneregning.send_alumneregninger(date_from, date_to)
     failed = [r for r in results if r.outcome == "failed"]
+    # Recorded after the run rather than around it: an event is one transaction, and each alumne's
+    # statement commits (and its mail goes) on its own. Every run, retries too, says whom it billed
+    # and whom it could not; a run with nobody left to bill records nothing.
+    if results:
+        trail.record(
+            "regnskab.alumneregninger.made",
+            actor=None,
+            details={
+                "date_from": date_from_iso,
+                "date_to": date_to_iso,
+                "made": len(results) - len(failed),
+                "failed": len(failed),
+            },
+            involve=[(r.resident, "billed" if r.outcome == "sent" else "failed") for r in results],
+        )
     if any(r.retryable for r in failed) and self.request.retries < self.max_retries:
         logger.info("alumneregning task: %d failed on e-conomic's rate limit; trying again", len(failed))
         raise self.retry(countdown=ECONOMIC_RETRY_COUNTDOWN)

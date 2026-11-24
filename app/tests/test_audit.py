@@ -28,18 +28,14 @@ PENDING_APPS = {
     "admissions",
     "ak",
     "cms",
-    "core",
     "den_hurtige",
     "events",
     "gahkflix",
-    "notifications",
     "oelkaelder",
     "opslagstavle",
     "photo_album",
-    "regnskab",
     "reparationer",
     "rooms",
-    "stats",
 }
 
 

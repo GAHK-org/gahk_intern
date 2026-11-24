@@ -10,6 +10,7 @@ from typing import cast
 
 from django.core.management.base import BaseCommand
 
+from audit import trail
 from core.models import Room
 
 
@@ -75,9 +76,11 @@ class Command(BaseCommand):
 
     def handle(self, *args, **opts) -> None:  # noqa: ANN002, ANN003
         n = 0
-        for r in build_rooms():
-            Room.objects.update_or_create(legacy_index=r["legacy_index"], defaults=r)
-            n += 1
+        # Loading the old site's room map is nobody's action: not one audit event per room.
+        with trail.unaudited():
+            for r in build_rooms():
+                Room.objects.update_or_create(legacy_index=r["legacy_index"], defaults=r)
+                n += 1
         self.stdout.write(
             self.style.SUCCESS(f"Seeded/updated {n} rooms (Room.objects={Room.objects.count()}).")
         )
