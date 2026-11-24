@@ -77,7 +77,9 @@ def create_folder(viewer: Viewer, parent: Folder, name: str, resident: Resident)
         created_by=resident,
     )
     try:
-        with trail.event("drive.folder.created", subject=folder, involve=[(parent, "parent")]):
+        with trail.event(
+            "drive.folder.created", subject=folder, actor=resident, involve=[(parent, "parent")]
+        ):
             folder.save()
     except IntegrityError as exc:
         raise ValidationError(f"Der er allerede noget, der hedder „{name}“, i mappen.") from exc
