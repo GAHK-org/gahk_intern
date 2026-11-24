@@ -34,6 +34,8 @@ from .stages import Stage, with_stage
 PREVIEW_SESSION_KEY = "preview_roles"
 # In a preview's list instead of a stage: the account has no stage at all.
 NO_STAGE = "none"
+# In a preview's list: "person:<pk>", the site as that account's own roles open it.
+PREVIEW_PERSON = "person:"
 
 # Attributes the answers are memoised under, on the request's user instance and the request. Both
 # live exactly one request, so a snapshot can never outlive the request that took it, and a request
@@ -127,12 +129,27 @@ def previewed_roles(request: HttpRequest) -> frozenset[str] | None:
     if PREVIEW_SESSION_KEY not in request.session or not can_preview(request.user):
         return None
     chosen = set(request.session.get(PREVIEW_SESSION_KEY) or [])
+    person = previewed_person_id(request)
+    if person is not None:
+        return roles_of_many([person]).get(person, frozenset())
     if KITCHEN in chosen:
         return frozenset({KITCHEN})
     roles = {role for role in chosen if role in ROLE_LABELS}
     if NO_STAGE not in chosen and not roles & STAGES:
         roles.add(RESIDENT)
     return frozenset(roles)
+
+
+def previewed_person_id(request: HttpRequest) -> int | None:
+    """The account "Se side som" shows the site as, when it shows one person's roles."""
+    for entry in request.session.get(PREVIEW_SESSION_KEY) or []:
+        if (
+            isinstance(entry, str)
+            and entry.startswith(PREVIEW_PERSON)
+            and entry[len(PREVIEW_PERSON) :].isdigit()
+        ):
+            return int(entry[len(PREVIEW_PERSON) :])
+    return None
 
 
 def request_roles(request: HttpRequest) -> frozenset[str]:

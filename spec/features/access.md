@@ -128,6 +128,17 @@ audience narrows who; the roles still decide what.
 - Administrators can see the site as any role, any stage, as never listed or as Køkkenet ("Se side
   som").
 
+## The access page
+
+- Every account has "Min adgang" in its account menu, the kitchen staff's and one with no access
+  too. The Indstilling opens anyone's from their edit page.
+- It lists each role with where it comes from (the list and month, the embedsgruppe, who gave it,
+  why and until when), each part of the site with its grade and the roles that give it, and what
+  will change: the list made ahead, a grant ending, and for someone not on the newest list the
+  moved-out stages as they come. Nothing is projected past the newest list for someone on it.
+- An administrator can see the site with one person's roles from their page ("Se siden med Annas
+  roller"). It shows what the roles open, not that person's own messages and posts.
+
 ## Decisions
 
 - **Months on the list, not the move-out date.** The list is kept every month and already decides

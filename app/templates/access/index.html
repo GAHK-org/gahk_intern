@@ -7,7 +7,7 @@
   {% if kitchen_form %}
     <div class="card">
       <h2>Køkkenpersonale</h2>
-      <p class="muted">Hver i køkkenet har sin egen konto. De ser køkkenets kanal på Den Hurtige, deres egne opslag og Reparationer.</p>
+      <p class="muted">Hver i køkkenet har sin egen konto. De ser køkkenets kanal på Den Hurtige, opslag til køkkenet og Reparationer.</p>
       <table class="w-full border-collapse mt-2">
         <tbody>
         {% for grant in kitchen %}
@@ -52,7 +52,7 @@
             <td class="p-2"><a href="{% url 'edit_resident' grant.resident_id %}">{{ grant.resident.full_name }}</a></td>
             <td class="p-2">{{ label }}</td>
             <td class="p-2">{{ grant.reason }}</td>
-            <td class="p-2">{{ grant.starts_on|date:"j. M Y" }} – {% if grant.ends_on %}{{ grant.ends_on|date:"j. M Y" }}{% else %}indtil videre{% endif %}</td>
+            <td class="p-2">{{ grant.starts_on|date:"j. F Y" }} – {% if grant.ends_on %}{{ grant.ends_on|date:"j. F Y" }}{% else %}indtil videre{% endif %}</td>
             <td class="p-2 text-right">
               <form method="post" action="{% url 'access:grant_end' grant.pk %}">{% csrf_token %}
                 <button type="submit" class="btn btn-secondary">Afslut</button>
