@@ -10,7 +10,8 @@ and replies and opslagstavle posts and comments.
 - While a form is being sent, pressing its button again does nothing. This covers ordinary forms
   and htmx forms alike.
 - An ordinary form that has been sent can be used again when Back brings its page back. A form
-  whose answer is a file, so the page stays (Arkiv's downloads), can be sent again at once.
+  whose answer is a file, so the page stays (a POST download, marked data-sends-again), can be sent
+  again at once.
 - Each form carries a send token, made when the form is drawn. A send whose token was already saved
   by the same person is not saved again; it is answered as the first was (the new post's page, the
   updated feed or replies).

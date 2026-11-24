@@ -3,7 +3,7 @@
 <div class="flix-list">
   {% for video in recent %}
     {% picture_url video "thumbnail" as thumb %}
-    <div class="flix-list-item">
+    <div class="flix-list-item"{% if video.latest_file.is_pending %} data-flix-pending{% endif %}>
       <span class="flix-card-img">{% if thumb %}<img src="{{ thumb }}" alt="">{% else %}<span class="flix-card-blank">{{ video.title|slice:":1"|upper }}</span>{% endif %}</span>
       <div>
         <h3><a href="{% if video.is_draft %}{% url 'gahkflix:edit' video.pk %}{% else %}{% url 'gahkflix:detail' video.pk %}{% endif %}">{{ video.title }}</a></h3>
@@ -12,6 +12,7 @@
             {% if latest.is_pending %}{% file_state latest %}
             {% elif latest.state == "failed" %}<span class="flix-state is-failed">Mislykkedes</span>
             {% elif video.is_draft %}<span class="flix-state is-draft">Ikke udgivet</span>
+            {% elif video.is_upcoming %}<span class="flix-state is-premiere">Premiere {{ video.premiere_label }}</span>
             {% else %}<span class="flix-state">Udgivet</span>{% endif %}
           </p>
           <p>{{ latest.original_name }} · uploadet {{ video.created_at|date:"j. F Y" }}</p>

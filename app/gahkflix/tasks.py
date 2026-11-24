@@ -148,6 +148,26 @@ def housekeeping() -> str:
 
 
 @shared_task
+def announce_released() -> int:
+    """At a premiere's minute (services._line_up): tell everybody about what has come out."""
+    return services.announce_released()
+
+
+@shared_task
+def announce_premieres() -> str:
+    """Every quarter hour: announce what has come out unannounced, and line up the premieres of the
+    next 20 minutes to be announced on their minute."""
+    announced, lined_up = services.announce_premieres()
+    return f"{announced} announced, {lined_up} lined up"
+
+
+@shared_task
+def warn_unpublished_premieres() -> int:
+    """Daily: tell uploaders about their drafts with a premiere ahead that are not published."""
+    return services.warn_unpublished_premieres()
+
+
+@shared_task
 def weekly_draft_reminders() -> int:
     """Mondays: remind uploaders of their unpublished drafts, and give the administrators an overview."""
     return services.send_weekly_draft_reminders()

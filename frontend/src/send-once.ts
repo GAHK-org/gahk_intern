@@ -10,7 +10,7 @@
 //   ORDINARY     Safari sends a form again on every press, and the server usually already has the
 //   FORMS        first. A POST form, once sent, ignores further sends until Back brings its page
 //                back. A form whose answer is a file, so the page stays, is marked data-sends-again
-//                (Arkiv's downloads).
+//                (a POST download).
 //
 //   HTMX         a second request from the same element is QUEUED by default and sent when the
 //                first is done. A press on an element whose write is still on its way is dropped.
