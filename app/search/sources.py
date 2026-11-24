@@ -101,7 +101,6 @@ KEYWORDS: dict[str, tuple[str, ...]] = {
     "Roller": ("rettigheder", "embedsgrupper"),
     "Stamtræ": ("fylgje", "slægt"),
     "Statistik": ("tal", "grafer"),
-    "Arkiv": ("dokumenter", "filer", "referater"),
     "Wiki": ("vejledning", "håndbog"),
     "Fejl & ønsker": ("feedback", "fejlmelding", "ønsker"),
     "Notifikationsindstillinger": ("notifikationer", "push", "mails"),

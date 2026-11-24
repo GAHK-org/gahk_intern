@@ -57,5 +57,5 @@ with the same words.
   service to run and keep in sync.
 - **Alumnelisten and reparationer now match word by word**, the same way as here. So
   "anders hansen" finds Anders Hansen on the list itself too.
-- **Not searched**: Den Hurtige, which is a chat and not something to look up later, and the
-  Arkiv, which the Drive replaces.
+- **Not searched**: Den Hurtige, which is a chat and not something to look up later. The Drive
+  (which replaced the Arkiv) becomes a source once both it and this search are on dev.
