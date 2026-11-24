@@ -20,7 +20,7 @@ from django.views.decorators.http import require_POST
 from access.api import can, permission_required
 from audit import trail
 from core.models import Room
-from residents.models import Residency, Resident, RoleAssignment, active_period, next_period, prev_period
+from residents.models import Residency, Resident, active_period, next_period, prev_period
 from residents.permissions import current_resident
 
 from .kvotient import compute_k, compute_k_parts, month_choices, month_index, month_label
@@ -373,7 +373,7 @@ def resolve_tie(request: HttpRequest, offer_id: int) -> HttpResponseRedirect:
 
 def _carry_roster_forward(sy: int, sm: int, ty: int, tm: int) -> None:
     """Copy every resident on the (sy, sm) list who is not already on (ty, tm) forward — same room,
-    embedsgruppe, rengøring and roles. Non-destructive: residents already on the target list (e.g. an
+    embedsgruppe and rengøring (and with the embedsgruppe its role). Non-destructive: residents already on the target list (e.g. an
     already-copied next-month list) are left untouched."""
     existing = set(Residency.objects.filter(year=ty, month=tm).values_list("resident_id", flat=True))
     for r in Residency.objects.filter(year=sy, month=sm):
@@ -387,8 +387,6 @@ def _carry_roster_forward(sy: int, sm: int, ty: int, tm: int) -> None:
             year=ty,
             month=tm,
         )
-        for ra in RoleAssignment.objects.filter(resident_id=r.resident_id, year=sy, month=sm):
-            RoleAssignment.objects.get_or_create(resident_id=r.resident_id, role=ra.role, year=ty, month=tm)
         existing.add(r.resident_id)
 
 
@@ -462,9 +460,6 @@ def end_round(request: HttpRequest) -> HttpResponseRedirect:
                     left += [{"name": lr.resident.full_name, "from": lr.room.number} for lr in leaver_rows]
                     leavers = [lr.resident_id for lr in leaver_rows]
                     Residency.objects.filter(resident_id__in=leavers, year=year, month=target_month).delete()
-                    RoleAssignment.objects.filter(
-                        resident_id__in=leavers, year=year, month=target_month
-                    ).delete()
                     evicted += len(leaver_rows)
             unresolved += len(alloc.contested)
             unresolved_rooms += [room_num[rid] for rid in alloc.contested]

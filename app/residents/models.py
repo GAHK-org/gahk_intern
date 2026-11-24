@@ -1,11 +1,12 @@
-"""Residents, residency (per-month membership) and monthly role assignments.
+"""Residents and their residency (the monthly alumneliste).
 
 Consolidates the legacy `intern_alumne` (directory + login principal) and `gahk_admin_user`
-(role flags) into one user model with **time-bound** roles (decided 2026-06): a resident's active
-privileges come from the *current month's* assignments, not a static table — see
-02-schema-etl.md §5 / 99-index.md F-010. Network-closed / MAC fields are dropped (feature retired).
+(role flags) into one user model. Roles are not stored here: an embedsgruppe's role is read from the
+month's list (WORKGROUP_ROLE), and a role given by hand is an access.models.Grant with a first and a
+last day. Network-closed / MAC fields are dropped (feature retired).
 """
 
+import datetime
 import logging
 from typing import Any
 
@@ -247,8 +248,19 @@ class Resident(AbstractBaseUser, PermissionsMixin):
         return f"{self.first_name} {self.last_name}".strip()
 
     def has_role(self, role: str, period: tuple[int, int] | None = None) -> bool:
+        """Whether the account held `role` in a month (the month in effect by default): from its
+        embedsgruppe on that month's list, or by a grant that held on any of the month's days."""
+        from access.models import Grant
+
         year, month = period or active_period()
-        return self.role_assignments.filter(role=role, year=year, month=month).exists()
+        names = [name for name, given in WORKGROUP_ROLE.items() if given == role]
+        listed = self.residencies.filter(year=year, month=month, workgroup__name__in=names).exists()
+        first = datetime.date(year, month, 1)
+        last = datetime.date(year + month // 12, month % 12 + 1, 1) - datetime.timedelta(days=1)
+        granted = Grant.objects.filter(resident=self, role=role, starts_on__lte=last).filter(
+            models.Q(ends_on__isnull=True) | models.Q(ends_on__gte=first)
+        )
+        return listed or granted.exists()
 
     def has_perm(self, perm: str, obj: models.Model | None = None) -> bool:
         """Netvaerksgruppen (spelled `administrator`) gets every Django admin permission, for exactly
@@ -294,24 +306,6 @@ class Residency(models.Model):
 
     def __str__(self) -> str:
         return f"{self.resident.full_name} — {self.year}-{self.month:02d}"
-
-
-class RoleAssignment(models.Model):
-    """A privilege/embedsgruppe role held by a resident **for a specific month** (decided 2026-06)."""
-
-    resident = models.ForeignKey(Resident, on_delete=models.CASCADE, related_name="role_assignments")
-    role = models.CharField(max_length=20, choices=Role.choices)
-    year = models.PositiveSmallIntegerField()
-    month = models.PositiveSmallIntegerField()
-
-    class Meta:
-        constraints = [
-            models.UniqueConstraint(fields=["resident", "role", "year", "month"], name="uniq_role_assignment")
-        ]
-        indexes = [models.Index(fields=["role", "year", "month"])]
-
-    def __str__(self) -> str:
-        return f"{self.resident.full_name} = {self.get_role_display()} ({self.year}-{self.month:02d})"
 
 
 class AdminAccessGrant(models.Model):

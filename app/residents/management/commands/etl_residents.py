@@ -17,10 +17,14 @@ from typing import Any
 from django.core.management.base import BaseCommand, CommandError
 from django.db import transaction
 
+from access.models import Grant
 from audit import trail
 from core.etl import decode_month_number, fetch_all
 from core.models import Cleaning, Room, Workgroup
-from residents.models import Residency, Resident, Role, RoleAssignment
+from residents.models import WORKGROUP_ROLE_VALUES, Residency, Resident, Role
+
+# What the grants this command makes say, so a rerun replaces only its own.
+ETL_REASON = "Fra det gamle intern"
 
 FLAG_TO_ROLE = [
     ("indstilling", Role.INDSTILLING),
@@ -100,20 +104,20 @@ class Command(BaseCommand):
             raise CommandError("No months in intern_alumne_liste — nothing to migrate.")
         active_year, active_month = decoded
 
-        # ---- 3. roles for the active month (gahk_admin_user flags) ------------------------------
-        RoleAssignment.objects.all().delete()
-        role_residents = set()
+        # ---- 3. roles given by hand (gahk_admin_user flags) -------------------------------------
+        # An embedsgruppe's role is read from the list (step 4), so only the roles no embedsgruppe
+        # gives become grants, from the first day of the active month until ended.
+        Grant.objects.filter(reason=ETL_REASON).delete()
+        starts_on = datetime.date(active_year, active_month, 1)
         for a in fetch_all("SELECT * FROM gahk_admin_user"):
             rid = id_remap.get(a["alumne_id"])
             if not rid:
                 continue
             for flag, role in FLAG_TO_ROLE:
-                if a[flag]:
-                    RoleAssignment.objects.update_or_create(
-                        resident_id=rid, role=role, year=active_year, month=active_month
+                if a[flag] and role not in WORKGROUP_ROLE_VALUES:
+                    Grant.objects.get_or_create(
+                        resident_id=rid, role=role, reason=ETL_REASON, defaults={"starts_on": starts_on}
                     )
-                    role_residents.add(rid)
-        Resident.objects.filter(id__in=role_residents).update(is_staff=True)
 
         # ---- 4. residency per month -------------------------------------------------------------
         rooms_by_number = {room.number: room for room in Room.objects.all()}
@@ -167,8 +171,8 @@ class Command(BaseCommand):
         self.stdout.write(
             self.style.SUCCESS(
                 f"Residents: {len(kept)} kept (merged {merged} dup, dropped {dropped_empty} empty-email). "
-                f"Active period {active_year}-{active_month:02d}: {RoleAssignment.objects.count()} role "
-                f"assignments across {len(role_residents)} residents. Residencies: {residencies} "
+                f"Active period {active_year}-{active_month:02d}: "
+                f"{Grant.objects.filter(reason=ETL_REASON).count()} roles given by hand. Residencies: {residencies} "
                 f"(orphan-resident {orphan_resident}, unmapped-room {orphan_room}). "
                 f"Sponsors set {sponsor_set} (ambiguous {sponsor_ambiguous})."
             )

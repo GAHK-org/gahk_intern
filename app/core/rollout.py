@@ -35,8 +35,7 @@ from django.db.models import Q, QuerySet
 from django.http import HttpRequest
 from django.http.response import HttpResponseBase
 
-from access.api import Feature, Grade, holders, request_permissions, request_roles
-from residents.models import RoleAssignment, active_period
+from access.api import Feature, Grade, holders, holding, request_permissions, request_roles
 from residents.permissions import View
 
 
@@ -112,8 +111,4 @@ class Gate:
         access_roles = self._roles()
         if access_roles is None:
             return qs
-        year, month = active_period()
-        allowed = RoleAssignment.objects.filter(role__in=access_roles, year=year, month=month).values(
-            "resident_id"
-        )
-        return qs.filter(Q(pk__in=allowed) | Q(is_superuser=True))
+        return qs.filter(Q(pk__in=holding(access_roles).values("pk")) | Q(is_superuser=True))

@@ -4,11 +4,13 @@ accounts' at once, and who holds a permission, as a queryset for notification au
 An account's roles:
 
   * its stage, from the alumneliste (access.stages): moving in, resident, moved out …;
-  * the role of each embedsgruppe it holds in the month in effect (residents.models.active_period);
-    holding one makes it a resident, whatever its months say, and so does being a superuser, who is
-    an administrator as well;
-  * every role granted to it by hand that holds today (access.models.Grant): the kitchen staff's,
-    an exception the Indstilling made.
+  * the role of its embedsgruppe on the list in effect (residents.models.active_period and
+    WORKGROUP_ROLE), read from the list itself;
+  * every role given to it by hand that holds today (access.models.Grant), each from a first day
+    through a last one: administrator, a role from the role page, the kitchen staff's, an exception
+    the Indstilling made.
+
+An administrator, by grant or as a superuser, is a resident whatever their months say.
 
 An account with none of these has no access at all, and the front page says so.
 """
@@ -16,10 +18,10 @@ An account with none of these has no access at all, and the front page says so.
 from collections.abc import Iterable
 
 from django.contrib.postgres.expressions import ArraySubquery
-from django.db.models import OuterRef, Q, QuerySet
+from django.db.models import OuterRef, Q, QuerySet, Subquery
 from django.http import HttpRequest
 
-from residents.models import Resident, RoleAssignment, active_period
+from residents.models import WORKGROUP_ROLE, Residency, Resident, active_period
 
 from . import stages
 from .features import parse
@@ -40,16 +42,29 @@ _ROLES_MEMO = "_access_roles"
 _REQUEST_MEMO = "_access_request_roles"
 
 
+# Each role's embedsgrupper on the list, the inverse of WORKGROUP_ROLE.
+_WORKGROUPS: dict[str, list[str]] = {}
+for _name, _role in WORKGROUP_ROLE.items():
+    _WORKGROUPS.setdefault(_role, []).append(_name)
+
+
+def workgroups_of(roles: Iterable[str]) -> list[str]:
+    """The names of the embedsgrupper that give any of `roles` on the list."""
+    return sorted(name for role in roles for name in _WORKGROUPS.get(role, ()))
+
+
 def _combine(
-    stage: Stage | None, groups: Iterable[str], granted: Iterable[str], superuser: bool
+    stage: Stage | None, workgroup: str | None, granted: Iterable[str], superuser: bool
 ) -> frozenset[str]:
-    held, given = set(groups), set(granted)
-    roles = held | given
+    roles = set(granted)
+    listed = WORKGROUP_ROLE.get(workgroup or "")
+    if listed:
+        roles.add(listed)
     if superuser:
         roles.add(ADMINISTRATOR)
-    if held or superuser:
+    if ADMINISTRATOR in roles:
         stage = Stage.RESIDENT
-    elif stage is None and not given:
+    elif stage is None and KITCHEN not in roles and not roles & STAGES:
         stage = stages.NEVER_LISTED
     if stage is not None:
         roles.add(stage.value)
@@ -63,19 +78,21 @@ def roles_of_many(resident_ids: Iterable[int]) -> dict[int, frozenset[str]]:
     if not ids:
         return {}
     year, month = active_period()
-    groups = RoleAssignment.objects.filter(resident_id=OuterRef("pk"), year=year, month=month)
+    workgroup = Residency.objects.filter(resident_id=OuterRef("pk"), year=year, month=month).values(
+        "workgroup__name"
+    )[:1]
     granted = Grant.objects.active().filter(resident_id=OuterRef("pk"))
     rows = (
         with_stage(Resident.objects.filter(pk__in=ids, is_active=True), now=year * 12 + month - 1)
         .annotate(
-            access_groups=ArraySubquery(groups.values("role")),
+            access_workgroup=Subquery(workgroup),
             access_granted=ArraySubquery(granted.values("role")),
         )
-        .values_list("pk", "is_superuser", "access_stage", "access_groups", "access_granted")
+        .values_list("pk", "is_superuser", "access_stage", "access_workgroup", "access_granted")
     )
     return {
-        pk: _combine(Stage(stage) if stage else None, held, given, superuser)
-        for pk, superuser, stage, held, given in rows
+        pk: _combine(Stage(stage) if stage else None, workgroup_name, given, superuser)
+        for pk, superuser, stage, workgroup_name, given in rows
     }
 
 
@@ -136,21 +153,22 @@ def holding(roles: Iterable[str]) -> QuerySet[Resident]:
     """The active accounts holding any of `roles` as their own, in SQL: the same rule as above."""
     wanted = set(roles)
     year, month = active_period()
-    in_groups = RoleAssignment.objects.filter(year=year, month=month).values("resident_id")
     granted = Grant.objects.active()
+    administrators = Q(pk__in=granted.filter(role=ADMINISTRATOR).values("resident_id")) | Q(is_superuser=True)
     match = Q(pk__in=granted.filter(role__in=wanted).values("resident_id"))
-    if wanted & GROUPS:
-        match |= Q(pk__in=in_groups.filter(role__in=wanted & GROUPS))
-    if ADMINISTRATOR in wanted:
-        match |= Q(pk__in=in_groups.filter(role=ADMINISTRATOR)) | Q(is_superuser=True)
-    if RESIDENT in wanted:
-        # Group holders and superusers are residents, whatever their months say.
-        match |= Q(pk__in=in_groups) | Q(is_superuser=True)
+    names = workgroups_of(wanted & GROUPS)
+    if names:
+        listed = Residency.objects.filter(year=year, month=month, workgroup__name__in=names)
+        match |= Q(pk__in=listed.values("resident_id"))
+    if ADMINISTRATOR in wanted or RESIDENT in wanted:
+        # Administrators are residents, whatever their months say.
+        match |= administrators
     by_stage = [stage.value for stage in Stage if stage.value in wanted]
     if by_stage:
         match |= Q(access_stage__in=by_stage)
     if stages.NEVER_LISTED is not None and stages.NEVER_LISTED.value in wanted:
-        match |= Q(access_stage__isnull=True) & ~Q(pk__in=granted.values("resident_id"))
+        apart = granted.filter(role__in=STAGES | {KITCHEN}).values("resident_id")
+        match |= Q(access_stage__isnull=True) & ~Q(pk__in=apart) & ~Q(is_superuser=True)
     return with_stage(Resident.objects.filter(is_active=True)).filter(match)
 
 

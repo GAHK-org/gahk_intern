@@ -30,11 +30,11 @@ from django.db.models import Q, QuerySet
 from django.urls import reverse
 from django.utils.http import url_has_allowed_host_and_scheme
 
-from access.api import KITCHEN, holding, may_open_many
+from access.api import ADMINISTRATOR, GROUPS, KITCHEN, holding, may_open_many
 from core import push
 from core.clock import current_datetime
 from core.models import PushSubscription
-from residents.models import Residency, Resident, RoleAssignment, active_period
+from residents.models import Residency, Resident, active_period
 
 from . import categories, live
 from .categories import Importance
@@ -79,7 +79,7 @@ def everyone() -> QuerySet[Resident]:
     """
     year, month = active_period()
     living = Residency.objects.filter(year=year, month=month).values("resident_id")
-    roles = RoleAssignment.objects.filter(year=year, month=month).values("resident_id")
+    roles = holding({ADMINISTRATOR, *GROUPS}).values("pk")
     devices = PushSubscription.objects.values("user_id")
     # Not the kitchen staff: a push device would otherwise put them in every feature's audience.
     return (

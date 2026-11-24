@@ -175,14 +175,6 @@ erDiagram
         int month
     }
 
-    residents_RoleAssignment {
-        int id PK
-        int resident_id FK
-        string role
-        int year
-        int month
-    }
-
     residents_AdminAccessGrant {
         int id PK
         int resident_id FK
@@ -1041,7 +1033,6 @@ erDiagram
     residents_Residency }o--|| core_Room : "room"
     residents_Residency }o--|o core_Workgroup : "workgroup"
     residents_Residency }o--|o core_Cleaning : "cleaning"
-    residents_RoleAssignment }o--|| residents_Resident : "resident"
     residents_AdminAccessGrant ||--|| residents_Resident : "resident"
     residents_AdminAccessGrant }o--|o residents_Resident : "requested_by"
     residents_AdminAccessGrant }o--|o residents_Resident : "decided_by"
@@ -2317,14 +2308,6 @@ erDiagram
         int month
     }
 
-    residents_RoleAssignment {
-        int id PK
-        int resident_id FK
-        string role
-        int year
-        int month
-    }
-
     residents_AdminAccessGrant {
         int id PK
         int resident_id FK
@@ -2346,7 +2329,6 @@ erDiagram
     residents_Residency }o--|| core_Room : "room"
     residents_Residency }o--|o core_Workgroup : "workgroup"
     residents_Residency }o--|o core_Cleaning : "cleaning"
-    residents_RoleAssignment }o--|| residents_Resident : "resident"
     residents_AdminAccessGrant ||--|| residents_Resident : "resident"
     residents_AdminAccessGrant }o--|o residents_Resident : "requested_by"
     residents_AdminAccessGrant }o--|o residents_Resident : "decided_by"

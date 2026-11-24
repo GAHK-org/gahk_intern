@@ -14,8 +14,9 @@ Three events, two audiences, matching the two-crew handoff in models.RepairTask:
 Only the crew INHERITING a ticket is told. The crew letting it go contains whoever just pressed the
 button, and paging a group about their own action is how people learn to ignore notifications.
 
-Both audiences are narrowed to the role's CURRENT holders (this month's RoleAssignment): someone who
-was on Reppergruppen last year and rotated off should not keep getting paged.
+Both audiences are narrowed to the role's CURRENT holders (this month's list, or a grant that holds
+today; access.roles.holding): someone who was on Reppergruppen last year and rotated off should not
+keep getting paged.
 """
 
 from typing import TYPE_CHECKING

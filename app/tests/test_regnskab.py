@@ -11,8 +11,7 @@ from ak.models import AkEntry
 from core.models import Room, Workgroup
 from oelkaelder.models import Deposit, Shopper
 from regnskab import alumneregning, economic, tasks
-from residents.models import Residency, Resident, RoleAssignment, prev_period
-from residents.views import _sync_month_roles
+from residents.models import Residency, Resident, prev_period
 
 
 @pytest.fixture(autouse=True)
@@ -395,13 +394,15 @@ def test_statement_pdf_view_404s_without_account_number(make_resident: Callable)
 
 @pytest.mark.django_db
 def test_regnskab_workgroup_grants_role(make_resident: Callable) -> None:
-    """Being placed in the 'Regnskab' embedsgruppe auto-grants the regnskab role for that month."""
+    """Being placed in the 'Regnskab' embedsgruppe gives the regnskab role for that month, read from
+    the list."""
     r = make_resident(email="d@gahk.dk")
     wg, _ = Workgroup.objects.get_or_create(name="Regnskabsgruppen")  # created by migration core.0003
+    room = Room.objects.create(legacy_index=95, number=95, floor="stuen", side="mod gaden")
+    Residency.objects.create(resident=r, room=room, workgroup=wg, year=2026, month=8)
 
-    _sync_month_roles(r.id, wg, 2026, 8, is_admin=False)
-
-    assert RoleAssignment.objects.filter(resident=r, role="regnskab", year=2026, month=8).exists()
+    assert r.has_role("regnskab", (2026, 8))
+    assert not r.has_role("regnskab", (2026, 9))
 
 
 def _alumne_in_august(email: str, number: int | None, room: int) -> Resident:

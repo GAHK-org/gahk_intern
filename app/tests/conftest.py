@@ -1,10 +1,11 @@
+import datetime
 import hashlib
 from collections.abc import Callable, Iterator
 from pathlib import Path
 
 import pytest
 
-from residents.models import Resident, RoleAssignment, active_period
+from residents.models import Resident, active_period
 
 
 def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
@@ -144,18 +145,19 @@ def make_resident(db: None) -> Callable[[str, str, bool, tuple], Resident]:
         else:
             r.set_password(password)
         r.save()
+        # Roles given by hand from the start of the month in effect (access.models.Grant): a test's
+        # account holds them whether or not it is on a list.
+        from access.models import Grant
+        from core.clock import current_date
+
         year, month = active_period()
+        since = min(datetime.date(year, month, 1), current_date())
         for role in roles:
-            RoleAssignment.objects.create(resident=r, role=role, year=year, month=month)
-        if roles:
+            Grant.objects.create(resident=r, role=role, reason="Test", starts_on=since)
+        if roles:  # as the role editor's accounts are: Django admin lets staff in
             Resident.objects.filter(id=r.id).update(is_staff=True)
         if kitchen:
-            from access.models import Grant
-            from core.clock import current_date
-
-            Grant.objects.create(
-                resident=r, role="kitchen", reason="Køkkenpersonale", starts_on=current_date()
-            )
+            Grant.objects.create(resident=r, role="kitchen", reason="Køkkenpersonale", starts_on=since)
         return r
 
     return _make

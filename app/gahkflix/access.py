@@ -27,9 +27,9 @@ from django.db.models import Q, QuerySet
 from django.http import HttpRequest
 from django.utils import timezone
 
-from access.api import Feature, can, holders
+from access.api import Feature, can, holders, holding
 from core.rollout import Gate
-from residents.models import Resident, Role, RoleAssignment, active_period
+from residents.models import Resident, Role
 from residents.permissions import current_resident
 
 from .models import ChangeRequest, Series, Video
@@ -57,9 +57,8 @@ def request_allowed(request: HttpRequest) -> bool:
 
 
 def _with_roles(residents: QuerySet[Resident], roles: Collection[str]) -> QuerySet[Resident]:
-    year, month = active_period()
-    holding = RoleAssignment.objects.filter(role__in=roles, year=year, month=month).values("resident_id")
-    return residents.filter(Q(pk__in=holding) | Q(is_superuser=True)).filter(is_active=True)
+    held = holding(roles).values("pk")
+    return residents.filter(Q(pk__in=held) | Q(is_superuser=True)).filter(is_active=True)
 
 
 def audience(residents: QuerySet[Resident]) -> QuerySet[Resident]:

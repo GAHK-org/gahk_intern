@@ -39,12 +39,14 @@ An account holds a set of roles:
   | Fraflyttet > 1 år | Last on the list more than 12 months before |
 
   Never on any list: no stage.
-- **Each embedsgruppe held in the month in effect**: Indstillingen, Inspektionen, AK, Ølkælderen,
-  Regnskab, PR, Repperne, Viceværterne, Fotogruppen, Køkkengruppen. Holding one makes someone
-  Beboer, whatever their months say.
-- **Administrator**: Netværksgruppen, and every superuser (who is also Beboer).
-- **Grants**: a role given by hand, from a first day through a last one (or until ended).
-  Køkkenet is only ever a grant.
+- **Its embedsgruppe's role**, read from the list in effect: Indstillingen, Inspektionen, AK,
+  Ølkælderen, Regnskab, PR, Repperne, Viceværterne, Fotogruppen, Køkkengruppen. A list made ahead
+  gives its roles when its month starts; nothing is copied from month to month.
+- **Roles given by hand**, each from a first day through a last one (or until ended): administrator
+  (Netværksgruppen), a role from the role page, the kitchen staff's, an exception the Indstilling
+  made. Køkkenet is only ever given this way.
+- **Administrator**: by hand, and every superuser. An administrator is Beboer whatever their months
+  say.
 
 An account with no role at all has no access: the front page says so and offers to log out.
 
@@ -105,6 +107,9 @@ audience narrows who; the roles still decide what.
   period: someone who moved out but finishes their group's accounts, a guest. Administrator cannot
   be given this way. The edit page shows the roles the account has now.
 - Ending a grant makes it hold through yesterday; one that has not begun is removed.
+- The role page (Site-admin → Roller) gives a role from today until removed, and shows each
+  resident's embedsgruppe role from the list, which is changed on the list. Giving administrator
+  opens the two-person approval, and only an administrator role gives Django admin's staff flag.
 
 ## Behaviour
 
@@ -126,7 +131,10 @@ audience narrows who; the roles still decide what.
 ## Decisions
 
 - **Months on the list, not the move-out date.** The list is kept every month and already decides
-  who lives here everywhere else.
+  who lives here everywhere else; AK, Regnskab, statistics and the room rounds all count its months.
+  So living here stays monthly, and only roles carry dates.
+- **An embedsgruppe's role is read from the list, not copied.** The list already says who is in
+  which group each month, so a second record per month could only disagree with it.
 - **Worked out when asked, not stored.** One query reads an account's months, groups and grants, and
   the same rule runs in SQL for audiences, so no signal or nightly job keeps a stored copy current.
 - **Channels stay in code, with their audience beside them.** Notification settings are made from

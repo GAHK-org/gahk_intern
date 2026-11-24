@@ -15,7 +15,8 @@ from django.core import mail
 from django.test import Client
 
 from core.models import Cleaning, Room, Workgroup
-from residents.models import Residency, Resident, Role, RoleAssignment, active_period, next_period
+from residents.models import Residency, Resident, Role, active_period, next_period
+from tests.role_support import held
 
 URL = "/alumneliste/naeste-maaned"
 
@@ -75,8 +76,8 @@ def test_copy_seeds_next_month_and_syncs_roles(
     assert Residency.objects.filter(resident=ind, room=groups["r1"], year=ny, month=nm).exists()
     assert Residency.objects.filter(resident=target, room=groups["r2"], year=ny, month=nm).exists()
     # privileged workgroup -> role next month; plain workgroup -> no role
-    assert RoleAssignment.objects.filter(resident=ind, role=Role.INDSTILLING, year=ny, month=nm).exists()
-    assert not RoleAssignment.objects.filter(resident=target, year=ny, month=nm).exists()
+    assert Role.INDSTILLING in held(ind, (ny, nm))
+    assert not held(target, (ny, nm))
 
 
 @pytest.mark.django_db
@@ -106,7 +107,7 @@ def test_save_edits_room_workgroup_cleaning_and_resyncs_role(
         groups["ak"].id,
         groups["clean"].id,
     )
-    assert RoleAssignment.objects.filter(resident=target, role=Role.AK, year=ny, month=nm).exists()
+    assert Role.AK in held(target, (ny, nm))
 
     # switch target back to a non-privileged workgroup -> role removed
     c.post(
@@ -117,7 +118,7 @@ def test_save_edits_room_workgroup_cleaning_and_resyncs_role(
             f"workgroup_{target.id}": groups["plain"].id,
         },
     )
-    assert not RoleAssignment.objects.filter(resident=target, year=ny, month=nm).exists()
+    assert not held(target, (ny, nm))
 
 
 @pytest.mark.django_db
@@ -129,7 +130,7 @@ def test_remove_person(make_resident: Callable, groups: dict[str, Room | Workgro
 
     c.post(URL, {"action": "save", f"room_{target.id}": groups["r2"].id, f"remove_{target.id}": "1"})
     assert not Residency.objects.filter(resident=target, year=ny, month=nm).exists()
-    assert not RoleAssignment.objects.filter(resident=target, year=ny, month=nm).exists()
+    assert not held(target, (ny, nm))
     # the editor themselves remain
     assert Residency.objects.filter(resident=ind, year=ny, month=nm).exists()
 
@@ -154,7 +155,7 @@ def test_add_existing_resident(
         },
     )
     assert Residency.objects.filter(resident=newcomer, room=groups["r3"], year=ny, month=nm).exists()
-    assert RoleAssignment.objects.filter(resident=newcomer, role=Role.AK, year=ny, month=nm).exists()
+    assert Role.AK in held(newcomer, (ny, nm))
 
 
 @pytest.mark.django_db
@@ -178,7 +179,7 @@ def test_add_new_resident(make_resident: Callable, groups: dict[str, Room | Work
     r = Resident.objects.get(email="nina@gahk.dk")
     assert not r.has_usable_password()
     assert Residency.objects.filter(resident=r, room=groups["r3"], year=ny, month=nm).exists()
-    assert RoleAssignment.objects.filter(resident=r, role=Role.INDSTILLING, year=ny, month=nm).exists()
+    assert Role.INDSTILLING in held(r, (ny, nm))
     # a welcome email is sent to the new resident
     assert any(m.to == ["nina@gahk.dk"] for m in mail.outbox)
 
@@ -627,7 +628,6 @@ def test_add_existing_replaces_and_drops_the_replaced_roles(
     ny, nm = next_period(active_period())
     c.post(URL, {"action": "copy"})
     Residency.objects.filter(resident=target, year=ny, month=nm).update(workgroup=groups["ak"])
-    RoleAssignment.objects.create(resident=target, role=Role.AK, year=ny, month=nm)
     newcomer = make_resident(email="new@gahk.dk")
 
     c.post(
@@ -636,9 +636,9 @@ def test_add_existing_replaces_and_drops_the_replaced_roles(
     )
     res = Residency.objects.get(resident=newcomer, year=ny, month=nm)
     assert (res.room_id, res.workgroup_id) == (groups["r3"].id, groups["ak"].id)  # room chosen, wg inherited
-    assert RoleAssignment.objects.filter(resident=newcomer, role=Role.AK, year=ny, month=nm).exists()
+    assert Role.AK in held(newcomer, (ny, nm))
     assert not Residency.objects.filter(resident=target, year=ny, month=nm).exists()
-    assert not RoleAssignment.objects.filter(resident=target, year=ny, month=nm).exists()
+    assert not held(target, (ny, nm))
 
 
 @pytest.mark.django_db

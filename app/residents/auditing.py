@@ -2,7 +2,7 @@
 
 from audit import trail
 
-from .models import AdminAccessGrant, Residency, Resident, RoleAssignment
+from .models import AdminAccessGrant, Residency, Resident
 
 trail.register(
     Resident,
@@ -46,13 +46,6 @@ trail.register(
         "year": "År",
         "month": "Måned",
     },
-)
-trail.register(
-    RoleAssignment,
-    "residents.role",
-    name=lambda r: f"{r.resident.full_name}: {r.get_role_display()} {r.year}-{r.month:02d}",
-    label="Rolle",
-    labels={"resident": "Beboer", "role": "Rolle", "year": "År", "month": "Måned"},
 )
 trail.register(
     AdminAccessGrant,
