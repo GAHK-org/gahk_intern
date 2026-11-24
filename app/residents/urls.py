@@ -3,7 +3,7 @@
 from django.contrib.auth import views as auth_views
 from django.urls import include, path, reverse_lazy
 
-from . import views
+from . import auth, views
 from .forms import EmailAuthenticationForm, ResidentPasswordResetForm
 from .permissions import open_to_every_kind
 
@@ -36,7 +36,7 @@ urlpatterns = [
     path(
         "login",
         open_to_every_kind(
-            auth_views.LoginView.as_view(
+            auth.LoginView.as_view(
                 template_name="registration/login.html",
                 authentication_form=EmailAuthenticationForm,
             )
@@ -47,7 +47,7 @@ urlpatterns = [
     path(
         "password-change",
         open_to_every_kind(
-            auth_views.PasswordChangeView.as_view(
+            auth.PasswordChangeView.as_view(
                 template_name="registration/password_change.html",
                 success_url=reverse_lazy("password_change_done"),
             )
@@ -67,7 +67,7 @@ urlpatterns = [
     path(
         "password-reset",
         open_to_every_kind(
-            auth_views.PasswordResetView.as_view(
+            auth.PasswordResetView.as_view(
                 form_class=ResidentPasswordResetForm,  # also reaches residents who never set a password
                 template_name="registration/password_reset_form.html",
                 email_template_name="registration/password_reset_email.html",
@@ -87,7 +87,7 @@ urlpatterns = [
     path(
         "password-reset/<uidb64>/<token>/",
         open_to_every_kind(
-            auth_views.PasswordResetConfirmView.as_view(
+            auth.PasswordResetConfirmView.as_view(
                 template_name="registration/password_reset_confirm.html",
                 success_url=reverse_lazy("password_reset_complete"),
             )

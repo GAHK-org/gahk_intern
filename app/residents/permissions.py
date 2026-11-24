@@ -214,12 +214,23 @@ def role_required(*roles: str) -> Callable[[View], View]:
             if not request.user.is_authenticated:
                 return redirect_to_login(request.get_full_path())
             if effective_roles(request).isdisjoint(roles):
+                _audit_denied(request, roles)
                 raise PermissionDenied
             return view(request, *args, **kwargs)
 
         return wrapped
 
     return decorator
+
+
+def _audit_denied(request: HttpRequest, roles: tuple[str, ...]) -> None:
+    """A resident sent away from a page their roles do not open. Not while previewing: an
+    administrator looking at the site as a plain resident is refused on purpose."""
+    if PREVIEW_SESSION_KEY in request.session and can_preview(request.user):
+        return
+    from audit import trail
+
+    trail.record("auth.access.denied", details={"path": request.path, "roles": list(roles)})
 
 
 def require_can_preview(view: View) -> View:

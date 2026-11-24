@@ -1,12 +1,16 @@
 """Smoke test for the seed_demo dev fixture command: it should run, be idempotent, and produce
 data that lights up the app's real queries (active period, roles, derived ølkælder balances)."""
 
+from typing import Any
+
 import pytest
 from django.core.management import call_command
 from django.test import Client
 from django.urls import reverse
 from django.utils import timezone
 
+from audit import trail
+from audit.models import AuditEvent
 from den_hurtige.models import QuickPost
 from oelkaelder.models import Shopper
 from residents.models import Resident, active_period
@@ -24,11 +28,14 @@ def test_seed_demo_populates_and_is_idempotent() -> None:
     first_count = Resident.objects.count()
     assert Resident.objects.filter(is_kitchen=False).count() == 13
     assert first_count == 14
+    first_trail = AuditEvent.objects.count()
 
     # Re-running with --fresh must not duplicate or raise (idempotent).
     # --force because Django's test runner forces DEBUG=False, which the safety guard blocks.
     call_command("seed_demo", "--fresh", "--force", "--residents", "12", verbosity=0)
     assert Resident.objects.count() == first_count
+    # The append-only trail too: emptied and written again, not doubled.
+    assert AuditEvent.objects.count() == first_trail
 
     # active_period follows the seeded current-month residencies.
     year, month = active_period()
@@ -152,6 +159,79 @@ def test_seed_demo_gives_the_logins_notifications_in_every_state() -> None:
     call_command("seed_demo", "--fresh", "--force", "--residents", "12", verbosity=0)  # still idempotent
     again = Notification.objects.filter(recipient__email="beboer@gahk.dk")
     assert again.exclude(category=categories.GAHKFLIX_UPLOADS).count() == 7
+
+
+@pytest.mark.django_db
+def test_seed_demo_writes_weeks_of_audit_history(settings: Any) -> None:  # noqa: ANN401
+    """The rest of the seed is unaudited (loading demo data is nobody's action), so without its own
+    step the audit page would be empty on a fresh checkout. The step writes the weeks before today:
+    every kind of line the page shows, by different people from different addresses, with before and
+    after values that are true because the history ends at the seeded data."""
+    from datetime import timedelta
+
+    from django.test import Client
+    from django.utils import timezone
+
+    from residents.models import Role, RoleAssignment
+
+    settings.AUDIT_FALLBACK = True  # as outside the tests, so the shell fix is recorded (as System)
+    call_command("seed_demo", "--fresh", "--force", "--residents", "12", verbosity=0)
+    events = AuditEvent.objects.all()
+
+    assert {
+        "auth.login",
+        "auth.login.failed",
+        "auth.logout",
+        "auth.password.changed",
+        "auth.password_reset.requested",
+        "auth.password_reset.completed",
+        "auth.access.denied",
+        "residents.role.added",
+        "residents.role.removed",
+        "residents.admin_access.approved",
+        "residents.admin_access.denied",
+        "residents.resident.updated",
+        "residents.profile.updated",
+        "residents.month_list.saved",
+        "residents.month_list.added",
+        "residents.preview.set",
+        "residents.preview.cleared",
+        "rooms.round.ended",
+        "regnskab.account_number.updated",
+    } <= set(events.values_list("action", flat=True))
+    failed = events.filter(action="auth.login.failed")
+    assert {e.details["reason"] for e in failed} == {"wrong password", "no account"}
+    typed = failed.get(details__email_hash=trail.address_hash("formånd@gahk.dk"))
+    assert typed.details["email_domain"] == "gahk.dk", "the typed å, kept only as domain and hash"
+    # "Uden handling" both ways: the Django admin (whoever was logged in) and a shell (nobody).
+    assert events.filter(unclaimed=True, source="web", actor_name="Admin Istrator").exists()
+    assert events.filter(unclaimed=True, source="system", actor=None).exists()
+
+    # Spread out like a real trail: people, addresses (an IPv6 one too), weeks; never in the future.
+    now = timezone.now()
+    assert events.exclude(actor=None).values("actor").distinct().count() >= 8
+    addresses = set(events.exclude(ip=None).values_list("ip", flat=True))
+    assert len(addresses) >= 4 and any(":" in ip for ip in addresses)
+    assert events.order_by("at").first().at < now - timedelta(days=21)
+    assert not events.filter(at__gt=now).exists()
+    # The page lists by id, so the history was written in time order.
+    times = list(events.order_by("id").values_list("at", flat=True))
+    assert times == sorted(times)
+
+    # The history ends at the seeded data: the two administrators it approved and refused lost the
+    # role again, and the passwords it changed are still the documented one.
+    assert set(
+        RoleAssignment.objects.filter(role=Role.ADMINISTRATOR).values_list("resident__email", flat=True)
+    ) == {"formand@gahk.dk"}
+    for email in ("ak@gahk.dk", "oel@gahk.dk"):
+        assert Resident.objects.get(email=email).check_password("demo1234")
+
+    client = Client()
+    client.force_login(Resident.objects.get(email="formand@gahk.dk"))
+    page = client.get("/admin/audit").content.decode()
+    assert "Ældre" in page, "more than one page of history"
+    assert "mislykket login" in page
+    assert "Uden handling" in client.get("/admin/audit?unclaimed=1").content.decode()
 
 
 @pytest.mark.django_db

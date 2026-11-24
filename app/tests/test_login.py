@@ -7,6 +7,7 @@ import pytest
 from django.test import Client
 from django.urls import reverse
 
+from audit import trail
 from residents.models import Resident
 
 LOGIN = "/login"
@@ -27,13 +28,16 @@ def test_the_email_field_is_an_email_field_phones_leave_alone() -> None:
 
 
 @pytest.mark.django_db
-def test_a_login_for_an_unknown_address_logs_the_address_as_received(
+def test_a_login_for_an_unknown_address_logs_only_its_hash(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
+    """People type their password into the address box: the log gets the same keyed hash as the
+    audit trail, never the text."""
     with caplog.at_level(logging.WARNING, logger="residents.auth"):
         Client().post(LOGIN, {"username": "ana.løfberg@gahk.dk", "password": "whatever"})
 
-    assert "no account for 'ana.l\\xf8fberg@gahk.dk'" in caplog.text  # the ø shows as \xf8
+    assert f"no account for address {trail.address_hash('ana.løfberg@gahk.dk')}" in caplog.text
+    assert "fberg" not in caplog.text
     assert "whatever" not in caplog.text
 
 
