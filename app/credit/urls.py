@@ -10,9 +10,11 @@ urlpatterns = [
     path("accounts/<int:pk>/", views.account, name="account"),
     path("accounts/<int:pk>/limit", views.set_limit, name="set_limit"),
     path("accounts/<int:pk>/close", views.close, name="close"),
+    path("accounts/<int:pk>/statements/<int:year>-<int:month>.pdf", views.statement, name="statement"),
     path("transfers/<int:pk>/reverse", views.reverse, name="reverse"),
     path("books/", views.books, name="books"),
     path("books/<int:pk>/", views.book, name="book"),
     path("books/<int:pk>/charge", views.charge, name="charge"),
+    path("books/<int:pk>/close", views.close_period, name="close_period"),
     path("books/<int:pk>/accounts/new", views.open_account, name="open_account"),
 ]

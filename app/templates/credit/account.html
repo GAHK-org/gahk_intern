@@ -46,6 +46,13 @@
     </table>
   </div>
 
+  {% if statement_months and not account.bank_reference and not account.is_mellemregning %}
+    <h2>Månedlige kontoudtog (PDF, signeret)</h2>
+    <p class="mb-6">
+      {% for year, month in statement_months %}<a href="{% url 'credit:statement' account.pk year month %}">{{ month|stringformat:"02d" }}/{{ year }}</a>{% if not forloop.last %} · {% endif %}{% endfor %}
+    </p>
+  {% endif %}
+
   {% if manages and account.credit_limit_ore is not None and not account.is_mellemregning and not account.closed_at %}
     <div class="card mb-4" style="max-width:32rem">
       <h2>Kreditgrænse</h2>

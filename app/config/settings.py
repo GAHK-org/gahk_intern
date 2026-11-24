@@ -292,6 +292,16 @@ PHOTO_ALBUM_SYSTEM_IMPORT_EMAIL = os.environ.get("PHOTO_ALBUM_SYSTEM_IMPORT_EMAI
 # `manage.py delete_photo_album` refuses anything created or uploaded on or after this date
 # (YYYY-MM-DD). Blank means the command's own default, 2026-10-01; a date in the future is refused.
 PHOTO_ALBUM_DELETE_PROTECTED_FROM = os.environ.get("PHOTO_ALBUM_DELETE_PROTECTED_FROM", "")
+# GAHK-konto (credit). Anchors go to a bucket with S3 Object Lock when CREDIT_ANCHOR_BUCKET names one
+# (made with Object Lock on), else by e-mail to CREDIT_ANCHOR_EMAILS (comma-separated). The signing
+# keys are made by `manage.py credit_signing_keys`; their public halves live in credit/keys/.
+CREDIT_ANCHOR_BUCKET = os.environ.get("CREDIT_ANCHOR_BUCKET", "")
+CREDIT_ANCHOR_EMAILS = [a for a in os.environ.get("CREDIT_ANCHOR_EMAILS", "").split(",") if a.strip()]
+CREDIT_ANCHOR_RETENTION_DAYS = int(os.environ.get("CREDIT_ANCHOR_RETENTION_DAYS", "3650"))
+CREDIT_ANCHOR_SIGNING_KEY = os.environ.get("CREDIT_ANCHOR_SIGNING_KEY", "").replace("\\n", "\n")
+CREDIT_ANCHOR_KEY_ID = os.environ.get("CREDIT_ANCHOR_KEY_ID", "")
+CREDIT_PDF_SIGNING_KEY = os.environ.get("CREDIT_PDF_SIGNING_KEY", "").replace("\\n", "\n")
+CREDIT_PDF_SIGNING_CERT = os.environ.get("CREDIT_PDF_SIGNING_CERT", "").replace("\\n", "\n")
 CELERY_BEAT_SCHEDULE = {
     # 00:01: everyone's roles follow the date (access.roles), as a list made ahead takes effect on
     # the 1st. Every change to the facts syncs at once too; this catches what only time changes.
@@ -425,6 +435,16 @@ CELERY_BEAT_SCHEDULE = {
     "credit-check-ledger": {
         "task": "credit.tasks.check_ledger",
         "schedule": crontab(minute=50, hour=2),
+    },
+    # GAHK-konto's daily anchor: the whole ledger's state, signed and put outside the database.
+    "credit-anchor-daily": {
+        "task": "credit.tasks.anchor_daily",
+        "schedule": crontab(minute=20, hour=0),
+    },
+    # The 1st at 06:00: last month's signed statement to every holder, after the month anchor.
+    "credit-monthly-statements": {
+        "task": "credit.tasks.send_statements",
+        "schedule": crontab(minute=0, hour=6, day_of_month=1),
     },
     "purge-worker-job-logs": {
         "task": "core.tasks.purge_worker_job_logs",

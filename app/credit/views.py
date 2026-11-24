@@ -9,13 +9,14 @@ from django.contrib import messages
 from django.db.models import Q, QuerySet
 from django.http import Http404, HttpRequest, HttpResponse
 from django.shortcuts import get_object_or_404, redirect, render
+from django.utils import timezone
 from django.views.decorators.http import require_POST
 
 from access.api import permission_required
 from residents.models import Account
 
-from . import holders, ledger
-from .forms import BookForm, ChargeForm, LimitForm, OpenAccountForm, TransferForm
+from . import closing, holders, ledger, statements
+from .forms import BookForm, ChargeForm, LimitForm, OpenAccountForm, TransferForm, parse_kr
 from .ledger import LedgerError
 from .models import Book, CreditAccount, Transfer
 
@@ -83,8 +84,37 @@ def account(request: HttpRequest, pk: int) -> HttpResponse:
             "own": holders.acts_for(user, credit_account.holder),
             "reversible": reversible,
             "limit_form": LimitForm(initial={"credit_limit": _kr_input(credit_account.credit_limit_ore)}),
+            "statement_months": _ended_months(credit_account),
         },
     )
+
+
+def _ended_months(credit_account: CreditAccount, count: int = 12) -> list[tuple[int, int]]:
+    """The last `count` months that have ended since the account was opened, newest first."""
+    opened = timezone.localtime(credit_account.created_at).date().replace(day=1)
+    year, month = statements.previous_month(timezone.localdate())
+    out: list[tuple[int, int]] = []
+    while len(out) < count and (year, month) >= (opened.year, opened.month):
+        out.append((year, month))
+        year, month = (year, month - 1) if month > 1 else (year - 1, 12)
+    return out
+
+
+def statement(request: HttpRequest, pk: int, year: int, month: int) -> HttpResponse:
+    """One account's signed statement for an ended month: for a person without a login, their
+    book's managers fetch it here and hand it on."""
+    credit_account = get_object_or_404(CreditAccount.objects.select_related("book", "holder"), pk=pk)
+    if not holders.may_see(_user(request), credit_account) or (year, month) not in _ended_months(
+        credit_account, 1200
+    ):
+        raise Http404
+    item = statements.account_month(credit_account, year, month)
+    pdf = statements.pdf_for(credit_account.holder.name, [item], year, month)
+    response = HttpResponse(pdf, content_type="application/pdf")
+    response["Content-Disposition"] = (
+        f'attachment; filename="gahk-konto-{credit_account.pk}-{year}-{month:02d}.pdf"'
+    )
+    return response
 
 
 def _kr_input(ore: int | None) -> str:
@@ -210,6 +240,10 @@ def book(request: HttpRequest, pk: int) -> HttpResponse:
             "settlements": settlements,
             "total": sum(ledger.annotated_balance(a) for a in accounts),
             "charge_form": _charge_form(book),
+            "closings": book.closings.select_related("anchor", "closed_by")[:24],
+            "next_period": closing.next_period(book),
+            "may_close": closing.may_close(book),
+            "banks": [a for a in own if a.bank_reference],
             "open_form": OpenAccountForm(initial={"credit_limit": _kr_input(book.default_credit_limit_ore)}),
         },
     )
@@ -304,3 +338,28 @@ def books(request: HttpRequest) -> HttpResponse:
             return redirect("credit:books")
     listed = Book.objects.select_related("holder__workgroup", "holder__person").prefetch_related("accounts")
     return render(request, "credit/books.html", {"form": form, "books": listed})
+
+
+@require_POST
+def close_period(request: HttpRequest, pk: int) -> HttpResponse:
+    book = _managed_book(request, pk)
+    typed: dict[int, int] = {}
+    for account in CreditAccount.objects.filter(book=book).exclude(bank_reference=""):
+        raw = request.POST.get(f"bank_{account.pk}", "").strip()
+        if raw:
+            try:
+                typed[account.pk] = parse_kr(raw)
+            except ValueError:
+                messages.error(request, f"Skriv bankens saldo for {account.name} i kroner.")
+                return redirect("credit:book", pk=pk)
+    try:
+        made = closing.close(
+            actor=_user(request), book=book, bank_statements=typed, note=request.POST.get("note", "")
+        )
+    except LedgerError as exc:
+        messages.error(request, str(exc))
+    else:
+        messages.success(
+            request, f"Perioden {made.period_start:%d.%m.%Y}–{made.period_end:%d.%m.%Y} er lukket."
+        )
+    return redirect("credit:book", pk=pk)

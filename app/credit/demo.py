@@ -152,3 +152,25 @@ def seed(residents: list[Account], now: datetime.datetime, rng: random.Random) -
     move(house_bank, spare, 1000)
     move(spare, general[someone(30).pk], 1000)
     CreditAccount.objects.filter(pk=spare.pk).update(closed_at=timezone.now())
+
+
+def seed_records(now: datetime.datetime) -> None:
+    """Closings and anchors (PR 2): Ølkælder's period two months back closed by oel@gahk.dk, so last
+    month's stands ready on the book page with its form; and today's daily anchor."""
+    from . import anchors, closing, holders
+    from .models import Anchor
+
+    cellar = Book.objects.filter(name="Ølkælder").first()
+    if cellar is None or cellar.closings.exists():
+        return
+    first = (timezone.localdate(now).replace(day=1) - datetime.timedelta(days=1)).replace(day=1)
+    first = (first - datetime.timedelta(days=1)).replace(day=1)
+    opened = timezone.make_aware(datetime.datetime.combine(first, datetime.time()))
+    Book.objects.update(created_at=opened)
+    CreditAccount.objects.update(created_at=opened)
+    cellar.refresh_from_db()
+    manager = Account.objects.filter(email="oel@gahk.dk").first()
+    if manager is not None and holders.manages(manager, cellar):
+        banks = {a.pk: 0 for a in CreditAccount.objects.filter(book=cellar).exclude(bank_reference="")}
+        closing.close(actor=manager, book=cellar, bank_statements=banks, now=now)
+    anchors.make(Anchor.Kind.DAILY, now.replace(second=0, microsecond=0))

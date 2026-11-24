@@ -4,7 +4,18 @@ other change without code of its own."""
 
 from audit import trail
 
-from .models import Book, CreditAccount, Holder, Posting, Transfer
+from .models import (
+    Anchor,
+    AnchorDelivery,
+    Book,
+    Closing,
+    ClosingBalance,
+    CreditAccount,
+    Holder,
+    Posting,
+    Statement,
+    Transfer,
+)
 
 trail.register(
     Holder,
@@ -70,6 +81,25 @@ trail.register(
         "text": "Tekst",
     },
 )
+trail.register(
+    Closing,
+    "credit.closing",
+    name=str,
+    label="Lukket periode",
+    labels={
+        "book": "Kontofører",
+        "period_start": "Fra",
+        "period_end": "Til og med",
+        "ends_at": "Slut",
+        "previous": "Forrige lukning",
+        "closed_by": "Lukket af",
+        "closed_at": "Lukket",
+        "note": "Bemærkning",
+        "anchor": "Anker",
+    },
+)
+for _model in (Anchor, AnchorDelivery, ClosingBalance, Statement):
+    trail.exempt(_model, "append-only records of their own, made by the jobs and the closing they belong to")
 trail.actions(
     {
         "credit.transfer.sent": "Overførte penge",
@@ -82,5 +112,6 @@ trail.actions(
         "credit.book.created": "Oprettede en kontofører",
         "credit.book.updated": "Ændrede en kontofører",
         "credit.check.failed": "Kontrol af GAHK-konto fandt en fejl",
+        "credit.book.closed": "Lukkede en periode",
     }
 )

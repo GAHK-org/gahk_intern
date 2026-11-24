@@ -48,6 +48,7 @@ from cms.models import Event as CmsEvent
 from core.demo import seed as seed_mail
 from core.models import Cleaning, OutgoingMail, Room, Workgroup
 from credit.demo import seed as seed_credit
+from credit.demo import seed_records as seed_credit_records
 from den_hurtige.demo import seed as seed_den_hurtige
 from den_hurtige.models import QuickComment, QuickPost, QuickReaction
 from events.demo import seed as seed_events
@@ -261,6 +262,7 @@ class Command(BaseCommand):
         seed_notifications(residents, self.now, self.rng)
         # After the roles: GAHK-konto's books are managed by embedsgrupper (credit.demo).
         seed_credit(residents, self.now, self.rng)
+        seed_credit_records(self.now)
         # After the ølkælder and admissions: its mails are theirs (core.demo).
         seed_mail(residents, self.now, self.rng)
         return residents
@@ -272,7 +274,8 @@ class Command(BaseCommand):
         with connection.cursor() as cursor:
             cursor.execute("SET CONSTRAINTS ALL IMMEDIATE")
             cursor.execute(
-                "TRUNCATE credit_posting, credit_transfer, credit_creditaccount, credit_book, credit_holder"
+                "TRUNCATE credit_statement, credit_closingbalance, credit_closing, credit_anchordelivery, "
+                "credit_anchor, credit_posting, credit_transfer, credit_creditaccount, credit_book, credit_holder"
             )
             cursor.execute("SET CONSTRAINTS ALL DEFERRED")
         for model in WIPE_ORDER:

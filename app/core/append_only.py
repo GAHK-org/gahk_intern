@@ -43,11 +43,12 @@ class AppendOnly(models.Model):
 def trigger_sql(function: str, tables: tuple[str, ...], what: str) -> tuple[list[str], list[str]]:
     """(forwards, backwards) SQL for a migration: a trigger function refusing UPDATE and DELETE, and
     one trigger per table calling it. `what` names the tables in the error ("the audit trail")."""
+    said = what.replace("'", "''")
     forwards = [
         f"""
         CREATE FUNCTION {function}() RETURNS trigger LANGUAGE plpgsql AS $$
         BEGIN
-            RAISE EXCEPTION '{what} is append-only: % on % refused', TG_OP, TG_TABLE_NAME;
+            RAISE EXCEPTION '{said} is append-only: % on % refused', TG_OP, TG_TABLE_NAME;
         END;
         $$
         """,

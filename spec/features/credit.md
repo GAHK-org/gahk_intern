@@ -45,6 +45,26 @@ ledger of claims that can never be changed after the fact.
 - Administrators make books (name, managing embedsgruppe, bank account, default limit).
 - The page stays open after moving out: someone who left may still owe or be owed.
 
+## Closing the books
+
+- Each book is closed every month, half year or year (its setting), one period after the other.
+- A period can be closed once it has ended, by the book's managers, when every bank account matches
+  the bank statement they type in and every mellemregning is settled, or the closing says why not.
+- A closing keeps every account's balance and chain head at the end, and the book's signed anchor.
+  Afterwards nothing can be recorded into the period: a posting belongs to the period it was
+  recorded in, and a later correction goes into the open one.
+
+## Statements
+
+- On the 1st, every holder gets last month's statement by e-mail: one signed PDF of the accounts
+  that moved or end the month with a balance. An embedsgruppe's goes to its current members; a
+  person without a login gets none by mail, and their book's managers fetch it on the account page.
+- Each account shows its opening and closing balance, the month's lines and two control numbers:
+  this month's chain head and last month's, which must match last month's statement. The shared
+  control number (the month anchor over every account) is the same on every statement that month,
+  so any two statements can expose a rewritten history.
+- Each statement is sent once; the account page offers the last twelve months as PDFs.
+
 ## Integrity
 
 - The database refuses changing or deleting ledger rows, changing an account's book or holder,
@@ -54,6 +74,12 @@ ledger of claims that can never be changed after the fact.
   lost. A nightly check recomputes every chain, balance and book total and reports a fault in the
   log and the audit trail; it never corrects anything.
 - Every transfer is also in the general audit trail.
+- Anchors fix the ledger outside the database: every night, at every month's start and at every
+  closing, one hash over the chain heads, signed and sent to a bucket with S3 Object Lock, or by
+  e-mail to the treasurers where there is none. `manage.py credit_verify` checks everything against
+  them, including anchor files kept elsewhere.
+- Signing keys may be lost or replaced: every signature names its key, and the public half of every
+  key is kept in the repository, so old signatures keep verifying.
 
 ## Decisions
 
@@ -64,3 +90,6 @@ ledger of claims that can never be changed after the fact.
 - Credit is only spent inside its own book, so Ølkælder's credit never leaves Ølkælder.
 - The hash chain is keyless and anchored outside the database instead of relying on a secret that
   could be lost.
+- Anchors are signed with Ed25519; PDFs with an ECDSA certificate, since PDF readers understand
+  that. The certificate is self-made for now (readers show an unknown signer); a bought one can
+  replace it without other changes.

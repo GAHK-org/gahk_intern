@@ -50,6 +50,9 @@ dependencies = [
     # exiv2: copies EXIF/IPTC/XMP into the photo album's HD copies and reads RAW files' metadata. Its
     # wheel links against the system's libexpat, which the Dockerfiles install.
     "exiv2>=0.19",
+    "pyhanko>=0.38.2",
+    "segno>=1.6.6",
+    "cryptography>=50.0.0",
 ]
 
 [dependency-groups]
