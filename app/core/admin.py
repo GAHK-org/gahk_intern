@@ -169,9 +169,18 @@ class OutgoingMailAdmin(ReadOnlyAdmin):
 
     @admin.action(description="Send valgte fejlede mails igen")
     def send_again(self, request: HttpRequest, queryset: QuerySet[OutgoingMail]) -> None:
+        from audit import trail
+
         from . import mail
 
         # Only a failed or cut-off mail that still has its content and lifetime (core.mail.can_send_again):
         # a sent one is not sent twice, and an alumneregning replaced by a rerun has lost its content.
-        count = mail.send_again(list(queryset))
+        again = [chosen for chosen in queryset if mail.can_send_again(chosen)]
+        with trail.event("core.mail.sent_again") as event:
+            for chosen in again:
+                event.involve_kind("core.mail", chosen.pk, f"{chosen.subject} → {chosen.recipients}")
+            count = mail.send_again(again)
+            event.details["count"] = count
+            if not count:
+                event.cancel()
         self.message_user(request, f"{count} mail(s) sat i kø igen.")
