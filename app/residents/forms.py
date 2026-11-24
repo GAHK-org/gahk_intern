@@ -54,12 +54,15 @@ class EmailAuthenticationForm(AuthenticationForm):
         )
 
     def clean(self) -> dict[str, Any]:
-        # Checked here as well as in residents.backends, so the page can say why instead of
-        # "Forkert e-mail eller kodeord" — which would send the resident off to guess again.
-        username = self.cleaned_data.get("username")
-        if self.request is not None and username and throttle.login_blocked(self.request, username):
-            raise forms.ValidationError("Too many failed logins", code="throttled")
-        return super().clean()
+        # The limit itself is residents.backends', which refuses the attempt as a failed login (and so
+        # the audit trail records it). Here it only changes what the page says: "Forkert e-mail eller
+        # kodeord" would send the resident off to guess again.
+        try:
+            return super().clean()
+        except forms.ValidationError:
+            if getattr(self.request, "login_throttled", False):
+                raise forms.ValidationError("Too many failed logins", code="throttled") from None
+            raise
 
     @property
     def throttled(self) -> bool:
@@ -183,10 +186,13 @@ class ResidentPasswordResetForm(PasswordResetForm):
     def save(self, *args: Any, **kwargs: Any) -> None:  # noqa: ANN401 - Django's signature
         # Over the limit, nothing is sent and the "done" page looks the same as ever: it never says
         # whether a mail went out, so it cannot tell a stranger which addresses have an account.
+        # residents.auth.PasswordResetView records the request either way, and `throttled` as its reason.
         request = kwargs.get("request")
-        if request is not None and not throttle.password_reset_allowed(request, self.cleaned_data["email"]):
-            return
-        super().save(*args, **kwargs)
+        self.throttled = request is not None and not throttle.password_reset_allowed(
+            request, self.cleaned_data["email"]
+        )
+        if not self.throttled:
+            super().save(*args, **kwargs)
 
     def send_mail(
         self,

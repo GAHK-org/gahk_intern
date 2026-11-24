@@ -12,6 +12,8 @@ and what every changed field held before and after. Under Administration → Rev
   the time, and each changed field before and after.
 - Logging in, failed logins (with the reason), logging out, changing a password, asking for a reset
   link (with the account it reached, if any), and setting a password from a link.
+- A login or a reset request refused for too many tries is recorded the same way, with "for mange
+  forsøg" as its reason.
 - An address typed into the login or reset form that matches no account is kept only as its domain
   and a keyed hash, never as typed: people type their password into that box. Searching the page for
   the address still finds every try with it.

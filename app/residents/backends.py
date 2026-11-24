@@ -28,7 +28,8 @@ class ThrottledModelBackend(ModelBackend):
         if username is None:
             username = kwargs.get(Resident.USERNAME_FIELD)
         if throttle.login_blocked(request, username):
-            request.login_throttled = True  # type: ignore[attr-defined]  # for residents.auth's log line
+            # Read by residents.auth (the failed login's reason) and the login form (its message).
+            request.login_throttled = True  # type: ignore[attr-defined]
             # Stops the attempt here; django.contrib.auth.authenticate() answers it as a failed login.
             raise PermissionDenied
         user = super().authenticate(request, username, password, **kwargs)

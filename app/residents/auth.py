@@ -37,19 +37,24 @@ logger = logging.getLogger(__name__)
 def log_failed_login(
     sender: object, credentials: dict[str, Any], request: HttpRequest | None = None, **_: object
 ) -> None:
-    if getattr(request, "login_throttled", False):
-        return  # refused before the password was looked at; residents.throttle logged why
+    # Refused by the login limit before the password was looked at (residents.backends): recorded
+    # like any failed login, since a burst of them is exactly what the trail should show.
+    throttled = getattr(request, "login_throttled", False)
     email = str(credentials.get("username") or "")
     try:
         user = Resident._default_manager.get_by_natural_key(email)
     except (Resident.DoesNotExist, Resident.MultipleObjectsReturned):
         # Only the domain and a keyed hash of what was typed: people type their password here.
         typed = trail.typed_address(email)
-        logger.warning("Login failed: no account for address %s", typed["email_hash"])
-        _audit_failed_login(None, {"reason": "no account", **typed})
+        reason = THROTTLED if throttled else "no account"
+        logger.warning("Login failed: %s for address %s", reason, typed["email_hash"])
+        _audit_failed_login(None, {"reason": reason, **typed})
         return
     # The account is known here, so its id is enough: no need to log the address as well.
-    reason = "account inactive" if not user.is_active else "wrong password"
+    if throttled:
+        reason = THROTTLED
+    else:
+        reason = "account inactive" if not user.is_active else "wrong password"
     logger.warning("Login failed for account %s: %s", user.pk, reason)
     _audit_failed_login(user, {"reason": reason})
 
@@ -65,6 +70,8 @@ def _audit_failed_login(account: Resident | None, details: dict[str, str]) -> No
 
 
 LOGIN_ATTEMPT = "auth.login.attempt"
+# The reason of a login or a reset request refused by residents.throttle's limits.
+THROTTLED = "throttled"
 
 
 @receiver(user_logged_in)
@@ -109,7 +116,8 @@ class PasswordChangeView(auth_views.PasswordChangeView):
 class PasswordResetView(auth_views.PasswordResetView):
     """Asking for a reset link is recorded with the account it reached, or, when it reached none, the
     domain and a keyed hash of the address typed (trail.typed_address): Django answers "sent" either
-    way, so the trail is the only place that tells them apart."""
+    way, so the trail is the only place that tells them apart. The same goes for a request refused by
+    the reset limit (ResidentPasswordResetForm.save), which sends nothing: its reason says so."""
 
     def form_valid(self, form: PasswordResetForm) -> HttpResponse:
         email = form.cleaned_data["email"]
@@ -121,8 +129,11 @@ class PasswordResetView(auth_views.PasswordResetView):
             "auth.password_reset.requested",
             details=details,
             involve=[(account, "subject") for account in accounts],
-        ):
-            return super().form_valid(form)
+        ) as event:
+            response = super().form_valid(form)
+            if getattr(form, "throttled", False):
+                event.details["reason"] = THROTTLED
+            return response
 
 
 class PasswordResetConfirmView(auth_views.PasswordResetConfirmView):

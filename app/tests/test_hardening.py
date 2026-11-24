@@ -9,10 +9,11 @@ from django.core.exceptions import ImproperlyConfigured
 from django.http import HttpResponse
 from django.test import Client, RequestFactory
 
+from audit import trail
 from config import settings as config_settings
 from core.security_headers import SecurityHeaders
 from residents import throttle
-from residents.models import Resident
+from residents.models import Resident, Role
 
 LOGIN = "/admin/login"
 RESET = "/admin/password-reset"
@@ -248,3 +249,78 @@ def test_a_name_in_a_confirm_handler_cannot_end_the_string(make_resident: Callab
     handler = body[body.index("confirm('Deaktivér") :][:120]
     assert "Test x\\u0027)" in handler
     assert "&#x27;);alert(1)" not in handler
+
+
+# ---------------------------------------------------------------- the audit trail
+@pytest.mark.django_db
+def test_a_throttled_login_is_in_the_trail_as_a_failed_login(make_resident: Callable[..., Resident]) -> None:
+    from audit.models import AuditEvent
+
+    anna = make_resident(email="anna@gahk.dk", password="rigtig")
+    client = Client()
+    _fail(client, "anna@gahk.dk", throttle.LOGIN_FAILURES_PER_ADDRESS)
+    _fail(client, "ukendt@gahk.dk", throttle.LOGIN_FAILURES_PER_ADDRESS)
+
+    client.post(LOGIN, {"username": "anna@gahk.dk", "password": "rigtig"}, REMOTE_ADDR=DORM_IP)
+    client.post(LOGIN, {"username": "ukendt@gahk.dk", "password": "x"}, REMOTE_ADDR=DORM_IP)
+
+    known, unknown = AuditEvent.objects.order_by("-id")[:2][::-1]
+    assert (known.action, known.actor_id, known.details) == (
+        "auth.login.failed",
+        None,
+        {"reason": "throttled"},
+    )
+    assert known.entities.get().entity_id == anna.pk
+    assert unknown.action == "auth.login.failed"
+    assert unknown.details == {"reason": "throttled", **trail.typed_address("ukendt@gahk.dk")}
+    assert "ukendt" not in str(unknown.details)
+
+
+@pytest.mark.django_db
+def test_a_throttled_django_admin_login_is_in_the_trail(make_resident: Callable[..., Resident]) -> None:
+    from audit.models import AuditEvent
+
+    admin = make_resident(email="admin@gahk.dk", password="rigtig", is_staff=True, is_superuser=True)
+    client = Client()
+    _fail(client, "admin@gahk.dk", throttle.LOGIN_FAILURES_PER_ADDRESS)
+
+    client.post(
+        "/django-admin/login/", {"username": "admin@gahk.dk", "password": "rigtig"}, REMOTE_ADDR=DORM_IP
+    )
+
+    newest = AuditEvent.objects.latest("id")
+    assert (newest.action, newest.details) == ("auth.login.failed", {"reason": "throttled"})
+    assert newest.entities.get().entity_id == admin.pk
+
+
+@pytest.mark.django_db
+def test_a_reset_refused_by_the_limit_is_in_the_trail(make_resident: Callable[..., Resident]) -> None:
+    from audit.models import AuditEvent
+
+    anna = make_resident(email="anna@gahk.dk", password="rigtig")
+    client = Client()
+    for _ in range(throttle.RESETS_PER_ADDRESS + 1):
+        client.post(RESET, {"email": "anna@gahk.dk"}, REMOTE_ADDR=DORM_IP)
+    client.post(RESET, {"email": "ingen@gahk.dk"}, REMOTE_ADDR="198.51.100.1")
+
+    asked = list(AuditEvent.objects.filter(action="auth.password_reset.requested").order_by("id"))
+    assert [e.details for e in asked[: throttle.RESETS_PER_ADDRESS]] == [{"accounts": 1}] * 3
+    refused = asked[throttle.RESETS_PER_ADDRESS]
+    assert refused.details == {"accounts": 1, "reason": "throttled"}
+    assert refused.entities.get().entity_id == anna.pk
+    assert asked[-1].details == {"accounts": 0, **trail.typed_address("ingen@gahk.dk")}  # under the limit
+
+
+@pytest.mark.django_db
+def test_the_audit_page_names_the_reason_in_danish(make_resident: Callable[..., Resident]) -> None:
+    admin = make_resident(email="admin@gahk.dk", roles=[Role.ADMINISTRATOR])
+    trail.record("auth.login.failed", actor=None, details={"reason": "throttled"})
+    trail.record("auth.login.failed", actor=None, details={"reason": "wrong password"})
+    client = Client()
+    client.force_login(admin)
+
+    page = client.get("/admin/audit").content.decode()
+
+    assert "for mange forsøg, afvist" in page
+    assert "forkert kodeord" in page
+    assert "throttled" not in page
