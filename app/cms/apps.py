@@ -9,7 +9,10 @@ class CmsConfig(AppConfig):
     def ready(self) -> None:
         from core.media import register_public_copy
 
+        from . import live
         from .snapshot import published_image_url
+
+        live.register()
 
         # The library was anonymous at /media/cms/ while this app rendered gahk.dk, and gahk.dk
         # forwards /media/ here: an old link to a published picture goes to gahk.dk's copy.

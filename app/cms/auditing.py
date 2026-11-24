@@ -12,6 +12,7 @@ from .models import (
     GahkWebSync,
     MenuItem,
     NewsItem,
+    OpenEditor,
     Page,
     PageRedirect,
     PageVersion,
@@ -98,6 +99,7 @@ trail.exempt(PageVersion, "a page's restorable copies, written by the same event
 trail.exempt(Publication, "the publish log of its own; asking to publish is an event")
 trail.exempt(GahkWebSync, "what gahk.dk last reported, kept up to date by a worker")
 trail.exempt(PylonEvent, "an archive of the old calendar, never written")
+trail.exempt(OpenEditor, "who has an editor open right now, a warning that locks nothing; kept for minutes")
 
 trail.kind_labels({"cms.menu": "Menu", "cms.site": "gahk.dk"})
 

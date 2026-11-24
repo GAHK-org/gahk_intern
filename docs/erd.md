@@ -283,6 +283,14 @@ erDiagram
         string default_background
     }
 
+    cms_OpenEditor {
+        int id PK
+        string target
+        int resident_id FK
+        datetime opened_at
+        datetime seen_at
+    }
+
     cms_Publication {
         int id PK
         datetime started_at
@@ -1027,6 +1035,7 @@ erDiagram
     cms_PageRedirect }o--|o residents_Resident : "created_by"
     cms_PageVersion }o--|o cms_Page : "page"
     cms_PageVersion }o--|o residents_Resident : "created_by"
+    cms_OpenEditor }o--|| residents_Resident : "resident"
     cms_Publication }o--|o residents_Resident : "triggered_by"
     ak_AkEntry }o--|| residents_Resident : "resident"
     ak_AkEntry }o--|o residents_Resident : "created_by"
@@ -1322,6 +1331,14 @@ erDiagram
         string default_background
     }
 
+    cms_OpenEditor {
+        int id PK
+        string target
+        int resident_id FK
+        datetime opened_at
+        datetime seen_at
+    }
+
     cms_Publication {
         int id PK
         datetime started_at
@@ -1358,6 +1375,7 @@ erDiagram
     cms_PageRedirect }o--|o residents_Resident : "created_by"
     cms_PageVersion }o--|o cms_Page : "page"
     cms_PageVersion }o--|o residents_Resident : "created_by"
+    cms_OpenEditor }o--|| residents_Resident : "resident"
     cms_Publication }o--|o residents_Resident : "triggered_by"
 ```
 

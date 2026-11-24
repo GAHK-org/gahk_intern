@@ -1,0 +1,36 @@
+{% comment %}
+  An editor's box about the others: who else has this open right now, and whether somebody saved it
+  after this editor was opened. Empty, it takes no room.
+
+  A live region (frontend/src/live-region.ts): it reads itself again from cms:editing on every signal
+  on its topic (somebody opened, left, saved or deleted it). cms.ts reports to the heartbeat URL while
+  the page is open, and asks for a fresh read after each report, which also catches somebody whose
+  laptop closed without saying goodbye. Takes: editing (cms.views.editing_context).
+{% endcomment %}
+{% with e=editing %}
+  <div id="cms-editing" class="cms-editing" role="status"
+       data-live="cms.{{ e.target }}" data-live-region
+       data-live-url="{% url 'cms:editing' e.target %}?{{ e.query }}"
+       {% if e.pk %}data-live-pk="{{ e.pk }}" data-live-gone="{{ e.thing|capfirst }} er lige blevet slettet."{% endif %}
+       data-cms-heartbeat="{% url 'cms:editing_heartbeat' e.target %}">
+    {% if e.saved_since %}
+      <p class="cms-note cms-note-warn">
+        <span>
+          <b>{{ e.saved_by }}</b> har gemt {{ e.thing }} {{ e.saved_when }}, efter du åbnede den.
+          Gemmer du nu, bliver du spurgt, før noget overskrives.
+          <a href="{{ e.change_url }}" target="_blank" rel="noopener">Se ændringen</a> ·
+          <a href="{{ e.edit_url }}">Hent den nye udgave</a> (det, du har rettet her, går tabt)
+        </span>
+      </p>
+    {% endif %}
+    {% if e.others %}
+      <p class="cms-note cms-note-warn">
+        <span>
+          {% for name, since in e.others %}{% if not forloop.first %}{% if forloop.last %} og {% else %}, {% endif %}{% endif %}<b>{{ name }}</b> (åbnet {{ since }}){% endfor %}
+          har også {{ e.thing }} åben. Aftal, hvem der retter: gemmer I begge, bliver den sidste spurgt,
+          før noget overskrives.
+        </span>
+      </p>
+    {% endif %}
+  </div>
+{% endwith %}

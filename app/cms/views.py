@@ -26,11 +26,12 @@ from django.core.exceptions import PermissionDenied, ValidationError
 from django.core.paginator import Paginator
 from django.db.models import Q
 from django.forms import Form
-from django.http import HttpRequest, HttpResponse, HttpResponseBadRequest, JsonResponse
+from django.http import Http404, HttpRequest, HttpResponse, HttpResponseBadRequest, JsonResponse
 from django.http.response import HttpResponseBase
 from django.shortcuts import get_object_or_404, redirect, render
 from django.template.loader import render_to_string
-from django.utils import timezone
+from django.urls import reverse
+from django.utils import dateformat, timezone
 from django.utils.dateparse import parse_datetime
 from django.views.decorators.http import require_POST
 
@@ -39,7 +40,8 @@ from audit.models import AuditEntity, AuditEvent
 from residents.models import Resident, Role
 from residents.permissions import CMS_EDITOR_ROLES, current_resident, request_has_role, role_required
 
-from . import services
+from . import live as cms_live
+from . import presence, services
 from .auditing import PUBLISHED_KINDS
 from .diff import DiffRow, html_diff
 from .forms import CaptionForm, EventForm, NewsForm, PageForm, RedirectForm, SiteSettingsForm
@@ -302,8 +304,121 @@ def _page_initial(page: Page | None) -> dict[str, Any]:
     }
 
 
-def _stamp(moment: datetime.datetime | None) -> str:
-    return moment.isoformat() if moment else ""
+# ------------------------------------------------------------------------- two editors at once
+Kind = cms_live.Kind
+
+# What the messages call each kind of thing ("Ada har gemt siden …").
+EDITED_THING: dict[str, str] = {
+    Kind.PAGE: "siden",
+    Kind.NEWS: "nyheden",
+    Kind.EVENT: "begivenheden",
+    Kind.MENU: "menuen",
+}
+
+
+def _when(moment: datetime.datetime) -> str:
+    """Today "kl. 14:05", another day "18. nov kl. 14:05"."""
+    local = timezone.localtime(moment)
+    clock = f"kl. {local:%H:%M}"
+    return clock if local.date() == timezone.localdate() else f"{dateformat.format(local, 'j. b')} {clock}"
+
+
+def _who(change: AuditEvent | None) -> str:
+    return (change.actor_name if change else "") or "En anden"
+
+
+def _posted_version(request: HttpRequest) -> str | None:
+    """The version the form was opened with; None (no check) for a form from before there was one."""
+    return request.POST.get("opened_version") or None
+
+
+def conflict_message(exc: services.EditConflict, kind: str, then: str) -> str:
+    """Why a save was stopped, and `then` what the editor can do about it."""
+    saved = f" {_when(exc.change.at)}" if exc.change else ""
+    return (
+        f"{_who(exc.change)} har gemt {EDITED_THING[kind]}{saved}, efter du åbnede den. "
+        f"Dine ændringer er ikke gemt. {then}"
+    )
+
+
+def _subject(target: str) -> tuple[str, int | None, str]:
+    """The kind, id and current version of what an editor is open on; 404 when it is gone."""
+    if not cms_live.TARGET.match(target):
+        raise Http404
+    kind, _, raw_pk = target.partition("-")
+    if kind == Kind.MENU:
+        return kind, None, services.menu_version()
+    pk = int(raw_pk)
+    if kind == Kind.PAGE:
+        return kind, pk, services.page_version(get_object_or_404(Page, pk=pk))
+    if kind == Kind.NEWS:
+        return kind, pk, services.news_version(get_object_or_404(NewsItem, pk=pk))
+    return kind, pk, services.event_version(get_object_or_404(Event, pk=pk))
+
+
+def _change_url(kind: str, pk: int | None) -> str:
+    if kind == Kind.PAGE and pk is not None:
+        return reverse("cms:page_history", args=[pk])
+    return f"{reverse('cms:change_log')}?{urlencode({'type': kind})}"
+
+
+def _edit_url(kind: str, pk: int | None) -> str:
+    if pk is None:
+        return reverse("cms:menu")
+    name = {Kind.PAGE: "cms:page_edit", Kind.NEWS: "cms:news_edit", Kind.EVENT: "cms:event_edit"}[Kind(kind)]
+    return reverse(name, args=[pk])
+
+
+def editing_context(request: HttpRequest, target: str, opened: str) -> dict[str, Any]:
+    """What templates/cms/_editing.html shows: who else has `target` open, and whether it has been
+    saved since this editor was opened with version `opened`."""
+    kind, pk, current = _subject(target)
+    change = services.last_change(kind, pk) if opened and opened != current else None
+    others = presence.others(target, current_resident(request))
+    return {
+        "target": target,
+        "pk": pk,
+        "query": urlencode({"opened": opened}),
+        "thing": EDITED_THING[kind],
+        "others": [(other.resident.full_name, _when(other.opened_at)) for other in others],
+        "saved_since": opened != current if opened else False,
+        "saved_by": _who(change),
+        "saved_when": _when(change.at) if change else "",
+        "change_url": _change_url(kind, pk),
+        "edit_url": _edit_url(kind, pk),
+    }
+
+
+def _open_editor(request: HttpRequest, target: str, opened: str) -> dict[str, Any]:
+    """The editor page's box about the others, and this editor counted as present."""
+    context = editing_context(request, target, opened)
+    presence.arrive(target, context["pk"], current_resident(request))
+    return {"editing": context}
+
+
+@editor_view
+def editing(request: HttpRequest, target: str) -> HttpResponse:
+    """The box alone, read again on every live signal and after every heartbeat (live-region.ts)."""
+    return render(
+        request,
+        "cms/_editing.html",
+        {"editing": editing_context(request, target, request.GET.get("opened", ""))},
+    )
+
+
+@editor_view
+@require_POST
+def editing_heartbeat(request: HttpRequest, target: str) -> HttpResponse:
+    """The editor page is still open (every half minute), or with `leave` it was just closed."""
+    if not cms_live.TARGET.match(target):
+        raise Http404
+    _kind, _, raw_pk = target.partition("-")
+    pk = int(raw_pk) if raw_pk else None
+    if request.POST.get("leave"):
+        presence.leave(target, pk, current_resident(request))
+    else:
+        presence.arrive(target, pk, current_resident(request))
+    return HttpResponse(status=204)
 
 
 def _after_page_save(request: HttpRequest, page: Page, old_slug: str | None) -> None:
@@ -325,33 +440,38 @@ def _after_page_save(request: HttpRequest, page: Page, old_slug: str | None) -> 
 @editor_view
 def page_edit(request: HttpRequest, pk: int | None = None) -> HttpResponse:
     page = get_object_or_404(Page.objects.select_related("updated_by"), pk=pk) if pk is not None else None
-    loaded_at = _stamp(page.updated_at) if page else ""
+    opened = services.page_version(page) if page else ""
     if request.method == "POST":
         form = PageForm(request.POST, page=page)
+        # Shown again after an error, the form keeps the version it was opened with: a save stopped
+        # for a bad address must still be stopped when somebody else saved meanwhile.
+        opened = _posted_version(request) or opened
         if form.is_valid():
-            posted_stamp = request.POST.get("loaded_at", "")
-            if page is not None and posted_stamp and posted_stamp != loaded_at:
-                # Somebody saved the page after this form was opened. The form comes back with this
-                # editor's text and the new stamp, so pressing Gem again overwrites knowingly.
-                who = page.updated_by.full_name if page.updated_by else "en anden"
-                when = timezone.localtime(page.updated_at).strftime("%H:%M")
+            old_slug = page.slug if page else None
+            try:
+                saved = services.save_page(
+                    page, form.service_data(), current_resident(request), opened=_posted_version(request)
+                )
+            except services.EditConflict as exc:
+                # The form comes back with this editor's text and the new version, so pressing Gem
+                # again overwrites knowingly.
                 form.add_error(
                     None,
-                    f"{who} har gemt siden kl. {when}, efter du åbnede den. Dine ændringer er ikke gemt. "
-                    "Se hvad der er ændret under Historik, eller tryk Gem igen for at overskrive.",
+                    conflict_message(
+                        exc,
+                        Kind.PAGE,
+                        "Se hvad der er ændret under Historik, eller tryk Gem igen for at overskrive.",
+                    ),
                 )
+                opened = exc.version
+            except ValidationError as exc:
+                apply_service_errors(form, exc, PageForm.SERVICE_FIELDS)
             else:
-                old_slug = page.slug if page else None
-                try:
-                    saved = services.save_page(page, form.service_data(), current_resident(request))
-                except ValidationError as exc:
-                    apply_service_errors(form, exc, PageForm.SERVICE_FIELDS)
+                if page is not None and saved.updated_at == page.updated_at:
+                    messages.info(request, "Der var ingen ændringer at gemme.")
                 else:
-                    if page is not None and saved.updated_at == page.updated_at:
-                        messages.info(request, "Der var ingen ændringer at gemme.")
-                    else:
-                        _after_page_save(request, saved, old_slug)
-                    return redirect("cms:page_edit", saved.pk)
+                    _after_page_save(request, saved, old_slug)
+                return redirect("cms:page_edit", saved.pk)
     else:
         form = PageForm(initial=_page_initial(page), page=page)
     path = _page_path(page) if page else None
@@ -361,7 +481,8 @@ def page_edit(request: HttpRequest, pk: int | None = None) -> HttpResponse:
         {
             "form": form,
             "page": page,
-            "loaded_at": loaded_at,
+            "opened_version": opened,
+            **(_open_editor(request, cms_live.target(Kind.PAGE, page.pk), opened) if page else {}),
             "images": _library(),
             "live_url": public_url(path) if path is not None else "",
             "redirects": list(page.redirects.all()) if page else [],
@@ -530,17 +651,32 @@ def _item_edit(
     instance: NewsItem | Event | None,
     form_class: type[NewsForm | EventForm],
     initial: dict[str, Any],
-    save: Callable[[Any, dict[str, Any], Resident], NewsItem | Event],
+    save: Callable[..., NewsItem | Event],
+    version: Callable[[Any], str],
     template: str,
     kind: str,
     edit_url: str,
     saved_message: str,
 ) -> HttpResponse:
+    opened = version(instance) if instance is not None else ""
     if request.method == "POST":
         form = form_class(request.POST)
+        opened = _posted_version(request) or opened  # see page_edit
         if form.is_valid():
             try:
-                saved = save(instance, form.service_data(), current_resident(request))
+                saved = save(
+                    instance, form.service_data(), current_resident(request), opened=_posted_version(request)
+                )
+            except services.EditConflict as exc:
+                form.add_error(
+                    None,
+                    conflict_message(
+                        exc,
+                        kind,
+                        "Se hvad der er ændret i Ændringsloggen, eller tryk Gem igen for at overskrive.",
+                    ),
+                )
+                opened = exc.version
             except ValidationError as exc:
                 apply_service_errors(form, exc, form.SERVICE_FIELDS)
             else:
@@ -550,7 +686,16 @@ def _item_edit(
     else:
         form = form_class(initial=initial)
     return render(
-        request, template, {"form": form, "item": instance, "images": _library(), "preview_kind": kind}
+        request,
+        template,
+        {
+            "form": form,
+            "item": instance,
+            "opened_version": opened,
+            **(_open_editor(request, cms_live.target(kind, instance.pk), opened) if instance else {}),
+            "images": _library(),
+            "preview_kind": kind,
+        },
     )
 
 
@@ -570,6 +715,7 @@ def news_edit(request: HttpRequest, pk: int | None = None) -> HttpResponse:
         form_class=NewsForm,
         initial=initial,
         save=services.save_news,
+        version=services.news_version,
         template="cms/news_form.html",
         kind="news",
         edit_url="cms:news_edit",
@@ -608,6 +754,7 @@ def event_edit(request: HttpRequest, pk: int | None = None) -> HttpResponse:
         form_class=EventForm,
         initial=initial,
         save=services.save_event,
+        version=services.event_version,
         template="cms/event_form.html",
         kind="event",
         edit_url="cms:event_edit",
@@ -774,10 +921,22 @@ def _menu_targets() -> list[str]:
 @editor_view
 def menu_edit(request: HttpRequest) -> HttpResponse:
     errors: list[str] = []
+    opened = services.menu_version()
     if request.method == "POST":
         rows = apply_menu_action(_posted_menu(request), request.POST.get("action", "save"))
+        opened = _posted_version(request) or opened  # see page_edit
         try:
-            services.save_menu(rows, current_resident(request))
+            services.save_menu(rows, current_resident(request), opened=_posted_version(request))
+        except services.EditConflict as exc:
+            errors = [
+                conflict_message(
+                    exc,
+                    Kind.MENU,
+                    "Din udgave står herunder. Se hvad der er ændret i Ændringsloggen, "
+                    "eller tryk på knappen igen for at overskrive.",
+                )
+            ]
+            opened = exc.version
         except ValidationError as exc:
             errors = (
                 exc.message_dict.get("items", exc.messages) if hasattr(exc, "error_dict") else exc.messages
@@ -793,6 +952,8 @@ def menu_edit(request: HttpRequest) -> HttpResponse:
         "cms/menu.html",
         {
             "rows": rows,
+            "opened_version": opened,
+            **_open_editor(request, cms_live.target(Kind.MENU), opened),
             "new_index": len(rows),
             "row_count": len(rows) + 1,
             "errors": errors,
