@@ -31,7 +31,8 @@ from collections.abc import Collection
 from django.db.models import QuerySet
 from django.http import HttpRequest
 
-from access.api import Feature
+from access import audiences
+from access.api import Feature, request_roles
 from core.rollout import Gate
 from residents.permissions import View
 
@@ -79,6 +80,13 @@ def allowed_residents(qs: QuerySet) -> QuerySet:
 def can_moderate(request: HttpRequest) -> bool:
     """Whether this request may delete other people's content and pin/unpin (opslagstavle.manage)."""
     return request.user.has_perm("access.opslagstavle_manage")
+
+
+def audience_presets(request: HttpRequest) -> tuple[audiences.Preset, ...]:
+    """Who a post may be for: the audiences its author is in themselves (the kitchen staff post to
+    the house and the kitchen; a resident may also post to those living here only)."""
+    roles = request_roles(request)
+    return tuple(preset for preset in audiences.PRESETS if audiences.includes(preset.roles, roles))
 
 
 def can_pin(request: HttpRequest) -> bool:

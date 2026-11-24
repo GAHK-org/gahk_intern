@@ -5,7 +5,6 @@ from django.http import HttpRequest
 from django.urls import reverse
 
 from access.api import (
-    KITCHEN,
     PREVIEW_SESSION_KEY,
     RESIDENT,
     ROLE_LABELS,
@@ -14,6 +13,7 @@ from access.api import (
     previewed_roles,
     request_roles,
 )
+from den_hurtige import channels
 from den_hurtige.access import roles_allowed as den_hurtige_allowed
 from events.access import roles_allowed as events_allowed
 from gahkflix.access import roles_allowed as gahkflix_allowed
@@ -32,19 +32,6 @@ def _nav_intern(request: HttpRequest, roles: frozenset[str], user_pk: int) -> li
     def opens(feature: Feature, action: str = "view") -> bool:
         return request.user.has_perm(f"access.{feature}_{action}")
 
-    if KITCHEN in roles:  # the kitchen staff: their own labels, and their channel for Den Hurtige
-        from core.middleware import kitchen_home
-
-        return [
-            (
-                "Køkkenet",
-                [
-                    (kitchen_home(), "Den Hurtige", "flash"),
-                    (reverse("opslagstavle:board"), "Mine opslag", "board"),
-                    (reverse("reparationer:board"), "Reparationer", "wrench"),
-                ],
-            )
-        ]
     oversigt: list[NavItem] = []
     if opens(Feature.DASHBOARD):
         oversigt.append((reverse("dashboard"), "Dashboard", "dashboard"))
@@ -56,7 +43,7 @@ def _nav_intern(request: HttpRequest, roles: frozenset[str], user_pk: int) -> li
     # Each feature with a rollout gate asks it as well (core.rollout): re-gating one is one edit that
     # narrows the views and this entry together.
     if opens(Feature.DEN_HURTIGE) and den_hurtige_allowed(roles):
-        oversigt.append((reverse("den_hurtige:feed"), "Den Hurtige", "flash"))
+        oversigt.append((channels.home(roles), "Den Hurtige", "flash"))
     if opens(Feature.OPSLAGSTAVLE) and opslagstavle_allowed(roles):
         oversigt.append((reverse("opslagstavle:board"), "Opslagstavle", "board"))
     if opens(Feature.EVENTS) and events_allowed(roles):
@@ -172,7 +159,6 @@ def navigation(request: HttpRequest) -> dict[str, object]:
         "public_site_url": settings.PUBLIC_SITE_URL,
         "nav_intern": nav_intern,
         "active_nav_url": _active_nav_url(nav_intern, request.path),
-        "is_kitchen": KITCHEN in roles,
         "preview_active": previewed is not None and PREVIEW_SESSION_KEY in request.session,
         "preview_label": _preview_label(previewed) if previewed is not None else "",
         "can_preview": previewer,

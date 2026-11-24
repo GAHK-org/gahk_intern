@@ -15,6 +15,8 @@ import datetime
 from django import forms
 from django.conf import settings
 
+from access import audiences
+from access.api import KITCHEN, real_roles
 from core.clock import current_datetime
 from core.uploads import validate_image_upload
 from residents.models import Account, Residency, active_period
@@ -154,6 +156,13 @@ class EventForm(forms.ModelForm):
         ),
     )
 
+    audience_preset = forms.ChoiceField(
+        label="Åben for",
+        choices=(),
+        required=False,
+        help_text="Hvem kan se den, når den er åben.",
+    )
+
     def __init__(self, *args: object, organiser: Account | None = None, **kwargs: object) -> None:
         """`organiser` is passed by the view so they can be kept out of their own guest list.
 
@@ -163,6 +172,29 @@ class EventForm(forms.ModelForm):
         """
         super().__init__(*args, **kwargs)  # type: ignore[arg-type]
         who = organiser or (self.instance.organiser if self.instance.pk else None)
+        # Who an open event is for: an audience the organiser is in themselves (access.audiences);
+        # the kitchen has no Begivenheder, so none with it. One saved that is not offered stays.
+        mine = real_roles(who) if who is not None else frozenset()
+        presets = [
+            p for p in audiences.PRESETS if audiences.includes(p.roles, mine) and KITCHEN not in p.roles
+        ]
+        self._presets = {p.key: p for p in presets}
+        current = (
+            audiences.preset_of(self.instance.audience)
+            if self.instance.pk
+            else (presets[0] if presets else None)
+        )
+        choices = [(p.key, p.label) for p in presets]
+        if current is None or current.key not in self._presets:
+            choices.insert(0, ("", audiences.label(self.instance.audience)))
+        self.fields["audience_preset"].choices = choices  # type: ignore[attr-defined]
+        self.fields["audience_preset"].initial = (
+            current.key if current and current.key in self._presets else ""
+        )
+        order = list(self.fields)
+        order.remove("audience_preset")
+        order.insert(order.index("visibility") + 1, "audience_preset")
+        self.order_fields(order)
         self.fields["invitees"].queryset = invitable_residents(exclude=who)  # type: ignore[attr-defined]
         if self.instance.pk:
             self.fields["invitees"].initial = [i.resident_id for i in self.instance.invites.all()]
@@ -184,6 +216,22 @@ class EventForm(forms.ModelForm):
                     "eller gør begivenheden åben for alle.",
                 )
         return cleaned
+
+    def clean_audience_preset(self) -> str:
+        key = self.cleaned_data.get("audience_preset") or ""
+        if key and key not in self._presets:
+            raise forms.ValidationError("Vælg en af mulighederne.")
+        return key
+
+    def save(self, commit: bool = True) -> Event:
+        event = super().save(commit=False)
+        key = self.cleaned_data.get("audience_preset")
+        if key:
+            event.audience = sorted(self._presets[key].roles)
+        if commit:
+            event.save()
+            self.save_m2m()
+        return event
 
     def clean_image(self) -> object:
         """One image policy for the whole site, in Danish. See core.uploads."""

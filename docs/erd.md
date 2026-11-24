@@ -556,6 +556,7 @@ erDiagram
         int id PK
         string author_embedsgruppe
         int author_id FK
+        string audience
         string category
         text body
         datetime created_at
@@ -601,6 +602,7 @@ erDiagram
         string location
         datetime starts_at
         datetime ends_at
+        string audience
         string visibility
         int capacity
         datetime rsvp_deadline_at
@@ -1586,6 +1588,7 @@ erDiagram
         string location
         datetime starts_at
         datetime ends_at
+        string audience
         string visibility
         int capacity
         datetime rsvp_deadline_at
@@ -1988,6 +1991,7 @@ erDiagram
         int id PK
         string author_embedsgruppe
         int author_id FK
+        string audience
         string category
         text body
         datetime created_at

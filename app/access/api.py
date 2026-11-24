@@ -60,7 +60,6 @@ __all__ = [
     "holders",
     "holding",
     "in_feature",
-    "is_kitchen",
     "may_open",
     "may_open_many",
     "own_perm",
@@ -85,11 +84,6 @@ def own_perm(user: object, permission: str) -> bool:
     if not getattr(user, "is_active", False) or not getattr(user, "is_authenticated", False):
         return False
     return bool(getattr(user, "is_superuser", False)) or ModelBackend().has_perm(user, permission)  # type: ignore[arg-type]
-
-
-def is_kitchen(request: HttpRequest) -> bool:
-    """Whether this request is the kitchen staff's, or an administrator looking at the site as it."""
-    return request.user.is_authenticated and KITCHEN in request_roles(request)
 
 
 def _opening(feature: Feature) -> list[str]:

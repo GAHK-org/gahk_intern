@@ -18,7 +18,7 @@ the page they are looking at.
 
 from django.http import HttpRequest
 
-from access.api import Feature, is_kitchen
+from access.api import Feature
 from core import live
 
 from .access import request_allowed
@@ -30,9 +30,8 @@ TOPIC = FEATURE
 
 def may_listen(request: HttpRequest, rest: str) -> bool:
     """The board's gate. One topic only, so anything after the prefix is a topic that does not exist.
-
-    Not the kitchen staff: the board's signals are about everyone's posts, and they see only their own."""
-    return not rest and request_allowed(request) and not is_kitchen(request)
+    A signal names a post only; what a reader then fetches goes through the board's audience filter."""
+    return not rest and request_allowed(request)
 
 
 def notice_created(notice: Notice) -> None:

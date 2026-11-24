@@ -19,13 +19,14 @@ from django.contrib import messages
 from django.core.exceptions import PermissionDenied, ValidationError
 from django.core.paginator import Paginator
 from django.db import transaction
-from django.db.models import Max, Prefetch
+from django.db.models import Max, Prefetch, Q
 from django.http import Http404, HttpRequest, HttpResponse, HttpResponseRedirect, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.utils import timezone
 from django.views.decorators.http import require_POST
 
-from access.api import fragment, is_kitchen
+from access import audiences
+from access.api import fragment, request_roles
 from core.emoji import EMOJI_SHORTLIST
 from core.markdown import embed_references, image_sources, render_markdown
 from core.reactions import CREATED, apply_toggle, reaction_rows
@@ -35,6 +36,7 @@ from residents.permissions import current_resident
 from . import embeds, live, search, services
 from .access import (
     access_required,
+    audience_presets,
     can_delete,
     can_delete_comment,
     can_edit,
@@ -95,10 +97,11 @@ REACTIONS = Prefetch("reactions", queryset=NoticeReaction.objects.select_related
 
 
 def _visible(request: HttpRequest) -> NoticeQuerySet:
-    """The posts this reader may see: all of them, except that the kitchen account sees only its own."""
-    if is_kitchen(request):
-        return Notice.objects.filter(author=current_resident(request))
-    return Notice.objects.all()
+    """The posts this reader may see: those whose audience they are in (access.audiences), and
+    their own."""
+    return Notice.objects.filter(
+        audiences.visible("audience", request_roles(request)) | Q(author=current_resident(request))
+    )
 
 
 def _list_queryset(request: HttpRequest) -> NoticeQuerySet:
@@ -287,6 +290,7 @@ def create(request: HttpRequest) -> HttpResponse:
         request.POST or None,
         initial={"body": shared} if shared else None,
         events_allowed=events_allowed(request),
+        presets=audience_presets(request),
     )
     if shared:
         form.fields["body"].widget.attrs["autofocus"] = True
@@ -311,7 +315,12 @@ def edit(request: HttpRequest, pk: int) -> HttpResponse:
     if not can_edit(request, notice):
         raise PermissionDenied
     old_body = notice.body
-    form = NoticeForm(request.POST or None, instance=notice, events_allowed=events_allowed(request))
+    form = NoticeForm(
+        request.POST or None,
+        instance=notice,
+        events_allowed=events_allowed(request),
+        presets=audience_presets(request),
+    )
     if request.method == "POST" and form.is_valid():
         with transaction.atomic():
             notice = form.save(commit=False)

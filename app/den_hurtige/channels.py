@@ -21,7 +21,7 @@ from dataclasses import dataclass
 
 from django.urls import reverse
 
-from access.api import KITCHEN
+from access import audiences
 
 
 @dataclass(frozen=True)
@@ -32,10 +32,10 @@ class Channel:
     name: str
     icon: str
     description: str
-    # None = everyone who can reach Den Hurtige at all (den_hurtige.access). A tuple restricts the
-    # channel to those roles — the seam for a future "Inspektion internt" without another rollout
-    # mechanism. Both launch channels are open.
-    roles: tuple[str, ...] | None = None
+    # Who reads it (access.audiences): anyone holding one of these roles, among those who can reach
+    # Den Hurtige at all (den_hurtige.access). The whole house unless said otherwise; a channel for
+    # former residents only, or for one embedsgruppe, is an audience of their roles.
+    audience: audiences.Audience = audiences.HOUSE
 
     @property
     def url(self) -> str:
@@ -83,12 +83,13 @@ CHANNELS: tuple[Channel, ...] = (
         icon="users",
         description="Make Hallen Great Again.",
     ),
-    # Open to everyone, and the only channel the kitchen account sees (see `allowed`).
+    # The house and the kitchen staff: the one channel the kitchen reads.
     Channel(
         slug="koekken",
         name="Køkkenet",
         icon="chat",
         description="Nyt fra køkkenet.",
+        audience=audiences.HOUSE_AND_KITCHEN,
     ),
 )
 
@@ -102,8 +103,7 @@ CHANNELS: tuple[Channel, ...] = (
 # is stored on posts.
 DEFAULT = CHANNELS[0]
 
-# The kitchen staff's channel, the one they read (see `allowed`); core.middleware.kitchen_home
-# sends them here.
+# The kitchen staff's channel, the one whose audience has them.
 KITCHEN_CHANNEL = "koekken"
 
 BY_SLUG: dict[str, Channel] = {c.slug: c for c in CHANNELS}
@@ -135,8 +135,15 @@ def visible(roles: set[str] | frozenset[str]) -> list[Channel]:
 
 
 def allowed(channel: Channel, roles: set[str] | frozenset[str]) -> bool:
-    """Whether a role set may open this channel. Mirrors access.roles_allowed, and stacks with it:
-    den_hurtige.access gates the feature, this gates one channel within it."""
-    if KITCHEN in roles:
-        return channel.slug == KITCHEN_CHANNEL
-    return channel.roles is None or not set(roles).isdisjoint(channel.roles)
+    """Whether a role set is in this channel's audience. Stacks with den_hurtige.access: that
+    gates the feature, this one channel within it."""
+    return audiences.includes(channel.audience, roles)
+
+
+def home(roles: set[str] | frozenset[str]) -> str:
+    """Where Den Hurtige opens for a role set: the bare address, or the first channel it reads
+    when that is not the default one."""
+    if allowed(DEFAULT, roles):
+        return reverse("den_hurtige:feed")
+    first = next(iter(visible(roles)), None)
+    return first.url if first is not None else reverse("den_hurtige:feed")
