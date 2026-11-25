@@ -176,7 +176,14 @@ function initLiveSearch(): void {
 
 // --- Uploading ------------------------------------------------------------------------------------
 
-type UploadConfig = { beginUrl: string; commitUrl: string; video: number | null; maxBytes: number };
+type UploadConfig = {
+  beginUrl: string;
+  commitUrl: string;
+  video: number | null;
+  maxBytes: number;
+  maxFiles: number;
+  maxDrafts: number;
+};
 type UploadPlan = { mode: "s3" | "direct"; url: string; fields?: Record<string, string> };
 
 const FINGERPRINT_PART = 4 * 1024 * 1024;
@@ -211,16 +218,18 @@ function sendWithProgress(
   });
 }
 
+/** The upload widget: one file for a new version, or several new videos, sent one after another. */
 function initUpload(): void {
   const root = document.querySelector<HTMLElement>("[data-flix-upload]");
   const config = jsonConfig<UploadConfig>("flix-upload-config");
   if (!root || !config) return;
   const drop = root.querySelector<HTMLElement>("[data-flix-drop]")!;
   const input = root.querySelector<HTMLInputElement>("[data-flix-file]")!;
-  const progress = root.querySelector<HTMLElement>("[data-flix-progress]")!;
-  const meter = root.querySelector<HTMLElement>("[data-flix-meter]")!;
+  const queue = root.querySelector<HTMLOListElement>("[data-flix-queue]")!;
   const status = root.querySelector<HTMLElement>("[data-flix-upload-status]")!;
+  let room = config.maxFiles;
   let busy = false;
+  const roomNote = root.querySelector<HTMLElement>("[data-flix-room]");
 
   const say = (text: string, error = false) => {
     status.textContent = text;
@@ -230,80 +239,152 @@ function initUpload(): void {
     event.preventDefault();
   };
 
-  async function upload(file: File): Promise<void> {
-    if (busy) return;
+  /** One file's row in the list: its name, size, a meter and what is happening to it. */
+  function row(file: File) {
+    const item = document.createElement("li");
+    item.className = "flix-upload-item";
+    const head = document.createElement("p");
+    const name = document.createElement("b");
+    name.textContent = file.name;
+    const size = document.createElement("span");
+    size.className = "muted";
+    size.textContent = ` ${formatBytes(file.size)}`;
+    head.append(name, size);
+    const meterBox = document.createElement("div");
+    meterBox.className = "flix-meter";
+    const meter = document.createElement("span");
+    meterBox.append(meter);
+    const line = document.createElement("p");
+    line.className = "flix-upload-status";
+    item.append(head, meterBox, line);
+    queue.append(item);
+    return {
+      progress: (fraction: number) => (meter.style.width = `${(fraction * 100).toFixed(1)}%`),
+      say: (text: string, error = false) => {
+        line.textContent = text;
+        line.classList.toggle("is-error", error);
+      },
+      done: (editUrl: string) => {
+        meterBox.hidden = true;
+        line.textContent = "Uploadet. Den behandles nu. ";
+        const link = document.createElement("a");
+        link.href = editUrl;
+        link.textContent = "Skriv titel og oplysninger";
+        line.append(link);
+      },
+      failed: (text: string) => {
+        meterBox.hidden = true;
+        line.textContent = text;
+        line.classList.add("is-error");
+      },
+    };
+  }
+
+  /** Send one file; the address of its edit page, or an Error saying why not. */
+  async function send(file: File, show: ReturnType<typeof row>): Promise<string> {
+    if (file.size > config!.maxBytes) {
+      throw new Error(`Videoen er for stor (${formatBytes(file.size)}; højst ${formatBytes(config!.maxBytes)}).`);
+    }
+    show.say("Tjekker filen …");
+    const begun = await postJSON(config!.beginUrl, {
+      name: file.name,
+      size: file.size,
+      type: file.type,
+      fingerprint: await fingerprint(file),
+      lastModified: String(file.lastModified || ""),
+      video: config!.video,
+    });
+    if (!begun.ok) throw new Error(await errorOf(begun, "Uploaden kunne ikke starte."));
+    const { token, upload: plan } = (await begun.json()) as { token: string; upload: UploadPlan };
+
+    const form = new FormData();
+    const headers: Record<string, string> = {};
+    if (plan.mode === "s3") {
+      for (const [name, value] of Object.entries(plan.fields ?? {})) form.append(name, value);
+    } else {
+      form.append("token", token);
+      headers["X-CSRFToken"] = csrfToken();
+    }
+    form.append("file", file);
+    const started = performance.now();
+    const statusCode = await sendWithProgress(plan.url, form, headers, (loaded, total) => {
+      const fraction = loaded / total;
+      show.progress(fraction);
+      const seconds = (performance.now() - started) / 1000;
+      const rate = loaded / Math.max(seconds, 0.001);
+      const left = rate > 0 ? (total - loaded) / rate : 0;
+      show.say(
+        `Sender … ${Math.floor(fraction * 100)} % · ${formatBytes(rate)}/s` +
+          (fraction < 1 && seconds > 3 ? ` · ca. ${formatSeconds(left)} tilbage` : ""),
+      );
+    });
+    if (statusCode < 200 || statusCode >= 300) throw new Error("Lageret afviste filen. Prøv igen.");
+
+    show.say("Gemmer …");
+    const committed = await postJSON(config!.commitUrl, { token });
+    if (!committed.ok) throw new Error(await errorOf(committed, "Uploaden kunne ikke gemmes."));
+    return ((await committed.json()) as { editUrl: string }).editUrl;
+  }
+
+  async function upload(files: File[]): Promise<void> {
+    if (busy || !files.length) return;
     if (!window.crypto?.subtle) {
       say("Din browser kan ikke uploade her. Brug en opdateret browser over https.", true);
       return;
     }
-    if (file.size > config!.maxBytes) {
-      say(`Videoen er for stor (${formatBytes(file.size)}; højst ${formatBytes(config!.maxBytes)}).`, true);
+    if (config!.video && files.length > 1) {
+      say("Vælg kun én fil: den nye version.", true);
+      return;
+    }
+    if (files.length > room) {
+      // Not the first few of them quietly: the uploader picks which.
+      say(
+        room
+          ? `Du har plads til ${room} ${room === 1 ? "kladde" : "kladder"} mere (højst ${config!.maxDrafts}), ` +
+              `men valgte ${files.length} filer. Vælg færre.`
+          : `Du har allerede ${config!.maxDrafts} videoer, der ikke er udgivet. Udgiv eller slet en af dem først.`,
+        true,
+      );
       return;
     }
     busy = true;
     drop.hidden = true;
-    progress.hidden = false;
-    progress.querySelector("[data-flix-filename]")!.textContent = file.name;
-    progress.querySelector("[data-flix-filesize]")!.textContent = formatBytes(file.size);
-    meter.style.width = "0%";
+    queue.hidden = false;
+    queue.replaceChildren();
+    say(files.length > 1 ? `Sender ${files.length} videoer, én ad gangen. Lad siden være åben imens.` : "");
     window.addEventListener("beforeunload", guard);
-    try {
-      say("Tjekker filen …");
-      const begun = await postJSON(config!.beginUrl, {
-        name: file.name,
-        size: file.size,
-        type: file.type,
-        fingerprint: await fingerprint(file),
-        lastModified: String(file.lastModified || ""),
-        video: config!.video,
-      });
-      if (!begun.ok) throw new Error(await errorOf(begun, "Uploaden kunne ikke starte."));
-      const { token, upload: plan } = (await begun.json()) as { token: string; upload: UploadPlan };
-
-      const form = new FormData();
-      const headers: Record<string, string> = {};
-      if (plan.mode === "s3") {
-        for (const [name, value] of Object.entries(plan.fields ?? {})) form.append(name, value);
-      } else {
-        form.append("token", token);
-        headers["X-CSRFToken"] = csrfToken();
+    const rows = files.map(row);
+    const sent: string[] = [];
+    for (const [index, file] of files.entries()) {
+      try {
+        sent.push(await send(file, rows[index]));
+        rows[index].done(sent[sent.length - 1]);
+        room -= config!.video ? 0 : 1;
+        if (roomNote) roomNote.textContent = `, og du har plads til ${room} ${room === 1 ? "kladde" : "kladder"} mere`;
+        refreshLiveLists(); // the file just saved joins the list above
+      } catch (error) {
+        rows[index].failed(error instanceof Error ? error.message : "Uploaden mislykkedes.");
       }
-      form.append("file", file);
-      const started = performance.now();
-      const statusCode = await sendWithProgress(plan.url, form, headers, (loaded, total) => {
-        const fraction = loaded / total;
-        meter.style.width = `${(fraction * 100).toFixed(1)}%`;
-        const seconds = (performance.now() - started) / 1000;
-        const rate = loaded / Math.max(seconds, 0.001);
-        const left = rate > 0 ? (total - loaded) / rate : 0;
-        say(
-          `Sender … ${Math.floor(fraction * 100)} % · ${formatBytes(rate)}/s` +
-            (fraction < 1 && seconds > 3 ? ` · ca. ${formatSeconds(left)} tilbage` : ""),
-        );
-      });
-      if (statusCode < 200 || statusCode >= 300) throw new Error("Lageret afviste filen. Prøv igen.");
-
-      say("Gemmer …");
-      const committed = await postJSON(config!.commitUrl, { token });
-      if (!committed.ok) throw new Error(await errorOf(committed, "Uploaden kunne ikke gemmes."));
-      const { editUrl } = await committed.json();
-      window.removeEventListener("beforeunload", guard);
-      say("Færdig. Videoen behandles nu …");
-      window.location.href = editUrl;
-    } catch (error) {
-      window.removeEventListener("beforeunload", guard);
-      busy = false;
-      drop.hidden = false;
-      progress.hidden = true;
-      input.value = "";
-      say(error instanceof Error ? error.message : "Uploaden mislykkedes.", true);
     }
+    window.removeEventListener("beforeunload", guard);
+    busy = false;
+    input.value = "";
+    if (files.length === 1 && sent.length === 1) {
+      say("Færdig. Videoen behandles nu …");
+      window.location.href = sent[0];
+      return;
+    }
+    drop.hidden = room <= 0;
+    if (files.length === 1) say("");
+    else
+      say(
+        `${sent.length} af ${files.length} videoer er uploadet. De behandles én ad gangen; ` +
+          "skriv titel og oplysninger imens.",
+        sent.length < files.length,
+      );
   }
 
-  input.addEventListener("change", () => {
-    const file = input.files?.[0];
-    if (file) void upload(file);
-  });
+  input.addEventListener("change", () => void upload([...(input.files ?? [])]));
   drop.addEventListener("dragover", (event) => {
     event.preventDefault();
     drop.classList.add("is-over");
@@ -312,14 +393,49 @@ function initUpload(): void {
   drop.addEventListener("drop", (event) => {
     event.preventDefault();
     drop.classList.remove("is-over");
-    const files = event.dataTransfer?.files;
-    if (files && files.length > 1) {
-      // Not the first of them quietly: the next can only go once this one is processed anyway.
-      say(`Du kan uploade én video ad gangen. Træk kun én af de ${files.length} filer herind.`, true);
-      return;
-    }
-    if (files?.[0]) void upload(files[0]);
+    void upload([...(event.dataTransfer?.files ?? [])]);
   });
+}
+
+/** Lists of one's own uploads (`data-flix-live`: the address of a fresh copy) that follow the
+ * processing as it happens: re-fetched every few seconds while any of them (`data-flix-pending`) waits
+ * or is processed, and at once when the uploader has saved a new file. */
+const LIVE_LIST_MS = 3000;
+const liveLists: (() => Promise<void>)[] = [];
+
+function initLiveLists(): void {
+  for (const section of document.querySelectorAll<HTMLElement>("[data-flix-live]")) {
+    const target = section.querySelector<HTMLElement>("[data-flix-live-list]")!;
+    let timer = 0;
+    const schedule = () => {
+      window.clearTimeout(timer);
+      if (target.querySelector("[data-flix-pending]")) timer = window.setTimeout(() => void refresh(), LIVE_LIST_MS);
+    };
+    const refresh = async () => {
+      window.clearTimeout(timer);
+      if (!document.hidden) {
+        try {
+          const response = await fetch(section.dataset.flixLive!, { credentials: "same-origin" });
+          if (response.ok) {
+            target.innerHTML = await response.text();
+            section.hidden = !target.querySelector(".flix-list-item");
+          }
+        } catch {
+          // A missed refresh is harmless; the next one catches up.
+        }
+      }
+      schedule();
+    };
+    liveLists.push(refresh);
+    schedule();
+    document.addEventListener("visibilitychange", () => {
+      if (!document.hidden) void refresh();
+    });
+  }
+}
+
+function refreshLiveLists(): void {
+  for (const refresh of liveLists) void refresh();
 }
 
 type ProcessingStatus = { state: string; progress: number; ahead: number };
@@ -754,7 +870,9 @@ function detailValues(form: HTMLFormElement): Record<string, string> {
     if (!field.name || field.name === "csrfmiddlewaretoken") continue;
     // The cast and the tags are JSON, written by the server one way and by their editors another.
     let value = field.value;
-    if (field.type === "hidden") {
+    if (field instanceof HTMLInputElement && field.type === "checkbox") {
+      value = field.checked ? "on" : "";
+    } else if (field.type === "hidden") {
       try {
         value = JSON.stringify(JSON.parse(value || "null"));
       } catch {
@@ -795,7 +913,8 @@ function initDetailsKeeper(): void {
     for (const field of detailFields(form)) {
       const value = kept.values[field.name];
       if (value === undefined || value === kept.base[field.name] || value === loaded[field.name]) continue;
-      field.value = value;
+      if (field instanceof HTMLInputElement && field.type === "checkbox") field.checked = value === "on";
+      else field.value = value;
       restored = true;
     }
     if (notice) notice.hidden = !restored;
@@ -815,6 +934,54 @@ function initDetailsKeeper(): void {
   });
   window.addEventListener("pageshow", (event) => {
     if (event.persisted) letGo = false; // back from the browser's cache: the page is as it was left
+  });
+}
+
+/** The release date's Premiere box: only a premiere has a time and a blur for its thumbnail, and the
+ * preview shows the thumbnail as the blur chosen makes it (views.picture blurs it). */
+function initPremiere(): void {
+  const box = document.querySelector<HTMLElement>("[data-flix-premiere]");
+  const tick = box?.querySelector<HTMLInputElement>('input[type="checkbox"]');
+  if (!box || !tick) return;
+  const blur = box.querySelector<HTMLSelectElement>("select[name='premiere_blur']");
+  const preview = box.querySelector<HTMLImageElement>("[data-flix-premiere-preview]");
+  const time = box.querySelector<HTMLInputElement>("input[name='premiere_time']");
+  const sync = () => {
+    for (const part of box.querySelectorAll<HTMLElement>("[data-flix-premiere-only]")) part.hidden = !tick.checked;
+    for (const part of box.querySelectorAll<HTMLElement>("[data-flix-premiere-hide]")) part.hidden = tick.checked;
+    if (time) time.required = tick.checked;
+  };
+  tick.addEventListener("change", () => {
+    sync();
+    if (tick.checked) time?.focus();
+  });
+  blur?.addEventListener("change", () => {
+    if (preview) preview.src = `${preview.dataset.flixPremierePreview}&premiere=${encodeURIComponent(blur.value)}`;
+  });
+  blur?.dispatchEvent(new Event("change"));
+  sync();
+}
+
+/** "Brug videoens dato": the date the file suggests ("2015", "2015-03" or "2015-03-12") put in the
+ * year, month and day, a part it does not know left empty. Nothing is filled in without it. */
+function initDateGuess(): void {
+  const button = document.querySelector<HTMLButtonElement>("[data-flix-date-guess]");
+  const form = button?.closest("form");
+  if (!button || !form) return;
+  button.addEventListener("click", () => {
+    const [year = "", month = "", day = ""] = (button.dataset.flixDateGuess ?? "").split("-");
+    const parts: [string, string][] = [
+      ["released_year", year],
+      ["released_month", month ? String(Number(month)) : ""],
+      ["released_day", day ? String(Number(day)) : ""],
+    ];
+    for (const [name, value] of parts) {
+      const field = form.elements.namedItem(name) as HTMLInputElement | HTMLSelectElement | null;
+      if (!field) continue;
+      field.value = value;
+      field.dispatchEvent(new Event("input", { bubbles: true }));
+      field.dispatchEvent(new Event("change", { bubbles: true }));
+    }
   });
 }
 
@@ -923,6 +1090,7 @@ type FilmConfig = {
   subtitle: string;
   streams: Record<string, string>;
   qualityLabels: Record<string, string>;
+  subtitles: SubtitleTrack[];
   startAt: number;
   viewUrl: string;
   positionUrl: string;
@@ -931,6 +1099,17 @@ type FilmConfig = {
   next: UpNext | null;
   // The viewing the statistics keep of this opening of the film; null for a draft.
   viewing: number | null;
+};
+
+type SubtitleTrack = {
+  id: number;
+  label: string;
+  language: string;
+  url: string;
+  default: boolean;
+  // Only the lines that must be read whatever else is chosen (signs, foreign speech): shown when
+  // no other track is.
+  forced: boolean;
 };
 
 type UpNext = {
@@ -950,21 +1129,45 @@ const NEXT_COUNTDOWN_SECONDS = 8;
 const AUTOPLAY_KEY = "gahkflix-autoplay";
 // Autoplays in a row with no input before the player asks "Ser du stadig med?".
 const STILL_WATCHING_AFTER = 3;
+// The subtitles chosen last, by language ("off" for none), and the sound: the next film starts so too.
+const SUBTITLES_KEY = "gahkflix-subtitles";
+const VOLUME_KEY = "gahkflix-volume";
+const SPEEDS = [0.5, 0.75, 1, 1.25, 1.5, 2];
+// A jump: the ±10 s buttons, J and L, the arrow keys, a double tap on either side.
+const JUMP_SECONDS = 10;
+// Two taps closer than this are a double tap.
+const DOUBLE_TAP_MS = 300;
+// How long the controls stay after the mouse last moved while the film plays.
+const IDLE_AFTER_MS = 3000;
 
-function storedQuality(): string | null {
+function stored(key: string): string | null {
   try {
-    return window.localStorage.getItem(QUALITY_KEY);
+    return window.localStorage.getItem(key);
   } catch {
     return null;
   }
 }
 
-function storedAutoplay(): boolean {
+function store(key: string, value: string): void {
   try {
-    return window.localStorage.getItem(AUTOPLAY_KEY) !== "off";
+    window.localStorage.setItem(key, value);
   } catch {
-    return true;
+    // Private mode: the choice just is not remembered.
   }
+}
+
+/** "4:05", "1:02:09". */
+function clock(seconds: number): string {
+  const whole = Math.max(0, Math.floor(Number.isFinite(seconds) ? seconds : 0));
+  const h = Math.floor(whole / 3600);
+  const m = Math.floor((whole % 3600) / 60);
+  const s = String(whole % 60).padStart(2, "0");
+  return h ? `${h}:${String(m).padStart(2, "0")}:${s}` : `${m}:${s}`;
+}
+
+/** "Normal", "1,5×". */
+function speedLabel(rate: number): string {
+  return rate === 1 ? "Normal" : `${String(rate).replace(".", ",")}×`;
 }
 
 function jsonUrl(url: string): string {
@@ -979,25 +1182,56 @@ async function fetchFilm(url: string): Promise<FilmConfig> {
   return (await response.json()) as FilmConfig;
 }
 
+type WebkitVideo = HTMLVideoElement & {
+  webkitDisplayingFullscreen?: boolean;
+  webkitEnterFullscreen?: () => void;
+  webkitExitFullscreen?: () => void;
+};
+
 class Player {
-  private video: HTMLVideoElement;
+  private video: WebkitVideo;
   private skip: HTMLButtonElement;
   private start: HTMLButtonElement;
   private errorBox: HTMLElement;
   private next: HTMLAnchorElement;
   private back: HTMLAnchorElement;
-  private qualityBar: HTMLElement;
   private autoplay: HTMLInputElement;
   private upNext: HTMLElement;
   private upNextPlay: HTMLButtonElement;
   private upNextCancel: HTMLButtonElement;
   private upNextRing: SVGElement;
+  // The controls.
+  private controls: HTMLElement;
+  private timeline: HTMLElement;
+  private played: HTMLElement;
+  private buffered: HTMLElement;
+  private thumb: HTMLElement;
+  private tip: HTMLElement;
+  private toggle: HTMLButtonElement;
+  private mute: HTMLButtonElement;
+  private volume: HTMLInputElement;
+  private time: HTMLElement;
+  private qualityBar: HTMLElement;
+  private qualityGroup: HTMLElement;
+  private speeds: HTMLElement;
+  private captionsWrap: HTMLElement;
+  private captionsMenu: HTMLElement;
+  private captions: HTMLElement;
+  private pip: HTMLButtonElement;
+  private fullscreen: HTMLButtonElement;
+  private flash: HTMLElement;
+  private spinner: HTMLElement;
+
   private stillWatching = false;
   private autoplays = 0;
   private film: FilmConfig | null = null;
   private phase: "intro" | "film" = "intro";
   private filmWanted = false;
   private quality = "";
+  private speed = 1;
+  // The subtitle track chosen in the menu (null: none), and the one last shown, for C to bring back.
+  private track: SubtitleTrack | null = null;
+  private lastTrack: SubtitleTrack | null = null;
   private filmTime = 0;
   // Seconds of the film that have actually played, and of those the ones not yet reported.
   private watched = 0;
@@ -1008,6 +1242,11 @@ class Player {
   private lastSaved = 0;
   private countdown = 0;
   private idleTimer = 0;
+  private spinnerTimer = 0;
+  private tapTimer = 0;
+  private lastTap: { at: number; side: "back" | "middle" | "ahead" } | null = null;
+  private lastPointer = "mouse";
+  private scrubbing = false;
   private closed = false;
   private listeners = new AbortController();
 
@@ -1015,19 +1254,42 @@ class Player {
     private root: HTMLElement,
     private overlay: boolean,
   ) {
-    this.video = root.querySelector("video")!;
-    this.skip = root.querySelector("[data-flix-skip]")!;
-    this.start = root.querySelector("[data-flix-start]")!;
-    this.errorBox = root.querySelector("[data-flix-error]")!;
-    this.next = root.querySelector("[data-flix-next]")!;
-    this.back = root.querySelector("[data-flix-back]")!;
-    this.qualityBar = root.querySelector("[data-flix-quality]")!;
-    this.autoplay = root.querySelector("[data-flix-autoplay]")!;
-    this.autoplay.checked = storedAutoplay();
-    this.upNext = root.querySelector("[data-flix-upnext]")!;
-    this.upNextPlay = root.querySelector("[data-flix-upnext-play]")!;
-    this.upNextCancel = root.querySelector("[data-flix-upnext-cancel]")!;
-    this.upNextRing = root.querySelector("[data-flix-upnext-ring]")!;
+    const find = <T extends Element>(selector: string) => root.querySelector<T>(selector)!;
+    this.video = find<HTMLVideoElement>("video");
+    this.skip = find("[data-flix-skip]");
+    this.start = find("[data-flix-start]");
+    this.errorBox = find("[data-flix-error]");
+    this.next = find("[data-flix-next]");
+    this.back = find("[data-flix-back]");
+    this.autoplay = find("[data-flix-autoplay]");
+    this.autoplay.checked = stored(AUTOPLAY_KEY) !== "off";
+    this.upNext = find("[data-flix-upnext]");
+    this.upNextPlay = find("[data-flix-upnext-play]");
+    this.upNextCancel = find("[data-flix-upnext-cancel]");
+    this.upNextRing = find("[data-flix-upnext-ring]");
+    this.controls = find("[data-flix-controls]");
+    this.timeline = find("[data-flix-timeline]");
+    this.played = find("[data-flix-played]");
+    this.buffered = find("[data-flix-buffered]");
+    this.thumb = find("[data-flix-thumb]");
+    this.tip = find("[data-flix-tip]");
+    this.toggle = find("[data-flix-toggle]");
+    this.mute = find("[data-flix-mute]");
+    this.volume = find("[data-flix-volume]");
+    this.time = find("[data-flix-time]");
+    this.qualityBar = find("[data-flix-quality]");
+    this.qualityGroup = find("[data-flix-quality-group]");
+    this.speeds = find("[data-flix-speeds]");
+    this.captionsWrap = find("[data-flix-captions-wrap]");
+    this.captionsMenu = find('[data-flix-menu="captions"]');
+    this.captions = find("[data-flix-captions]");
+    this.pip = find("[data-flix-pip]");
+    this.fullscreen = find("[data-flix-fullscreen]");
+    this.flash = find("[data-flix-flash]");
+    this.spinner = find("[data-flix-spinner]");
+    this.pip.hidden = !document.pictureInPictureEnabled;
+    this.speeds.replaceChildren(...SPEEDS.map((rate) => this.menuItem(speedLabel(rate), "speed", String(rate))));
+    this.restoreSound();
     this.bind();
   }
 
@@ -1035,11 +1297,14 @@ class Player {
   playIntro(): void {
     this.phase = "intro";
     this.filmWanted = false;
-    this.video.controls = false;
-    this.qualityBar.hidden = true;
+    this.controls.hidden = true;
+    this.closeMenus();
     this.next.hidden = true;
     this.errorBox.hidden = true;
+    this.captions.replaceChildren();
     this.hideUpNext();
+    this.video.defaultPlaybackRate = 1;
+    this.video.playbackRate = 1;
     const intro = body.dataset.flixIntro;
     if (!intro) {
       this.startFilm();
@@ -1064,20 +1329,16 @@ class Player {
     document.title = `${film.subtitle || film.title} – GAHKFlix`;
     if (!this.overlay) this.back.href = film.backUrl;
     const qualities = Object.keys(film.streams);
-    this.quality = storedQuality() ?? "";
+    this.quality = stored(QUALITY_KEY) ?? "";
     if (!qualities.includes(this.quality)) {
       const narrow = window.matchMedia("(max-width: 900px)").matches;
       this.quality = narrow && qualities.includes("hd") ? "hd" : qualities[0];
     }
     this.qualityBar.replaceChildren(
-      ...(qualities.length > 1 ? qualities : []).map((quality) => {
-        const button = document.createElement("button");
-        button.type = "button";
-        button.dataset.quality = quality;
-        button.textContent = film.qualityLabels[quality] ?? quality;
-        return button;
-      }),
+      ...qualities.map((quality) => this.menuItem(film.qualityLabels[quality] ?? quality, "quality", quality)),
     );
+    this.qualityGroup.hidden = qualities.length < 2;
+    this.setTracks(film.subtitles ?? []);
     this.next.href = film.next?.url ?? "#";
     this.next.textContent = "Næste afsnit ▸";
     if (this.filmWanted) this.startFilm();
@@ -1092,14 +1353,16 @@ class Player {
     if (!this.film || this.phase === "film" || this.closed) return;
     this.phase = "film";
     this.skip.hidden = true;
-    this.qualityBar.hidden = this.qualityBar.childElementCount === 0;
-    this.video.controls = true;
+    this.controls.hidden = false;
     this.load(this.filmTime, true);
+    this.showTrack();
   }
 
   private load(at: number, play: boolean): void {
     if (!this.film) return;
+    this.video.defaultPlaybackRate = this.speed;
     this.video.src = this.film.streams[this.quality];
+    this.video.playbackRate = this.speed;
     this.video.addEventListener(
       "loadedmetadata",
       () => {
@@ -1107,11 +1370,274 @@ class Player {
       },
       { once: true },
     );
-    for (const button of this.qualityBar.querySelectorAll<HTMLButtonElement>("[data-quality]")) {
-      button.setAttribute("aria-pressed", String(button.dataset.quality === this.quality));
-    }
+    this.check(this.qualityBar, this.quality);
+    this.check(this.speeds, String(this.speed));
     if (play) this.tryPlay();
   }
+
+  // --- Menus ------------------------------------------------------------------------------------
+
+  private menuItem(label: string, kind: string, value: string): HTMLButtonElement {
+    const item = document.createElement("button");
+    item.type = "button";
+    item.className = "flix-popup-item";
+    item.setAttribute("role", "menuitemradio");
+    item.setAttribute("aria-checked", "false");
+    item.dataset.kind = kind;
+    item.dataset.value = value;
+    item.textContent = label;
+    return item;
+  }
+
+  /** Ticks the item with `value` among the menu items in `group`. */
+  private check(group: HTMLElement, value: string): void {
+    for (const item of group.querySelectorAll<HTMLElement>("[data-value]")) {
+      item.setAttribute("aria-checked", String(item.dataset.value === value));
+    }
+  }
+
+  private openMenu(name: string): void {
+    for (const button of this.root.querySelectorAll<HTMLElement>("[data-flix-menu-button]")) {
+      const open = button.dataset.flixMenuButton === name;
+      button.setAttribute("aria-expanded", String(open));
+      this.root.querySelector<HTMLElement>(`[data-flix-menu="${button.dataset.flixMenuButton}"]`)!.hidden = !open;
+    }
+    this.root.classList.toggle("is-menu-open", Boolean(name));
+    if (name) {
+      const menu = this.root.querySelector<HTMLElement>(`[data-flix-menu="${name}"]`)!;
+      (menu.querySelector<HTMLElement>('[aria-checked="true"]') ?? menu.querySelector<HTMLElement>("button"))?.focus();
+    }
+  }
+
+  private closeMenus(): boolean {
+    const open = this.root.classList.contains("is-menu-open");
+    this.openMenu("");
+    return open;
+  }
+
+  // --- Subtitles ----------------------------------------------------------------------------------
+  //
+  // DRAWN BY THE PLAYER, not the browser: the tracks are "hidden" (loaded, cues firing, nothing drawn),
+  // and the cues go into .flix-captions, which moves up while the controls show. Only iOS's own
+  // fullscreen player, where nothing of ours shows, draws them itself ("showing").
+
+  private setTracks(tracks: SubtitleTrack[]): void {
+    for (const old of this.video.querySelectorAll("track")) old.remove();
+    this.captions.replaceChildren();
+    for (const track of tracks) {
+      const element = document.createElement("track");
+      element.kind = "subtitles";
+      element.label = track.label;
+      element.srclang = track.language || "und";
+      element.src = track.url;
+      element.dataset.id = String(track.id);
+      this.video.append(element);
+      element.track.mode = "disabled";
+      element.track.addEventListener("cuechange", () => this.drawCues());
+    }
+    const choosable = tracks.filter((track) => !track.forced);
+    this.captionsWrap.hidden = choosable.length === 0;
+    this.captionsMenu.replaceChildren(
+      this.menuItem("Fra", "subtitles", ""),
+      ...choosable.map((track) => this.menuItem(track.label, "subtitles", String(track.id))),
+    );
+    // As chosen last time, by language; else the track the file marks as its default.
+    const wanted = stored(SUBTITLES_KEY);
+    this.track =
+      wanted === "off"
+        ? null
+        : ((wanted ? choosable.find((track) => (track.language || String(track.id)) === wanted) : undefined) ??
+          choosable.find((track) => track.default) ??
+          null);
+    this.lastTrack = this.track ?? choosable[0] ?? null;
+    this.showTrack();
+  }
+
+  /** The track to draw: the one chosen, else the forced lines of the film, if it has any. */
+  private shownTrack(): SubtitleTrack | null {
+    return this.track ?? this.film?.subtitles?.find((track) => track.forced) ?? null;
+  }
+
+  private showTrack(): void {
+    const shown = this.phase === "film" ? this.shownTrack() : null;
+    const native = Boolean(this.video.webkitDisplayingFullscreen);
+    for (const element of this.video.querySelectorAll("track")) {
+      const on = shown !== null && element.dataset.id === String(shown.id);
+      element.track.mode = on ? (native ? "showing" : "hidden") : "disabled";
+    }
+    this.check(this.captionsMenu, this.track ? String(this.track.id) : "");
+    this.root.classList.toggle("has-subtitles", this.track !== null);
+    this.drawCues();
+  }
+
+  private chooseTrack(track: SubtitleTrack | null): void {
+    this.track = track;
+    if (track) this.lastTrack = track;
+    store(SUBTITLES_KEY, track ? track.language || String(track.id) : "off");
+    this.showTrack();
+  }
+
+  private drawCues(): void {
+    const shown = this.phase === "film" ? this.shownTrack() : null;
+    const element = shown && this.video.querySelector<HTMLTrackElement>(`track[data-id="${shown.id}"]`);
+    const cues = element ? [...(element.track.activeCues ?? [])] : [];
+    this.captions.replaceChildren(
+      ...cues.map((cue) => {
+        const line = document.createElement("span");
+        line.className = "flix-caption";
+        // getCueAsHTML keeps <i> and <b> and nothing that could run; plain text where it is missing.
+        if (cue instanceof VTTCue && typeof cue.getCueAsHTML === "function") line.append(cue.getCueAsHTML());
+        else line.textContent = (cue as VTTCue).text ?? "";
+        return line;
+      }),
+    );
+  }
+
+  // --- Sound, time and the timeline -----------------------------------------------------------------
+
+  private restoreSound(): void {
+    try {
+      const sound = JSON.parse(stored(VOLUME_KEY) ?? "null") as { volume?: number; muted?: boolean } | null;
+      if (sound && typeof sound.volume === "number") this.video.volume = Math.min(1, Math.max(0, sound.volume));
+      if (sound?.muted) this.video.muted = true;
+    } catch {
+      // Unreadable: full sound.
+    }
+    this.showSound();
+  }
+
+  private showSound(): void {
+    const { volume, muted } = this.video;
+    const level = muted || volume === 0 ? "muted" : volume < 0.5 ? "quiet" : "loud";
+    this.mute.dataset.level = level;
+    this.mute.setAttribute("aria-label", level === "muted" ? "Slå lyden til" : "Slå lyden fra");
+    this.volume.value = String(muted ? 0 : volume);
+    this.volume.style.setProperty("--flix-fill", `${(muted ? 0 : volume) * 100}%`);
+  }
+
+  private setVolume(volume: number): void {
+    this.video.volume = Math.min(1, Math.max(0, volume));
+    this.video.muted = this.video.volume === 0;
+  }
+
+  private seekBy(seconds: number): void {
+    if (this.phase !== "film" || !Number.isFinite(this.video.duration)) return;
+    this.seekTo(this.video.currentTime + seconds);
+  }
+
+  private seekTo(at: number): void {
+    const { duration } = this.video;
+    this.lastTime = null;
+    this.video.currentTime = Math.min(Math.max(0, at), Math.max(0, (duration || 0) - 0.1));
+    this.showTime();
+  }
+
+  private showTime(at = this.video.currentTime): void {
+    const duration = Number.isFinite(this.video.duration) ? this.video.duration : 0;
+    const share = duration ? Math.min(1, at / duration) : 0;
+    this.played.style.width = `${share * 100}%`;
+    this.thumb.style.left = `${share * 100}%`;
+    this.time.textContent = `${clock(at)} / ${clock(duration)}`;
+    this.timeline.setAttribute("aria-valuemax", String(Math.round(duration)));
+    this.timeline.setAttribute("aria-valuenow", String(Math.round(at)));
+    this.timeline.setAttribute("aria-valuetext", `${clock(at)} af ${clock(duration)}`);
+    // What is loaded from here on.
+    const ranges = this.video.buffered;
+    let end = 0;
+    for (let index = 0; index < ranges.length; index++) {
+      if (ranges.start(index) <= at + 0.5 && ranges.end(index) >= at) end = ranges.end(index);
+    }
+    this.buffered.style.width = duration ? `${Math.min(1, end / duration) * 100}%` : "0";
+  }
+
+  /** The moment under the pointer on the timeline. */
+  private timeAt(event: PointerEvent): number {
+    const box = this.timeline.getBoundingClientRect();
+    const share = Math.min(1, Math.max(0, (event.clientX - box.left) / box.width));
+    this.tip.textContent = clock(share * (this.video.duration || 0));
+    this.tip.style.left = `${share * 100}%`;
+    return share * (this.video.duration || 0);
+  }
+
+  // --- Showing and hiding the controls ----------------------------------------------------------------
+
+  /** The title bar and the controls fade out while the film plays undisturbed. */
+  private wake(): void {
+    this.root.classList.remove("is-idle");
+    window.clearTimeout(this.idleTimer);
+    this.idleTimer = window.setTimeout(() => this.sleep(), IDLE_AFTER_MS);
+  }
+
+  private sleep(): void {
+    if (this.video.paused || this.scrubbing || this.root.classList.contains("is-menu-open")) return;
+    window.clearTimeout(this.idleTimer);
+    this.root.classList.add("is-idle");
+  }
+
+  private showFlash(kind: "play" | "pause"): void {
+    this.flash.dataset.kind = kind;
+    this.flash.classList.remove("is-on");
+    void this.flash.offsetWidth; // start the animation over
+    this.flash.classList.add("is-on");
+  }
+
+  private showJump(side: "back" | "ahead"): void {
+    const mark = this.root.querySelector<HTMLElement>(`[data-flix-jump="${side}"]`)!;
+    mark.classList.remove("is-on");
+    void mark.offsetWidth;
+    mark.classList.add("is-on");
+  }
+
+  private togglePlay(flash = false): void {
+    if (this.video.paused) {
+      this.hideUpNext();
+      void this.video.play().catch(() => (this.start.hidden = false));
+    } else {
+      this.video.pause();
+    }
+    if (flash && this.phase === "film") this.showFlash(this.video.paused ? "pause" : "play");
+  }
+
+  private toggleFullscreen(): void {
+    if (document.fullscreenElement) {
+      void document.exitFullscreen().catch(() => undefined);
+    } else if (document.fullscreenEnabled && this.root.requestFullscreen) {
+      void this.root.requestFullscreen().catch(() => undefined);
+    } else {
+      // An iPhone: only the video itself, in the system's player.
+      this.video.webkitEnterFullscreen?.();
+    }
+  }
+
+  private toggleSubtitles(): void {
+    if (this.captionsWrap.hidden) return;
+    this.chooseTrack(this.track ? null : this.lastTrack);
+  }
+
+  /** A tap on the picture with a finger: once shows or hides the controls; twice on either side jumps. */
+  private tap(event: MouseEvent): void {
+    const box = this.root.getBoundingClientRect();
+    const x = (event.clientX - box.left) / box.width;
+    const side = x < 1 / 3 ? "back" : x > 2 / 3 ? "ahead" : "middle";
+    const now = Date.now();
+    const again = this.lastTap && now - this.lastTap.at < DOUBLE_TAP_MS && this.lastTap.side === side;
+    this.lastTap = { at: now, side };
+    if (again && side !== "middle" && this.phase === "film") {
+      window.clearTimeout(this.tapTimer);
+      this.seekBy(side === "ahead" ? JUMP_SECONDS : -JUMP_SECONDS);
+      this.showJump(side);
+      return;
+    }
+    const showOrHide = () => {
+      if (this.root.classList.contains("is-idle")) this.wake();
+      else this.sleep();
+    };
+    window.clearTimeout(this.tapTimer);
+    if (side === "middle") showOrHide();
+    else this.tapTimer = window.setTimeout(showOrHide, DOUBLE_TAP_MS);
+  }
+
+  // --- Reporting, the end card, leaving ----------------------------------------------------------------
 
   /** Where the film is, and how much of it has played since the last report — put back to go with
    * the next one if this one does not arrive. */
@@ -1206,14 +1732,19 @@ class Player {
     this.closed = true;
     this.hideUpNext();
     window.clearTimeout(this.idleTimer);
+    window.clearTimeout(this.spinnerTimer);
+    window.clearTimeout(this.tapTimer);
     this.listeners.abort();
     this.video.pause();
     this.video.removeAttribute("src");
     this.video.load();
     if (document.fullscreenElement) void document.exitFullscreen().catch(() => undefined);
+    if (document.pictureInPictureElement === this.video) void document.exitPictureInPicture().catch(() => undefined);
     this.root.remove();
     body.classList.remove("flix-player-open");
   }
+
+  // --- Events -----------------------------------------------------------------------------------------
 
   private bind(): void {
     const { video } = this;
@@ -1239,11 +1770,7 @@ class Player {
     this.autoplay.addEventListener("change", () => {
       // Let Space go back to pausing the film rather than flipping the switch again.
       this.autoplay.blur();
-      try {
-        window.localStorage.setItem(AUTOPLAY_KEY, this.autoplay.checked ? "on" : "off");
-      } catch {
-        // Private mode: the choice just is not remembered.
-      }
+      store(AUTOPLAY_KEY, this.autoplay.checked ? "on" : "off");
       if (!this.upNext.hidden) {
         this.hideUpNext();
         this.showUpNext();
@@ -1254,6 +1781,147 @@ class Player {
       document.addEventListener(name, () => (this.autoplays = 0), { capture: true, passive: true, signal });
     }
 
+    // The controls.
+    this.toggle.addEventListener("click", () => this.togglePlay());
+    for (const button of this.root.querySelectorAll<HTMLElement>("[data-flix-seek]")) {
+      button.addEventListener("click", () => this.seekBy(Number(button.dataset.flixSeek)));
+    }
+    this.mute.addEventListener("click", () => {
+      if (video.muted || video.volume === 0) {
+        video.muted = false;
+        if (video.volume === 0) video.volume = 0.5;
+      } else {
+        video.muted = true;
+      }
+    });
+    this.volume.addEventListener("input", () => this.setVolume(Number(this.volume.value)));
+    video.addEventListener("volumechange", () => {
+      this.showSound();
+      store(VOLUME_KEY, JSON.stringify({ volume: video.volume, muted: video.muted }));
+    });
+    this.fullscreen.addEventListener("click", () => this.toggleFullscreen());
+    document.addEventListener(
+      "fullscreenchange",
+      () => this.root.classList.toggle("is-fullscreen", document.fullscreenElement === this.root),
+      { signal },
+    );
+    this.pip.addEventListener("click", () => {
+      if (document.pictureInPictureElement) void document.exitPictureInPicture().catch(() => undefined);
+      else if (this.phase === "film") void video.requestPictureInPicture().catch(() => undefined);
+    });
+    // iOS's own fullscreen player draws the subtitles itself; ours are behind it.
+    video.addEventListener("webkitbeginfullscreen", () => this.showTrack());
+    video.addEventListener("webkitendfullscreen", () => window.setTimeout(() => this.showTrack()));
+
+    for (const button of this.root.querySelectorAll<HTMLElement>("[data-flix-menu-button]")) {
+      button.addEventListener("click", () => {
+        const name = button.dataset.flixMenuButton!;
+        this.openMenu(button.getAttribute("aria-expanded") === "true" ? "" : name);
+      });
+    }
+    this.controls.addEventListener("click", (event) => {
+      const item = (event.target as HTMLElement).closest<HTMLElement>(".flix-popup-item");
+      if (!item) return;
+      const { kind, value = "" } = item.dataset;
+      if (kind === "subtitles") {
+        this.chooseTrack(this.film?.subtitles.find((track) => String(track.id) === value) ?? null);
+      } else if (kind === "speed") {
+        this.speed = Number(value);
+        video.defaultPlaybackRate = this.speed;
+        if (this.phase === "film") video.playbackRate = this.speed;
+        this.check(this.speeds, value);
+      } else if (kind === "quality" && value !== this.quality && this.phase === "film") {
+        this.quality = value;
+        store(QUALITY_KEY, value);
+        this.load(video.currentTime, !video.paused);
+      }
+      this.closeMenus();
+      this.toggle.focus({ preventScroll: true });
+    });
+    document.addEventListener(
+      "pointerdown",
+      (event) => {
+        if (!(event.target as HTMLElement).closest(".flix-popup-wrap")) this.closeMenus();
+      },
+      { signal },
+    );
+
+    // The timeline: hover shows the moment, a press or a drag goes there.
+    this.timeline.addEventListener("pointermove", (event) => {
+      const at = this.timeAt(event);
+      this.tip.hidden = false;
+      if (this.scrubbing) {
+        this.showTime(at);
+        this.seekTo(at);
+      }
+    });
+    this.timeline.addEventListener("pointerdown", (event) => {
+      if (event.button !== 0 || this.phase !== "film") return;
+      this.scrubbing = true;
+      this.root.classList.add("is-scrubbing");
+      this.timeline.setPointerCapture(event.pointerId);
+      const at = this.timeAt(event);
+      this.tip.hidden = false;
+      this.seekTo(at);
+    });
+    const endScrub = () => {
+      this.scrubbing = false;
+      this.root.classList.remove("is-scrubbing");
+      this.tip.hidden = true;
+      this.wake();
+    };
+    this.timeline.addEventListener("pointerup", endScrub);
+    this.timeline.addEventListener("pointercancel", endScrub);
+    this.timeline.addEventListener("pointerleave", () => {
+      if (!this.scrubbing) this.tip.hidden = true;
+    });
+    this.timeline.addEventListener("keydown", (event) => {
+      if (event.key === "Home" || event.key === "End") {
+        event.preventDefault();
+        this.seekTo(event.key === "Home" ? 0 : video.duration);
+      }
+    });
+
+    // The picture: a click plays or pauses and a double click is fullscreen; a finger is tap().
+    video.addEventListener("pointerdown", (event) => (this.lastPointer = event.pointerType), { passive: true });
+    video.addEventListener("click", (event) => {
+      if (this.lastPointer === "touch" || this.lastPointer === "pen") this.tap(event);
+      else if (this.phase === "film" && !this.closeMenus()) this.togglePlay(true);
+    });
+    video.addEventListener("dblclick", () => {
+      if (this.lastPointer === "mouse") this.toggleFullscreen();
+    });
+
+    video.addEventListener("play", () => {
+      this.root.classList.remove("is-paused");
+      this.toggle.setAttribute("aria-label", "Pause");
+      this.toggle.title = "Pause (k)";
+      this.hideUpNext();
+      this.wake();
+    });
+    video.addEventListener("pause", () => {
+      this.root.classList.add("is-paused");
+      this.toggle.setAttribute("aria-label", "Afspil");
+      this.toggle.title = "Afspil (k)";
+      this.wake();
+    });
+    // A spinner while the film waits for more of itself, unless that is over at once.
+    video.addEventListener("waiting", () => {
+      window.clearTimeout(this.spinnerTimer);
+      this.spinnerTimer = window.setTimeout(() => (this.spinner.hidden = false), 400);
+    });
+    for (const name of ["playing", "canplay", "pause", "seeked", "error", "emptied"]) {
+      video.addEventListener(name, () => {
+        window.clearTimeout(this.spinnerTimer);
+        this.spinner.hidden = true;
+      });
+    }
+    for (const name of ["durationchange", "progress", "seeked", "loadedmetadata"]) {
+      video.addEventListener(name, () => {
+        if (this.phase === "film" && !this.scrubbing) this.showTime();
+      });
+    }
+
     video.addEventListener("ended", () => {
       if (this.phase === "intro") {
         this.startFilm();
@@ -1261,20 +1929,9 @@ class Player {
       }
       void this.savePosition();
       // iOS plays fullscreen in its own player, over the page: leave it, or the end card is never seen.
-      const ios = video as HTMLVideoElement & { webkitDisplayingFullscreen?: boolean; webkitExitFullscreen?: () => void };
-      if (this.film?.next && ios.webkitDisplayingFullscreen) ios.webkitExitFullscreen?.();
+      if (this.film?.next && video.webkitDisplayingFullscreen) video.webkitExitFullscreen?.();
       this.showUpNext();
     });
-
-    // The video's own fullscreen button shows the video alone; make it the whole player, end card and all.
-    document.addEventListener(
-      "fullscreenchange",
-      () => {
-        if (document.fullscreenElement === video) void this.root.requestFullscreen?.().catch(() => undefined);
-      },
-      { signal },
-    );
-    video.addEventListener("play", () => this.hideUpNext());
 
     video.addEventListener("error", () => {
       if (this.closed) return;
@@ -1297,9 +1954,11 @@ class Player {
       if (this.phase !== "film" || !this.film) return;
       const now = video.currentTime;
       this.filmTime = now;
+      if (!this.scrubbing) this.showTime(now);
       if (this.lastTime !== null) {
         const step = now - this.lastTime;
-        if (step > 0 && step < 1.5) {
+        // Real seconds of the film, whatever the speed: 2× plays two of them a second.
+        if (step > 0 && step < 1.5 * Math.max(1, video.playbackRate)) {
           this.watched += step;
           this.unreported += step;
         }
@@ -1313,9 +1972,13 @@ class Player {
         void postJSON(this.film.viewUrl, { viewing: this.film.viewing }).catch(() => (this.counted = false));
       }
       if (Date.now() - this.lastSaved > SAVE_EVERY_MS && !video.paused) this.savePosition();
-      if (this.film.next?.kind === "episode" && this.upNext.hidden && video.duration && video.duration - now < 20) {
-        this.next.hidden = false;
-      }
+      // "Næste afsnit" in the last 20 seconds of an episode; gone again if the timeline goes back.
+      this.next.hidden = !(
+        this.film.next?.kind === "episode" &&
+        this.upNext.hidden &&
+        video.duration &&
+        video.duration - now < 20
+      );
     });
     video.addEventListener("pause", () => this.savePosition());
     window.addEventListener("pagehide", () => this.savePosition(true), { signal });
@@ -1327,47 +1990,45 @@ class Player {
       { signal },
     );
 
-    this.qualityBar.addEventListener("click", (event) => {
-      const button = (event.target as HTMLElement).closest<HTMLButtonElement>("[data-quality]");
-      if (!button || button.dataset.quality === this.quality || this.phase !== "film") return;
-      this.quality = button.dataset.quality!;
-      try {
-        window.localStorage.setItem(QUALITY_KEY, this.quality);
-      } catch {
-        // Private mode: the choice just is not remembered.
-      }
-      this.load(video.currentTime, !video.paused);
-    });
-
-    // The title bar and the quality switch fade out while the film plays undisturbed.
-    const wake = () => {
-      this.root.classList.remove("is-idle");
-      window.clearTimeout(this.idleTimer);
-      this.idleTimer = window.setTimeout(() => {
-        if (!video.paused) this.root.classList.add("is-idle");
-      }, 3000);
-    };
-    for (const name of ["mousemove", "touchstart", "keydown"]) this.root.addEventListener(name, wake, { passive: true });
-    video.addEventListener("pause", wake);
-    wake();
+    this.root.addEventListener("mousemove", () => this.wake(), { passive: true });
+    this.root.addEventListener("keydown", () => this.wake(), { passive: true });
+    this.controls.addEventListener("pointerdown", () => this.wake(), { passive: true });
+    this.wake();
 
     document.addEventListener(
       "keydown",
       (event) => {
-        if ((event.target as HTMLElement).closest("input, textarea, select, button")) return;
-        if (event.key === " " || event.key === "k") {
+        if (event.ctrlKey || event.metaKey || event.altKey) return; // the browser's own shortcuts
+        const target = event.target as HTMLElement;
+        if (target.closest("input:not([type=range]), textarea, select")) return;
+        const key = event.key.length === 1 ? event.key.toLowerCase() : event.key;
+        // Space and Enter on a button press it; anything else is the player's.
+        if ((key === " " || key === "Enter") && target.closest("button, a")) return;
+        if (target.closest("input[type=range]") && key.startsWith("Arrow")) return; // the volume's own
+        const film = this.phase === "film";
+        if (key === " " || key === "k") {
           event.preventDefault();
-          if (video.paused) void video.play();
-          else video.pause();
-        } else if (event.key === "f") {
-          if (document.fullscreenElement) void document.exitFullscreen();
-          else void this.root.requestFullscreen?.().catch(() => undefined);
-        } else if (this.phase === "film" && (event.key === "ArrowRight" || event.key === "ArrowLeft")) {
-          if (event.target === video) return; // the native controls already do it
-          video.currentTime = Math.max(0, video.currentTime + (event.key === "ArrowRight" ? 10 : -10));
-        } else if (event.key === "Escape" && !this.upNext.hidden) {
+          this.togglePlay(true);
+        } else if (film && (key === "ArrowLeft" || key === "j")) {
+          event.preventDefault();
+          this.seekBy(-JUMP_SECONDS);
+        } else if (film && (key === "ArrowRight" || key === "l")) {
+          event.preventDefault();
+          this.seekBy(JUMP_SECONDS);
+        } else if (key === "ArrowUp" || key === "ArrowDown") {
+          event.preventDefault();
+          this.setVolume((video.muted ? 0 : video.volume) + (key === "ArrowUp" ? 0.1 : -0.1));
+        } else if (key === "f") {
+          this.toggleFullscreen();
+        } else if (key === "m") {
+          video.muted = !video.muted;
+        } else if (film && key === "c") {
+          this.toggleSubtitles();
+        } else if (key === "Escape" && this.closeMenus()) {
+          this.toggle.focus({ preventScroll: true });
+        } else if (key === "Escape" && !this.upNext.hidden) {
           this.hideUpNext();
-        } else if (event.key === "Escape" && !document.fullscreenElement) {
+        } else if (key === "Escape" && !document.fullscreenElement) {
           this.leave();
         }
       },
@@ -1431,9 +2092,12 @@ if (body.classList.contains("flix")) {
   initCharts();
   initForms();
   initLiveSearch();
+  initLiveLists();
   initUpload();
   initProcessing();
   initDetailsKeeper(); // before the editors, which read what it puts back
+  initPremiere();
+  initDateGuess();
   initCastEditor();
   initTagEditor();
   initNumberPickers();
