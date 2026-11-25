@@ -4,7 +4,7 @@ from django.core.management import call_command
 
 @shared_task
 def purge_expired_events() -> None:
-    """Delete events past their retention period."""
+    """Delete events past their retention period, and forget guest lists past theirs."""
     call_command("purge_events")
 
 

@@ -36,8 +36,8 @@
             * `visibility` — checked here as well as in the form's queryset, because an event that
               was open when somebody linked it can be switched to "kun inviterede" afterwards, and
               this chip is on a board the whole house reads.
-            * `notice.event` at all — it is deleted a week after it is held while this post lives
-              for two years, so None is an ordinary state, not an error.
+            * `notice.event` at all — an aflyst event is deleted 30 days later, and a host may delete
+              one nobody said ja to, while this post stays, so None is an ordinary state.
 
           A real link, and in the feed it sits under the card's stretched permalink, so it needs
           raising above it (see .notice-event in the stylesheet).

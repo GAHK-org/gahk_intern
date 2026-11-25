@@ -175,6 +175,13 @@ class EventForm(forms.ModelForm):
         has to satisfy it too — that transition is the one a create-only check would miss.
         """
         cleaned = super().clean() or self.cleaned_data
+        # Visibility is frozen once the event has ended, because it decides retention: an open
+        # event is kept and an invite-only one is deleted a week after it ends. Switching an old
+        # open event to private would quietly delete it, comments and all, on the next sweep.
+        # `self.instance` still holds the saved times here: the form copies the cleaned values onto
+        # it only after clean() returns.
+        if self.instance.pk and "visibility" in self.changed_data and self.instance.has_ended():
+            self.add_error("visibility", "Synligheden kan ikke ændres, når begivenheden er afholdt.")
         if cleaned.get("visibility") == Visibility.KUN_INVITEREDE:
             chosen = cleaned.get("invitees") or []
             if len(chosen) < MIN_INVITEES:

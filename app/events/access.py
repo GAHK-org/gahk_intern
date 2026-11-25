@@ -140,15 +140,24 @@ def can_delete(event: Event, resident: Resident) -> bool:
     vanishes from every subscribed calendar with no explanation, and the per-event .ics already
     imported into other people's calendars stays there forever, because once the row is gone there
     is nothing left to emit STATUS:CANCELLED from.
+
+    The stored attendee_count counts as a ja: an old open event whose guest list has been forgotten
+    still had people at it, and deleting it outright would erase that from the house's history.
     """
     if not is_host(event, resident):
+        return False
+    if event.attendee_count:
         return False
     return not event.rsvps.filter(answer="ja").exists()
 
 
 def can_cancel(event: Event, resident: Resident) -> bool:
-    """The other half of can_delete: hosts may aflys anything not already cancelled."""
-    return not event.is_cancelled and is_host(event, resident)
+    """The other half of can_delete: hosts may aflys anything not already cancelled or over.
+
+    Not once it has ended. Something that was held cannot be called off, and a cancelled event is
+    deleted thirty days later — so on a kept open event, Aflys would be a way to erase history.
+    """
+    return not event.is_cancelled and not event.has_ended() and is_host(event, resident)
 
 
 def can_delete_comment(comment: EventComment, resident: Resident, *, host: bool | None = None) -> bool:

@@ -31,7 +31,8 @@ from core.models import PushSubscription
 from events import access, services
 from events import icalendar as icalendar_mod
 from events.models import (
-    RETENTION_AFTER_END,
+    ATTENDANCE_RETENTION,
+    PRIVATE_RETENTION_AFTER_END,
     Answer,
     CalendarFeedToken,
     Event,
@@ -742,41 +743,61 @@ def test_a_cancelled_event_takes_no_more_answers(beboer: Resident, other: Reside
 # --- retention ---------------------------------------------------------------------------------------
 
 
-def test_an_event_is_kept_for_a_week_after_it_is_held() -> None:
+def test_the_retention_clocks() -> None:
     """The policy, pinned once and by value.
 
-    Every other test in this section works off the constant, so they follow a change here instead of
-    failing one by one. This is the one that has to be edited deliberately — which is the point:
-    widening retention is a decision about whether this feature has an archive, not a tuning knob.
+    Every other test in this section works off the constants, so they follow a change here instead
+    of failing one by one. This is the one that has to be edited deliberately.
     """
-    assert RETENTION_AFTER_END == datetime.timedelta(days=7)
+    assert PRIVATE_RETENTION_AFTER_END == datetime.timedelta(days=7)
+    assert ATTENDANCE_RETENTION == datetime.timedelta(days=5 * 365 + 1)
 
 
-def test_an_event_survives_until_the_window_is_up(beboer: Resident) -> None:
-    now = timezone.now()
-    ended = now - RETENTION_AFTER_END + datetime.timedelta(hours=1)  # an hour short of the cutoff
-    make_event(beboer, starts_at=ended - datetime.timedelta(hours=3), ends_at=ended)
+def _held(organiser: Resident, ago: datetime.timedelta, **extra: object) -> Event:
+    """An event that ended `ago` ago, three hours long."""
+    ended = timezone.now() - ago
+    return make_event(organiser, starts_at=ended - datetime.timedelta(hours=3), ends_at=ended, **extra)
+
+
+def test_an_open_event_is_kept_after_it_is_held(beboer: Resident) -> None:
+    _held(beboer, ATTENDANCE_RETENTION * 3)
+
+    assert Event.objects.purge_expired() == 0
+    assert Event.objects.count() == 1
+
+
+def test_a_private_event_survives_until_the_window_is_up(beboer: Resident) -> None:
+    _held(
+        beboer,
+        PRIVATE_RETENTION_AFTER_END - datetime.timedelta(hours=1),
+        visibility=Visibility.KUN_INVITEREDE,
+    )
 
     assert Event.objects.purge_expired() == 0
 
 
-def test_an_event_is_gone_once_the_window_is_up(beboer: Resident) -> None:
-    now = timezone.now()
-    ended = now - RETENTION_AFTER_END - datetime.timedelta(hours=1)  # an hour past it
-    make_event(beboer, starts_at=ended - datetime.timedelta(hours=3), ends_at=ended)
+def test_a_private_event_is_gone_once_the_window_is_up(beboer: Resident) -> None:
+    _held(
+        beboer,
+        PRIVATE_RETENTION_AFTER_END + datetime.timedelta(hours=1),
+        visibility=Visibility.KUN_INVITEREDE,
+    )
 
     assert Event.objects.purge_expired() == 1
 
 
 def test_retention_falls_back_to_the_start_when_there_is_no_end(beboer: Resident) -> None:
-    make_event(beboer, starts_at=timezone.now() - RETENTION_AFTER_END - datetime.timedelta(hours=1))
+    make_event(
+        beboer,
+        starts_at=timezone.now() - PRIVATE_RETENTION_AFTER_END - datetime.timedelta(hours=1),
+        visibility=Visibility.KUN_INVITEREDE,
+    )
     assert Event.objects.purge_expired() == 1
 
 
 def test_a_cancelled_event_is_kept_for_its_own_grace_period(beboer: Resident) -> None:
-    """It never happens, so the held-and-done rule would either purge it the moment its start
-    passed or hold it to a date that means nothing. Thirty days is what lets subscribed calendars
-    poll and pick up STATUS:CANCELLED."""
+    """It never happens, so it is not history: thirty days, open or not, which is what lets
+    subscribed calendars poll and pick up STATUS:CANCELLED."""
     event = make_event(beboer, starts_at=timezone.now() + datetime.timedelta(days=9))
     Event.objects.filter(pk=event.pk).update(cancelled_at=timezone.now() - datetime.timedelta(days=29))
     assert Event.objects.purge_expired() == 0
@@ -799,8 +820,8 @@ def test_purging_takes_the_answers_and_the_image_with_it(
     event.image.save("plakat.png", SimpleUploadedFile("plakat.png", b"x", "image/png"), save=True)
     stored = event.image.storage
     name = event.image.name
-    stale = timezone.now() - RETENTION_AFTER_END - datetime.timedelta(hours=1)
-    Event.objects.filter(pk=event.pk).update(starts_at=stale)
+    stale = timezone.now() - PRIVATE_RETENTION_AFTER_END - datetime.timedelta(hours=1)
+    Event.objects.filter(pk=event.pk).update(starts_at=stale, visibility=Visibility.KUN_INVITEREDE)
 
     with django_capture_on_commit_callbacks(execute=True):
         Event.objects.purge_expired()
@@ -812,13 +833,129 @@ def test_purging_takes_the_answers_and_the_image_with_it(
 def test_the_list_purges_on_the_way_past(client: Client, beboer: Resident) -> None:
     """Traffic does the cleanup; the cron covers the quiet weeks. The den_hurtige idiom, and the
     backstop for a cron that has silently stopped."""
-    stale = timezone.now() - RETENTION_AFTER_END - datetime.timedelta(hours=1)
-    make_event(beboer, starts_at=stale)
+    stale = timezone.now() - PRIVATE_RETENTION_AFTER_END - datetime.timedelta(hours=1)
+    make_event(beboer, starts_at=stale, visibility=Visibility.KUN_INVITEREDE)
     client.force_login(beboer)
 
     client.get(EVENTS)
 
     assert not Event.objects.exists()
+
+
+def _answered(event: Event, *residents: Resident, answer: str = Answer.JA) -> None:
+    """Answers recorded directly: set_answer refuses them once the event is over."""
+    for resident in residents:
+        Rsvp.objects.create(event=event, resident=resident, answer=answer, answered_at=event.starts_at)
+
+
+def test_an_old_guest_list_is_replaced_by_its_size(
+    beboer: Resident, other: Resident, make_resident: Callable[..., Resident]
+) -> None:
+    """Five years on, the event stays and the names go: RSVPs and invites both, since an invite on
+    an open event says who was asked just as plainly. What is left is how many held a seat."""
+    event = _held(beboer, ATTENDANCE_RETENTION + datetime.timedelta(days=1), capacity=2)
+    _answered(event, beboer, other, make_resident(email="c@gahk.dk"))  # three ja, two seats
+    _answered(event, make_resident(email="d@gahk.dk"), answer=Answer.NEJ)
+    EventInvite.objects.create(event=event, resident=other)
+
+    assert Event.objects.purge_expired() == 0
+
+    event.refresh_from_db()
+    assert event.attendee_count == 2
+    assert not Rsvp.objects.exists()
+    assert not EventInvite.objects.exists()
+
+
+def test_a_guest_list_survives_until_five_years_are_up(beboer: Resident, other: Resident) -> None:
+    event = _held(beboer, ATTENDANCE_RETENTION - datetime.timedelta(days=1))
+    _answered(event, other)
+
+    Event.objects.purge_expired()
+
+    event.refresh_from_db()
+    assert event.attendee_count is None
+    assert Rsvp.objects.count() == 1
+
+
+def test_forgetting_a_guest_list_happens_once(beboer: Resident, other: Resident) -> None:
+    """The stored count is the marker, so a second sweep must not overwrite it with zero."""
+    event = _held(beboer, ATTENDANCE_RETENTION + datetime.timedelta(days=1))
+    _answered(event, other)
+
+    assert Event.objects.forget_attendance() == 1
+    assert Event.objects.forget_attendance() == 0
+    event.refresh_from_db()
+    assert event.attendee_count == 1
+
+
+def test_an_old_event_reads_as_held_with_its_count(client: Client, beboer: Resident) -> None:
+    event = _held(beboer, ATTENDANCE_RETENTION * 2)
+    Event.objects.filter(pk=event.pk).update(attendee_count=23)
+    client.force_login(beboer)
+
+    body = client.get(f"{EVENTS}{event.pk}").content.decode()
+
+    assert "Begivenheden er afholdt." in body
+    assert "23 var tilmeldt" in body
+    assert "Deltagerlisten er slettet" in body
+
+
+def test_a_held_event_shows_its_list_in_the_past_tense(
+    client: Client, beboer: Resident, other: Resident, make_resident: Callable[..., Resident]
+) -> None:
+    """The venteliste stopped meaning anything when the doors opened, so it is not shown."""
+    event = _held(beboer, datetime.timedelta(days=30), capacity=1)
+    late = make_resident(email="c@gahk.dk", first_name="Sidst", last_name="Ankommen")
+    _answered(event, other)
+    Rsvp.objects.create(
+        event=event,
+        resident=late,
+        answer=Answer.JA,
+        answered_at=event.starts_at + datetime.timedelta(minutes=1),
+    )
+    client.force_login(beboer)
+
+    body = client.get(f"{EVENTS}{event.pk}").content.decode()
+
+    assert "1 var tilmeldt" in body
+    assert other.full_name in body
+    assert "Venteliste" not in body
+    assert late.full_name not in body
+
+
+def test_a_held_event_cannot_be_cancelled(beboer: Resident) -> None:
+    """A cancelled event is deleted thirty days later, so Aflys on a kept event would erase it."""
+    event = _held(beboer, datetime.timedelta(hours=1))
+
+    assert not access.can_cancel(event, beboer)
+
+
+def test_an_old_event_with_people_at_it_cannot_be_deleted(beboer: Resident) -> None:
+    """The guest list is gone, but the count still says people came."""
+    event = _held(beboer, ATTENDANCE_RETENTION * 2)
+    Event.objects.filter(pk=event.pk).update(attendee_count=5)
+    event.refresh_from_db()
+
+    assert not access.can_delete(event, beboer)
+
+
+def test_visibility_is_frozen_once_the_event_is_held(beboer: Resident) -> None:
+    """Visibility decides retention, so making an old open event private would delete it."""
+    from events.forms import EventForm
+
+    event = _held(beboer, datetime.timedelta(days=30))
+    form = EventForm(
+        data={
+            "title": event.title,
+            "starts_at": timezone.localtime(event.starts_at).strftime("%Y-%m-%dT%H:%M"),
+            "ends_at": timezone.localtime(event.ends_at).strftime("%Y-%m-%dT%H:%M"),
+            "visibility": Visibility.KUN_INVITEREDE,
+        },
+        instance=event,
+    )
+
+    assert not form.is_valid()
+    assert form.errors["visibility"] == ["Synligheden kan ikke ændres, når begivenheden er afholdt."]
 
 
 def test_the_list_shows_only_what_is_coming(client: Client, beboer: Resident) -> None:
@@ -1543,8 +1680,8 @@ def _local(naive: datetime.datetime) -> datetime.datetime:
 def _future_month_first() -> datetime.date:
     """The 1st of a month two ahead of today.
 
-    Far enough that nothing placed in it is near `RETENTION_AFTER_END`, which is what makes a date
-    in a calendar test safe: `calendar()` purges on every request, so an event fixed to a literal
+    Far enough that nothing placed in it is near `PRIVATE_RETENTION_AFTER_END`, which is what makes a date
+    in a calendar test safe: `calendar()` purges on every request, so a private event fixed to a literal
     date stops existing a week after that date passes, and the test then fails for a reason
     unrelated to what it is testing.
     """
@@ -1556,7 +1693,7 @@ def _month_with_trailing_padding() -> tuple[datetime.date, datetime.date]:
 
     DERIVED, NOT HARDCODED, and the reason is a trap worth naming: `calendar()` calls
     `purge_expired()` on every request, and an event is hard-deleted a week after it ends
-    (RETENTION_AFTER_END). These two tests originally pinned an event to 2026-09-01 and asked for
+    (PRIVATE_RETENTION_AFTER_END; open events are now kept). These two tests originally pinned an event to 2026-09-01 and asked for
     the August grid, which worked perfectly until the real date passed 2026-09-08 — at which point
     the view deleted the event before rendering it, and the padding tests began failing for a reason
     that has nothing to do with padding. A fixed date in a test that exercises a retention-swept view

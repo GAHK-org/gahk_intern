@@ -258,7 +258,7 @@ idempotent, so a retry or an overlapping run is harmless.
 | `admissions.tasks.purge_expired_applications` | Daily 03:20 | Enforces the one-year application retention policy. |
 | `opslagstavle.tasks.purge_orphaned_images` | Daily 03:40 | Removes unused compose-toolbar image uploads. |
 | `reparationer.tasks.archive_finished_repairs` | Daily 03:50 | Archives completed repairs after 30 days. |
-| `events.tasks.purge_expired_events` | Daily 04:00 | Enforces event retention. |
+| `events.tasks.purge_expired_events` | Daily 04:00 | Enforces event retention: deletes invite-only events a week after they are held and cancelled ones 30 days after cancelling, and replaces an open event's guest list with its size five years after it is held. Open events themselves are kept. |
 | `ak.tasks.apply_monthly_assessment` | Day 1, 04:10 | Books the AK deduction for the month that just ended, from that month's final alumneliste. A month is charged once it is over, not as it starts: the list in effect on the 1st is still the one copied forward, so charging then kept a −2 on residents removed later in the month. |
 | `photo_album.tasks.purge_orphaned_import_archives` | Daily 04:15 | Deletes import ZIPs under `photo-album-imports/` that no import refers to, two days after they were stored: an upload straight to the bucket that was finished but never submitted. The bucket's lifecycle rule only aborts *unfinished* multipart uploads. |
 | `photo_album.tasks.purge_expired_downloads` | Daily 04:20 | Removes album ZIPs and their rows seven days after they were built. |

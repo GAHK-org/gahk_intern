@@ -12,13 +12,14 @@ state a developer would otherwise have to construct by hand before they could lo
   * one that is **aflyst**, so the greyed card and STATUS:CANCELLED are reachable;
   * one whose **svarfrist is inside the reminder window**, so `remind_rsvp_deadlines --dry-run`
     reports a real audience instead of "ingen svarfrister";
-  * one **held two days ago**, still inside the retention window — invisible on the list, which
-    shows only what is coming up, but present in a subscriber's `.ics`. That tail is the whole
-    point of keeping an event a week, and nothing else in the fixture shows it;
-  * one **held and past that window**, so `purge_events --dry-run` reports a real number instead of
-    zeros. Without it that command prints nothing until a demo event has actually aged past its
-    clock, and nobody can tell whether it works or is broken. Same argument as opslagstavlen's
-    stale opslag.
+  * one **held two days ago**, gone from the list (which shows only what is coming up) but on the
+    calendar, in a subscriber's `.ics`, and with the answer panel in the past tense;
+  * one **held six years ago**, open and with its guest list still there, so the first sweep
+    forgets it and the "deltagerlisten er slettet" state is on screen;
+  * one **invite-only and held past its week**, so `purge_events --dry-run` reports a real number
+    instead of zeros. Without it that command prints nothing until a demo event has actually aged
+    past its clock, and nobody can tell whether it works or is broken. Same argument as
+    opslagstavlen's stale opslag.
 
 No uploaded images: this project has no Pillow and the seed writes no media (see
 opslagstavle.demo). The events simply have none.
@@ -31,7 +32,17 @@ from django.utils import timezone
 
 from residents.models import Resident
 
-from .models import RETENTION_AFTER_END, Answer, Event, EventComment, EventInvite, Rsvp, Visibility
+from .models import (
+    ATTENDANCE_RETENTION,
+    MIN_INVITEES,
+    PRIVATE_RETENTION_AFTER_END,
+    Answer,
+    Event,
+    EventComment,
+    EventInvite,
+    Rsvp,
+    Visibility,
+)
 
 FAELLESSPISNING = """Vi laver **grøn karry** til hele huset.
 
@@ -145,9 +156,8 @@ def seed(residents: list[Resident], now: datetime, rng: random.Random) -> int:
     Event.objects.filter(pk=cancelled.pk).update(cancelled_at=now - timedelta(hours=6))
     events.append(cancelled)
 
-    # Held, but still inside the retention window: gone from the list (which shows only what is
-    # coming up) and still in the .ics of everyone who said ja. That tail is what the week buys, and
-    # it is invisible in the fixture without a row that sits in it.
+    # Held two days ago: gone from the list (which shows only what is coming up), still on the
+    # calendar and in the .ics of everyone who said ja, and drawn in the past tense on its page.
     recent = Event.objects.create(
         organiser=residents[1],
         title="Fredagsbar",
@@ -158,22 +168,36 @@ def seed(residents: list[Resident], now: datetime, rng: random.Random) -> int:
     _answer(recent, organiser, Answer.JA, now - timedelta(days=4))
     events.append(recent)
 
-    # Held and past the window: the row `purge_events --dry-run` reports. Without one the command
-    # prints zeros on a fresh checkout and nobody can tell whether it works. It goes on the first
-    # sweep — lazily, on the next list view — which is the behaviour, not a bug.
-    #
-    # Offset from RETENTION_AFTER_END rather than written as a number, so widening the window again
-    # cannot silently turn this back into a row that survives and a --dry-run that prints zeros.
-    stale_days = RETENTION_AFTER_END.days + 2
-    events.append(
-        Event.objects.create(
-            organiser=residents[1],
-            title="Sommerfest",
-            location="Gården",
-            starts_at=_at(now, -stale_days, 19),
-            ends_at=_at(now, -stale_days, 23),
-        )
+    # Held past ATTENDANCE_RETENTION, guest list still attached: the first sweep (lazily, on the
+    # next list view) replaces it with its size, which is the behaviour, not a bug. Offset from the
+    # constant rather than written as a number, so a change to it cannot turn this into a row the
+    # sweep never reaches.
+    old_days = ATTENDANCE_RETENTION.days + 365
+    julefrokost = Event.objects.create(
+        organiser=organiser,
+        title="Julefrokost",
+        location="Fælleslokalet",
+        starts_at=_at(now, -old_days, 18),
+        ends_at=_at(now, -old_days, 23),
     )
+    for resident in residents[1:8]:
+        _answer(julefrokost, resident, Answer.JA, now - timedelta(days=old_days + 7))
+    events.append(julefrokost)
+
+    # Invite-only and held past its week: the row `purge_events --dry-run` reports as deleted.
+    # Offset from PRIVATE_RETENTION_AFTER_END for the same reason as above.
+    stale_days = PRIVATE_RETENTION_AFTER_END.days + 2
+    stale = Event.objects.create(
+        organiser=residents[1],
+        title="Middag i 212",
+        location="Værelse 212",
+        starts_at=_at(now, -stale_days, 19),
+        ends_at=_at(now, -stale_days, 23),
+        visibility=Visibility.KUN_INVITEREDE,
+    )
+    for resident in residents[2 : 3 + MIN_INVITEES]:
+        EventInvite.objects.create(event=stale, resident=resident, invited_by=residents[1])
+    events.append(stale)
 
     _seed_the_thread(events[0], residents)
     _link_the_announcement(events[0])

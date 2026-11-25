@@ -2008,8 +2008,8 @@ def test_the_trial_group_is_still_notified(
 # "Announce on opslagstavlen; sign up on begivenheder" is what both features' docstrings have always
 # said, with no way to get from one to the other until this field existed. The interesting part is
 # not the FK, it is the two places the two features disagree about lifetime and about who may see
-# what: an event lives a week past its date and a post lives two years, and an event may be private
-# while the board is not.
+# what: an event can be deleted (aflyst, or nobody said ja) while the post stays, and an event may
+# be private while the board is not.
 
 
 @pytest.fixture
@@ -2098,9 +2098,9 @@ def test_an_event_made_private_after_the_fact_stops_being_shown(
 
 
 def test_deleting_the_event_keeps_the_post(client: Client, beboer: Resident, events_open: None) -> None:
-    """SET_NULL, and this is the whole reason for it. An event is deleted a week after it is held; a
-    post lives about two years. CASCADE would mean Tuesday's dinner quietly deleting the post that
-    announced it — with its comments and reactions — on Wednesday."""
+    """SET_NULL, and this is the whole reason for it. An event can be deleted — aflyst, or by its
+    host while nobody has said ja — and the post stays. CASCADE would mean calling off Tuesday's
+    dinner quietly deleting the post that announced it, with its comments and reactions."""
     event = _event(beboer)
     notice = make_notice(beboer, event=event, body="Vi spiste sammen.")
 

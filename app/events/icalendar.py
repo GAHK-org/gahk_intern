@@ -44,9 +44,10 @@ FOLD_LIMIT = 75
 
 # How far back a feed reaches. Apple re-fetches the whole file every time, so a long tail is pure
 # bytes — but "hvornår var fællesspisningen?" is a question people ask the calendar, not the site.
-# Retention now keeps an event a WEEK past its end, so this is what puts last Tuesday's dinner in
-# your calendar rather than leaving a hole where it was. Anything older than the retention window
-# is already deleted, so the 90 days is a ceiling rather than a promise.
+# This is what puts last Tuesday's dinner in your calendar rather than leaving a hole where it was.
+# Open events are kept for good (see events.models), so this is the actual ceiling: an event drops
+# out of a subscriber's calendar 90 days after it starts, and stays on the site. An invite-only one
+# is deleted a week after it ends, so for those the 90 days is never reached.
 FEED_LOOKBACK = datetime.timedelta(days=90)
 
 
