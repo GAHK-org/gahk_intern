@@ -243,7 +243,7 @@ class Command(BaseCommand):
             seed_photo_album(residents, self.now, self.rng)
             seed_gahkflix(residents, self.now, self.rng)
             seed_drive(residents, self.now, self.rng)
-            # After both: these posts embed an album and a film seeded just above.
+            # After them: these posts embed an album, a film and Drive files seeded just above.
             seed_opslagstavle_embeds(residents, self.now)
             seed_den_hurtige(residents, self.now, self.rng)
             # Last: its rows link to the events, opslag and Den Hurtige posts seeded above.

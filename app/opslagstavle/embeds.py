@@ -1,9 +1,10 @@
-"""The photo album's and GAHKFlix's own widgets in a post on opslagstavlen (core.embeds).
+"""The photo album's, GAHKFlix's and Drive's own widgets in a post on opslagstavlen (core.embeds).
 
 A post embeds an album or a film in its body, `![Julefrokost 2026](album:12)`, picked in the composer
 or written there by "Del på opslagstavlen" on the album's or the film's page. Each is drawn where it
 stands the way its own feature draws itself: the album as the photo album's mosaic (the tile its
-index leads with), the film as a small GAHKFlix hero, dark, with its banner and a play button.
+index leads with), the film as a small GAHKFlix hero, dark, with its banner and a play button, a Drive file or folder as
+a card with its thumbnail or icon, where it lives, and a folder's first few files.
 
 ANOTHER KIND OF WIDGET is an entry in KINDS below (how to find what it shows, which template draws
 it, what the composer's picker lists) and its name and icon in core.embeds.KINDS. Nothing about a
@@ -19,11 +20,16 @@ photo album; a film only for those GAHKFlix's rollout gate lets in, and only whi
 as such). The kitchen account, which can open neither, gets none. Where no widget is drawn, the
 name the author embedded it under stands in its place (core.markdown).
 
+A DRIVE FILE OR FOLDER IS DRAWN FOR EVERY READER, unlike the others: one who may not open it, the
+kitchen account included, gets the widget with a line saying so, rather than a name with nothing to
+say why it leads nowhere. One that not every resident may open carries a warning saying who can,
+in the composer and on the post. Drive decides all of it (drive.embeds); the board draws.
+
 A FIXED NUMBER OF QUERIES PER PAGE, however many posts embed however many albums and films: the
 albums, their pictures, their counts and the picked pictures in four queries for the whole page, the
-films and the reader's progress in two.
+films and the reader's progress in two, the files and folders in a handful (drive.embeds).
 
-The photo album and GAHKFlix are imported inside the functions, as opslagstavle.forms does with
+The photo album, GAHKFlix and Drive are imported inside the functions, as opslagstavle.forms does with
 events: neither depends on the board, and loading the board's models should not depend on them.
 """
 
@@ -34,6 +40,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from functools import reduce
 from typing import TYPE_CHECKING
+from uuid import UUID
 
 from django.db.models import Count, F, Model, Q, Window
 from django.db.models.functions import RowNumber
@@ -52,6 +59,7 @@ from .models import Notice
 if TYPE_CHECKING:
     from django.db.models import QuerySet
 
+    from drive.embeds import Item
     from gahkflix.models import Video
     from photo_album.models import Album, Media
 
@@ -109,13 +117,17 @@ class VideoWidget:
 
 @dataclass
 class Choice:
-    """One album or film in the composer's picker, with the Markdown that embeds it."""
+    """One album, film, file or folder in the composer's picker, with the Markdown that embeds it."""
 
-    pk: int
+    pk: int | UUID
     title: str
     detail: str
     markdown: str
     picture: str = ""
+    # The sprite symbol drawn where there is no picture (a Drive file's type, a folder).
+    icon: str = ""
+    # Who can open it, when not every resident can (a Drive file or folder).
+    warning: str = ""
 
 
 @dataclass
@@ -151,7 +163,7 @@ class Kind:
     # The picker's list: the newest, or those matching what is typed.
     choices: Callable[[HttpRequest, str], list[Choice]]
     # The name "Del på opslagstavlen" embeds it under, or None for what may not be shared.
-    shareable: Callable[[HttpRequest, int], str | None]
+    shareable: Callable[[HttpRequest, int | UUID], str | None]
     # The URL name of the composer's picker of what the widget shows (core.embeds.FEATURING), if any.
     featuring: str = ""
 
@@ -248,12 +260,19 @@ def shared_body(request: HttpRequest) -> str:
 
 
 def share_url(obj: Model) -> str:
-    """The composer, with an album or a film embedded ("Del på opslagstavlen")."""
-    name = {"photo_album.album": "album", "gahkflix.video": "gahkflix"}[obj._meta.label_lower]
-    return f"{reverse('opslagstavle:create')}?{name}={obj.pk}"
+    """The composer, with an album, a film, or a Drive file or folder embedded ("Del på
+    opslagstavlen"). Drive's by their uuid, as everywhere else."""
+    name = {
+        "photo_album.album": "album",
+        "gahkflix.video": "gahkflix",
+        "drive.file": "drive",
+        "drive.folder": "drive",
+    }[obj._meta.label_lower]
+    key = getattr(obj, "uuid") if name in embed_syntax.UUID_KEYED else obj.pk  # noqa: B009 - not every model has one
+    return f"{reverse('opslagstavle:create')}?{name}={key}"
 
 
-def _key(name: str, value: str) -> int | None:
+def _key(name: str, value: str) -> int | UUID | None:
     """A key from the querystring, read the way an embed's is: digits, and no bigger than a row's."""
     embed = embed_syntax.parse(f"{name}:{value}")
     return embed.key if embed is not None and not embed.featured else None
@@ -278,7 +297,9 @@ def _album_widgets(request: HttpRequest, wanted: set[Embed]) -> dict[Embed, obje
     from photo_album.models import Album
     from photo_album.storage import get_photo_album_storage
 
-    albums = {album.pk: album for album in Album.objects.filter(pk__in={embed.key for embed in wanted})}
+    albums: dict[int | UUID, Album] = {
+        album.pk: album for album in Album.objects.filter(pk__in={embed.key for embed in wanted})
+    }
     if not albums:
         return {}
     counts, newest = _contents(list(albums.values()), MOSAIC)
@@ -414,9 +435,11 @@ def _album_choices(request: HttpRequest, query: str) -> list[Choice]:
     return choices
 
 
-def _album_shareable(request: HttpRequest, key: int) -> str | None:
+def _album_shareable(request: HttpRequest, key: int | UUID) -> str | None:
     from photo_album.models import Album
 
+    if not isinstance(key, int):
+        return None
     return Album.objects.filter(pk=key).values_list("name", flat=True).first()
 
 
@@ -494,7 +517,7 @@ def _video_widgets(request: HttpRequest, wanted: set[Embed]) -> dict[Embed, obje
         if access.can_see(request, video)
     ]
     progress = services.progress_by_video(current_resident(request), shown) if shown else {}
-    widgets = {
+    widgets: dict[int | UUID, VideoWidget] = {
         video.pk: VideoWidget(
             video=video,
             url=reverse("gahkflix:detail", args=[video.pk]),
@@ -535,11 +558,60 @@ def _video_choices(request: HttpRequest, query: str) -> list[Choice]:
     ]
 
 
-def _video_shareable(request: HttpRequest, key: int) -> str | None:
+def _video_shareable(request: HttpRequest, key: int | UUID) -> str | None:
     """Only a published film: a draft or a binned one is no news to share."""
     from gahkflix.models import Video
 
+    if not isinstance(key, int):
+        return None
     return Video.objects.published().filter(pk=key).values_list("title", flat=True).first()
+
+
+# --- Drive -----------------------------------------------------------------------------------------
+
+
+def _drive_allowed(request: HttpRequest) -> bool:
+    """Every reader gets the widget: one who may not open it is told so on it (drive.embeds)."""
+    return True
+
+
+def drive_allowed(request: HttpRequest) -> bool:
+    """Whether the composer offers Drive's picker: to whoever may use Drive."""
+    from drive import embeds as drive_embeds
+
+    return drive_embeds.may_embed(request)
+
+
+def _drive_widgets(request: HttpRequest, wanted: set[Embed]) -> dict[Embed, object]:
+    from drive import embeds as drive_embeds
+
+    found: dict[UUID, Item] = drive_embeds.items(
+        request, {embed.key for embed in wanted if isinstance(embed.key, UUID)}
+    )
+    return {embed: found[embed.key] for embed in wanted if isinstance(embed.key, UUID) and embed.key in found}
+
+
+def _drive_choices(request: HttpRequest, query: str) -> list[Choice]:
+    from drive import embeds as drive_embeds
+
+    return [
+        Choice(
+            pk=choice.uuid,
+            title=choice.name,
+            detail=choice.place,
+            markdown=embed_syntax.markdown("drive", choice.uuid, choice.name),
+            picture=choice.thumbnail_url,
+            icon=choice.icon,
+            warning=choice.warning,
+        )
+        for choice in drive_embeds.choices(request, query)
+    ]
+
+
+def _drive_shareable(request: HttpRequest, key: int | UUID) -> str | None:
+    from drive import embeds as drive_embeds
+
+    return drive_embeds.shareable(request, key) if isinstance(key, UUID) else None
 
 
 KINDS: dict[str, Kind] = {
@@ -559,5 +631,13 @@ KINDS: dict[str, Kind] = {
         widgets=_video_widgets,
         choices=_video_choices,
         shareable=_video_shareable,
+    ),
+    "drive": Kind(
+        name="drive",
+        template="opslagstavle/_drive_widget.html",
+        allowed=_drive_allowed,
+        widgets=_drive_widgets,
+        choices=_drive_choices,
+        shareable=_drive_shareable,
     ),
 }

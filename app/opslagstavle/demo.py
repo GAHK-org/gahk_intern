@@ -129,24 +129,77 @@ def seed(residents: list[Resident], now: datetime, rng: random.Random) -> int:
 
 
 def seed_embeds(residents: list[Resident], now: datetime) -> int:
-    """Posts embedding a demo album and a demo film, drawn as their widgets (opslagstavle.embeds).
+    """Posts embedding a demo album, a demo film and Drive files and folders, drawn as their widgets
+    (opslagstavle.embeds).
 
-    Separate from `seed` because it needs the photo album and GAHKFlix seeded first; seed_demo runs
-    it after both. Returns the number of notices made.
+    Separate from `seed` because it needs the photo album, GAHKFlix and Drive seeded first; seed_demo
+    runs it after them. Returns the number of notices made.
     """
     from core.embeds import markdown
     from gahkflix.models import Video
     from photo_album.models import Album
 
-    bodies = []
+    bodies = _drive_bodies()
     if (film := Video.objects.published().filter(title="Revy").first()) is not None:
         bodies.append(
-            "Årets revy kan nu ses på GAHKFlix. Tak til alle, der var med! 🎭\n\n"
-            + markdown("gahkflix", film.pk, film.title)
+            (
+                None,
+                "Årets revy kan nu ses på GAHKFlix. Tak til alle, der var med! 🎭\n\n"
+                + markdown("gahkflix", film.pk, film.title),
+            )
         )
     if (album := Album.objects.filter(parent__isnull=True, name="Sommerfest").first()) is not None:
-        bodies.append(markdown("album", album.pk, album.name))
-    for i, body in enumerate(bodies):
-        notice = Notice.objects.create(author=residents[i % len(residents)], category=Category.NYT, body=body)
+        bodies.append((None, markdown("album", album.pk, album.name)))
+    for i, (author, body) in enumerate(bodies):
+        notice = Notice.objects.create(
+            author=author or residents[i % len(residents)], category=Category.NYT, body=body
+        )
         Notice.objects.filter(pk=notice.pk).update(created_at=now - timedelta(hours=2 + i))
     return len(bodies)
+
+
+def _drive_bodies() -> list[tuple[Resident | None, str]]:
+    """Drive's widget in each state (drive.embeds): a Fælles folder every resident may open, with its
+    first files; a Fælles image with its thumbnail; and Regnskabsgruppen's budget, which warns that
+    not everyone may open it - regnskab@ sees it open, everyone outside the group sees it closed."""
+    from core.embeds import markdown
+    from drive.models import File, Folder
+
+    def author(email: str) -> Resident | None:
+        return Resident.objects.filter(email=email).first()
+
+    bodies: list[tuple[Resident | None, str]] = []
+    guides = Folder.objects.filter(
+        name="Vejledninger", kind=Folder.Kind.FOLDER, deleted_at__isnull=True
+    ).first()
+    if guides is not None:
+        bodies.append(
+            (
+                author("formand@gahk.dk"),
+                "Nye beboere: husorden, telefonliste og alt det praktiske ligger samlet i Drive.\n\n"
+                + markdown("drive", guides.uuid, guides.name),
+            )
+        )
+    poster = File.objects.filter(
+        name="Plakat.png", folder__name="Julefrokost", deleted_at__isnull=True
+    ).first()
+    if poster is not None:
+        bodies.append(
+            (
+                author("oel@gahk.dk"),
+                "Plakaten til julefrokosten er klar - hæng den gerne op på gangen 🎄\n\n"
+                + markdown("drive", poster.uuid, poster.name),
+            )
+        )
+    budget = File.objects.filter(
+        name__startswith="Budget ", folder__kind=Folder.Kind.PERIOD, deleted_at__isnull=True
+    ).first()
+    if budget is not None:
+        bodies.append(
+            (
+                author("regnskab@gahk.dk"),
+                "Budgettet for perioden er lagt i Drive til gruppen.\n\n"
+                + markdown("drive", budget.uuid, budget.name),
+            )
+        )
+    return bodies

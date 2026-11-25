@@ -44,8 +44,9 @@ disputes Inspektionen exists to settle.
 
 `/opslagstavle/` (board), `<pk>` (permalink), `opret`, `<pk>/rediger`, `<pk>/slet`,
 `<pk>/fastgoer`, `<pk>/kommentar`, `kommentar/<pk>/slet`, `<pk>/reaktion`, `forhaandsvisning`,
-`billede`, `abonner`, `indlejret`, `indlejr/album`, `indlejr/album/<pk>/billeder`, `indlejr/gahkflix`. `opret?album=<pk>` and
-`opret?gahkflix=<pk>` open the composer with that album or film embedded. Namespaced `opslagstavle:`.
+`billede`, `abonner`, `indlejret`, `indlejr/album`, `indlejr/album/<pk>/billeder`, `indlejr/gahkflix`,
+`indlejr/drive`. `opret?album=<pk>`, `opret?gahkflix=<pk>` and `opret?drive=<uuid>` open the composer
+with that album, film, file or folder embedded. Namespaced `opslagstavle:`.
 
 ## Data model
 
@@ -90,10 +91,10 @@ the post.
 
 **Rendered on read; only the Markdown source is stored.** See "rejected" below.
 
-## Albums and films in a post
+## Albums, films and Drive files in a post
 
-A post can embed photo albums and GAHKFlix films in its text, each drawn as its feature's own
-widget where it stands:
+A post can embed photo albums, GAHKFlix films and Drive files and folders in its text, each drawn as
+its feature's own widget where it stands:
 
 - **An album** as the photo album's mosaic tile: its newest seven pictures (sub-albums included, in
   the album page's order) or the ones the author picked, the folder and parent albums, the name in
@@ -102,14 +103,20 @@ widget where it stands:
 - **A film** as a small GAHKFlix hero: the banner, the red wordmark, series, title, episode, release
   date, length, quality and description, `Afspil` (the player) and `Mere info` (the film's page), and
   the reader's red progress bar. On a phone the words go under the banner.
-- In the text an embed is `![Julefrokost 2026](album:12)`: a reference, not an address. An embed
+- **A Drive file or folder** as a card like a row of Drive's list: the thumbnail or the type's icon,
+  where it lives, a file's size and last change with `Hent`, or a folder's file count and its first
+  five subfolders and files, and `Åbn i Drive →`.
+- In the text an embed is `![Julefrokost 2026](album:12)`: a reference, not an address. A Drive file
+  or folder is named by its random id, `![Budget.xlsx](drive:3f2c9a1e-…)`, as everywhere in Drive. An embed
   in the middle of a sentence is drawn right after its paragraph. The feed shows the text and the
   first widget under it; the post's own page draws up to ten, each where it stands.
-- In the composer, `Indsæt` → `Fotoalbum` / `Video fra GAHKFlix` opens a picker of the newest albums
-  or published films, searched by name (and series) as you type; picking one puts its embed at the
-  cursor. The widgets show under the text as they will in the post, each with `Fjern`, and the
-  preview tab draws them in place. `Del på opslagstavlen` on an album's page or a published film's
-  page opens the composer with it embedded and the cursor above it.
+- In the composer, `Indsæt` → `Fotoalbum` / `Video fra GAHKFlix` / `Fil fra Drive` opens a picker of
+  the newest albums, published films, or the Drive files you can open that changed most recently,
+  searched by name (and series) as you type; Drive's search finds files and folders. Picking one puts
+  its embed at the cursor. The widgets show under the text as they will in the post, each with
+  `Fjern`, and the preview tab draws them in place. `Del på opslagstavlen` on an album's page, a
+  published film's page, or a Drive file's or folder's page opens the composer with it embedded and
+  the cursor above it.
 - `Vælg billeder` on an album's widget in the composer picks its pictures: every picture the tile may
   show, newest first, a page at a time; picking one adds it, picking it again takes it out, and each
   wears its place. The first is the large one, and a phone shows the first three. `Gem` writes them
@@ -121,9 +128,17 @@ widget where it stands:
   showing only approved, unbinned items, so everyone sees the same tile. Films only for those
   GAHKFlix's rollout gate lets in, and only while they may see the film: a draft for its uploader and
   the administrators (`Kladde`), a binned one for the administrators (`I papirkurven`). The kitchen
-  account gets none.
-- Where no widget can be drawn (the reader may not see it, it is gone, or past the ten) the name it
-  was embedded under stands in its place. A notification shows `📷 Julefrokost 2026`.
+  account gets neither.
+- A Drive file or folder is drawn for every reader, by Drive's access rules. One who may not open it
+  (outside its group or Delt mappe, outside Drive's trial, moved out, the kitchen account) gets the
+  widget with its name and `Du har ikke adgang til denne fil` (or `mappe`), and nothing of where it
+  lives or what is in it.
+- What not every resident may open (an embedsgruppe's folders, a Delt mappe in use, anything while
+  Drive is on trial) carries a warning saying who can: in the picker, under the text before posting,
+  and on the post for every reader, also those who may open it.
+- Where no widget can be drawn (the reader may not see it, it is gone or in Drive's bin, or past the
+  ten) the name it was embedded under stands in its place. A notification shows `📷 Julefrokost 2026`
+  (`📎` for Drive).
 
 ## Retention
 
@@ -256,6 +271,12 @@ an entry in a registry (core.embeds, opslagstavle.embeds) rather than a migratio
 **Links to the album's or the film's page as the embed.** Rejected for references (`album:12`): every
 link in a widget is reversed when it is drawn, so posts keep pointing at the right pages however the
 photo album or GAHKFlix change their addresses, which a stored address would not.
+
+**Leaving a Drive file's name in place for a reader who may not open it**, as an album's or a film's
+is. Rejected: a name leading nowhere does not say why, and the author cannot tell from it that most
+readers will never get in. The closed widget says so, and the warning tells the author before
+posting. It shows the item's name and its embedsgruppe, which are on the post already; never its
+folders, size or contents.
 
 **A `CheckConstraint` that `pinned_by` is set iff `pinned_at` is.** Rejected: `pinned_by` is
 `SET_NULL`, so deleting the resident who pinned a post would violate it and make the delete fail.

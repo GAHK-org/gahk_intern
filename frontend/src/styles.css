@@ -1741,6 +1741,47 @@
   .board-choice.is-album strong { font-family: Georgia, serif; font-size: 16.5px; font-weight: 700; }
   .board-choice-text small { color: var(--muted); font-size: 12.5px; }
   .board-choice-none { padding: 18px 10px; margin: 0; color: var(--muted); text-align: center; }
+  .board-choice-img > .ni { display: block; width: 26px; height: 26px; margin: 15px; stroke: var(--brass); fill: none; }
+  .board-choice-text .board-choice-warning { display: flex; align-items: center; gap: 4px; color: var(--brass-ink); }
+  .board-choice-warning .ni { flex: none; width: 13px; height: 13px; stroke: currentColor; fill: none; }
+
+  /* A Drive file or folder in a post (opslagstavle/_drive_widget.html): a card like a row of Drive's
+     list, the thumbnail or the type's icon, where it lives, a folder's first few files, and a warning
+     in the warn colours when not every resident may open it. Inside the rendered body, so the prose
+     styles of links, lists and images are undone here. */
+  .drive-embed { display: grid; gap: 10px; margin: 10px 0 0; padding: 14px; border: 1px solid var(--border);
+    border-radius: var(--radius); background: var(--surface); line-height: 1.35; }
+  .drive-embed-head { display: flex; align-items: center; gap: 12px; min-width: 0; color: var(--ink); }
+  .drive-embed a, .prose-gahk .drive-embed a { color: inherit; text-decoration: none; }
+  .drive-embed-icon { flex: none; display: grid; place-items: center; width: 56px; height: 56px; overflow: hidden;
+    border-radius: 8px; background: var(--sunken); }
+  .drive-embed-icon .ni { width: 28px; height: 28px; stroke: var(--brass); fill: none; }
+  .prose-gahk .drive-embed-icon img, .drive-embed-icon img { display: block; width: 100%; height: 100%;
+    max-width: none; margin: 0; border-radius: 0; object-fit: cover; }
+  .drive-embed-text { display: grid; gap: 2px; min-width: 0; }
+  .drive-embed-text > * { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .drive-embed-eyebrow { color: var(--brass-ink); font-size: 12px; font-weight: 600; }
+  .drive-embed-text strong { font-size: 16px; font-weight: 650; }
+  .drive-embed-meta { color: var(--muted); font-size: 13px; }
+  .prose-gahk .drive-embed-entries, .drive-embed-entries { display: grid; gap: 2px; margin: 0; padding: 0;
+    list-style: none; font-size: 14px; }
+  .prose-gahk .drive-embed-entries li { margin: 0; padding: 0; }
+  .drive-embed-entries a { display: flex; align-items: center; gap: 8px; min-width: 0; padding: 3px 0; }
+  .drive-embed-entries a span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .drive-embed-entries a:hover span, a.drive-embed-head:hover strong { text-decoration: underline; }
+  .drive-embed-entries .ni { flex: none; width: 17px; height: 17px; stroke: var(--brass); fill: none; }
+  .drive-embed-more, .prose-gahk .drive-embed-empty, .drive-embed-empty { margin: 0; color: var(--muted); font-size: 13px; }
+  .drive-embed-actions { display: flex; flex-wrap: wrap; gap: 16px; font-size: 14px; font-weight: 600; }
+  .drive-embed-actions a, .prose-gahk .drive-embed-actions a { color: var(--brass); }
+  .drive-embed-actions a:hover, .prose-gahk .drive-embed-actions a:hover { text-decoration: underline; }
+  .prose-gahk .drive-embed-warning, .drive-embed-warning { display: flex; align-items: flex-start; gap: 8px; margin: 0;
+    padding: 9px 11px; border: 1px solid var(--warn-line); border-radius: var(--radius-sm); background: var(--warn-bg);
+    color: var(--brass-ink); font-size: 13px; }
+  .drive-embed-warning .ni { flex: none; width: 16px; height: 16px; margin-top: 1px; stroke: currentColor; fill: none; }
+  .drive-embed.is-closed .drive-embed-icon .ni { stroke: var(--muted); }
+  /* In the composer, room for `Fjern` in the corner. */
+  .board-embed > .drive-embed { margin-top: 0; }
+  .board-embed > .drive-embed .drive-embed-head { padding-right: 70px; }
   .board-picker.is-gahkflix { background: #141414; color: #e5e5e5; }
   .board-picker.is-gahkflix .board-picker-head h2 { display: flex; align-items: baseline; gap: 10px;
     font-family: "Helvetica Neue", Helvetica, Arial, sans-serif; font-size: 18px; font-weight: 800; }

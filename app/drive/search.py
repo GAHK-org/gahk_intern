@@ -120,7 +120,7 @@ def search(viewer: Viewer, text: str, *, space: str = "", kind: str = "", period
     ]
     more = len(hits) > RESULTS
     hits = hits[:RESULTS]
-    _place(hits)
+    place(hits)
     return Results(hits, more)
 
 
@@ -133,7 +133,7 @@ def _above(hit: Hit) -> list[int]:
     return [int(part) for part in hit.file.folder.path.strip("/").split("/") if part]
 
 
-def _place(hits: list[Hit]) -> None:
+def place(hits: list[Hit]) -> None:
     """`Embedsgrupper / Regnskabsgruppen / 2026-27 Vinter` for each hit, from one query."""
     chains = [_above(hit) for hit in hits]
     names = dict(

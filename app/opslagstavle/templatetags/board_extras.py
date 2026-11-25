@@ -45,7 +45,8 @@ def markdown_text_only_filter(value: str | None, embeds: Mapping[str, str] | Non
 
 @register.simple_tag(takes_context=True)
 def board_share_url(context: dict[str, Any], obj: Model) -> str:
-    """ "Del på opslagstavlen" for an album or a film: the composer, with it embedded.
+    """ "Del på opslagstavlen" for an album, a film, or a Drive file or folder: the composer, with it
+    embedded.
 
     "" for a reader the board's rollout gate keeps out, so the album's and the film's pages never
     offer a button that answers 403.

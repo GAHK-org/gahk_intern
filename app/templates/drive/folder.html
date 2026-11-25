@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% load drive %}
+{% load board_extras drive %}
 {% block title %}{% if folder %}{{ folder.name }} - {% endif %}Drive - GAHK Intern{% endblock %}
 {% block content_width %}max-w-5xl{% endblock %}
 
@@ -21,6 +21,7 @@
       {% if space_root %}<a href="{% url 'drive:standing_manage' folder.uuid %}">Stående mapper</a>{% endif %}
       {% if standing_item %}<a href="{% url 'drive:standing' standing_item.uuid %}">{{ standing_item.all_name }}</a>{% endif %}
       <a href="{% url 'drive:folder_history' folder.uuid %}">Historik</a>
+      {% board_share_url folder as share_url %}{% if share_url %}<a href="{{ share_url }}">Del på opslagstavlen</a>{% endif %}
       {% if folder.parent_id %}
         <form method="post" action="{% url 'drive:request_zip' folder.uuid %}">
           {% csrf_token %}

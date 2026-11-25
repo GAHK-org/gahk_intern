@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% load board_extras %}
 {% block title %}{{ file.name }} - Drive - GAHK Intern{% endblock %}
 {% block content_width %}max-w-5xl{% endblock %}
 
@@ -72,6 +73,7 @@
       <a href="{% url 'drive:move' file.folder.uuid %}?op=move&{{ move_query }}">Flyt</a>
     {% endif %}
     {% if can_copy %}<a href="{% url 'drive:move' file.folder.uuid %}?op=copy&{{ move_query }}">Kopier</a>{% endif %}
+    {% board_share_url file as share_url %}{% if share_url %}<a href="{{ share_url }}">Del på opslagstavlen</a>{% endif %}
     {% if can_change %}
       <form method="post" action="{% url 'drive:delete' file.folder.uuid %}" data-drive-confirm="Læg „{{ file.name }}“ i papirkurven?">
         {% csrf_token %}

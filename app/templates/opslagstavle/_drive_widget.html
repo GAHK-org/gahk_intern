@@ -1,0 +1,61 @@
+{% comment %}
+  A post's Drive file or folder (opslagstavle.embeds, drive.embeds), drawn for its reader.
+
+  One who may open it gets a card like a row of Drive's own list: the thumbnail or the type's icon,
+  where it lives, a file's size and last change or a folder's file count and its first few files and
+  folders, and `Åbn i Drive →` (and `Hent` for a file). One who may not gets its name and a line
+  saying they have no access: nothing of where it lives or what is in it.
+
+  What not every resident may open carries a warning saying who can, for every reader. In the
+  composer (`compose`) the links open a new tab, so following one does not lose the draft.
+{% endcomment %}
+<div class="drive-embed{% if not widget.can_open %} is-closed{% endif %}">
+  {% if widget.can_open %}<a class="drive-embed-head" href="{{ widget.url }}"{% if compose %} target="_blank" rel="noopener"{% endif %}>{% else %}<div class="drive-embed-head">{% endif %}
+    <span class="drive-embed-icon">
+      {% if widget.thumbnail_url %}
+        <img src="{{ widget.thumbnail_url }}" alt="" loading="lazy" decoding="async" width="56" height="56">
+      {% else %}
+        <svg class="ni" aria-hidden="true"><use href="#i-{{ widget.icon }}"></use></svg>
+      {% endif %}
+    </span>
+    <span class="drive-embed-text">
+      <span class="drive-embed-eyebrow">Drive{% if widget.place %} · {{ widget.place }}{% endif %}</span>
+      <strong>{{ widget.name }}</strong>
+      {% if widget.file %}
+        <span class="drive-embed-meta">{{ widget.file.size|filesizeformat }} · ændret {{ widget.file.changed_at|date:"j. M Y" }}{% if widget.file.changed_by %} af {{ widget.file.changed_by.full_name }}{% endif %}</span>
+      {% elif widget.count is not None %}
+        <span class="drive-embed-meta">{{ widget.count }} fil{{ widget.count|pluralize:"er" }} · {{ widget.size|filesizeformat }}</span>
+      {% endif %}
+    </span>
+  {% if widget.can_open %}</a>{% else %}</div>{% endif %}
+
+  {% if widget.can_open and widget.is_folder %}
+    {% if widget.entries %}
+      <ul class="drive-embed-entries">
+        {% for entry in widget.entries %}
+          <li><a href="{{ entry.url }}"{% if compose %} target="_blank" rel="noopener"{% endif %}><svg class="ni" aria-hidden="true"><use href="#i-{{ entry.icon }}"></use></svg><span>{{ entry.name }}</span></a></li>
+        {% endfor %}
+        {% if widget.more %}<li class="drive-embed-more">og {{ widget.more }} mere</li>{% endif %}
+      </ul>
+    {% else %}
+      <p class="drive-embed-empty">Mappen er tom.</p>
+    {% endif %}
+  {% endif %}
+
+  {% if widget.can_open %}
+    <span class="drive-embed-actions">
+      <a href="{{ widget.url }}"{% if compose %} target="_blank" rel="noopener"{% endif %}>Åbn i Drive →</a>
+      {% if widget.download_url %}<a href="{{ widget.download_url }}">Hent</a>{% endif %}
+    </span>
+  {% endif %}
+
+  {% if not widget.can_open or widget.warning %}
+    <p class="drive-embed-warning" role="note">
+      <svg class="ni" aria-hidden="true"><use href="#i-lock"></use></svg>
+      <span>
+        <strong>{% if widget.can_open %}Ikke alle kan åbne denne{% else %}Du har ikke adgang til denne{% endif %} {% if widget.is_folder %}mappe{% else %}fil{% endif %}.</strong>
+        {{ widget.warning }}
+      </span>
+    </p>
+  {% endif %}
+</div>
