@@ -9,6 +9,7 @@ from django.core.management import call_command
 from audit import trail
 from audit.models import AuditEvent
 from den_hurtige.models import QuickPost
+from facilities.models import Booking, Status
 from oelkaelder.models import Shopper
 from residents.models import Resident, active_period
 from residents.permissions import real_roles
@@ -49,6 +50,10 @@ def test_seed_demo_populates_and_is_idempotent() -> None:
     missing = Resident.objects.filter(economic_account_number__isnull=True)
     assert missing.count() == 2
     assert all(r.residencies.filter(year=year, month=month).exists() for r in missing)
+
+    # Booking: a request waiting for approval, and one of the demo events holding Spisesalen.
+    assert Booking.objects.filter(status=Status.PENDING).exists()
+    assert Booking.objects.filter(event__isnull=False, facility__name="Spisesalen").exists()
 
     # Derived ølkælder balance is computable (no crash, integer øre).
     shopper = Shopper.objects.first()

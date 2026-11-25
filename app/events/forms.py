@@ -17,6 +17,7 @@ from django.conf import settings
 
 from core.clock import current_datetime
 from core.uploads import validate_image_upload
+from facilities import api as facilities_api
 from residents.models import Residency, Resident, active_period
 
 from .models import MIN_INVITEES, Event, EventComment, Visibility
@@ -78,6 +79,16 @@ class EventForm(forms.ModelForm):
         required=False,
         widget=forms.CheckboxSelectMultiple,
         label="Inviterede",
+    )
+    # Booked through facilities.api when the event is saved, and kept in step with it from then on:
+    # moving the event moves the booking, cancelling it frees the room. Its queryset is bound in
+    # __init__, like the invitees'.
+    facilities = forms.ModelMultipleChoiceField(
+        queryset=facilities_api.bookable_facilities(),
+        required=False,
+        widget=forms.CheckboxSelectMultiple,
+        label="Book lokaler",
+        help_text="Lokalet bookes til begivenhedens tidspunkt og følger med, hvis den flyttes eller aflyses.",
     )
 
     class Meta:
@@ -166,6 +177,17 @@ class EventForm(forms.ModelForm):
         self.fields["invitees"].queryset = invitable_residents(exclude=who)  # type: ignore[attr-defined]
         if self.instance.pk:
             self.fields["invitees"].initial = [i.resident_id for i in self.instance.invites.all()]
+        bookable = facilities_api.bookable_facilities(self.instance)
+        if bookable.exists():
+            self.fields["facilities"].queryset = bookable  # type: ignore[attr-defined]
+            self.fields["facilities"].initial = facilities_api.booked_facility_ids(self.instance)
+            # Beside the times it is booked for, rather than appended after the guest list.
+            order = list(self.fields)
+            order.remove("facilities")
+            order.insert(order.index("ends_at") + 1, "facilities")
+            self.order_fields(order)
+        else:
+            del self.fields["facilities"]  # nothing to book yet: no empty heading on the form
 
     def clean(self) -> dict:
         """The four-invitee minimum, on create and on edit alike.
@@ -183,6 +205,15 @@ class EventForm(forms.ModelForm):
                     f"Vælg mindst {MIN_INVITEES} beboere ud over dig selv, "
                     "eller gør begivenheden åben for alle.",
                 )
+        # Only when the times themselves are valid: their own errors say what is wrong with them.
+        if "starts_at" in cleaned and "ends_at" not in self.errors:
+            for problem in facilities_api.booking_problems(
+                list(cleaned.get("facilities") or []),
+                cleaned.get("starts_at"),
+                cleaned.get("ends_at"),
+                self.instance,
+            ):
+                self.add_error("facilities", problem)
         return cleaned
 
     def clean_image(self) -> object:

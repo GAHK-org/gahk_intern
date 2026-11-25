@@ -629,6 +629,34 @@ erDiagram
         datetime last_used_at
     }
 
+    facilities_Facility {
+        int id PK
+        string name
+        text description
+        int capacity
+        bool requires_approval
+        bool is_active
+        datetime created_at
+    }
+
+    facilities_Booking {
+        int id PK
+        int facility_id FK
+        int booked_by_id FK
+        datetime starts_at
+        datetime ends_at
+        string purpose
+        bool purpose_public
+        int event_id FK
+        string status
+        datetime created_at
+        int decided_by_id FK
+        datetime decided_at
+        string decision_note
+        int cancelled_by_id FK
+        datetime cancelled_at
+    }
+
     reparationer_RepairTask {
         int id PK
         string title
@@ -1085,6 +1113,11 @@ erDiagram
     events_EventComment }o--|| events_Event : "event"
     events_EventComment }o--|| residents_Resident : "author"
     events_CalendarFeedToken ||--|| residents_Resident : "resident"
+    facilities_Booking }o--|| facilities_Facility : "facility"
+    facilities_Booking }o--|| residents_Resident : "booked_by"
+    facilities_Booking }o--|o events_Event : "event"
+    facilities_Booking }o--|o residents_Resident : "decided_by"
+    facilities_Booking }o--|o residents_Resident : "cancelled_by"
     reparationer_RepairTask }o--|| residents_Resident : "reported_by"
     reparationer_RepairComment }o--|| reparationer_RepairTask : "task"
     reparationer_RepairComment }o--|| residents_Resident : "author"
@@ -1598,6 +1631,49 @@ erDiagram
     events_EventComment }o--|| events_Event : "event"
     events_EventComment }o--|| residents_Resident : "author"
     events_CalendarFeedToken ||--|| residents_Resident : "resident"
+```
+
+## facilities
+
+```mermaid
+erDiagram
+    facilities_Facility {
+        int id PK
+        string name
+        text description
+        int capacity
+        bool requires_approval
+        bool is_active
+        datetime created_at
+    }
+
+    facilities_Booking {
+        int id PK
+        int facility_id FK
+        int booked_by_id FK
+        datetime starts_at
+        datetime ends_at
+        string purpose
+        bool purpose_public
+        int event_id FK
+        string status
+        datetime created_at
+        int decided_by_id FK
+        datetime decided_at
+        string decision_note
+        int cancelled_by_id FK
+        datetime cancelled_at
+    }
+
+    events_Event { }
+
+    residents_Resident { }
+
+    facilities_Booking }o--|| facilities_Facility : "facility"
+    facilities_Booking }o--|| residents_Resident : "booked_by"
+    facilities_Booking }o--|o events_Event : "event"
+    facilities_Booking }o--|o residents_Resident : "decided_by"
+    facilities_Booking }o--|o residents_Resident : "cancelled_by"
 ```
 
 ## gahkflix

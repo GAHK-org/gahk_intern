@@ -1,0 +1,67 @@
+{% extends "base.html" %}
+{% block title %}Booking - GAHK Intern{% endblock %}
+{% block content_width %}max-w-3xl{% endblock %}
+
+{% block content %}
+  <div class="page-head">
+    <div>
+      <p class="eyebrow">Kollegiet</p>
+      <h1>Booking</h1>
+    </div>
+    <div class="head-actions">
+      <a class="btn btn-secondary" href="{% url 'facilities:mine' %}">Mine bookinger</a>
+      {% if is_manager %}
+        <a class="btn btn-secondary" href="{% url 'facilities:requests' %}">
+          Anmodninger{% if pending_count %} <span class="chip chip-brass">{{ pending_count }}</span>{% endif %}
+        </a>
+        <a class="btn" href="{% url 'facilities:create' %}">Ny facilitet</a>
+      {% endif %}
+    </div>
+  </div>
+
+  <p class="muted facility-intro">
+    Book et lokale til noget privat her. Skal det bruges til en begivenhed, så vælg lokalet på
+    begivenheden, så følger bookingen med, hvis den flyttes eller aflyses.
+  </p>
+
+  {% if my_bookings %}
+    <section class="card-flat facility-section">
+      <div class="card-head"><h2>Dine næste bookinger</h2><a href="{% url 'facilities:mine' %}">Se alle</a></div>
+      <div class="booking-list">
+        {% for booking in my_bookings %}{% include "facilities/_booking_row.html" with show_facility=True %}{% endfor %}
+      </div>
+    </section>
+  {% endif %}
+
+  <div class="facility-grid">
+    {% for facility in facilities %}
+      <a class="facility-card card-flat" href="{% url 'facilities:facility' facility.pk %}">
+        <div class="facility-card-head">
+          <strong>{{ facility.name }}</strong>
+          {% if facility.requires_approval %}<span class="chip chip-quiet">Kræver godkendelse</span>{% endif %}
+        </div>
+        {% if facility.capacity %}<span class="muted">Op til {{ facility.capacity }} personer</span>{% endif %}
+        {% if facility.current %}
+          <span class="facility-now is-busy">Optaget til {{ facility.current.ends_at|date:"H.i" }}{% if facility.current.ends_at|date:"Ymd" != facility.current.starts_at|date:"Ymd" %} {{ facility.current.ends_at|date:"j. M" }}{% endif %} &middot; {{ facility.current.booked_by.full_name }}</span>
+        {% else %}
+          <span class="facility-now is-free">Ledig nu</span>
+        {% endif %}
+        {% if facility.next %}
+          <span class="muted facility-next">Næste: {{ facility.next.starts_at|date:"D j. M H.i" }}</span>
+        {% endif %}
+      </a>
+    {% empty %}
+      <div class="card-flat card-pad facility-empty">
+        <p><strong>Der er ingen faciliteter at booke endnu.</strong></p>
+        <p class="muted">Inspektionen opretter dem.</p>
+      </div>
+    {% endfor %}
+  </div>
+
+  {% if retired %}
+    <section class="facility-retired">
+      <h2 class="muted">Kan ikke bookes</h2>
+      <p>{% for facility in retired %}<a href="{% url 'facilities:facility' facility.pk %}">{{ facility.name }}</a>{% if not forloop.last %}, {% endif %}{% endfor %}</p>
+    </section>
+  {% endif %}
+{% endblock %}

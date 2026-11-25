@@ -1,0 +1,3 @@
+{% if booking.status == "pending" %}<span class="chip chip-brass">Afventer godkendelse</span>
+{% elif booking.status == "rejected" %}<span class="chip chip-neg">Afvist</span>
+{% elif booking.status == "cancelled" %}<span class="chip chip-neutral">Aflyst</span>{% endif %}

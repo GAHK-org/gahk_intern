@@ -50,6 +50,8 @@ from den_hurtige.demo import seed as seed_den_hurtige
 from den_hurtige.models import QuickComment, QuickPost, QuickReaction
 from events.demo import seed as seed_events
 from events.models import CalendarFeedToken, Event, EventInvite, Rsvp
+from facilities.demo import seed as seed_facilities
+from facilities.models import Booking, Facility
 from gahkflix.demo import seed as seed_gahkflix
 from gahkflix.models import ChangeRequest as GahkflixRequest
 from gahkflix.models import Series as GahkflixSeries
@@ -128,6 +130,9 @@ ROOM_CRITERIA = [
 
 # Deletion order: children before parents so PROTECT FKs don't block the wipe.
 WIPE_ORDER: list[type[models.Model]] = [
+    # Before Resident and Event: a booking PROTECTs its booker and its facility.
+    Booking,
+    Facility,
     Rsvp,
     EventInvite,
     CalendarFeedToken,
@@ -247,6 +252,8 @@ class Command(BaseCommand):
         self._seed_stats()
         seed_opslagstavle(residents, self.now, self.rng)
         seed_events(residents, self.now, self.rng)
+        # After the events: one of them has booked Spisesalen.
+        seed_facilities(residents, self.now, self.rng)
         seed_photo_album(residents, self.now, self.rng)
         seed_gahkflix(residents, self.now, self.rng)
         # After both: these posts embed an album and a film seeded just above.

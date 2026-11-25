@@ -1399,8 +1399,8 @@
   .event-field ul label { display: flex; align-items: center; gap: 10px; margin: 0;
     border: 1px solid var(--border-strong); border-radius: 9px; padding: 12px 13px;
     background: var(--surface); font-weight: 600; font-size: 14.5px; cursor: pointer; }
-  .event-field ul input[type="radio"] { width: auto; margin: 0; accent-color: var(--green);
-    width: 18px; height: 18px; flex: none; }
+  .event-field ul input[type="radio"], .event-field ul input[type="checkbox"] { width: auto; margin: 0;
+    accent-color: var(--green); width: 18px; height: 18px; flex: none; }
   .event-field ul label:has(input:checked) { border-color: var(--green); background: var(--green-050);
     color: var(--green-700); }
 
@@ -1577,6 +1577,68 @@
   .event-help { font-size: 12px; margin: 5px 0 0; }
   .event-form-actions { display: flex; gap: 10px; align-items: center; margin-top: 14px; }
   .pager { display: flex; align-items: center; gap: 12px; margin-top: 16px; }
+
+  /* ---- Booking (app/facilities): facilities, their week, and bookings ----------------------------
+     Forms reuse .event-form/.event-field, facts reuse .event-facts. A day is a 24-hour SVG bar (its
+     blocks are SVG attributes, never inline styles) above a list carrying the same facts in words. */
+  .facility-intro { font-size: 14px; margin: -6px 0 16px; }
+  .facility-section { margin-bottom: 16px; }
+  .facility-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 10px; }
+  .facility-card { display: flex; flex-direction: column; gap: 5px; padding: 14px 16px; text-decoration: none;
+    color: var(--ink); font-size: 13.5px; }
+  .facility-card:hover { border-color: var(--green-100); }
+  .facility-card-head { display: flex; align-items: center; justify-content: space-between; gap: 8px;
+    font-size: 15.5px; }
+  .facility-now { font-weight: 600; }
+  .facility-now.is-free { color: var(--pos); }
+  .facility-now.is-busy { color: var(--brass-ink); }
+  .facility-next { font-size: 12.5px; }
+  .facility-empty { grid-column: 1 / -1; text-align: center; }
+  .facility-retired { margin-top: 20px; font-size: 14px; }
+  .facility-retired h2 { font-size: 12px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; margin: 0 0 4px; }
+  .facility-about { margin-bottom: 14px; font-size: 14.5px; }
+  .facility-about p { margin: 0 0 6px; }
+  .facility-about p:last-child { margin-bottom: 0; }
+  .facility-note { margin-bottom: 12px; font-size: 14px; background: var(--warn-bg); border-color: var(--warn-line); }
+  .facility-week-nav { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
+  .facility-week-nav .btn { padding: 7px 9px; }
+  .facility-week-nav a:not(.btn) { font-size: 13px; font-weight: 600; color: var(--green-700); }
+  .facility-day { padding: 12px 16px; border-bottom: 1px solid var(--border); }
+  .facility-day:last-child { border-bottom: 0; }
+  .facility-day.is-today { background: var(--green-050); }
+  .facility-day.is-past { opacity: .6; }
+  .facility-day-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+  .facility-day-head h2 { font-size: 14px; font-weight: 700; margin: 0 0 6px; }
+  .facility-bar { display: block; width: 100%; height: 18px; border-radius: 5px; background: var(--sunken); }
+  .facility-tick { stroke: var(--border-strong); stroke-width: 1; vector-effect: non-scaling-stroke; }
+  .facility-block { fill: var(--faint); }
+  .facility-block.is-mine { fill: var(--green); }
+  .facility-block.is-pending { fill: var(--brass); }
+  .facility-hours { display: flex; justify-content: space-between; font-size: 10.5px; margin-top: 2px; }
+  .facility-day-list { list-style: none; margin: 6px 0 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
+  .facility-day-list a { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; font-size: 13.5px;
+    color: var(--ink); text-decoration: none; padding: 3px 0; }
+  .facility-day-list a:hover span:nth-child(2) { text-decoration: underline; }
+  .facility-free { font-size: 13px; margin: 6px 0 0; }
+  .facility-check > label { display: flex; align-items: center; gap: 9px; }
+  .facility-check input { width: 18px; height: 18px; accent-color: var(--green); }
+  .booking-list { display: flex; flex-direction: column; }
+  .booking-row { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; padding: 10px 16px;
+    border-bottom: 1px solid var(--border); color: var(--ink); text-decoration: none; font-size: 14px; }
+  .booking-row:last-child { border-bottom: 0; }
+  .booking-row:hover { background: var(--surface-2); }
+  .booking-when { font-variant-numeric: tabular-nums; font-weight: 600; white-space: nowrap; }
+  .booking-what { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; }
+  .booking-status { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 0; font-size: 13.5px; }
+  .booking-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-top: 12px; }
+  .booking-actions form { margin: 0; }
+  .booking-reject { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; flex: 1; min-width: 0; }
+  .booking-reject input, .booking-cancel input { flex: 1 1 200px; min-width: 0; max-width: 320px; }
+  .booking-requests { display: flex; flex-direction: column; gap: 10px; }
+  .booking-request { padding: 0 0 12px; }
+  .booking-request .booking-row { border-bottom: 0; }
+  .booking-request .booking-actions { margin: 0; padding: 0 16px; }
+  .event-bookings { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
 
   /* ---- Opslagstavlen (the noticeboard) --------------------------------------------------------
      Reuses .card-flat/.chip/.btn/.push-bar and, for the reaction row and comment replies, the

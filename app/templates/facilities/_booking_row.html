@@ -1,0 +1,12 @@
+{% comment %}One booking in a list. `show_facility` names the facility (on lists spanning several).{% endcomment %}
+<a class="booking-row" href="{% url 'facilities:booking' booking.pk %}">
+  <span class="booking-when">
+    {{ booking.starts_at|date:"D j. M" }}, {{ booking.starts_at|date:"H.i" }}&ndash;{% if booking.starts_at|date:"Ymd" != booking.ends_at|date:"Ymd" %}{{ booking.ends_at|date:"D j. M" }}, {% endif %}{{ booking.ends_at|date:"H.i" }}
+  </span>
+  <span class="booking-what">
+    {% if show_facility %}<strong>{{ booking.facility }}</strong>{% endif %}
+    {% if booking.shown_purpose %}<span>{{ booking.shown_purpose }}</span>{% endif %}
+    {% if not booking.is_mine %}<span class="muted">{{ booking.booked_by.full_name }}</span>{% endif %}
+    {% include "facilities/_status.html" %}
+  </span>
+</a>

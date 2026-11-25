@@ -1,0 +1,27 @@
+{% extends "base.html" %}
+{% block title %}Book {{ facility.name }} - GAHK Intern{% endblock %}
+{% block content_width %}max-w-3xl{% endblock %}
+
+{% block content %}
+  <div class="page-head">
+    <div>
+      <p class="eyebrow"><a href="{% url 'facilities:facility' facility.pk %}">{{ facility.name }}</a></p>
+      <h1>Book {{ facility.name }}</h1>
+    </div>
+  </div>
+
+  {% if facility.requires_approval %}
+    <p class="card-flat card-pad facility-note">Inspektionen skal godkende bookinger af {{ facility.name }}. Tiden er din, mens du venter på svar.</p>
+  {% endif %}
+
+  <form method="post" class="event-form card-flat card-pad">
+    {% csrf_token %}
+    {% if form.non_field_errors %}<div class="form-errors">{{ form.non_field_errors }}</div>{% endif %}
+    {% for field in form %}{% include "facilities/_field.html" %}{% endfor %}
+    <p class="muted event-help">Er det til en begivenhed? Så vælg lokalet på <a href="{% url 'events:create' %}">begivenheden</a> i stedet, så følger bookingen med.</p>
+    <div class="event-form-actions">
+      <button type="submit" class="btn">Book</button>
+      <a class="btn btn-secondary" href="{% url 'facilities:facility' facility.pk %}">Annullér</a>
+    </div>
+  </form>
+{% endblock %}

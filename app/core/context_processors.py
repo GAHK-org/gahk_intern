@@ -82,6 +82,8 @@ def _nav_intern(roles: Collection[str], user_pk: int) -> list[NavSection]:
     # manages the board once inside — see reparationer.views.MANAGE_ROLES.
     vaerktoejer: list[NavItem] = [
         (reverse("reparationer:board"), "Reparationer", "wrench"),
+        # Open to every resident: anyone may book Festsalen or the guest room (facilities.access).
+        (reverse("facilities:index"), "Booking", "key"),
     ]
     administration: list[NavItem] = []
     if "indstilling" in roles:

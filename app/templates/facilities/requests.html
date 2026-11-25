@@ -1,0 +1,34 @@
+{% extends "base.html" %}
+{% block title %}Anmodninger - Booking - GAHK Intern{% endblock %}
+{% block content_width %}max-w-3xl{% endblock %}
+
+{% block content %}
+  <div class="page-head">
+    <div>
+      <p class="eyebrow"><a href="{% url 'facilities:index' %}">Booking</a></p>
+      <h1>Anmodninger</h1>
+    </div>
+  </div>
+
+  <div class="booking-requests">
+    {% for booking in pending %}
+      <article class="card-flat card-pad booking-request">
+        {% include "facilities/_booking_row.html" with show_facility=True %}
+        <div class="booking-actions">
+          <form method="post" action="{% url 'facilities:approve' booking.pk %}">
+            {% csrf_token %}<input type="hidden" name="next" value="requests">
+            <button type="submit" class="btn">Godkend</button>
+          </form>
+          <form method="post" action="{% url 'facilities:reject' booking.pk %}" class="booking-reject">
+            {% csrf_token %}<input type="hidden" name="next" value="requests">
+            <label for="note-{{ booking.pk }}" class="sr-only">Begrundelse</label>
+            <input id="note-{{ booking.pk }}" name="note" maxlength="200" placeholder="Begrundelse (valgfri)">
+            <button type="submit" class="btn btn-danger">Afvis</button>
+          </form>
+        </div>
+      </article>
+    {% empty %}
+      <div class="card-flat card-pad facility-empty"><p class="muted">Ingen bookinger venter på godkendelse.</p></div>
+    {% endfor %}
+  </div>
+{% endblock %}

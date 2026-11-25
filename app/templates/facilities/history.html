@@ -1,0 +1,20 @@
+{% extends "base.html" %}
+{% block title %}Historik for {{ facility.name }} - GAHK Intern{% endblock %}
+{% block content_width %}max-w-3xl{% endblock %}
+
+{% block content %}
+  <div class="page-head">
+    <div>
+      <p class="eyebrow"><a href="{% url 'facilities:facility' facility.pk %}">{{ facility.name }}</a></p>
+      <h1>Historik</h1>
+    </div>
+  </div>
+  <p class="muted facility-intro">Alle bookinger af {{ facility.name }}, nyeste først — også aflyste og afviste.</p>
+  <section class="card-flat facility-section">
+    <div class="booking-list">
+      {% for booking in page_obj %}{% include "facilities/_booking_row.html" %}
+      {% empty %}<p class="muted card-pad">{{ facility.name }} har ikke været booket endnu.</p>{% endfor %}
+    </div>
+  </section>
+  {% include "facilities/_pager.html" %}
+{% endblock %}

@@ -38,7 +38,7 @@ from typing import Any
 
 from django.conf import settings
 from django.db import models
-from django.db.models.signals import post_delete
+from django.db.models.signals import post_delete, pre_delete
 from django.dispatch import receiver
 
 from core.clock import current_datetime
@@ -486,6 +486,20 @@ class CalendarFeedToken(models.Model):
         self.rotated_at = current_datetime()
         self.save(update_fields=["token", "rotated_at"])
         return self.token
+
+
+@receiver(pre_delete, sender=Event)
+def _release_facilities(sender: type[models.Model], instance: Event, **kwargs: Any) -> None:  # noqa: ANN401
+    """Free the rooms an event still holds, whatever deletes it — the admin as much as the views.
+
+    The views release first themselves (so the trail names who did it); this is the backstop. For the
+    retention purge it finds nothing: a held event's bookings are over, and a cancelled one's were
+    released when it was cancelled. Imported here, not at the top: facilities' models point back at
+    this one by name.
+    """
+    from facilities import api as facilities_api
+
+    facilities_api.release_event_bookings(instance, by=None)
 
 
 @receiver(post_delete, sender=EventComment)

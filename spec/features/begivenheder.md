@@ -244,6 +244,12 @@ beside the desktop chips.
 The previous phone rendering scrolled the grid sideways at 660px wide, which showed three days at a
 time — no month at all, which is the one thing a month view is for.
 
+## Rooms (Booking)
+
+The form's **Book lokaler** books facilities for the event's time, and the bookings follow the event:
+moved, renamed, unticked, cancelled or deleted alike. The event page lists them with their status.
+Everything about bookings lives in `spec/features/booking.md`.
+
 ## Linked from opslagstavlen
 
 `opslagstavle.Notice.event` points a post at an event, and the event page lists the posts about it
