@@ -18,6 +18,21 @@
       </div>
     </div>
 
+  {% elif is_over %}
+    {% comment %}
+      Held. An open event is kept, so this is how it reads from then on — for years, and after five
+      of them without the list (Event.attendee_count is what is left).
+    {% endcomment %}
+    <div class="rsvp-locked">
+      <svg class="ni" aria-hidden="true"><use href="#i-calendar"></use></svg>
+      <div>
+        <strong>Begivenheden er afholdt.</strong>
+        {% if event.attendee_count is not None %}
+          <p class="muted">Deltagerlisten er slettet, fem år efter.</p>
+        {% endif %}
+      </div>
+    </div>
+
   {% elif locked %}
     {% comment %}
       The buttons are REMOVED, not disabled. A greyed-out button with a live POST target behind it
@@ -74,9 +89,14 @@
   {% endif %}
 
   <div class="rsvp-counts">
-    <strong>{{ seated_count }} kommer</strong>
-    {% if waitlist_count %}<span class="muted">· {{ waitlist_count }} på venteliste</span>{% endif %}
-    {% if declined_count %}<span class="muted">· {{ declined_count }} kan ikke</span>{% endif %}
+    {% if is_over %}
+      {# "var tilmeldt", not "deltog": the list records who said ja and held a seat, not who came. #}
+      <strong>{% if event.attendee_count is not None %}{{ event.attendee_count }}{% else %}{{ seated_count }}{% endif %} var tilmeldt</strong>
+    {% else %}
+      <strong>{{ seated_count }} kommer</strong>
+      {% if waitlist_count %}<span class="muted">· {{ waitlist_count }} på venteliste</span>{% endif %}
+      {% if declined_count %}<span class="muted">· {{ declined_count }} kan ikke</span>{% endif %}
+    {% endif %}
   </div>
 
   {% if seated %}
@@ -98,7 +118,7 @@
     </ul>
   {% endif %}
 
-  {% if waitlist %}
+  {% if waitlist and not is_over %}
     {% comment %}
       The queue is public, and numbered. Seating is decided purely by the order people answered in
       (services.seated), so showing the order is showing the rule — and someone who is told they are

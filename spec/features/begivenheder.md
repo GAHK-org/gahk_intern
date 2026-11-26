@@ -87,7 +87,7 @@ Mounted at `/begivenheder/`, namespaced `events:`. Fixed segments come **before*
 so they are never read as an id.
 
 ```
-""                       index          GET       upcoming only — there is no archive
+""                       index          GET       upcoming only — past events via the calendar
 "opret"                  create         GET/POST
 "abonner"                save_subscription  POST  push consent for the `events` topic
 "kalender"               calendar       GET       month grid; ?maaned=, ?dag=
@@ -262,38 +262,32 @@ argument — `SET_NULL`, the string reference, the second visibility check — l
 
 ## Retention
 
-**The shortest in the app**, and it shapes the feature more than it looks.
+Split by who the data is about. The event is the house's history; the guest list is about named
+people.
 
-| | Deleted |
+| | What happens |
 | --- | --- |
-| Held | 7 days after `ends_at`, or after `starts_at` if there is no end |
-| Aflyst | 30 days after `cancelled_at` |
+| Open, held | **Kept.** 5 years after `ends_at` (or `starts_at`) its RSVPs and invites are deleted and only the number who held a seat is kept |
+| Kun inviterede, held | Deleted 7 days after `ends_at` (or `starts_at`) |
+| Aflyst | Deleted 30 days after `cancelled_at` |
 
-**A week, widened from the day this shipped with.** A day covered the question people ask the
-morning after — "var det i går?" — and nothing else. It missed everything on the scale the house
-actually runs on: somebody back from a weekend away wanting to know what they missed, an organiser
-checking the guest list before settling up, and the calendar feed, where an event you had said ja to
-vanished from your own calendar the next day rather than staying where you could see what the week
-held. A week is still a tail rather than a record; if it ever grows past a month, that is the point
-to admit an archive is being built and design one on purpose.
+- Comments and the picture stay with an open event; they go with an invite-only or cancelled one.
+- A held event's page says **"Begivenheden er afholdt"** and **"N var tilmeldt"** — not "deltog",
+  since the list records who said ja and held a seat, not who came. The venteliste is not shown.
+  Once the list is gone the page says so.
+- The list view shows only what is coming up. **Past events are reached through the month
+  calendar**, which goes back as far as there are events.
+- A held event **cannot be aflyst** (a cancelled event is deleted 30 days later, so that would be a
+  way to erase it), **cannot change visibility** (switching an old open event to private would
+  delete it), and **cannot be deleted** once its stored count says anyone came.
+- The subscribed `.ics` feed still reaches back 90 days, so an open event leaves people's calendars
+  then and stays on the site.
 
-A cancelled event gets its own, longer clock because it never happens — the first rule would either
-purge it the moment its start passed or hold it to a date that no longer means anything. Thirty days is what gives every subscribed calendar time
-to poll and pick up `STATUS:CANCELLED`.
-
-Consequences to build around rather than bolt on: **there is no past-events archive**, so the list
-view is only ever "what is coming up" — no history pagination, no year filter, no "tidligere
-begivenheder" tab. The calendar view is forward-looking for the same reason.
-
-The obvious objection, answered: RSVPs are deleted with the event, so **there is no record of who
-came to anything**. That is deliberate and matches the promise. If the house wants a record, that is
-opslagstavlen's job.
-
-Mechanics: `manage.py purge_events` nightly (DEPLOY.md §4b) **plus** a lazy purge on the list view.
-Both, unlike opslagstavlen. Nothing about a missed sweep shows on the list — that only ever displays
-what is coming up — but a held event stays in every subscriber's `.ics` until it is deleted, so a
-cron that has silently stopped leaves last month's dinners sitting in people's calendars. Images go with the row through the `post_delete` receiver, which
-is a signal precisely because a bulk queryset delete never calls `Model.delete()`.
+Mechanics: `manage.py purge_events` nightly (DEPLOY.md §4b) **plus** a lazy run on the list view.
+A held invite-only event stays in every invitee's `.ics` until it is deleted, so a cron that has
+silently stopped would leave last month's dinners in people's calendars. Images go with the row
+through the `post_delete` receiver, which is a signal precisely because a bulk queryset delete never
+calls `Model.delete()`.
 
 ## Aflys, not delete
 
@@ -401,7 +395,9 @@ phones polling hourly would otherwise turn a read endpoint into a write storm.
 | Derived queue position | A stored `position`. Every withdrawal would rewrite every row behind it, and a trustworthy version needs a partial unique constraint whose shuffle-down UPDATE collides with itself — fixable only with `DEFERRABLE`, which Postgres has and SQLite does not. |
 | Deadline closes at `starts_at` when unset | "Open forever". A ja arriving after the party keeps mutating an attendee list and every subscriber's `.ics`. |
 | Aflys, keeping the row 30 days | Hard delete. Nothing is left to emit `STATUS:CANCELLED` from, so the event sits in people's calendars forever. |
-| No archive | Keeping events, with a "tidligere" tab. Retention is the shape the list and calendar are built around, not a policy bolted on afterwards. |
+| Open events kept, guest lists 5 years | Deleting every event a week after it is held (the original rule). The house lost the record of what it did, and the comments and photos with it. Keeping the guest list forever lost too: "who said ja to which party" about people long moved out has no purpose that outlasts a few years. |
+| Invite-only events still a week | Keeping them like open ones. A private dinner list is the record nobody signed up for. |
+| Past events via the calendar | A "tidligere" tab with a year filter. The month grid already goes back, and a month is how people remember a party. Worth revisiting if the calendar turns out to be the wrong way in. |
 | Moderators cannot see private events | "Inspektionen sees everything". It falsifies the one promise a private event makes. The admin is the escape hatch. |
 | Subqueries in `visible_to` | `Q(invites__resident=r)` joins. An event you are both co-organiser of and invited to comes back twice — a duplicate card, and two VEVENTs sharing one UID, which some clients resolve by dropping both. `.distinct()` patches it and silently stops being enough the moment anyone adds an `annotate(Count(...))`. |
 | Hand-rolled iCalendar | A library. CI runs `pip-audit` over a frozen lockfile; `core/push.py` made the same call for the same reason. |

@@ -594,6 +594,7 @@ erDiagram
         datetime edited_at
         datetime cancelled_at
         datetime reminder_sent_at
+        int attendee_count
     }
 
     events_EventInvite {
@@ -1554,6 +1555,7 @@ erDiagram
         datetime edited_at
         datetime cancelled_at
         datetime reminder_sent_at
+        int attendee_count
     }
 
     events_EventInvite {

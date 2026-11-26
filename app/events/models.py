@@ -15,8 +15,9 @@ So the three features divide like this, and each docstring says so on purpose:
   * **Den Hurtige** — minutes to hours. "Kaffe om ti minutter." Hard-deleted on expiry.
   * **Opslagstavlen** — weeks to forever. An announcement *about* something, with comments and
     reactions. No retention: the board is the kollegium's archive.
-  * **Begivenheder** — this. A thing with a time, that you answer yes or no to. Gone a week after
-    it is held (see EventQuerySet.expired).
+  * **Begivenheder** — this. A thing with a time, that you answer yes or no to. An open event is
+    kept as the house's record of what happened; an invite-only one goes a week after it is held
+    (see EventQuerySet.expired).
 
 Announce on opslagstavlen; sign up here. Nothing stops someone doing both, and that is fine.
 
@@ -25,11 +26,14 @@ the *public* marketing model behind /begivenheder/ (developer-edited, a DateFiel
 and `opslagstavle.Category.BEGIVENHED` is an announcement about an event. This is the internal one
 with the guest list. Import the CMS one as `CmsEvent` anywhere both appear.
 
-RETENTION IS THE SHORTEST IN THE APP and it shapes the feature more than it looks: an event is
-deleted a week after it ends, so there is no archive, and therefore no history pagination, no year
-filter and no "tidligere begivenheder" tab to build. The obvious objection is worth answering here
-rather than in review: RSVPs go with the event, so there is no record of who came to anything. That
-is deliberate. If the house wants a record, that is opslagstavlen's job.
+RETENTION IS SPLIT BY WHO THE DATA IS ABOUT. The event itself — title, time, place, description,
+picture, comments — is the house's history, so an open event is never deleted. The guest list is
+about named people, so it does not get "forever": RSVPs and invites go five years after the event,
+and the number that were coming is kept on the row (Event.attendee_count). An invite-only event is
+the house's business only in a narrow sense — a private dinner list is exactly the record nobody
+signed up for — so it keeps the old one-week tail and then goes entirely. A cancelled event never
+happened, so it is not history either: thirty days, then gone.
+
 """
 
 import datetime
@@ -37,14 +41,14 @@ import secrets
 from typing import Any
 
 from django.conf import settings
-from django.db import models
+from django.db import models, transaction
 from django.db.models.signals import post_delete
 from django.dispatch import receiver
 
 from core.clock import current_datetime
 from core.files import delete_attached_files
 
-# How long an event outlives itself.
+# How long an INVITE-ONLY event outlives itself. An open one is kept (see the module docstring).
 #
 # A WEEK, widened from the day this shipped with. A day covered the question people ask the morning
 # after — "var det i går?" — and nothing else. It missed everything on the scale the house actually
@@ -52,13 +56,15 @@ from core.files import delete_attached_files
 # checking the guest list before settling up, and the calendar feed, where an event you said ja to
 # vanished from your own calendar the next day rather than staying where you could see what the
 # week held.
-#
-# Still short enough that the shape holds: no archive, no history pagination, no "tidligere
-# begivenheder" tab. A week is a tail, not a record. If this ever grows past a month, that is the
-# point to admit an archive is being built and design one on purpose.
-RETENTION_AFTER_END = datetime.timedelta(days=7)
+PRIVATE_RETENTION_AFTER_END = datetime.timedelta(days=7)
 
-# A cancelled event gets its own, longer clock. It never happens, so RETENTION_AFTER_END would
+# How long an open event's guest list (RSVPs and invites) outlives the event. Five years, leap days
+# included: long enough to answer "hvem var med til sommerfesten for et par år siden?", short of
+# keeping who said ja to which party about people who have long since moved out. The same horizon
+# as the audit trail's longest retention.
+ATTENDANCE_RETENTION = datetime.timedelta(days=5 * 365 + 1)
+
+# A cancelled event gets its own, longer clock. It never happens, so PRIVATE_RETENTION_AFTER_END would
 # either purge it the moment its start passed or hold it to a date that no longer means anything.
 # Thirty days is what gives every subscribed calendar time to poll and pick up STATUS:CANCELLED;
 # purging sooner leaves the event sitting in people's calendars with no way left to retract it.
@@ -133,26 +139,62 @@ def _ended_before(moment: datetime.datetime) -> models.Q:
 
 class EventQuerySet(models.QuerySet["Event"]):
     def upcoming(self, now: datetime.datetime | None = None) -> "EventQuerySet":
-        """Not yet finished. The list view's whole world — see the retention note above."""
+        """Not yet finished. The list view's whole world."""
         return self.exclude(_ended_before(now or current_datetime())).order_by("starts_at")
 
     def expired(self, now: datetime.datetime | None = None) -> "EventQuerySet":
-        """Past retention: held and a day gone, or cancelled and a month gone.
+        """Past retention: invite-only and a week gone, or cancelled and a month gone.
 
-        Two clocks, because a cancelled event never happens (see CANCELLED_GRACE).
+        An open event that was held never expires (see the module docstring). Two clocks for the
+        rest, because a cancelled event never happens (see CANCELLED_GRACE).
         """
         moment = now or current_datetime()
-        held_and_done = models.Q(cancelled_at__isnull=True) & _ended_before(moment - RETENTION_AFTER_END)
-        return self.filter(held_and_done | models.Q(cancelled_at__lt=moment - CANCELLED_GRACE))
+        private_and_done = models.Q(
+            cancelled_at__isnull=True, visibility=Visibility.KUN_INVITEREDE
+        ) & _ended_before(moment - PRIVATE_RETENTION_AFTER_END)
+        return self.filter(private_and_done | models.Q(cancelled_at__lt=moment - CANCELLED_GRACE))
+
+    def attendance_expired(self, now: datetime.datetime | None = None) -> "EventQuerySet":
+        """Kept events whose guest list is past ATTENDANCE_RETENTION and not yet forgotten.
+
+        `attendee_count__isnull=True` is what makes forgetting run once per event: the count is
+        written in the same transaction that deletes the rows it was counted from.
+        """
+        moment = now or current_datetime()
+        return self.filter(
+            _ended_before(moment - ATTENDANCE_RETENTION),
+            cancelled_at__isnull=True,
+            visibility=Visibility.AABENT,
+            attendee_count__isnull=True,
+        )
 
     def purge_expired(self, now: datetime.datetime | None = None) -> int:
-        """Delete what retention is done with. Returns the number of events removed.
+        """Apply retention: delete expired events, forget old guest lists. Returns events deleted.
 
         Attached images go with the rows through the post_delete receiver below — which is a signal
         precisely because this is a bulk delete and never calls Model.delete().
         """
-        deleted, _ = self.expired(now).delete()
-        return deleted
+        _, per_model = self.expired(now).delete()
+        self.forget_attendance(now)
+        return per_model.get(Event._meta.label, 0)
+
+    def forget_attendance(self, now: datetime.datetime | None = None) -> int:
+        """Replace each old guest list by its size. Returns the number of events done.
+
+        The count is who held a seat — the first `capacity` ja answers, as services.seated derives
+        it — because that is what the page said "kommer" to. Computed here from the counts rather
+        than through services.seated, which imports this module.
+        """
+        done = 0
+        for event in self.attendance_expired(now):
+            with transaction.atomic():
+                said_ja = event.rsvps.filter(answer=Answer.JA).count()
+                event.attendee_count = said_ja if event.capacity is None else min(said_ja, event.capacity)
+                event.save(update_fields=["attendee_count"])
+                event.rsvps.all().delete()
+                event.invites.all().delete()
+            done += 1
+        return done
 
 
 class Event(models.Model):
@@ -243,6 +285,11 @@ class Event(models.Model):
     # as Notice.pinned_at. Deliberately not a side table.
     reminder_sent_at = models.DateTimeField(null=True, blank=True)
 
+    # How many held a seat, written when the guest list is deleted ATTENDANCE_RETENTION after the
+    # event (EventQuerySet.forget_attendance). NULL means the RSVP rows are still here and are the
+    # truth; a number means they are gone and this is all that is left of them. Never edited.
+    attendee_count = models.PositiveSmallIntegerField(null=True, blank=True, editable=False)
+
     objects = EventQuerySet.as_manager()
 
     class Meta:
@@ -266,6 +313,10 @@ class Event(models.Model):
     @property
     def is_cancelled(self) -> bool:
         return self.cancelled_at is not None
+
+    def has_ended(self, now: datetime.datetime | None = None) -> bool:
+        """Over — held, if it was not cancelled. Reads core.clock, like answers_locked."""
+        return self.effective_end < (now or current_datetime())
 
     @property
     def ical_uid(self) -> str:
@@ -378,24 +429,23 @@ class EventComment(models.Model):
     ANNOUNCEMENT belongs on the board, where it is kept. What this is for is the practical traffic
     an event generates while it is still ahead of you, which was previously landing in Den Hurtige
     (where it expires in an hour, often before the event) or in a Messenger thread the house left
-    Facebook to get rid of. It attaches to the thing it is about and dies with it.
+    Facebook to get rid of. It attaches to the thing it is about and shares its fate.
 
     THREE THINGS THE SIBLING COMMENT MODELS DO THAT THIS ONE DELIBERATELY DOES NOT:
 
       * **No embedsgruppe snapshot.** opslagstavle.NoticeComment inherits AuthoredByResident to
         freeze the author's group at writing time, because a rotating group would relabel a
-        multi-year archive on every månedsliste. This lives a week past its event, and groups
-        rotate monthly, so the snapshot would be protecting an archive that does not exist —
-        the same call reparationer.RepairComment already made. Importing that abstract base would
-        also make events depend on opslagstavle at import time, which views.py goes out of its way
-        to avoid (see _related_notices).
+        multi-year archive on every månedsliste. An open event is now kept too, but its thread is
+        the practical traffic of one evening, not a record anyone reads by group — the same call
+        reparationer.RepairComment already made. Importing that abstract base would also make
+        events depend on opslagstavle at import time, which views.py goes out of its way to avoid
+        (see _related_notices).
       * **No reactions.** A reaction is a cheap way to say "seen" on a board post. Here the answer
         panel is the way to say anything that matters, and a second, weaker signal beside it just
         raises "does a 👍 count as tilmeldt?".
-      * **No retention of its own.** CASCADE from the event, which is deleted a week after it is
-        held. That is not an oversight to fix later: the module docstring commits to there being no
-        record of what happened, and a comment thread outliving its event would be exactly the
-        archive it says belongs to opslagstavlen.
+      * **No retention of its own.** CASCADE from the event. On an open event that means it is
+        kept with the event, as part of what happened; on an invite-only or cancelled one it goes
+        when the event does.
 
     Plain text, not Markdown, for the reasons NoticeComment's docstring gives — rendered
     autoescaped with `white-space:pre-wrap` and `|urlize` — plus one optional attached photo, which

@@ -3,10 +3,10 @@
 {% block content_width %}max-w-3xl{% endblock %}
 
 {% comment %}
-  Upcoming only. There is no past to show: an event is deleted a week after it is held (see the
-  retention note in events/models.py), so there is deliberately no archive tab, no year filter and
-  no history pagination to build. The pager below is for a house with an unusually busy month, not
-  for scrolling backwards.
+  Upcoming only. Open events are kept after they are held (see the retention note in
+  events/models.py), and the calendar is how you go back to them: a month is the unit people
+  remember a party by. The pager below is for a house with an unusually busy month, not for
+  scrolling backwards.
 {% endcomment %}
 {% block content %}
   <div class="page-head">
@@ -58,8 +58,8 @@
       <div class="event-empty card-flat card-pad">
         <p><strong>Der er ikke noget på programmet.</strong></p>
         <p class="muted">
-          Lav den første — en fællesspisning, en filmaften, en tur. Begivenheder forsvinder af sig
-          selv en uge efter de er holdt, så du behøver ikke rydde op efter dig.
+          Lav den første — en fællesspisning, en filmaften, en tur. Dem der allerede er holdt, finder
+          du i kalenderen.
         </p>
       </div>
     {% endfor %}

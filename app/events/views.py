@@ -174,6 +174,9 @@ def _rsvp_context(request: HttpRequest, event: Event) -> dict[str, object]:
         "waitlist_count": len(queue),
         "my_position": next((i + 1 for i, r in enumerate(queue) if r.resident_id == resident.pk), None),
         "locked": services.answers_locked(event),
+        # Held, as opposed to merely closed: the panel then speaks in the past tense and drops the
+        # venteliste, which stopped meaning anything when the doors opened.
+        "is_over": not event.is_cancelled and event.has_ended(),
         "is_host": access.is_host(event, resident),
         "is_full": event.capacity is not None and len(coming) >= event.capacity,
     }
@@ -181,7 +184,7 @@ def _rsvp_context(request: HttpRequest, event: Event) -> dict[str, object]:
 
 @access.access_required
 def index(request: HttpRequest) -> HttpResponse:
-    """Everything coming up. There is no past — see the retention note in models.py.
+    """Everything coming up. Past events are reached through the calendar, which goes back.
 
     Purges on the way past, the den_hurtige idiom: traffic does the cleanup and the cron covers the
     quiet weeks. Cheap here, and it is the backstop for a cron that has silently stopped.

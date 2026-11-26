@@ -66,9 +66,10 @@ load-bearing:
 
 - **A string reference, not an import.** `events` is the newer app and points back here in prose;
   `ForeignKey("events.Event")` keeps the dependency one-directional at import time for free.
-- **`SET_NULL`, which is the whole retention story.** An event is deleted a week after it is held; a
-  post lives about two years. `CASCADE` would mean Tuesday's fællesspisning quietly deleting the post
-  that announced it — comments, reactions and all — on Wednesday. The chip simply disappears.
+- **`SET_NULL`, because the lifetimes differ.** An open event is kept once held, but an aflyst one
+  is deleted 30 days later and a host may delete one nobody said ja to. `CASCADE` would mean calling
+  off Tuesday's fællesspisning quietly deleting the post that announced it — comments, reactions and
+  all. The chip simply disappears.
 - **Only *åbne* events may be linked.** Opslagstavlen is read by the whole house, so a chip naming a
   private party would announce it to everyone who was not invited. The form's queryset is what
   validates the submitted id, and the template checks `visibility` again on the way out for an event

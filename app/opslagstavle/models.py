@@ -180,11 +180,12 @@ class Notice(AuthoredByResident):
     # here; importing the model would make the dependency mutual at module level, and a
     # ForeignKey("events.Event") costs nothing to avoid it.
     #
-    # SET_NULL, and that is the whole retention story in one keyword: an event is deleted a week
-    # after it is held (events.models), a notice lives about two years. CASCADE would mean Tuesday's
-    # fællesspisning quietly deleting the post that announced it — along with its comments and
-    # reactions — the following Wednesday. The link simply disappears and the post stays, which is
-    # also why the card has to cope with `event` being None on a post that once had one.
+    # SET_NULL, because the two lifetimes differ: an open event is kept once held, but one that is
+    # aflyst is deleted 30 days later and a host may delete one nobody has said ja to
+    # (events.models). CASCADE would mean calling off Tuesday's fællesspisning quietly deleting the
+    # post that announced it — along with its comments and reactions — a month on. The link simply
+    # disappears and the post stays, which is also why the card has to cope with `event` being None
+    # on a post that once had one.
     #
     # ONLY OPEN EVENTS may be linked (see forms.NoticeForm), because opslagstavlen is visible to
     # every resident and a chip naming a private party would leak exactly what "kun inviterede" is
