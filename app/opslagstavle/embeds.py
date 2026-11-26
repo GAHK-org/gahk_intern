@@ -526,7 +526,13 @@ def _video_widgets(request: HttpRequest, wanted: set[Embed]) -> dict[Embed, obje
             meta=list(filter(None, [video.episode_label, video.date_label, duration(video.duration)])),
             full_hd=bool(video.file and video.file.full_hd),
             progress=progress.get(video.pk),
-            state="I papirkurven" if video.is_binned else "Kladde" if video.is_draft else "",
+            state="I papirkurven"
+            if video.is_binned
+            else "Kladde"
+            if video.is_draft
+            else f"Premiere {video.premiere_label}"
+            if video.is_upcoming
+            else "",
         )
         for video in shown
     }
@@ -534,11 +540,11 @@ def _video_widgets(request: HttpRequest, wanted: set[Embed]) -> dict[Embed, obje
 
 
 def _video_choices(request: HttpRequest, query: str) -> list[Choice]:
-    """Published films whose title or series holds `query`, newest first."""
-    from gahkflix.models import Video
+    """Films out whose title or series holds `query`, newest first."""
+    from gahkflix import services
     from gahkflix.templatetags.gahkflix import duration, picture_url
 
-    videos = Video.objects.published().select_related("file", "series").order_by("-published_at", "-pk")
+    videos = services.released().order_by(*services.newest_first())
     if query:
         videos = videos.filter(Q(title__icontains=query) | Q(series__title__icontains=query))
     return [
@@ -559,12 +565,12 @@ def _video_choices(request: HttpRequest, query: str) -> list[Choice]:
 
 
 def _video_shareable(request: HttpRequest, key: int | UUID) -> str | None:
-    """Only a published film: a draft or a binned one is no news to share."""
+    """Only a film that is out: a draft, an upcoming premiere or a binned one is no news to share."""
     from gahkflix.models import Video
 
     if not isinstance(key, int):
         return None
-    return Video.objects.published().filter(pk=key).values_list("title", flat=True).first()
+    return Video.objects.released().filter(pk=key).values_list("title", flat=True).first()
 
 
 # --- Drive -----------------------------------------------------------------------------------------
