@@ -33,6 +33,7 @@ from django.template.defaultfilters import filesizeformat
 from django.utils import timezone
 from PIL import ExifTags, Image, ImageFile, ImageOps, ImageSequence, IptcImagePlugin
 
+from audit import trail
 from core.job_directories import job_directory
 from core.job_progress import stage
 from residents.models import Resident
@@ -313,7 +314,7 @@ def create_album(*, name: str, folder: str = "", parent: Album | None = None) ->
     album.full_clean(exclude=["path"])
     album.validate_constraints()
     try:
-        with transaction.atomic():
+        with trail.event("photo_album.album.created", subject=album, involve=[(parent, "parent")]):
             album.save()
     except IntegrityError as exc:  # a sibling of the same name created in the meantime
         raise ValidationError({"name": "Der findes allerede et album med det navn."}) from exc
@@ -334,7 +335,8 @@ def rename_album(album: Album, name: str, *, by: Resident) -> None:
     album.full_clean(exclude=["path"])
     album.validate_constraints()
     try:
-        with transaction.atomic():
+        # `by`, not the request's: the import script renames with a token, not a login.
+        with trail.event("photo_album.album.renamed", actor=by, subject=album, only_if_changed=True):
             album.save(update_fields=["name"])
     except IntegrityError as exc:
         raise ValidationError({"name": "Der findes allerede et album med det navn."}) from exc
@@ -401,13 +403,19 @@ def search_tags(query: str, limit: int = 20) -> list[str]:
 
 
 def add_tag(target: Album | Media, name: str) -> Tag:
-    tag = tag_named(name)
-    target.tags.add(tag)
+    with trail.event("photo_album.tag.added", subject=target, only_if_changed=True) as event:
+        tag = tag_named(name)
+        target.tags.add(tag)
+        event.involve(tag, "tag")
     return tag
 
 
 def remove_tag(target: Album | Media, name: str) -> None:
-    target.tags.remove(*target.tags.filter(name__iexact=normalize_name(name.strip())))
+    with trail.event("photo_album.tag.removed", subject=target, only_if_changed=True) as event:
+        tags = list(target.tags.filter(name__iexact=normalize_name(name.strip())))
+        for tag in tags:
+            event.involve(tag, "tag")
+        target.tags.remove(*tags)
 
 
 def tagged_media(media: QuerySet[Media], tag: Tag) -> QuerySet[Media]:
@@ -781,6 +789,7 @@ def import_zip_album(
     merge: bool = False,
     root_name: str = "",
     progress: Progress = no_progress,
+    album_import: AlbumImport | None = None,
 ) -> ZipImport:
     """Import a ZIP as one album tree — completely, or not at all.
 
@@ -811,6 +820,9 @@ def import_zip_album(
 
     `progress` is told how far each pass has got, as ("checking" | "storing", done, total).
 
+    Storing is one event in the audit trail, by nobody (a worker does it), with every album and
+    item it made; `album_import` is the job it was for, and who asked is in that job's own event.
+
     Returns the albums (root first), the log of files deliberately left out and how many were
     stored. Raises ValidationError carrying every error when the import is refused.
     """
@@ -837,7 +849,9 @@ def import_zip_album(
             raise ValidationError("ZIP-filen kunne ikke læses.") from exc
         if plan.errors:
             raise ValidationError(plan.errors)
-        albums, added = _store_import(plan, folder, resident, lock=lock, progress=progress)
+        albums, added = _store_import(
+            plan, folder, resident, lock=lock, progress=progress, album_import=album_import
+        )
         return ZipImport(
             albums=albums, skipped=plan.skipped, added=added, merged=plan.existing_root is not None
         )
@@ -850,6 +864,7 @@ def _store_import(
     *,
     lock: bool = False,
     progress: Progress = no_progress,
+    album_import: AlbumImport | None = None,
 ) -> tuple[list[Album], int]:
     """Pass two: create the albums and store the files, all or nothing.
 
@@ -879,7 +894,12 @@ def _store_import(
         return exempt[album.pk]
 
     try:
-        with transaction.atomic():
+        with trail.event(
+            "photo_album.import.completed",
+            actor=None,
+            subject=album_import,
+            involve=[(resident, "requested_by")],
+        ) as event:
             # First of this transaction's callbacks, so it has run before any other can raise.
             transaction.on_commit(mark_committed)
             root = plan.existing_root
@@ -936,6 +956,10 @@ def _store_import(
             if lock and root.manually_locked_at is None:
                 root.manually_locked_at = timezone.now()
                 root.save(update_fields=["manually_locked_at"])
+            event.involve(root, "album" if album_import is not None else "subject")
+            event.details.update(
+                added=added, left_out=len(plan.skipped), merged=plan.existing_root is not None
+            )
     except Exception:
         if committed:
             raise
@@ -1921,7 +1945,7 @@ class SidecarDates:
     )
 
 
-def apply_sidecars(*, archive: File, folder: str, root_name: str) -> SidecarDates:
+def apply_sidecars(*, archive: File, folder: str, root_name: str, by: Resident | None = None) -> SidecarDates:
     """Give media already stored their AppleDouble sidecars, and the dates in them, as an import
     now does.
 
@@ -1933,6 +1957,9 @@ def apply_sidecars(*, archive: File, folder: str, root_name: str) -> SidecarDate
 
     Not one transaction: each item is stored on its own, as stored objects cannot be rolled back,
     and sending the same sidecars again changes nothing.
+
+    One event in the audit trail, by `by` (the import script), saying how many it gave sidecars and
+    dates; the dates themselves are left out of it, like every date the album works out.
 
     Raises ValidationError when there is no such album or the ZIP cannot be read.
     """
@@ -1998,6 +2025,14 @@ def apply_sidecars(*, archive: File, folder: str, root_name: str) -> SidecarDate
             result.redated = settle_dates(root)
     except (zipfile.BadZipFile, OSError, EOFError, RuntimeError) as exc:
         raise ValidationError("ZIP-filen kunne ikke læses.") from exc
+    if result.stored or result.updated or result.redated:
+        # Afterwards, not around it: each item is stored on its own (above).
+        trail.record(
+            "photo_album.sidecars.applied",
+            actor=by,
+            subject=root,
+            details={"stored": result.stored, "updated": result.updated, "redated": result.redated},
+        )
     return result
 
 
@@ -2159,22 +2194,35 @@ def delete(media: Media, resident: Resident, now: datetime | None = None) -> Non
 
 
 def permanently_delete(media: Media) -> None:
-    """Remove all stored media variants and their database record."""
-    _delete_files(media)
+    """Remove the database record and, once that commits, every stored variant. A selection deletes
+    many in one transaction (one audit event): a failure part-way rolls the rows back, and their
+    files must still be there. Outside a transaction the files go at once."""
     media.delete()
+    transaction.on_commit(lambda: _delete_files(media))
 
 
 def purge_expired(now: datetime | None = None) -> int:
+    """Delete for good what waited 30 days for approval, or lay in the bin for 30 days.
+
+    One event in the audit trail, by nobody, with every item and how many. The rows go first, in its
+    transaction, and the files after it: a file deleted for a row that then stayed would
+    leave it pointing at nothing, where a file left behind is only an orphan for the dashboard.
+    """
     moment = now or timezone.now()
     expired = Media.objects.filter(
         status=MediaStatus.PENDING, added_at__lt=moment - PURGE_AFTER
     ) | Media.objects.filter(deleted_at__lt=moment - PURGE_AFTER)
-    count = 0
-    for media in expired.distinct():
+    purged: list[Media] = []
+    with trail.event("photo_album.media.purged", actor=None) as event:
+        for media in expired.distinct():
+            media.delete()
+            purged.append(media)
+        event.details["count"] = len(purged)
+        if not purged:
+            event.cancel()
+    for media in purged:
         _delete_files(media)
-        media.delete()
-        count += 1
-    return count
+    return len(purged)
 
 
 def _delete_files(media: Media) -> None:

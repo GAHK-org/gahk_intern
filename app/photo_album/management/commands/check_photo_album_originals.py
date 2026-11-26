@@ -3,8 +3,8 @@ from typing import Any
 
 from django.core.exceptions import ValidationError
 from django.core.management.base import BaseCommand, CommandError, CommandParser
-from django.db import transaction
 
+from audit import trail
 from photo_album.models import Album, Media, normalize_name, validate_folder
 from photo_album.services import _delete_files
 from photo_album.storage import get_photo_album_storage
@@ -53,7 +53,8 @@ class Command(BaseCommand):
                 self.stdout.write("Nothing removed; run again with --delete to remove them.")
             return
 
-        with transaction.atomic():
+        # One event in the audit trail, by nobody: whoever runs it on the server is not known here.
+        with trail.event("photo_album.media.missing_removed", actor=None, details={"count": found}):
             for items in missing.values():
                 for item in items:
                     _delete_files(item)  # the variants that are there; the original is already gone

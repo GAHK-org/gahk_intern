@@ -19,6 +19,7 @@ from django.db.models import Q, QuerySet
 from django.utils import timezone
 from zipstream import ZIP_STORED, ZipStream
 
+from audit import trail
 from core.job_progress import stopped_reason
 
 from . import direct_upload, merge, notify
@@ -321,15 +322,22 @@ def retry_derivatives(queryset: "QuerySet[Media]") -> int:
     until a worker has had it: a second press, or a second administrator, queues it no second time.
     """
     queued = 0
-    for media in list(retryable_derivatives(queryset)):
-        if retryable_derivatives(Media.objects.filter(pk=media.pk)).update(
-            derivative_state=DerivativeState.PENDING,
-            derivative_attempts=0,
-            derivative_started_at=None,
-            derivative_task_id="",
-        ):
-            queue_derivatives(media)
-            queued += 1
+    # Someone's choice, so a line in the audit trail: which items, by whom (nobody from the shell).
+    # What it resets is the conversion's bookkeeping, which the trail leaves out.
+    with trail.event("photo_album.media.retried") as event:
+        for media in list(retryable_derivatives(queryset)):
+            if retryable_derivatives(Media.objects.filter(pk=media.pk)).update(
+                derivative_state=DerivativeState.PENDING,
+                derivative_attempts=0,
+                derivative_started_at=None,
+                derivative_task_id="",
+            ):
+                queue_derivatives(media)
+                event.involve(media)
+                queued += 1
+        event.details["count"] = queued
+        if not queued:
+            event.cancel()
     return queued
 
 
@@ -662,12 +670,19 @@ def fail_stalled_imports() -> int:
     """
     # Which were running and stopped, and which never started — told apart for the notification.
     started = dict(_stalled(AlbumImport.objects.all(), AlbumImportState).values_list("pk", "progressed_at"))
-    failed = _stalled(AlbumImport.objects.filter(pk__in=started), AlbumImportState).update(
-        state=AlbumImportState.FAILED, error=IMPORT_INTERRUPTED, completed_at=timezone.now()
-    )
-    for album_import in AlbumImport.objects.filter(
-        pk__in=started, state=AlbumImportState.FAILED, error=IMPORT_INTERRUPTED
-    ).select_related("requested_by"):
+    with trail.event("photo_album.import.interrupted", actor=None) as event:
+        failed = _stalled(AlbumImport.objects.filter(pk__in=started), AlbumImportState).update(
+            state=AlbumImportState.FAILED, error=IMPORT_INTERRUPTED, completed_at=timezone.now()
+        )
+        given_up = AlbumImport.objects.filter(
+            pk__in=started, state=AlbumImportState.FAILED, error=IMPORT_INTERRUPTED
+        ).select_related("requested_by")
+        for album_import in given_up:
+            event.involve(album_import)
+        event.details["count"] = failed
+        if not failed:
+            event.cancel()
+    for album_import in given_up:
         _tell_import_failed(
             album_import, notify.INTERRUPTED if started[album_import.pk] else notify.NEVER_STARTED
         )
@@ -687,7 +702,9 @@ def process_album_import(self: Task, import_id: int) -> bool:
     if claim is Claim.LOST:
         # This message's own dead first run, just closed out; nothing will run it now.
         _discard_archives(rows)
-        _tell_import_failed(rows.get(), notify.INTERRUPTED)
+        lost = rows.get()
+        trail.record("photo_album.import.interrupted", actor=None, subject=lost, details={"count": 1})
+        _tell_import_failed(lost, notify.INTERRUPTED)
     if claim is not Claim.CLAIMED:
         return False
     album_import = rows.get()
@@ -709,6 +726,7 @@ def process_album_import(self: Task, import_id: int) -> bool:
                 merge=album_import.merge_into_existing,
                 root_name=album_import.album_name,
                 progress=JobProgress(rows),
+                album_import=album_import,
             )
         # READY even over a FAILED that `fail_stalled_imports` wrote meanwhile: the albums are in.
         album_import.state = AlbumImportState.READY
@@ -740,6 +758,9 @@ def process_album_import(self: Task, import_id: int) -> bool:
         album_import.error = "ZIP-filen blev afvist. Intet er importeret."
         album_import.completed_at = timezone.now()
         album_import.save(update_fields=["state", "errors", "error", "completed_at"])
+        trail.record(
+            "photo_album.import.refused", actor=None, subject=album_import, details={"reasons": exc.messages}
+        )
         _tell_import_failed(album_import, notify.refused(exc.messages))
         return False
     except Exception as exc:
@@ -747,6 +768,12 @@ def process_album_import(self: Task, import_id: int) -> bool:
         album_import.error = _failure(exc)
         album_import.completed_at = timezone.now()
         album_import.save(update_fields=["state", "error", "completed_at"])
+        trail.record(
+            "photo_album.import.failed",
+            actor=None,
+            subject=album_import,
+            details={"error": album_import.error},
+        )
         _tell_import_failed(album_import, notify.CRASHED)
         raise
     finally:
@@ -785,13 +812,14 @@ def process_album_merge(self: Task, merge_id: int) -> bool:
     try:
         if job.source is None:
             raise ValidationError(f"{job.source_path} findes ikke længere.")
-        result = merge.merge_albums(job.target, job.source, progress=JobProgress(rows))
+        result = merge.merge_albums(job.target, job.source, progress=JobProgress(rows), job=job)
     except ValidationError as exc:
         # Refused, not crashed: an album was locked or moved meanwhile, and nothing was merged.
         logger.warning("Refused: %s", " ".join(exc.messages))
         rows.update(
             state=AlbumMergeState.FAILED, error=" ".join(exc.messages)[:255], completed_at=timezone.now()
         )
+        trail.record("photo_album.merge.refused", actor=None, subject=job, details={"reasons": exc.messages})
         return False
     except Exception:
         rows.update(
@@ -799,6 +827,7 @@ def process_album_merge(self: Task, merge_id: int) -> bool:
             error="Fletningen mislykkedes. Intet er flettet.",
             completed_at=timezone.now(),
         )
+        trail.record("photo_album.merge.failed", actor=None, subject=job)
         raise
     # By update, not save: the merge deleted the source album, which the row in memory still names.
     rows.update(state=AlbumMergeState.READY, result=asdict(result), error="", completed_at=timezone.now())
@@ -812,6 +841,14 @@ def process_album_merge(self: Task, merge_id: int) -> bool:
 def fail_stalled_merges() -> int:
     """Close out album merges no worker is coming back to. A merge changes the albums in one
     transaction, which died with the worker, so there is nothing of it to undo."""
-    return _stalled(AlbumMerge.objects.all(), AlbumMergeState).update(
-        state=AlbumMergeState.FAILED, error=MERGE_INTERRUPTED, completed_at=timezone.now()
-    )
+    with trail.event("photo_album.merge.interrupted", actor=None) as event:
+        stalled = list(_stalled(AlbumMerge.objects.all(), AlbumMergeState))
+        failed = _stalled(
+            AlbumMerge.objects.filter(pk__in=[job.pk for job in stalled]), AlbumMergeState
+        ).update(state=AlbumMergeState.FAILED, error=MERGE_INTERRUPTED, completed_at=timezone.now())
+        for job in stalled:
+            event.involve(job)
+        event.details["count"] = failed
+        if not failed:
+            event.cancel()
+    return failed

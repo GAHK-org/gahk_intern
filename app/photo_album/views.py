@@ -2,7 +2,8 @@ import logging
 import mimetypes
 import posixpath
 from collections import defaultdict
-from collections.abc import Iterable
+from collections.abc import Iterable, Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -524,7 +525,8 @@ def delete_album(request: HttpRequest, pk: int) -> HttpResponse:
         raise PermissionDenied
     album = get_object_or_404(Album, pk=pk)
     try:
-        album.delete()
+        with trail.event("photo_album.album.deleted", subject=album):
+            album.delete()
     except ValidationError:
         # The button is drawn only for an album with no media and no sub-albums, but binned items
         # count too. Say so instead of 500ing; the way out is to empty the bin (or wait for the
@@ -630,9 +632,10 @@ def lock_album(request: HttpRequest, pk: int) -> HttpResponse:
     album = get_object_or_404(Album, pk=pk)
     if not access.can_lock_album(request, album):
         raise PermissionDenied
-    album.manually_locked_at = timezone.now()
-    album.unlocked_at = None
-    album.save(update_fields=["manually_locked_at", "unlocked_at"])
+    with trail.event("photo_album.album.locked", subject=album):
+        album.manually_locked_at = timezone.now()
+        album.unlocked_at = None
+        album.save(update_fields=["manually_locked_at", "unlocked_at"])
     return redirect("photo_album:detail", album.pk)
 
 
@@ -650,9 +653,10 @@ def unlock_album(request: HttpRequest, pk: int) -> HttpResponse:
     if not access.can_unlock_album(request, album):
         messages.error(request, "Albummet har været låst i mere end 6 måneder og kan ikke låses op.")
         return redirect("photo_album:detail", album.pk)
-    album.manually_locked_at = None
-    album.unlocked_at = timezone.now()
-    album.save(update_fields=["manually_locked_at", "unlocked_at"])
+    with trail.event("photo_album.album.unlocked", subject=album):
+        album.manually_locked_at = None
+        album.unlocked_at = timezone.now()
+        album.save(update_fields=["manually_locked_at", "unlocked_at"])
     return redirect("photo_album:detail", album.pk)
 
 
@@ -840,8 +844,10 @@ def selection(request: HttpRequest) -> HttpResponse:
         if not access.can_manage_media(request):
             raise PermissionDenied
         pending = list(Media.objects.filter(pk__in=ids, deleted_at__isnull=True, status=MediaStatus.PENDING))
-        for media in pending:
-            (services.approve if action == "approve" else services.reject)(media, resident)
+        verb = "approved" if action == "approve" else "rejected"
+        with _selection_event(f"photo_album.media.{verb}", pending, album):
+            for media in pending:
+                (services.approve if action == "approve" else services.reject)(media, resident)
         verb = "godkendt" if action == "approve" else "afvist"
         messages.success(request, f"{len(pending)} medier er {verb}.")
         if skipped := len(ids) - len(pending):
@@ -856,23 +862,42 @@ def selection(request: HttpRequest) -> HttpResponse:
         # One Album instance per album, so its lock is worked out once rather than once per item
         # (each select_related copy has its own cache). Every item still gets its own checks.
         albums = {media.album_id: media.album for media in items}
-        for media in items:
-            media.album = albums[media.album_id]
-            if access.can_withdraw(media, request):
-                services.permanently_delete(media)
-            elif access.can_curate_delete(media, request):
-                services.delete(media, resident)
-            else:
-                continue
-            for album in albums.values():
-                album.media_removed(media)
-            done += 1
+        withdrawn = binned = 0
+        with _selection_event("photo_album.media.removed", items, album) as event:
+            for media in items:
+                media.album = albums[media.album_id]
+                if access.can_withdraw(media, request):
+                    services.permanently_delete(media)
+                    withdrawn += 1
+                elif access.can_curate_delete(media, request):
+                    services.delete(media, resident)
+                    binned += 1
+                else:
+                    continue
+                for each in albums.values():
+                    each.media_removed(media)
+                done += 1
+            # Named for what it did, when it did one thing: the uploader's own, or a curator's binning.
+            if not binned:
+                event.action = "photo_album.media.withdrawn"
+            elif not withdrawn:
+                event.action = "photo_album.media.binned"
+            event.details["count"] = done
         messages.success(request, f"{done} medier er fjernet.")
         if skipped := len(ids) - done:
             messages.info(request, f"{skipped} af de valgte kunne du ikke fjerne, og de er urørte.")
         return redirect(back)
 
     return HttpResponseBadRequest("unknown action")
+
+
+@contextmanager
+def _selection_event(action: str, items: list[Media], album: Album | None) -> Iterator[trail.Event]:
+    """One audit event for one action on a selection, however many items: about the item when
+    there is one, else about the album it was chosen in (the timeline's has none)."""
+    subject = items[0] if len(items) == 1 else album
+    with trail.event(action, subject=subject, details={"count": len(items)}, only_if_changed=True) as event:
+        yield event
 
 
 # --- ZIP import ---------------------------------------------------------------------------------
@@ -1011,15 +1036,18 @@ def _queue_import(
     to the bucket (photo_album.direct_upload)."""
     archive, archive_name = stored or (form.cleaned_data["archive"], form.cleaned_data["archive"].name)
     try:
-        album_import = AlbumImport.objects.create(
-            requested_by=resident,
-            folder=form.cleaned_data["folder"],
-            archive_name=archive_name,
-            archive=archive,
-            lock_when_done=lock,
-            merge_into_existing=merge,
-            album_name=form.cleaned_data.get("album", ""),
-        )
+        # `resident`, not the request's: the import script calls in with a token, not a login.
+        with trail.event("photo_album.import.requested", actor=resident) as event:
+            album_import = AlbumImport.objects.create(
+                requested_by=resident,
+                folder=form.cleaned_data["folder"],
+                archive_name=archive_name,
+                archive=archive,
+                lock_when_done=lock,
+                merge_into_existing=merge,
+                album_name=form.cleaned_data.get("album", ""),
+            )
+            event.involve(album_import, "subject")
     except Exception:
         # An archive already in the bucket that no import will ever read: without this, every
         # attempt of the Dropbox script left a whole album behind (the ~1 GB ZIP of the album whose
@@ -1117,7 +1145,8 @@ def system_rename_album(request: HttpRequest) -> JsonResponse:
 def system_sidecar_dates(request: HttpRequest) -> JsonResponse:
     """The import script's sidecars for an album it imported before the import read them
     (services.apply_sidecars). A few hundred kilobytes, so answered at once, not queued."""
-    if _token_import_resident(request) is None:
+    resident = _token_import_resident(request)
+    if resident is None:
         raise PermissionDenied
     form = SystemSidecarDatesForm(request.POST, request.FILES)
     if not form.is_valid():
@@ -1127,6 +1156,7 @@ def system_sidecar_dates(request: HttpRequest) -> JsonResponse:
             archive=form.cleaned_data["archive"],
             folder=form.cleaned_data["folder"],
             root_name=form.cleaned_data["album"],
+            by=resident,
         )
     except ValidationError as exc:
         return JsonResponse(
@@ -1252,25 +1282,28 @@ def upload(request: HttpRequest, pk: int) -> HttpResponse:
     uploaded = 0
     skipped: list[str] = []
     warnings: list[str] = []
-    for index, uploaded_file in enumerate(form.cleaned_data["uploads"]):
-        try:
-            outcome = services.store_upload(
-                album=album,
-                uploaded_file=uploaded_file,
-                resident=resident,
-                title=form.cleaned_data["title"],
-                approved=access.can_manage_media(request),
-                file_modified_at=_file_modified_at(modified[index] if index < len(modified) else None),
-                file_time_source=FileTimeSource.UPLOAD,
-            )
-        except ValueError as exc:  # locked between the check above and now
-            if wants_json:
-                return JsonResponse({"errors": {"uploads": [{"message": str(exc)}]}}, status=409)
-            messages.error(request, str(exc))
-            return redirect("photo_album:detail", album.pk)
-        uploaded += _noted(outcome, uploaded_file.name, album, resident, skipped, warnings)
-    if uploaded:
-        services.settle_dates(album)
+    # One event however many files: the upload is one thing the resident did.
+    with trail.event("photo_album.media.uploaded", subject=album, only_if_changed=True) as event:
+        for index, uploaded_file in enumerate(form.cleaned_data["uploads"]):
+            try:
+                outcome = services.store_upload(
+                    album=album,
+                    uploaded_file=uploaded_file,
+                    resident=resident,
+                    title=form.cleaned_data["title"],
+                    approved=access.can_manage_media(request),
+                    file_modified_at=_file_modified_at(modified[index] if index < len(modified) else None),
+                    file_time_source=FileTimeSource.UPLOAD,
+                )
+            except ValueError as exc:  # locked between the check above and now
+                if wants_json:
+                    return JsonResponse({"errors": {"uploads": [{"message": str(exc)}]}}, status=409)
+                messages.error(request, str(exc))
+                return redirect("photo_album:detail", album.pk)
+            uploaded += _noted(outcome, uploaded_file.name, album, resident, skipped, warnings)
+        event.details["count"] = uploaded
+        if uploaded:
+            services.settle_dates(album)
     if wants_json:
         return JsonResponse({"uploaded": uploaded, "skipped": skipped, "warnings": warnings}, status=201)
     for note in [*skipped, *warnings]:
@@ -1380,7 +1413,10 @@ def upload_commit(request: HttpRequest, pk: int) -> JsonResponse:
     resident = current_resident(request)
     skipped: list[str] = []
     warnings: list[str] = []
-    with NamedTemporaryFile(prefix="photo-album-", suffix=Path(upload["name"]).suffix) as local:
+    with (
+        trail.event("photo_album.media.uploaded", subject=album, details={"count": 1}, only_if_changed=True),
+        NamedTemporaryFile(prefix="photo-album-", suffix=Path(upload["name"]).suffix) as local,
+    ):
         direct_upload.read_into(upload["key"], local)
         received = _Downloaded(local, name=upload["name"])
         received.content_type = content_type_for(upload["name"])
@@ -1401,10 +1437,10 @@ def upload_commit(request: HttpRequest, pk: int) -> JsonResponse:
         except ValueError as exc:  # locked since it was begun
             direct_upload.delete(upload["key"])
             return _upload_errors(str(exc), status=409)
-    stored = _noted(outcome, upload["name"], album, resident, skipped, warnings)
-    if stored:
-        services.settle_dates(album)  # as `upload` does
-    else:
+        stored = _noted(outcome, upload["name"], album, resident, skipped, warnings)
+        if stored:
+            services.settle_dates(album)  # as `upload` does
+    if not stored:
         direct_upload.delete(upload["key"])
     return JsonResponse({"uploaded": int(stored), "skipped": skipped, "warnings": warnings}, status=201)
 
@@ -1718,7 +1754,8 @@ def _album_url(media: Media) -> str:
 @require_POST
 def approve(request: HttpRequest, pk: int) -> HttpResponse:
     media = _managed_media(request, pk)
-    services.approve(media, current_resident(request))
+    with trail.event("photo_album.media.approved", subject=media):
+        services.approve(media, current_resident(request))
     return redirect(_safe_next(request, _album_url(media)))
 
 
@@ -1726,7 +1763,8 @@ def approve(request: HttpRequest, pk: int) -> HttpResponse:
 @require_POST
 def reject(request: HttpRequest, pk: int) -> HttpResponse:
     media = _managed_media(request, pk)
-    services.reject(media, current_resident(request))
+    with trail.event("photo_album.media.rejected", subject=media):
+        services.reject(media, current_resident(request))
     return redirect(_safe_next(request, _album_url(media)))
 
 
@@ -1742,9 +1780,11 @@ def delete(request: HttpRequest, pk: int) -> HttpResponse:
     # "your own pending upload" rule, in a second copy that spelled the status as a bare string —
     # so the two could disagree about what a withdrawal is, and only one of them gated the action.
     if access.can_withdraw(media, request):
-        services.permanently_delete(media)
+        with trail.event("photo_album.media.withdrawn", subject=media):
+            services.permanently_delete(media)
     else:
-        services.delete(media, requester)
+        with trail.event("photo_album.media.binned", subject=media):
+            services.delete(media, requester)
     return redirect(back)
 
 
@@ -1752,7 +1792,8 @@ def delete(request: HttpRequest, pk: int) -> HttpResponse:
 @require_POST
 def restore(request: HttpRequest, pk: int) -> HttpResponse:
     media = _managed_media(request, pk)
-    services.restore(media)
+    with trail.event("photo_album.media.restored", subject=media):
+        services.restore(media)
     return redirect(_safe_next(request, _bin_url(media)))
 
 
@@ -1763,5 +1804,6 @@ def permanently_delete(request: HttpRequest, pk: int) -> HttpResponse:
     if not access.can_permanently_delete(media, request):
         raise PermissionDenied
     back = _safe_next(request, _bin_url(media))
-    services.permanently_delete(media)
+    with trail.event("photo_album.media.deleted", subject=media):
+        services.permanently_delete(media)
     return redirect(back)

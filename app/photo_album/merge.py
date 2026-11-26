@@ -25,7 +25,7 @@ file was first stored in, and nothing in the bucket is copied.
 
 import logging
 from collections import defaultdict
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 
 from django.core.exceptions import ValidationError
 from django.db import transaction
@@ -33,6 +33,7 @@ from django.db.models import CharField, F, Max, Value
 from django.db.models.fields.files import FieldFile
 from django.db.models.functions import Concat, Substr
 
+from audit import trail
 from residents.models import Resident
 
 from .models import (
@@ -168,7 +169,13 @@ def request_merge(target: Album, source: Album, *, by: Resident) -> AlbumMerge:
         raise ValidationError(
             f"Der er allerede en fletning i gang i mappen {target.folder}. Vent, til den er færdig."
         )
-    job = AlbumMerge.objects.create(target=target, source=source, source_path=label(source), requested_by=by)
+    with trail.event(
+        "photo_album.merge.requested", actor=by, involve=[(target, "target"), (source, "source")]
+    ) as event:
+        job = AlbumMerge.objects.create(
+            target=target, source=source, source_path=label(source), requested_by=by
+        )
+        event.involve(job, "subject")
     from .tasks import process_album_merge
 
     def enqueue() -> None:
@@ -179,9 +186,12 @@ def request_merge(target: Album, source: Album, *, by: Resident) -> AlbumMerge:
     return job
 
 
-def merge_albums(target: Album, source: Album, progress: Progress = no_progress) -> MergeResult:
-    """Merge `source` into `target`. Raises ValidationError for albums that cannot be merged."""
-    return apply(target, source, compare(plan(target, source).pairs, progress))
+def merge_albums(
+    target: Album, source: Album, progress: Progress = no_progress, *, job: AlbumMerge | None = None
+) -> MergeResult:
+    """Merge `source` into `target`. Raises ValidationError for albums that cannot be merged.
+    `job` is the request it carries out, for the audit trail."""
+    return apply(target, source, compare(plan(target, source).pairs, progress), job=job)
 
 
 # --- Reading the files ------------------------------------------------------------------------
@@ -253,15 +263,25 @@ def _read(stored: FieldFile) -> bytes | None:
 # --- Merging ----------------------------------------------------------------------------------
 
 
-def apply(target: Album, source: Album, comparison: Comparison) -> MergeResult:
+def apply(
+    target: Album, source: Album, comparison: Comparison, *, job: AlbumMerge | None = None
+) -> MergeResult:
     """Merge `source` into `target` in one transaction, with what `compare` found out.
 
     The albums are planned again, locked: anything may have changed while the files were read. An
     item or a sub-album that arrived meanwhile was not compared, so it is moved as it is.
+
+    The transaction is one event in the audit trail, by the worker, with every item and album moved,
+    merged or deleted; `job` is the administrator's request it carries out.
     """
     result = MergeResult()
     unused: list[str] = []
-    with transaction.atomic():
+    with trail.event(
+        "photo_album.merge.completed",
+        actor=None,
+        subject=target,
+        involve=[(job, "request"), (source, "merged")],
+    ) as event:
         albums = {
             album.pk: album
             for album in Album.objects.select_for_update().filter(pk__in=[target.pk, source.pk])
@@ -275,9 +295,9 @@ def apply(target: Album, source: Album, comparison: Comparison) -> MergeResult:
         for _, merged in merge_plan.pairs:
             Album.objects.filter(pk=merged.pk).update(name=f"/fletning/{merged.pk}")
         for kept, merged in merge_plan.pairs:
-            _merge_media(kept, merged, comparison, result, unused)
+            _merge_media(kept, merged, comparison, result, unused, event)
         for album, under in merge_plan.moves:
-            _move(album, under=under)
+            _move(album, under=under, event=event)
         for kept, merged in merge_plan.pairs:
             kept.tags.add(*merged.tags.all())
             AlbumDownload.objects.filter(album=merged).update(album=kept)
@@ -292,14 +312,16 @@ def apply(target: Album, source: Album, comparison: Comparison) -> MergeResult:
             merged.delete()
         result.albums_merged, result.albums_moved = len(merge_plan.pairs) - 1, len(merge_plan.moves)
         settle_dates(target)
+        event.details.update(asdict(result))
         transaction.on_commit(lambda: _delete_stored(unused))
     return result
 
 
-def _move(album: Album, *, under: Album) -> None:
+def _move(album: Album, *, under: Album, event: trail.Event) -> None:
     """Move `album` and its subtree under `under`: their paths and depths, nothing else."""
     old, new, deeper = album.path, f"{under.path}{album.pk}/", under.depth + 1 - album.depth
     Album.objects.filter(pk=album.pk).update(parent=under)
+    event.change(album, "parent", album.parent_id, under.pk)
     Album.objects.filter(path__startswith=old).update(
         path=Concat(Value(new), Substr("path", len(old) + 1), output_field=CharField()),
         depth=F("depth") + deeper,
@@ -307,7 +329,12 @@ def _move(album: Album, *, under: Album) -> None:
 
 
 def _merge_media(
-    target: Album, source: Album, comparison: Comparison, result: MergeResult, unused: list[str]
+    target: Album,
+    source: Album,
+    comparison: Comparison,
+    result: MergeResult,
+    unused: list[str],
+    event: trail.Event,
 ) -> None:
     # Each of target's items, by its id, mapped to the copy of it kept so far: itself, or a better
     # copy from source that took its place.
@@ -329,6 +356,7 @@ def _merge_media(
         )
         if match is None:
             moved.append(item.pk)
+            event.change(item, "album", source.pk, target.pk)
         else:
             kept[match] = _keep_one(kept[match], item, target, result, unused)
     result.moved += Media.objects.filter(pk__in=moved).update(album=target)
