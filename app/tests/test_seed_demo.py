@@ -237,8 +237,9 @@ def test_seed_demo_writes_weeks_of_audit_history(settings: Any) -> None:  # noqa
     assert len(addresses) >= 4 and any(":" in ip for ip in addresses)
     assert events.order_by("at").first().at < now - timedelta(days=21)
     assert not events.filter(at__gt=now).exists()
-    # The page lists by id, so the history was written in time order.
-    times = list(events.order_by("id").values_list("at", flat=True))
+    # The page lists by id, so the history was written in time order. Drive's demo comes after it,
+    # its events dated by its own steps (drive.demo).
+    times = list(events.exclude(action__startswith="drive.").order_by("id").values_list("at", flat=True))
     assert times == sorted(times)
 
     # The history ends at the seeded data: the two administrators it approved and refused lost the
@@ -253,7 +254,8 @@ def test_seed_demo_writes_weeks_of_audit_history(settings: Any) -> None:  # noqa
     client.force_login(Resident.objects.get(email="formand@gahk.dk"))
     page = client.get("/admin/audit").content.decode()
     assert "Ældre" in page, "more than one page of history"
-    assert "mislykket login" in page
+    # Drive's demo is written last (core seed_demo), so its events lead the page.
+    assert "mislykket login" in client.get("/admin/audit?area=auth").content.decode()
     assert "Uden handling" in client.get("/admin/audit?unclaimed=1").content.decode()
 
 

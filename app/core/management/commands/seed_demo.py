@@ -228,10 +228,11 @@ class Command(BaseCommand):
             # Loading demo data is nobody's action: not one audit event per row.
             with trail.unaudited():
                 residents = self._seed_data(opts)
-            # Audited, unlike the rest: Drive's history is its part of the trail (drive.history).
-            seed_drive(residents, self.now, self.rng)
-            # Then, on purpose and audited, the weeks of history before today, for the audit page.
+            # Then, on purpose and audited, the weeks of history before today, for the audit page. It
+            # writes only into an empty trail, so before Drive.
             seed_audit_trail(residents, self.now, self.rng)
+            # Audited too: Drive's history is its part of the trail (drive.history).
+            seed_drive(residents, self.now, self.rng)
 
         self._report(residents)
 
