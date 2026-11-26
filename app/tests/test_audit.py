@@ -656,6 +656,59 @@ def test_the_audit_page_finds_actions_by_their_names_and_typed_addresses_by_hash
 
 
 @pytest.mark.django_db
+def test_private_names_and_fields_are_kept_but_not_shown_or_searched(
+    make_resident: Callable[..., Resident], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import dataclasses
+
+    from audit import presentation
+
+    # As an app registers what it keeps from administrators; residents stand in for one here.
+    hidden = dataclasses.replace(
+        trail.registration(Resident), private=frozenset({"phone"}), private_name=True
+    )
+    monkeypatch.setitem(trail._registry, Resident, hidden)
+    monkeypatch.setitem(trail._by_kind, "residents.resident", hidden)
+    monkeypatch.setattr(trail, "_private_details", {"notes"})
+    admin = make_resident(email="admin@gahk.dk", roles=[Role.ADMINISTRATOR])
+    # Values with spaces: a random token on the page (a nonce, an asset's hash) never has one.
+    before, after = "55 11 11 11", "55 22 22 22"
+    anna = make_resident(email="anna@gahk.dk", first_name="Anna", last_name="Berg", phone=before)
+    with trail.event("residents.resident.updated", actor=admin, subject=anna, details={"notes": "Anna Berg"}):
+        anna.phone = after
+        anna.save()
+    event = AuditEvent.objects.get(action="residents.resident.updated")
+    assert event.entities.get().name == "Anna Berg"  # kept in full
+    assert AuditChange.objects.get(entity__event=event).after == after
+
+    tag = hidden.tag(anna.pk)
+    assert tag.startswith("Beboer ") and len(tag) == len("Beboer ") + 6
+    assert tag == hidden.tag(anna.pk) != hidden.tag(admin.pk)
+    client = Client()
+    client.force_login(admin)
+    page = client.get("/admin/audit?area=residents").content.decode()
+    assert tag in page and "ændret (vises ikke her)" in page
+    assert "Anna Berg" not in page and before not in page and after not in page
+    history = client.get(f"/admin/audit?kind=residents.resident&id={anna.pk}").content.decode()
+    assert f"«{tag}»" in history and "Anna Berg" not in history
+    assert not presentation.Filters(q="Anna Berg").queryset().exists()  # not even that it exists
+
+    # A feature's own page, after its own access rules, shows them.
+    lines, _ = presentation.page(presentation.Filters(kind="residents.resident"), show_private=True)
+    line = next(line for line in lines if line.action == "residents.resident.updated")
+    assert line.subject is not None and line.subject.name == "Anna Berg"
+    assert [(c.before, c.after, c.hidden) for c in line.subject.changes] == [(before, after, False)]
+
+
+def test_a_private_field_must_exist() -> None:
+    from photo_album.models import Album
+
+    with pytest.raises(ValueError, match="no fields"):
+        trail.register(Album, "test.album", private={"nmae"})
+    assert trail.registration(Album) is None
+
+
+@pytest.mark.django_db
 def test_the_audit_page_pages_back_by_id(make_resident: Callable[..., Resident]) -> None:
     from audit import presentation
 

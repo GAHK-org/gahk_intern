@@ -4,6 +4,10 @@ features that show their own part of it (the Hjemmeside's history, Drive's activ
 Values are shown as stored, turned into words where the model still knows how: a field's name, a
 choice's label, the name of a related row (or "#id" once it is gone). The trail itself never
 depends on that — it only makes it easier to read.
+
+What an app registers as private (trail.Registration) the audit page shows only as "changed", and a
+thing with a private name by its tag; searching does not find it by that name. A feature's own page
+passes `show_private=True` after applying its own access rules.
 """
 
 import datetime
@@ -135,7 +139,11 @@ class Filters:
         if self.until:
             events = events.filter(at__date__lte=self.until)
         if self.q:
-            named = AuditEntity.objects.filter(name__icontains=self.q).values("event_id")
+            named = (
+                AuditEntity.objects.filter(name__icontains=self.q)
+                .exclude(kind__in=trail.private_name_kinds())
+                .values("event_id")
+            )
             matches = (
                 Q(actor_name__icontains=self.q)
                 | Q(action__icontains=self.q)
@@ -157,6 +165,7 @@ class ChangeLine:
     redacted: bool
     before_long: bool
     after_long: bool
+    hidden: bool = False  # private: kept, but not shown here
 
 
 @dataclass
@@ -207,7 +216,7 @@ class EventLine:
 
 
 def page(
-    filters: Filters, *, before: int | None = None, size: int = PAGE_SIZE
+    filters: Filters, *, before: int | None = None, size: int = PAGE_SIZE, show_private: bool = False
 ) -> tuple[list[EventLine], int | None]:
     """One page of events, newest first, and the id to pass as `before` for the next (None: no more).
     By id rather than offset: new events arriving while somebody pages back do not shift the pages."""
@@ -226,12 +235,15 @@ def page(
     )
     more = len(rows) > size
     rows = rows[:size]
-    names = _RelatedNames()
+    names = _RelatedNames(show_private)
     return [_event_line(row, names) for row in rows], (rows[-1].id if more and rows else None)
 
 
-def latest_name(kind: str, entity_id: int | None) -> str:
+def latest_name(kind: str, entity_id: int | None, *, show_private: bool = False) -> str:
     """What a thing was last called in the trail: the heading of its history."""
+    reg = trail.registration_for_kind(kind)
+    if reg is not None and reg.private_name and not show_private:
+        return reg.tag(entity_id)
     entity = AuditEntity.objects.filter(kind=kind, entity_id=entity_id).order_by("-id").first()
     return entity.name if entity else f"#{entity_id}"
 
@@ -260,7 +272,12 @@ def _event_line(row: AuditEvent, names: "_RelatedNames") -> EventLine:
         ip=row.ip,
         unclaimed=row.unclaimed,
         details=[
-            (DETAIL_LABELS.get(str(key), str(key)), _plain(value))
+            (
+                DETAIL_LABELS.get(str(key), str(key)),
+                "vises ikke her"
+                if trail.is_private_detail(str(key)) and not names.show_private
+                else _plain(value),
+            )
             for key, value in (row.details or {}).items()
         ],
         subject=subject,
@@ -270,11 +287,12 @@ def _event_line(row: AuditEvent, names: "_RelatedNames") -> EventLine:
 
 def _entity_line(entity: AuditEntity, names: "_RelatedNames") -> EntityLine:
     reg = trail.registration_for_kind(entity.kind)
+    hide = reg is not None and reg.private_name and not names.show_private
     return EntityLine(
         kind=entity.kind,
         kind_label=trail.kind_label(entity.kind),
         entity_id=entity.entity_id,
-        name=entity.name,
+        name=reg.tag(entity.entity_id) if hide and reg is not None else entity.name,
         operation=entity.operation,
         operation_label=entity.get_operation_display(),
         role=entity.role,
@@ -292,6 +310,10 @@ def _change_line(reg: trail.Registration | None, change: AuditChange, names: "_R
         label = change.field
     if change.redacted:
         return ChangeLine(change.field, label, "", "", redacted=True, before_long=False, after_long=False)
+    if reg is not None and change.field in reg.private and not names.show_private:
+        return ChangeLine(
+            change.field, label, "", "", False, before_long=False, after_long=False, hidden=True
+        )
     before = _value(model_field, change.before, names)
     after = _value(model_field, change.after, names)
     return ChangeLine(
@@ -352,7 +374,8 @@ def _plain(value: Any) -> str:  # noqa: ANN401
 class _RelatedNames:
     """Names of related rows for one page, looked up once each. A row since deleted is "#id"."""
 
-    def __init__(self) -> None:
+    def __init__(self, show_private: bool = False) -> None:
+        self.show_private = show_private
         self._cache: dict[tuple[type[models.Model], Any], str] = {}
 
     def get(self, model: Any, pk: Any) -> str:  # noqa: ANN401
@@ -360,7 +383,9 @@ class _RelatedNames:
         if key not in self._cache:
             obj = model._base_manager.filter(pk=pk).first()
             reg = trail.registration(model)
-            if obj is None:
+            if reg is not None and reg.private_name and not self.show_private:
+                self._cache[key] = reg.tag(pk)
+            elif obj is None:
                 self._cache[key] = f"#{pk}"
             else:
                 self._cache[key] = reg.describe(obj) if reg else str(obj)
