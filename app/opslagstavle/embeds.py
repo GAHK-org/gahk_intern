@@ -16,7 +16,10 @@ the album is passed over, and with none left the album shows its newest again.
 EVERY WIDGET IS DRAWN FOR ITS READER, by its feature's rules: an album for anyone who may open the
 photo album; a film only for those GAHKFlix's rollout gate lets in, and only while they may see it
 (a draft for its uploader and the administrators, a binned one for the administrators, each marked
-as such). The kitchen account, which can open neither, gets none. Where no widget is drawn, the
+as such). An upcoming premiere is drawn for everybody as GAHKFlix's own premiere card is: its
+thumbnail blurred as its uploader chose, title, series and moment, nothing to play, and a link to its
+page only for those who may open it. Once the premiere is past it is an ordinary film's widget. The
+kitchen account, which can open neither, gets none. Where no widget is drawn, the
 name the author embedded it under stands in its place (core.markdown).
 
 A FIXED NUMBER OF QUERIES PER PAGE, however many posts embed however many albums and films: the
@@ -90,17 +93,20 @@ class AlbumWidget:
 @dataclass
 class VideoWidget:
     video: "Video"
+    # The film's page and its player; "" where the reader may not open them (an upcoming premiere).
     url: str
     play_url: str
-    # The banner, else the thumbnail.
+    # The banner, else the thumbnail; an upcoming premiere's thumbnail, blurred as its uploader chose.
     picture: str
     # "S1:A2", the release date and the length, those it has.
     meta: list[str] = field(default_factory=list)
     full_hd: bool = False
     # How far this reader is into it, 0–1, as GAHKFlix's own cards show it.
     progress: float | None = None
-    # "Kladde" or "I papirkurven", for the few who may see a film in either.
+    # "Kladde" or "I papirkurven", for the few who may see a film in either; "Premiere <moment>".
     state: str = ""
+    # Drawn as an upcoming premiere: no description, length, quality or play button.
+    premiere: bool = False
 
     @property
     def resumes(self) -> bool:
@@ -480,48 +486,69 @@ def videos_allowed(request: HttpRequest) -> bool:
 
 
 def _video_widgets(request: HttpRequest, wanted: set[Embed]) -> dict[Embed, object]:
-    """The films this reader may see, with their pictures and how far they are into them. Two
-    queries: the films, and the progress."""
+    """The films this reader may see, and the upcoming premieres everybody may, with their pictures
+    and how far the reader is into them. Two queries: the films, and the progress."""
     from gahkflix import access, services
     from gahkflix.models import Video
-    from gahkflix.templatetags.gahkflix import duration, picture_url
 
     shown = [
         video
         for video in Video.objects.filter(pk__in={embed.key for embed in wanted}).select_related(
             "file", "series"
         )
-        if access.can_see(request, video)
+        if access.can_see(request, video) or access.can_see_premiere(video)
     ]
-    progress = services.progress_by_video(current_resident(request), shown) if shown else {}
+    released = [video for video in shown if not video.is_upcoming]
+    progress = services.progress_by_video(current_resident(request), released) if released else {}
     widgets = {
-        video.pk: VideoWidget(
-            video=video,
-            url=reverse("gahkflix:detail", args=[video.pk]),
-            play_url=reverse("gahkflix:play", args=[video.pk]),
-            picture=picture_url(video, "banner") or picture_url(video, "thumbnail"),
-            meta=list(filter(None, [video.episode_label, video.date_label, duration(video.duration)])),
-            full_hd=bool(video.file and video.file.full_hd),
-            progress=progress.get(video.pk),
-            state="I papirkurven"
-            if video.is_binned
-            else "Kladde"
-            if video.is_draft
-            else f"Premiere {video.premiere_label}"
-            if video.is_upcoming
-            else "",
-        )
+        video.pk: _premiere_widget(request, video)
+        if video.is_upcoming
+        else _video_widget(video, progress.get(video.pk))
         for video in shown
     }
     return {embed: widgets[embed.key] for embed in wanted if embed.key in widgets}
 
 
+def _video_widget(video: "Video", progress: float | None) -> VideoWidget:
+    from gahkflix.templatetags.gahkflix import duration, picture_url
+
+    return VideoWidget(
+        video=video,
+        url=reverse("gahkflix:detail", args=[video.pk]),
+        play_url=reverse("gahkflix:play", args=[video.pk]),
+        picture=picture_url(video, "banner") or picture_url(video, "thumbnail"),
+        meta=list(filter(None, [video.episode_label, video.date_label, duration(video.duration)])),
+        full_hd=bool(video.file and video.file.full_hd),
+        progress=progress,
+        state="I papirkurven" if video.is_binned else "Kladde" if video.is_draft else "",
+    )
+
+
+def _premiere_widget(request: HttpRequest, video: "Video") -> VideoWidget:
+    """What GAHKFlix's premiere card shows everybody (gahkflix.access.can_see_premiere): the
+    thumbnail blurred as chosen, never the banner, which is not blurred; title, series, episode and
+    moment. Its page opens only for the uploader and the administrators, as the card does."""
+    from gahkflix import access
+    from gahkflix.templatetags.gahkflix import picture_url
+
+    return VideoWidget(
+        video=video,
+        url=reverse("gahkflix:detail", args=[video.pk]) if access.can_see(request, video) else "",
+        play_url="",
+        picture=picture_url(video, "thumbnail"),
+        meta=list(filter(None, [video.episode_label])),
+        state=f"Premiere {video.premiere_label}",
+        premiere=True,
+    )
+
+
 def _video_choices(request: HttpRequest, query: str) -> list[Choice]:
-    """Films out whose title or series holds `query`, newest first."""
+    """Films out or with their premiere ahead, whose title or series holds `query`, newest first
+    (an upcoming premiere counts from its moment, so those lead)."""
     from gahkflix import services
     from gahkflix.templatetags.gahkflix import duration, picture_url
 
-    videos = services.released().order_by(*services.newest_first())
+    videos = services.published().order_by(*services.newest_first())
     if query:
         videos = videos.filter(Q(title__icontains=query) | Q(series__title__icontains=query))
     return [
@@ -531,7 +558,12 @@ def _video_choices(request: HttpRequest, query: str) -> list[Choice]:
             detail=" · ".join(
                 filter(
                     None,
-                    [video.series.title if video.series else "", video.date_label, duration(video.duration)],
+                    [
+                        f"Premiere {video.premiere_label}" if video.is_upcoming else "",
+                        video.series.title if video.series else "",
+                        video.date_label,
+                        duration(video.duration),
+                    ],
                 )
             ),
             markdown=embed_syntax.markdown("gahkflix", video.pk, video.title),
@@ -542,10 +574,10 @@ def _video_choices(request: HttpRequest, query: str) -> list[Choice]:
 
 
 def _video_shareable(request: HttpRequest, key: int) -> str | None:
-    """Only a film that is out: a draft, an upcoming premiere or a binned one is no news to share."""
+    """A film that is out, or whose premiere is announced: a draft or a binned one is no news to share."""
     from gahkflix.models import Video
 
-    return Video.objects.released().filter(pk=key).values_list("title", flat=True).first()
+    return Video.objects.published().filter(pk=key).values_list("title", flat=True).first()
 
 
 KINDS: dict[str, Kind] = {
