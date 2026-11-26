@@ -17,7 +17,7 @@ from django.urls import reverse
 from django.utils import timezone
 
 from config.celery import app as celery_app
-from core import worker_logs
+from core import job_progress, worker_logs
 from core.models import WorkerJobLog
 from core.tasks import (
     UNSUCCESSFUL_JOB_RETENTION,
@@ -354,3 +354,41 @@ def test_the_temporary_admin_test_email_is_removed_from_the_stored_schedule() ->
 
     assert list(PeriodicTask.objects.values_list("name", flat=True)) == ["other"]
     assert "send-admin-dummy-notification" not in settings.CELERY_BEAT_SCHEDULE
+
+
+@pytest.mark.django_db
+def test_a_job_started_again_under_its_id_is_timed_from_this_start() -> None:
+    """A retry, or a message redelivered after its worker died, runs under the same task id. The
+    record kept the first run's start and end, so a running job looked hours old — and finished.
+    Its progress and peak memory start over too: they are this run's."""
+    task = type("FakeTask", (), {"name": "photo_album.tasks.build_media_derivatives"})()
+    task.request = Context(argsrepr="(42,)", is_eager=True)
+    first_start = timezone.now() - timedelta(hours=8)
+    WorkerJobLog.objects.create(
+        task_id="encode",
+        task_name=task.name,
+        state="FAILURE",
+        started_at=first_start,
+        finished_at=first_start + timedelta(hours=4),
+        lines=[{"message": "Converting GOPR6565.MP4 (3,7 GB)"}],
+        progress=0.6,
+        progress_step="Konverterer",
+        progressed_at=first_start + timedelta(hours=3),
+        peak_memory=1400 * 1024 * 1024,
+        peak_program="ffmpeg",
+        peak_program_memory=900 * 1024 * 1024,
+    )
+
+    before = timezone.now()
+    worker_logs._start(task_id="encode", task=task)
+    worker_logs._current.set(None)  # as _finish would; the job is still running here
+    job_progress.finish("encode")
+
+    record = WorkerJobLog.objects.get(task_id="encode")
+    assert record.state == "STARTED"
+    assert record.started_at >= before
+    assert record.finished_at is None
+    assert (record.progress, record.progress_step, record.progressed_at) == (None, "", None)  # starts over
+    # Its own peak, not the last run's: a run that measures nothing must not show that one's.
+    assert (record.peak_memory, record.peak_program, record.peak_program_memory) == (None, "", None)
+    assert record.lines == [{"message": "Converting GOPR6565.MP4 (3,7 GB)"}]  # why it ran again
