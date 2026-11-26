@@ -499,6 +499,11 @@ CELERY_BEAT_SCHEDULE = {
         "task": "drive.tasks.empty_bin",
         "schedule": crontab(minute=40, hour=3),
     },
+    # Drive (drive.locks.auto_lock): files and folders with nothing new for a year are locked.
+    "drive-auto-lock": {
+        "task": "drive.tasks.auto_lock",
+        "schedule": crontab(minute=50, hour=3),
+    },
 }
 
 STATIC_URL = "static/"

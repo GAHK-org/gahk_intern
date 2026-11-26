@@ -32,7 +32,7 @@ from residents.models import Resident
 
 from . import history, services
 from .access import Level, Viewer
-from .models import BIN_DAYS, Event, File, FileVersion, Folder, Space, name_key
+from .models import BIN_DAYS, ApprovalRequest, Event, File, FileVersion, Folder, Space, name_key
 from .periods import Period
 
 
@@ -69,6 +69,23 @@ def select(source: Folder, file_uuids: list[UUID], folder_uuids: list[UUID]) -> 
     )
 
 
+def check_files(viewer: Viewer, files: list[File]) -> None:
+    """Each file may be renamed, moved or deleted: a locked one says so, anything else is refused."""
+    for file in files:
+        if file.lock_active():
+            raise ValidationError(f"„{file.name}“ er låst.")
+        if not viewer.can_change_file(file):
+            raise PermissionDenied
+
+
+def check_folder(viewer: Viewer, folder: Folder) -> None:
+    holder = viewer.lock_holder(folder)
+    if holder is not None:
+        raise ValidationError(f"Mappen „{holder.name}“ er låst.")
+    if not viewer.can_change_folder(folder):
+        raise PermissionDenied
+
+
 def _clash(folder: Folder, name: str) -> ValidationError:
     return ValidationError(f"Der er allerede noget, der hedder „{name}“, i {folder.name}.")
 
@@ -78,8 +95,9 @@ def _clash(folder: Folder, name: str) -> ValidationError:
 
 @transaction.atomic
 def rename_file(viewer: Viewer, file: File, name: str, actor: Resident) -> None:
-    if file.deleted_at is not None or not viewer.can_change_file_in(file.folder):
+    if file.deleted_at is not None:
         raise PermissionDenied
+    check_files(viewer, [file])
     name = services.check_name(file.folder, name)
     if name == file.name:
         return
@@ -99,8 +117,9 @@ def rename_file(viewer: Viewer, file: File, name: str, actor: Resident) -> None:
 
 @transaction.atomic
 def rename_folder(viewer: Viewer, folder: Folder, name: str, actor: Resident) -> None:
-    if folder.deleted_at is not None or not viewer.can_change_folder(folder):
+    if folder.deleted_at is not None:
         raise PermissionDenied
+    check_folder(viewer, folder)
     parent = folder.parent
     assert parent is not None  # noqa: S101  # nosec B101 - can_change_folder refuses the roots
     name = services.check_name(parent, name)
@@ -145,6 +164,9 @@ def changes_access(selection: Selection, destination: Folder) -> bool:
 def _check_destination(viewer: Viewer, selection: Selection, destination: Folder) -> None:
     if destination.deleted_at is not None:
         raise ValidationError("Mappen findes ikke længere.")
+    holder = viewer.lock_holder(destination)
+    if holder is not None:
+        raise ValidationError(f"Mappen „{holder.name}“ er låst.")
     if selection.files and not viewer.can_upload_to(destination):
         raise ValidationError(f"Du kan ikke lægge filer i {destination.name}.")
     if selection.folders and not viewer.can_create_in(destination):
@@ -159,10 +181,9 @@ def check_move(viewer: Viewer, selection: Selection, destination: Folder) -> Non
         raise ValidationError("Vælg noget at flytte.")
     if destination.pk == selection.source.pk:
         raise ValidationError("Det ligger allerede der.")
-    if selection.files and not viewer.can_change_file_in(selection.source):
-        raise PermissionDenied
-    if any(not viewer.can_change_folder(folder) for folder in selection.folders):
-        raise PermissionDenied
+    check_files(viewer, selection.files)
+    for folder in selection.folders:
+        check_folder(viewer, folder)
     _check_destination(viewer, selection, destination)
     for name in selection.names:
         if services.taken(destination, name_key(name)):
@@ -196,6 +217,12 @@ def _move(viewer: Viewer, selection: Selection, destination: Folder, actor: Resi
             space=destination.space,
             workgroup=destination.workgroup,
             period_start=destination.period_start,
+        )
+        folder.parent = destination
+        folder.space, folder.workgroup, folder.period_start = (
+            destination.space,
+            destination.workgroup,
+            destination.period_start,
         )
         history.record(Event.Action.MOVED, actor=actor, folder=folder, name=folder.name, origin=origin, to=to)
     for file in selection.files:
@@ -302,11 +329,9 @@ def delete(viewer: Viewer, selection: Selection, actor: Resident) -> None:
 def _delete(viewer: Viewer, selection: Selection, actor: Resident) -> None:
     if not selection:
         raise ValidationError("Vælg noget at slette.")
-    if selection.files and not viewer.can_change_file_in(selection.source):
-        raise PermissionDenied
+    check_files(viewer, selection.files)
     for folder in selection.folders:
-        if not viewer.can_change_folder(folder):
-            raise PermissionDenied
+        check_folder(viewer, folder)
         if _has_contents(folder):
             raise ValidationError(f"{folder.name} kan kun slettes, når den er tom.")
     now = timezone.now()
@@ -329,6 +354,7 @@ class Binned:
     file: File
     where: str
     gone_at: datetime
+    purge_pending: bool = False
 
 
 def binned(viewer: Viewer, folder: Folder) -> list[Binned]:
@@ -339,6 +365,14 @@ def binned(viewer: Viewer, folder: Folder) -> list[Binned]:
         .order_by("-deleted_at")
     )
     paths: dict[int, str] = {}
+    pending = set(
+        ApprovalRequest.objects.filter(
+            kind=ApprovalRequest.Kind.PURGE,
+            state=ApprovalRequest.State.PENDING,
+            file__in=files,
+            version_number__isnull=True,
+        ).values_list("file_id", flat=True)
+    )
     found = []
     for file in files:
         if not viewer.can_change_file_in(file.folder):
@@ -346,7 +380,11 @@ def binned(viewer: Viewer, folder: Folder) -> list[Binned]:
         if file.folder_id not in paths:
             paths[file.folder_id] = file.folder.display_path()
         assert file.deleted_at is not None  # noqa: S101  # nosec B101 - filtered above
-        found.append(Binned(file, paths[file.folder_id], file.deleted_at + timedelta(days=BIN_DAYS)))
+        found.append(
+            Binned(
+                file, paths[file.folder_id], file.deleted_at + timedelta(days=BIN_DAYS), file.pk in pending
+            )
+        )
     return found
 
 
@@ -403,7 +441,7 @@ def empty_bin(now: datetime | None = None) -> tuple[int, int]:
         keys = set(FileVersion.objects.filter(file__in=expired).values_list("key", flat=True))
         _, removed = expired.delete()
         files = removed.get(File._meta.label, 0)
-        keys -= set(FileVersion.objects.filter(key__in=keys).values_list("key", flat=True))
+        services.drop_unreferenced(keys)
         folders = 0
         # Deepest first, so a parent goes once its children have.
         for folder in sorted(
@@ -412,8 +450,6 @@ def empty_bin(now: datetime | None = None) -> tuple[int, int]:
             if not folder.children.exists() and not folder.files.exists():
                 folder.delete()
                 folders += 1
-        store = services.storage()
-        transaction.on_commit(lambda: [store.delete(key) for key in sorted(keys)])
     return files, folders
 
 
@@ -428,8 +464,9 @@ def restore_version(viewer: Viewer, file: File, number: int, actor: Resident) ->
 
 def _restore_version(viewer: Viewer, file: File, number: int, actor: Resident) -> FileVersion:
     file = File.objects.select_for_update().get(pk=file.pk)
-    if file.deleted_at is not None or not viewer.can_change_file_in(file.folder):
+    if file.deleted_at is not None:
         raise PermissionDenied
+    check_files(viewer, [file])
     latest = file.latest_version()
     old = file.versions.filter(number=number).first()
     if old is None or old.number == latest.number:

@@ -8,7 +8,7 @@ them to whoever may read the item.
 
 from audit import trail
 
-from .models import Event, File, FileVersion, Folder, LastDownload
+from .models import ApprovalRequest, Event, File, FileVersion, Folder, LastDownload
 
 
 def _folder_path(folder: Folder) -> str:
@@ -39,6 +39,9 @@ trail.register(
         "created_at": "Oprettet",
         "deleted_at": "Lagt i papirkurven",
         "deleted_by": "Lagt i papirkurven af",
+        "locked_at": "Låst",
+        "locked_by": "Låst af",
+        "unlocked_until": "Låst op til",
     },
 )
 trail.register(
@@ -59,6 +62,9 @@ trail.register(
         "created_at": "Oprettet",
         "deleted_at": "Lagt i papirkurven",
         "deleted_by": "Lagt i papirkurven af",
+        "locked_at": "Låst",
+        "locked_by": "Låst af",
+        "unlocked_until": "Låst op til",
     },
 )
 trail.register(
@@ -76,6 +82,33 @@ trail.register(
         "created_by": "Lagt op af",
         "created_at": "Lagt op",
         "restored_from": "Gendannet fra version",
+    },
+)
+
+trail.register(
+    ApprovalRequest,
+    "drive.request",
+    name=lambda r: f"{r.get_kind_display()}: {r.name}",
+    label="Anmodning",
+    # The item's name and path, and the reasons, which may say what is in it.
+    private_name=True,
+    private={"name", "where", "reason", "decision_reason"},
+    ignore={"uuid"},
+    labels={
+        "kind": "Slags",
+        "state": "Status",
+        "file": "Fil",
+        "folder": "Mappe",
+        "version_number": "Version",
+        "name": "Navn",
+        "where": "Sted",
+        "days": "Dage",
+        "reason": "Begrundelse",
+        "requested_by": "Anmodet af",
+        "requested_at": "Anmodet",
+        "decided_by": "Besluttet af",
+        "decided_at": "Besluttet",
+        "decision_reason": "Begrundelse for beslutningen",
     },
 )
 
@@ -103,5 +136,14 @@ trail.actions(
         "drive.file.restored": "Gendannede fra papirkurven",
         "drive.file.version_restored": "Gendannede en tidligere version",
         "drive.bin.emptied": "Tømte papirkurven",
+        "drive.file.locked": "Låste fil",
+        "drive.folder.locked": "Låste mappe",
+        "drive.items.auto_locked": "Låste filer og mapper uden ændringer i et år",
+        "drive.unlock.requested": "Bad om oplåsning",
+        "drive.unlock.approved": "Godkendte oplåsning",
+        "drive.unlock.rejected": "Afviste oplåsning",
+        "drive.purge.requested": "Bad om permanent sletning",
+        "drive.purge.approved": "Godkendte permanent sletning",
+        "drive.purge.rejected": "Afviste permanent sletning",
     }
 )

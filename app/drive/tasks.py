@@ -1,6 +1,6 @@
 from celery import shared_task
 
-from . import operations
+from . import locks, operations
 from .structure import ensure_structure
 
 
@@ -14,3 +14,9 @@ def ensure_structure_task() -> None:
 def empty_bin_task() -> None:
     """Daily: remove for good what has been in the bin for BIN_DAYS."""
     operations.empty_bin()
+
+
+@shared_task(name="drive.tasks.auto_lock")
+def auto_lock_task() -> None:
+    """Daily: lock files and folders that have had nothing new for a year."""
+    locks.auto_lock()

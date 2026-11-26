@@ -1,6 +1,6 @@
 from django.contrib import admin
 
-from .models import Event, File, FileVersion, Folder
+from .models import ApprovalRequest, Event, File, FileVersion, Folder
 
 
 @admin.register(Folder)
@@ -31,3 +31,11 @@ class EventAdmin(admin.ModelAdmin):
     list_filter = ("action",)
     search_fields = ("name",)
     raw_id_fields = ("actor", "file", "folder")
+
+
+@admin.register(ApprovalRequest)
+class ApprovalRequestAdmin(admin.ModelAdmin):
+    list_display = ("requested_at", "kind", "state", "name", "requested_by", "decided_by")
+    list_filter = ("kind", "state")
+    search_fields = ("name", "where")
+    raw_id_fields = ("file", "folder", "requested_by", "decided_by")

@@ -21,15 +21,21 @@ and the joins small.
 """
 
 import unicodedata
+from datetime import datetime
 from uuid import uuid4
 
 from django.core.exceptions import ValidationError
 from django.db import models
 from django.db.models import Q
+from django.utils import timezone
 
 NAME_MAX_LENGTH = 200
 # How long a deleted file stays in the bin before it is removed with all its versions.
 BIN_DAYS = 30
+# A file locks this long after its last new version; a folder after this long with nothing new in it.
+LOCK_AFTER_DAYS = 365
+# The longest an unlock lasts.
+MAX_UNLOCK_DAYS = 30
 
 
 def normalize_name(value: str) -> str:
@@ -60,12 +66,32 @@ def validate_name(value: str) -> None:
         raise ValidationError("Et navn må ikke starte eller slutte med mellemrum eller slutte med punktum.")
 
 
+class Lockable(models.Model):
+    """A lock, set by hand or by the daily task (`locked_by` null), and lifted for a while by an
+    approved unlock request (`unlocked_until`). The lock holds again the moment that time is past:
+    nothing has to run for it."""
+
+    locked_at = models.DateTimeField(null=True, blank=True)
+    locked_by = models.ForeignKey(
+        "residents.Resident", null=True, blank=True, on_delete=models.SET_NULL, related_name="+"
+    )
+    unlocked_until = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        abstract = True
+
+    def lock_active(self, now: datetime | None = None) -> bool:
+        if self.locked_at is None:
+            return False
+        return self.unlocked_until is None or self.unlocked_until <= (now or timezone.now())
+
+
 class Space(models.TextChoices):
     COMMON = "common", "Fælles"
     GROUP = "group", "Embedsgruppe"
 
 
-class Folder(models.Model):
+class Folder(Lockable):
     class Kind(models.TextChoices):
         # Made by the system, and never renamed, moved or deleted.
         COMMON_ROOT = "common_root", "Fælles"
@@ -152,7 +178,7 @@ class Folder(models.Model):
         return " / ".join([*(folder.name for folder in self.ancestors()), self.name])
 
 
-class File(models.Model):
+class File(Lockable):
     uuid = models.UUIDField(default=uuid4, unique=True, editable=False)  # in URLs, not the key
     folder = models.ForeignKey(Folder, on_delete=models.PROTECT, related_name="files")
     name = models.CharField(max_length=NAME_MAX_LENGTH)
@@ -248,6 +274,12 @@ class Event(models.Model):
         COPIED = "copied", "Kopieret"
         DELETED = "deleted", "Slettet"
         RESTORED = "restored", "Gendannet"
+        LOCKED = "locked", "Låst"
+        UNLOCK_REQUESTED = "unlock_requested", "Oplåsning ønsket"
+        UNLOCK_DECIDED = "unlock_decided", "Oplåsning besluttet"
+        PURGE_REQUESTED = "purge_requested", "Permanent sletning ønsket"
+        PURGE_DECIDED = "purge_decided", "Permanent sletning besluttet"
+        PURGED = "purged", "Slettet permanent"
 
     at = models.DateTimeField(auto_now_add=True, db_index=True)
     actor = models.ForeignKey(
@@ -263,9 +295,17 @@ class Event(models.Model):
     # version number.
     name = models.CharField(max_length=NAME_MAX_LENGTH)
     details = models.JSONField(default=dict, blank=True)
+    # Where the item was, so a space's activity page shows a line only to those who could read the
+    # item there - also once the item itself is gone.
+    space = models.CharField(max_length=10, choices=Space.choices, blank=True)
+    workgroup = models.ForeignKey(
+        "core.Workgroup", null=True, blank=True, on_delete=models.SET_NULL, related_name="+"
+    )
+    period_start = models.DateField(null=True, blank=True)
 
     class Meta:
         ordering = ["-at", "-pk"]
+        indexes = [models.Index(fields=["space", "workgroup", "-at"], name="drive_event_activity")]
 
     def __str__(self) -> str:
         return f"{self.get_action_display()}: {self.name}"
@@ -291,4 +331,70 @@ class Event(models.Model):
                 return f"Lagde {self.name} i papirkurven"
             case self.Action.RESTORED:
                 return f"Gendannede {self.name} fra papirkurven"
+            case self.Action.LOCKED:
+                if d.get("automatic"):
+                    return f"{self.name} blev låst efter et år uden ændringer"
+                return f"Låste {self.name}"
+            case self.Action.UNLOCK_REQUESTED:
+                return f"Bad om at låse {self.name} op i {d.get('days')} dage: {d.get('reason')}"
+            case self.Action.UNLOCK_DECIDED:
+                if d.get("approved"):
+                    return f"Godkendte at låse {self.name} op til {d.get('until')}"
+                return f"Afviste at låse {self.name} op: {d.get('reason')}"
+            case self.Action.PURGE_REQUESTED:
+                return f"Bad om at slette {_what(self.name, d)} permanent: {d.get('reason')}"
+            case self.Action.PURGE_DECIDED:
+                return f"Afviste at slette {_what(self.name, d)} permanent: {d.get('reason')}"
+            case self.Action.PURGED:
+                return f"{_what(self.name, d, capital=True)} slettet permanent af {d.get('requested_by')}, godkendt af {d.get('approved_by')}"
         return str(self)
+
+
+def _what(name: str, details: dict, *, capital: bool = False) -> str:
+    """`version 3 af Budget.xlsx`, or the file's name when the whole file is meant."""
+    if details.get("number"):
+        return f"{'V' if capital else 'v'}ersion {details['number']} af {name}"
+    return name
+
+
+class ApprovalRequest(models.Model):
+    """A request that somebody else decides: lifting a lock for a while, or deleting a version or a
+    binned file for good before its time. Admins and Inspektionen decide, never the one who asked;
+    they see the name, the path and the version, never the contents."""
+
+    class Kind(models.TextChoices):
+        UNLOCK = "unlock", "Oplåsning"
+        PURGE = "purge", "Permanent sletning"
+
+    class State(models.TextChoices):
+        PENDING = "pending", "Venter"
+        APPROVED = "approved", "Godkendt"
+        REJECTED = "rejected", "Afvist"
+
+    uuid = models.UUIDField(default=uuid4, unique=True, editable=False)  # in URLs, not the key
+    kind = models.CharField(max_length=10, choices=Kind.choices)
+    state = models.CharField(max_length=10, choices=State.choices, default=State.PENDING, db_index=True)
+    # One of the two. Null once what it was about is gone; `name` and `where` stay.
+    file = models.ForeignKey(File, null=True, blank=True, on_delete=models.SET_NULL, related_name="+")
+    folder = models.ForeignKey(Folder, null=True, blank=True, on_delete=models.SET_NULL, related_name="+")
+    # A purge of one version, rather than of a binned file.
+    version_number = models.PositiveIntegerField(null=True, blank=True)
+    name = models.CharField(max_length=NAME_MAX_LENGTH)
+    where = models.CharField(max_length=1000)
+    days = models.PositiveSmallIntegerField(null=True, blank=True)
+    reason = models.TextField()
+    requested_by = models.ForeignKey(
+        "residents.Resident", null=True, on_delete=models.SET_NULL, related_name="+"
+    )
+    requested_at = models.DateTimeField(auto_now_add=True)
+    decided_by = models.ForeignKey(
+        "residents.Resident", null=True, blank=True, on_delete=models.SET_NULL, related_name="+"
+    )
+    decided_at = models.DateTimeField(null=True, blank=True)
+    decision_reason = models.TextField(blank=True)
+
+    class Meta:
+        ordering = ["-requested_at", "-pk"]
+
+    def __str__(self) -> str:
+        return f"{self.get_kind_display()}: {self.name}"

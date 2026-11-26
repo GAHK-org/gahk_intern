@@ -1,0 +1,10 @@
+{% comment %} Asking admins and Inspektionen to lift a lock for a while (drive/locks.py). {% endcomment %}
+<details class="drive-inline">
+  <summary>Bed om at låse op</summary>
+  <form method="post" action="{{ action }}" class="drive-request-form">
+    {% csrf_token %}
+    <label>Hvor mange dage <input type="number" name="days" min="1" max="{{ max_unlock_days }}" value="7" required></label>
+    <label>Begrundelse <textarea name="reason" rows="2" maxlength="2000" required></textarea></label>
+    <button type="submit" class="btn btn-secondary">Send anmodning</button>
+  </form>
+</details>
