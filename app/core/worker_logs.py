@@ -159,7 +159,9 @@ def _start(task_id: str | None = None, task: Any = None, **_: Any) -> None:  # n
         # job — the page's "running for", core.tasks.close_lost_jobs — must measure this run. Kept
         # from the first, it closed a redelivered encode as lost an hour into it ("started" 8½ hours
         # before), and the job vanished from the page while ffmpeg went on. Its progress starts over
-        # too. The lines are kept: the earlier run's log is what says why it ran again.
+        # too, and so does its peak memory: only what is measured is written (core/job_progress.py),
+        # so a run that measures none would otherwise show the last run's. The lines are kept: the
+        # earlier run's log is what says why it ran again.
         if not created:
             WorkerJobLog.objects.filter(pk=log.pk).update(
                 state="STARTED",
@@ -168,6 +170,9 @@ def _start(task_id: str | None = None, task: Any = None, **_: Any) -> None:  # n
                 progress=None,
                 progress_step="",
                 progressed_at=None,
+                peak_memory=None,
+                peak_program="",
+                peak_program_memory=None,
             )
         earlier = [] if created else list(log.lines)
     except Exception:
