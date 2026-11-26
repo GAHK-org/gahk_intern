@@ -1170,6 +1170,15 @@ function speedLabel(rate: number): string {
   return rate === 1 ? "Normal" : `${String(rate).replace(".", ",")}×`;
 }
 
+/**
+ * A path on this site ("/gahkflix/…"), not "//other.host" or "javascript:…". The player's links and
+ * subtitle files come from its JSON config, which the server builds with reverse(); this check keeps
+ * anything else in that config out of a link, a <track> or the address bar (CodeQL js/xss-through-dom).
+ */
+function isSafePath(url: string | null | undefined): url is string {
+  return typeof url === "string" && /^\/(?![/\\])/.test(url);
+}
+
 function jsonUrl(url: string): string {
   const target = new URL(url, window.location.href);
   target.searchParams.set("format", "json");
@@ -1327,7 +1336,7 @@ class Player {
     this.root.querySelector("[data-flix-title]")!.textContent = film.title;
     this.root.querySelector("[data-flix-subtitle]")!.textContent = film.subtitle;
     document.title = `${film.subtitle || film.title} – GAHKFlix`;
-    if (!this.overlay) this.back.href = film.backUrl;
+    if (!this.overlay && isSafePath(film.backUrl)) this.back.href = film.backUrl;
     const qualities = Object.keys(film.streams);
     this.quality = stored(QUALITY_KEY) ?? "";
     if (!qualities.includes(this.quality)) {
@@ -1339,7 +1348,8 @@ class Player {
     );
     this.qualityGroup.hidden = qualities.length < 2;
     this.setTracks(film.subtitles ?? []);
-    this.next.href = film.next?.url ?? "#";
+    const nextUrl = film.next?.url;
+    this.next.href = isSafePath(nextUrl) ? nextUrl : "#";
     this.next.textContent = "Næste afsnit ▸";
     if (this.filmWanted) this.startFilm();
   }
@@ -1425,6 +1435,7 @@ class Player {
     for (const old of this.video.querySelectorAll("track")) old.remove();
     this.captions.replaceChildren();
     for (const track of tracks) {
+      if (!isSafePath(track.url)) continue;
       const element = document.createElement("track");
       element.kind = "subtitles";
       element.label = track.label;
@@ -1707,7 +1718,7 @@ class Player {
   /** The next video, in the same element, after the intro again. */
   private async playNext(): Promise<void> {
     const next = this.film?.next;
-    if (!next) return;
+    if (!next || !isSafePath(next.url)) return;
     // Saved first, so the film that just ended counts as watched when the next one picks its own successor.
     const saved = this.savePosition();
     this.playIntro();
@@ -1724,7 +1735,10 @@ class Player {
   /** Away from the player: back where "Afspil" was clicked, or to the video's page. */
   leave(): void {
     if (this.overlay) history.back();
-    else window.location.href = this.film?.backUrl ?? this.back.href;
+    else {
+      const backUrl = this.film?.backUrl;
+      window.location.href = isSafePath(backUrl) ? backUrl : this.back.href;
+    }
   }
 
   close(): void {
