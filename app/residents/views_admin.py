@@ -184,6 +184,10 @@ class Job(_TaskName):
     progress: float | None = None
     progress_step: str = ""
     progressed_at: datetime.datetime | None = None
+    # From the worker's record: the job's peak memory, in bytes (core/job_memory.py).
+    peak_memory: int | None = None
+    peak_program: str = ""
+    peak_program_memory: int | None = None
 
     @property
     def state_label(self) -> str:
@@ -257,6 +261,9 @@ class Job(_TaskName):
         self.progress = record.progress
         self.progress_step = record.progress_step
         self.progressed_at = record.progressed_at
+        self.peak_memory = record.peak_memory
+        self.peak_program = record.peak_program
+        self.peak_program_memory = record.peak_program_memory
 
 
 class _ResultUnpickler(pickle.Unpickler):
