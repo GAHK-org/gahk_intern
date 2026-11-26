@@ -9,6 +9,8 @@
 - gahk.dk keeps a submission only until intern fetches it, at most a couple of minutes later.
   intern checks every submission against the same field rules the forms had, stores it once
   (fetching it again changes nothing), and then lets gahk.dk delete it.
+- The motivation is at most 500 characters on both forms (the tour form since #93, the sublet form
+  since #480), so indstillingen gets a short one.
 - A submission that breaks the rules is dropped and logged; the overview counts them. One of a kind
   intern does not know yet stays on gahk.dk until an intern that knows it fetches it.
 - gahk.dk hands a submission over with English codes: the kind is `tour` or `sublet`, and "Hvor

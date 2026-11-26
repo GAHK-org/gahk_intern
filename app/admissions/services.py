@@ -60,7 +60,7 @@ HEARD_ABOUT_US: dict[str, str] = {
 # Above anything gahk.dk can accept: its forms read at most 64 KiB of request body (gahk_web's
 # forms.MAX_FORM_BYTES), so no field it validated and queued can be longer, and an over-long field
 # is not from gahk.dk's form. Keep it above that limit: an item dropped here is acknowledged, which
-# deletes gahk.dk's only copy. (The sublet motivation has no length rule of its own, here or there.)
+# deletes gahk.dk's only copy.
 MAX_FIELD_LENGTH = 65_536
 # A submission time this far ahead of intern's clock is the webhost's clock being wrong; it is
 # stored as "now" rather than sorting at the top of the list for weeks.

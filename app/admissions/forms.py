@@ -26,9 +26,7 @@ HEARD_CHOICES = [
 class _BaseApplicationForm(forms.ModelForm):
     heard_about_us = forms.ChoiceField(choices=HEARD_CHOICES, required=True, label="Hvor hørte du om os?")
     gender = forms.ChoiceField(choices=Application.Gender.choices, required=True, label="Køn")
-
-
-class RundvisningForm(_BaseApplicationForm):
+    # Indstillingen reads every one, so both forms keep it short (#93, #480).
     motivation = forms.CharField(
         label="Motivation",
         max_length=500,
@@ -36,6 +34,8 @@ class RundvisningForm(_BaseApplicationForm):
         widget=forms.Textarea(attrs={"rows": 5}),
     )
 
+
+class RundvisningForm(_BaseApplicationForm):
     class Meta:
         model = Application
         fields = [
@@ -70,6 +70,4 @@ class FremlejeForm(_BaseApplicationForm):
             "email": "E-mail",
             "age": "Alder",
             "occupation": "Beskæftigelse",
-            "motivation": "Motivation",
         }
-        widgets = {"motivation": forms.Textarea(attrs={"rows": 5})}
