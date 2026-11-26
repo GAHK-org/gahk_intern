@@ -66,6 +66,7 @@ INSTALLED_APPS = [
     "django.contrib.staticfiles",
     "django_celery_beat",
     # GAHK domains
+    "audit",
     "core",
     "residents",
     "admissions",
@@ -94,6 +95,8 @@ MIDDLEWARE = [
     "django.middleware.common.CommonMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
     "django.contrib.auth.middleware.AuthenticationMiddleware",
+    # Each request is one source of audit events: its resident, its address (audit.trail).
+    "audit.middleware.AuditContext",
     # The "gahk_editor" hint cookie for gahk.dk's "Rediger siden" (EDITOR_HINT_COOKIE_DOMAIN).
     # Needs the user; set or deleted only when its state changes, never on static files or media.
     "cms.middleware.EditorHintCookie",
@@ -189,6 +192,12 @@ AUTH_PASSWORD_VALIDATORS = [
 
 # Password-reset links expire after 2 hours (F-014 decision, 2026-06).
 PASSWORD_RESET_TIMEOUT = 7200
+
+# The audit trail (audit.trail). A registered model written outside trail.event() is recorded as an
+# "unclaimed" event; from a request or a job that is a missing event(), logged as a warning — except
+# under these paths, where unclaimed is how writes are recorded: the Django admin has no events of its
+# own, so each of its saves becomes "<kind>.updated" with the admin's resident and every field.
+AUDIT_UNCLAIMED_PATHS = ("/django-admin/",)
 
 LANGUAGE_CODE = "da"
 TIME_ZONE = "Europe/Copenhagen"
@@ -373,6 +382,14 @@ CELERY_BEAT_SCHEDULE = {
         "task": "gahkflix.tasks.recover_stalled",
         "schedule": crontab(minute="13-59/15"),
     },
+    # Lines up each GAHKFlix premiere of the next 20 minutes to be announced on its minute, and
+    # announces any that came out unannounced (gahkflix.services.announce_premieres). Not every
+    # minute: that is 1440 jobs a day on the worker-jobs page for a handful of premieres a year.
+    # Free quarter-hour minutes, off the */15 sweeps above and the 2-minute gahk.dk sync.
+    "gahkflix-announce-premieres": {
+        "task": "gahkflix.tasks.announce_premieres",
+        "schedule": crontab(minute="3-59/15"),
+    },
     # GAHKFlix's bin and expired requests after 30 days, unpublished drafts after 90, and stored files
     # nothing refers to (gahkflix.services.sweep_orphans).
     "gahkflix-housekeeping": {
@@ -388,6 +405,12 @@ CELERY_BEAT_SCHEDULE = {
     "gahkflix-warn-expiring-drafts": {
         "task": "gahkflix.tasks.warn_expiring_drafts",
         "schedule": crontab(minute=15, hour=10),
+    },
+    # Daily, after the draft warnings: a draft with a premiere ahead is not published yet, and will
+    # have no premiere unless it is (gahkflix.services.warn_unpublished_premieres).
+    "gahkflix-warn-unpublished-premieres": {
+        "task": "gahkflix.tasks.warn_unpublished_premieres",
+        "schedule": crontab(minute=20, hour=10),
     },
     "purge-worker-job-logs": {
         "task": "core.tasks.purge_worker_job_logs",
@@ -415,6 +438,12 @@ CELERY_BEAT_SCHEDULE = {
     "purge-delivered-broker-messages": {
         "task": "core.tasks.purge_delivered_broker_messages",
         "schedule": crontab(minute=50, hour=4),
+    },
+    # 03:10: the audit trail's retention, a year for logins and reset requests and five years for the
+    # rest (audit migration 0002).
+    "purge-expired-audit-events": {
+        "task": "audit.tasks.purge_expired",
+        "schedule": crontab(minute=10, hour=3),
     },
     "purge-outgoing-mail": {
         "task": "core.tasks.purge_outgoing_mail",

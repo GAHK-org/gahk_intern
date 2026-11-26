@@ -16,13 +16,26 @@ def _version(key: str) -> str:
 
 
 @register.simple_tag
-def picture_url(video: Video | None, kind: str = "thumbnail") -> str:
+def picture_url(video: Video | None, kind: str = "thumbnail", *, as_premiere: bool = True) -> str:
+    """An upcoming premiere's thumbnail is the blurred one, as everybody sees it (views.picture),
+    unless `as_premiere` is False: the edit page shows its uploader the picture itself."""
     if video is None:
         return ""
     field = getattr(video, kind, None)
     if not field:
         return ""
-    return f"{reverse('gahkflix:picture', args=[video.pk, kind])}?v={_version(key_of(field))}"
+    url = f"{reverse('gahkflix:picture', args=[video.pk, kind])}?v={_version(key_of(field))}"
+    if as_premiere and kind == "thumbnail" and video.is_upcoming:
+        url += f"&premiere={video.premiere_blur}"
+    return url
+
+
+@register.simple_tag(takes_context=True)
+def can_open(context: dict[str, Any], video: Video) -> bool:
+    """Whether this reader may open the video's page: an upcoming premiere's card is a link for its
+    uploader and the administrators, and only a card for everybody else."""
+    request = context.get("request")
+    return request is not None and access.can_see(request, video)
 
 
 @register.simple_tag

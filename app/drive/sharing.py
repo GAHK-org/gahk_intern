@@ -13,10 +13,10 @@ periode` for an item from `Uden periode` - so last period's accounts sit with la
 from dataclasses import dataclass
 
 from django.core.exceptions import PermissionDenied, ValidationError
-from django.db import transaction
 from django.db.models import Q
 from django.urls import reverse
 
+from audit import trail
 from core.models import Workgroup
 from notifications import categories
 from notifications import services as notifications
@@ -51,7 +51,6 @@ def _check_sharer(viewer: Viewer, file: File | None, folder: Folder | None) -> F
     return where
 
 
-@transaction.atomic
 def share(
     viewer: Viewer,
     *,
@@ -59,6 +58,30 @@ def share(
     folder: Folder | None = None,
     resident_id: int | None = None,
     workgroup_id: int | None = None,
+    access: str,
+    actor: Resident,
+) -> Share:
+    with trail.event("drive.share.given", actor=actor, involve=[(file or folder, "item")]) as event:
+        row = _share(
+            viewer,
+            file=file,
+            folder=folder,
+            resident_id=resident_id,
+            workgroup_id=workgroup_id,
+            access=access,
+            actor=actor,
+        )
+        event.involve(row, "subject")
+        return row
+
+
+def _share(
+    viewer: Viewer,
+    *,
+    file: File | None,
+    folder: Folder | None,
+    resident_id: int | None,
+    workgroup_id: int | None,
     access: str,
     actor: Resident,
 ) -> Share:
@@ -111,10 +134,14 @@ def share(
     return row
 
 
-@transaction.atomic
 def stop(viewer: Viewer, row: Share, actor: Resident) -> None:
     item = row.file or row.folder
     _check_sharer(viewer, row.file, row.folder)
+    with trail.event("drive.share.stopped", subject=row, actor=actor, involve=[(item, "item")]):
+        _stop(row, item, actor)
+
+
+def _stop(row: Share, item: File | Folder | None, actor: Resident) -> None:
     recipient = row.recipient
     row.delete()
     history.record(
