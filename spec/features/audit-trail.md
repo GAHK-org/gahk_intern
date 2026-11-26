@@ -56,7 +56,8 @@ and what every changed field held before and after. Under Administration → Rev
 - A person's name shows everything they did; a thing's name shows its whole history.
 - What a feature keeps from administrators (the names in a Delt mappe, say) is kept in the trail in
   full but not shown here: such a thing is named by a tag ("Fil 3f2c9a", the same in every event), its
-  private fields read "ændret (vises ikke her)", and searching does not find it by name. The
+  private fields read "ændret (vises ikke her)", so do the event details a feature keeps for its own
+  pages, and searching does not find it by name. The
   feature's own pages show them to whoever may see them there.
 
 ## Pages of their own
