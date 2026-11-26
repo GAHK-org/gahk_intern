@@ -100,10 +100,11 @@ def page(request: HttpRequest, uuid: UUID) -> HttpResponse:
     )
 
 
-def _act(request: HttpRequest, uuid: UUID, action) -> HttpResponse:  # noqa: ANN001
+def _act(request: HttpRequest, uuid: UUID, action, done: str = "") -> HttpResponse:  # noqa: ANN001
+    """Run `action(viewer, item, me)` and say `done` when it went through."""
     item, viewer = _shared(request, uuid)
     try:
-        done = action(viewer, item, current_resident(request))
+        action(viewer, item, current_resident(request))
     except PermissionDenied:
         messages.error(request, "Det kan kun mappens moderatorer.")
     except ValidationError as exc:
@@ -125,10 +126,10 @@ def add_member(request: HttpRequest, uuid: UUID) -> HttpResponse:
     return _act(
         request,
         uuid,
-        lambda viewer, item, me: (
-            shared.add_member(viewer, item, _resident(request), request.POST.get("role", ""), me)
-            or "Medlemmet er tilføjet."
+        lambda viewer, item, me: shared.add_member(
+            viewer, item, _resident(request), request.POST.get("role", ""), me
         ),
+        "Medlemmet er tilføjet.",
     )
 
 
@@ -138,10 +139,10 @@ def set_role(request: HttpRequest, uuid: UUID) -> HttpResponse:
     return _act(
         request,
         uuid,
-        lambda viewer, item, me: (
-            shared.set_role(viewer, item, _resident(request), request.POST.get("role", ""), me)
-            or "Rollen er ændret."
+        lambda viewer, item, me: shared.set_role(
+            viewer, item, _resident(request), request.POST.get("role", ""), me
         ),
+        "Rollen er ændret.",
     )
 
 
@@ -171,12 +172,10 @@ def set_expiry(request: HttpRequest, uuid: UUID) -> HttpResponse:
     return _act(
         request,
         uuid,
-        lambda viewer, item, me: (
-            shared.set_expiry(
-                viewer, item, _date(request.POST.get("expires_on", "")), request.POST.get("on_expiry", ""), me
-            )
-            or "Udløbet er gemt."
+        lambda viewer, item, me: shared.set_expiry(
+            viewer, item, _date(request.POST.get("expires_on", "")), request.POST.get("on_expiry", ""), me
         ),
+        "Udløbet er gemt.",
     )
 
 
@@ -186,7 +185,7 @@ def rename(request: HttpRequest, uuid: UUID) -> HttpResponse:
     return _act(
         request,
         uuid,
-        lambda viewer, item, me: shared.rename(viewer, item, request.POST.get("name", ""), me) or "",
+        lambda viewer, item, me: shared.rename(viewer, item, request.POST.get("name", ""), me),
     )
 
 
