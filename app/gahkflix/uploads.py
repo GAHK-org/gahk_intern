@@ -1,4 +1,4 @@
-"""Getting a film into GAHKFlix: the browser sends it straight to the bucket, as Arkiv does.
+"""Getting a film into GAHKFlix: the browser sends it straight to the bucket.
 
     begin   the server checks the file and the resident, decides the key, signs a token and hands
             back a presigned POST policy (or, with no bucket, "post it to us instead")

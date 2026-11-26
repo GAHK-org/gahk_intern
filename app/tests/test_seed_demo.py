@@ -1,9 +1,14 @@
 """Smoke test for the seed_demo dev fixture command: it should run, be idempotent, and produce
 data that lights up the app's real queries (active period, roles, derived ølkælder balances)."""
 
+from typing import Any
+
 import pytest
 from django.core.management import call_command
+from django.test import Client
 
+from audit import trail
+from audit.models import AuditEvent
 from den_hurtige.models import QuickPost
 from oelkaelder.models import Shopper
 from residents.models import Resident, active_period
@@ -19,11 +24,14 @@ def test_seed_demo_populates_and_is_idempotent() -> None:
     # without leaving the alumneliste a person short.
     first_count = Resident.objects.count()
     assert first_count == 13
+    first_trail = AuditEvent.objects.count()
 
     # Re-running with --fresh must not duplicate or raise (idempotent).
     # --force because Django's test runner forces DEBUG=False, which the safety guard blocks.
     call_command("seed_demo", "--fresh", "--force", "--residents", "12", verbosity=0)
     assert Resident.objects.count() == first_count
+    # The append-only trail too: emptied and written again, not doubled.
+    assert AuditEvent.objects.count() == first_trail
 
     # active_period follows the seeded current-month residencies.
     year, month = active_period()
@@ -68,14 +76,6 @@ def test_seed_demo_populates_and_is_idempotent() -> None:
     newcomer = Resident.objects.get(move_in_date=date(year, month, 1))
     assert this_month.filter(resident=newcomer).exists()
 
-    from arkiv.models import ArchiveFile, ArchiveFolder
-
-    shared = ArchiveFolder.objects.get(parent=None, name="Fælles dokumenter")
-    billeder = ArchiveFolder.objects.get(parent=shared, name="Billeder")
-    summer = ArchiveFolder.objects.get(parent=billeder, name="Sommerfest 2026")
-    assert ArchiveFile.objects.filter(folder=summer, name="gruppebillede.jpg").exists()
-    assert not ArchiveFolder.objects.filter(parent=None, name="Billeder").exists()
-
 
 @pytest.mark.django_db
 def test_seed_demo_fills_the_board_including_the_two_awkward_cases() -> None:
@@ -106,6 +106,39 @@ def test_seed_demo_fills_the_board_including_the_two_awkward_cases() -> None:
     assert not hasattr(Notice.objects, "expired"), (
         "retention was removed from opslagstavlen; a reinstated expired() needs the spec updated too"
     )
+
+
+@pytest.mark.django_db
+def test_seed_demo_gives_the_gahkflix_player_everything_it_offers() -> None:
+    """The player's menus only show what a film has: subtitles from the file, a second quality from a
+    Full HD original. The demo has both, and a film with neither for their empty states."""
+    from gahkflix import services
+    from gahkflix.models import Video
+    from gahkflix.views import _subtitle_tracks
+
+    call_command("seed_demo", "--fresh", "--force", "--residents", "12", verbosity=0)
+
+    def menu(title: str) -> list[tuple[str, bool, bool]]:
+        video = Video.objects.get(title=title)
+        return [(t["label"], t["default"], t["forced"]) for t in _subtitle_tracks(video.file, video)]
+
+    assert menu("Pilot") == menu("Opvasken") == [("Dansk", True, False), ("Engelsk", False, False)]
+    assert menu("Revy") == [
+        ("Dansk", True, False),
+        ("Engelsk (Kommentarer)", False, False),
+        ("Dansk (Skilte) – kun tvungne", False, True),
+    ]
+    assert menu("Julefrokost") == []
+    revy = Video.objects.get(title="Revy")
+    assert revy.file.qualities == ["fullhd", "hd"]
+    assert all(Video.objects.get(title=t).file.qualities == ["hd"] for t in ("Pilot", "Julefrokost"))
+    upright = Video.objects.get(title="Julefrokost").file
+    assert upright.height > upright.width
+    # Long enough for `Næste afsnit` (the last 20 seconds) to come after the start, and to resume in.
+    assert Video.objects.get(title="Pilot").duration > 20
+    beboer = Resident.objects.get(email="beboer@gahk.dk")
+    assert services.continue_watching(beboer) == [revy]
+    assert services.resume_position(revy, beboer) == 12.0
 
 
 @pytest.mark.django_db
@@ -147,6 +180,79 @@ def test_seed_demo_gives_the_logins_notifications_in_every_state() -> None:
     call_command("seed_demo", "--fresh", "--force", "--residents", "12", verbosity=0)  # still idempotent
     again = Notification.objects.filter(recipient__email="beboer@gahk.dk")
     assert again.exclude(category=categories.GAHKFLIX_UPLOADS).count() == 7
+
+
+@pytest.mark.django_db
+def test_seed_demo_writes_weeks_of_audit_history(settings: Any) -> None:  # noqa: ANN401
+    """The rest of the seed is unaudited (loading demo data is nobody's action), so without its own
+    step the audit page would be empty on a fresh checkout. The step writes the weeks before today:
+    every kind of line the page shows, by different people from different addresses, with before and
+    after values that are true because the history ends at the seeded data."""
+    from datetime import timedelta
+
+    from django.test import Client
+    from django.utils import timezone
+
+    from residents.models import Role, RoleAssignment
+
+    settings.AUDIT_FALLBACK = True  # as outside the tests, so the shell fix is recorded (as System)
+    call_command("seed_demo", "--fresh", "--force", "--residents", "12", verbosity=0)
+    events = AuditEvent.objects.all()
+
+    assert {
+        "auth.login",
+        "auth.login.failed",
+        "auth.logout",
+        "auth.password.changed",
+        "auth.password_reset.requested",
+        "auth.password_reset.completed",
+        "auth.access.denied",
+        "residents.role.added",
+        "residents.role.removed",
+        "residents.admin_access.approved",
+        "residents.admin_access.denied",
+        "residents.resident.updated",
+        "residents.profile.updated",
+        "residents.month_list.saved",
+        "residents.month_list.added",
+        "residents.preview.set",
+        "residents.preview.cleared",
+        "rooms.round.ended",
+        "regnskab.account_number.updated",
+    } <= set(events.values_list("action", flat=True))
+    failed = events.filter(action="auth.login.failed")
+    assert {e.details["reason"] for e in failed} == {"wrong password", "no account"}
+    typed = failed.get(details__email_hash=trail.address_hash("formånd@gahk.dk"))
+    assert typed.details["email_domain"] == "gahk.dk", "the typed å, kept only as domain and hash"
+    # "Uden handling" both ways: the Django admin (whoever was logged in) and a shell (nobody).
+    assert events.filter(unclaimed=True, source="web", actor_name="Admin Istrator").exists()
+    assert events.filter(unclaimed=True, source="system", actor=None).exists()
+
+    # Spread out like a real trail: people, addresses (an IPv6 one too), weeks; never in the future.
+    now = timezone.now()
+    assert events.exclude(actor=None).values("actor").distinct().count() >= 8
+    addresses = set(events.exclude(ip=None).values_list("ip", flat=True))
+    assert len(addresses) >= 4 and any(":" in ip for ip in addresses)
+    assert events.order_by("at").first().at < now - timedelta(days=21)
+    assert not events.filter(at__gt=now).exists()
+    # The page lists by id, so the history was written in time order.
+    times = list(events.order_by("id").values_list("at", flat=True))
+    assert times == sorted(times)
+
+    # The history ends at the seeded data: the two administrators it approved and refused lost the
+    # role again, and the passwords it changed are still the documented one.
+    assert set(
+        RoleAssignment.objects.filter(role=Role.ADMINISTRATOR).values_list("resident__email", flat=True)
+    ) == {"formand@gahk.dk"}
+    for email in ("ak@gahk.dk", "oel@gahk.dk"):
+        assert Resident.objects.get(email=email).check_password("demo1234")
+
+    client = Client()
+    client.force_login(Resident.objects.get(email="formand@gahk.dk"))
+    page = client.get("/admin/audit").content.decode()
+    assert "Ældre" in page, "more than one page of history"
+    assert "mislykket login" in page
+    assert "Uden handling" in client.get("/admin/audit?unclaimed=1").content.decode()
 
 
 @pytest.mark.django_db
@@ -235,6 +341,61 @@ def test_the_seeded_mails_carry_their_groups_sender_and_reply_to(settings: objec
     reset = kept.get(kind=OutgoingMail.Kind.INTERACTIVE)
     assert reset.payload["reply_to"] == [settings.DEFAULT_REPLY_TO]  # type: ignore[attr-defined]
     assert all(m.payload["headers"] == outbox.AUTOMATIC_HEADERS for m in kept)
+
+
+@pytest.mark.django_db
+def test_seed_demo_fills_the_worker_jobs_page_in_every_state(client: Client) -> None:
+    """No worker has run in a seeded database, and none on a Mac measures memory, so the page would
+    be empty: every state it shows comes from the seed, through the page's own queries."""
+    from django.urls import reverse
+    from django.utils import timezone
+
+    from core.models import WorkerJobLog
+    from core.worker_jobs_demo import task_id
+    from residents.views_admin import JobFilters, _child_jobs, _history_counts, _job_details, _running
+
+    call_command("seed_demo", "--fresh", "--force", "--residents", "12", verbosity=0)
+    now = timezone.now()
+
+    running = _running(now)
+    live = [job for job in running if not job.over_time_limit]
+    assert {job.task for job in live} == {
+        "gahkflix.tasks.process_video_file",
+        "photo_album.tasks.build_media_derivatives",
+    }
+    encode = next(job for job in live if job.progress is not None)
+    assert encode.task_context.startswith("Video: ")
+    assert encode.task_context.endswith("(Revy)")
+    assert [job.task for job in running if job.over_time_limit] == ["gahkflix.tasks.recover_stalled"]
+
+    counts = _history_counts(JobFilters(include_children=True))
+    assert (counts["FAILURE"], counts["STARTED"]) == (3, 3)
+    assert counts["SUCCESS"] > 40
+
+    # Memory: so far while it runs, ffmpeg the largest; near the limit for the one that ran out; and
+    # "–" where it was not measured.
+    lost = WorkerJobLog.objects.get(task_id=task_id("encode-lost"))
+    assert lost.peak_memory > 1400 * 1024 * 1024
+    assert lost.peak_program == "ffmpeg"
+    assert WorkerJobLog.objects.get(task_id=task_id("encode-unmeasured")).peak_memory is None
+    assert WorkerJobLog.objects.get(task_id=task_id("upload/running")).peak_memory is None
+
+    # The import names its ZIP and albums, and lists a thumbnail sub-job per picture.
+    album_import, _record = _job_details(task_id("album-import"), now)
+    assert album_import.task_context.startswith("ZIP: sommerfest-2026.zip (mappe: 2026); albummer: ")
+    children, child_counts = _child_jobs(task_id("album-import"))
+    assert child_counts == {"SUCCESS": 17}
+    assert all(child.task_context.startswith("Medie: ") for child in children)
+
+    client.force_login(Resident.objects.get(email="formand@gahk.dk"))
+    assert client.get(reverse("siteadmin:worker_jobs")).status_code == 200
+    page = client.get(reverse("siteadmin:worker_job_detail", args=[task_id("encode-running")]))
+    assert "(ffmpeg) · indtil nu" in page.content.decode()
+
+    # Seeding again replaces the jobs rather than adding to them.
+    total = WorkerJobLog.objects.count()
+    call_command("seed_demo", "--fresh", "--force", "--residents", "12", verbosity=0)
+    assert WorkerJobLog.objects.count() == total
 
 
 @pytest.mark.django_db
