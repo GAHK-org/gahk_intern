@@ -50,7 +50,7 @@ from residents.views_admin import (
 
 DERIVATIVES = "photo_album.tasks.build_media_derivatives"
 IMPORT = "photo_album.tasks.process_album_import"
-NOTIFY = "oelkaelder.tasks.send_monthly_statements"
+NOTIFY = "credit.tasks.send_statements"
 LOCAL = ZoneInfo(settings.TIME_ZONE)
 
 

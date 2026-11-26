@@ -4,7 +4,7 @@ from decimal import Decimal
 
 from django import forms
 
-from .models import InterestPolicy, PurchasePolicy, Warning
+from .models import InterestPolicy, Shopper, Warning
 
 
 class WarningForm(forms.ModelForm):
@@ -50,30 +50,25 @@ class InterestPolicyForm(forms.ModelForm):
         return obj
 
 
-class PurchasePolicyForm(forms.ModelForm):
-    """The credit limit shown on the ØK admin screen. Entered in kroner as a negative number, e.g.
-    -100 means "cannot buy once you owe more than 100 kr"."""
+class _ShopperChoice(forms.ModelChoiceField):
+    def label_from_instance(self, obj: Shopper) -> str:
+        return obj.resident.full_name
 
-    block_below_kr = forms.DecimalField(
-        label="Kan ikke handle under (kr)",
-        max_digits=8,
-        decimal_places=2,
-        help_text="Negativt tal, fx -100. Gælder kun når spærringen er slået til.",
+
+class ExemptionForm(forms.Form):
+    """An ølkælder account freed of the monthly interest for a while (or until ended)."""
+
+    shopper = _ShopperChoice(
+        queryset=Shopper.objects.select_related("resident").order_by(
+            "resident__first_name", "resident__last_name"
+        ),
+        label="Alumne",
     )
-
-    class Meta:
-        model = PurchasePolicy
-        fields = ["active"]
-        labels = {"active": "Spærring aktiveret"}
-
-    def __init__(self, *args, **kwargs) -> None:  # noqa: ANN002, ANN003
-        super().__init__(*args, **kwargs)
-        if self.instance and self.instance.pk:
-            self.fields["block_below_kr"].initial = Decimal(self.instance.block_below_ore) / 100
-
-    def save(self, commit: bool = True) -> PurchasePolicy:
-        obj = super().save(commit=False)
-        obj.block_below_ore = int((self.cleaned_data["block_below_kr"] * 100).to_integral_value())
-        if commit:
-            obj.save()
-        return obj
+    reason = forms.CharField(label="Begrundelse", max_length=255)
+    starts_on = forms.DateField(label="Fra", widget=forms.DateInput(attrs={"type": "date"}))
+    ends_on = forms.DateField(
+        label="Til og med",
+        required=False,
+        widget=forms.DateInput(attrs={"type": "date"}),
+        help_text="Tom = indtil den afsluttes.",
+    )

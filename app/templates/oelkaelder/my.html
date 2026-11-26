@@ -4,7 +4,8 @@
 {% block content %}
   <h1>Min ølkælder-saldo</h1>
   {% for account, balance in accounts %}
-    <p>Saldo: <strong class="{{ balance|sign_class }}">{{ balance|kr }}</strong></p>
+    <p>Saldo: <strong class="{{ balance|sign_class }}">{{ balance|kr }}</strong>
+      · <a href="{% url 'credit:account' account.credit_account_id %}">Se kontoen i GAHK-konto</a></p>
   {% empty %}
     <p class="muted">Du er ikke registreret som shopper i ølkælderen.</p>
   {% endfor %}

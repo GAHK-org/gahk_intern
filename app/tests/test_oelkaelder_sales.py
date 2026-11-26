@@ -10,17 +10,18 @@ from django.test.utils import CaptureQueriesContext
 from django.urls import reverse
 from django.utils import timezone
 
+from credit.models import Posting, Transfer
 from oelkaelder import views
+from oelkaelder.ledger import accounts, balance, open_shopper
 from oelkaelder.models import (
     Adjustment,
     LogEntry,
     Product,
     PurchaseShare,
-    Shopper,
     Transaction,
     TransactionItem,
 )
-from oelkaelder.services import record_purchase
+from oelkaelder.services import counted_sales, record_deposit, record_purchase
 
 SALES = "oelkaelder:all_sales"
 WIDE = {"start": "2000-01-01", "end": "2100-01-01"}
@@ -38,9 +39,7 @@ def _sale(make_resident: Callable, *people: tuple[str, str], qty: int = 2) -> Tr
         name="Fadøl", price_ore=1050, active=True
     )
     shoppers = [
-        Shopper.objects.create(
-            resident=make_resident(email=f"{first}.{last}@gahk.dk".lower(), first_name=first, last_name=last)
-        )
+        open_shopper(make_resident(email=f"{first}.{last}@gahk.dk".lower(), first_name=first, last_name=last))
         for first, last in people
     ]
     return record_purchase([s.pk for s in shoppers], [{"product": product.pk, "mode": "fixed", "qty": qty}])
@@ -171,14 +170,15 @@ def test_export_over_the_cap_is_refused(make_resident: Callable, monkeypatch: py
 def test_void_refunds_every_buyer_and_logs(make_resident: Callable) -> None:
     txn = _sale(make_resident, ("Anders", "Bo"), ("Cecilie", "Dam"))
     shoppers = [s.shopper for s in PurchaseShare.objects.filter(transaction=txn)]
-    assert [s.balance_ore for s in shoppers] == [-1050, -1050]
+    assert [balance(s) for s in shoppers] == [-1050, -1050]
 
     resp = _oek(make_resident).post(reverse("oelkaelder:void_sale", args=[txn.pk]), WIDE)
 
     assert resp.status_code == 302
-    txn.refresh_from_db()
-    assert txn.is_valid is False
-    assert [s.balance_ore for s in shoppers] == [0, 0]  # BOTH buyers, not just the first
+    assert not counted_sales().filter(pk=txn.pk).exists()
+    assert [balance(s) for s in shoppers] == [0, 0]  # BOTH buyers, not just the first
+    shares = PurchaseShare.objects.filter(transaction=txn)
+    assert Transfer.objects.filter(reverses__in=[s.transfer_id for s in shares]).count() == 2
 
     entry = LogEntry.objects.filter(message__contains="annulleret").get()
     assert f"txn#{txn.pk}" in entry.message
@@ -193,8 +193,7 @@ def test_void_is_idempotent_and_rejects_get(make_resident: Callable) -> None:
     c = _oek(make_resident)
 
     assert c.get(url).status_code == 405  # legacy deleteTransaction moved money on GET
-    txn.refresh_from_db()
-    assert txn.is_valid is True
+    assert counted_sales().filter(pk=txn.pk).exists()
 
     c.post(url, WIDE)
     c.post(url, WIDE)
@@ -234,11 +233,9 @@ def test_pager_and_void_redirect_preserve_filters(
 
 @pytest.mark.django_db
 def test_person_history_shows_purchases_deposits_and_balance(make_resident: Callable) -> None:
-    from oelkaelder.models import Deposit
-
     txn = _sale(make_resident, ("Anders", "Bo"))
     shopper = PurchaseShare.objects.get(transaction=txn).shopper
-    Deposit.objects.create(shopper=shopper, amount_ore=5000)
+    record_deposit(shopper, 5000, actor=None)
 
     html = (
         _oek(make_resident)
@@ -261,8 +258,7 @@ def test_both_pages_are_oelkaelder_only(make_resident: Callable) -> None:
     assert plain.get(reverse(SALES)).status_code == 403
     assert plain.get(reverse("oelkaelder:person_history")).status_code == 403
     assert plain.post(reverse("oelkaelder:void_sale", args=[txn.pk])).status_code == 403
-    txn.refresh_from_db()
-    assert txn.is_valid is True
+    assert counted_sales().filter(pk=txn.pk).exists()
 
     admin = Client()
     admin.force_login(make_resident(email="admin-sales@gahk.dk", roles=("administrator",)))
@@ -274,7 +270,7 @@ def test_adjustment_subtracts_with_a_written_reason_and_logs(make_resident: Call
     """The migration repair tool: correct a balance, with the explanation recorded for the resident."""
     txn = _sale(make_resident, ("Anders", "Bo"))
     shopper = PurchaseShare.objects.get(transaction=txn).shopper
-    assert shopper.balance_ore == -2100
+    assert balance(shopper) == -2100
 
     resp = _oek(make_resident).post(
         reverse("oelkaelder:add_adjustment", args=[shopper.pk]),
@@ -282,10 +278,13 @@ def test_adjustment_subtracts_with_a_written_reason_and_logs(make_resident: Call
     )
 
     assert resp.status_code == 302
-    assert shopper.balance_ore == -2100 - 4550
+    assert balance(shopper) == -2100 - 4550
     adj = Adjustment.objects.get(shopper=shopper, kind=Adjustment.Kind.MANUAL)
     assert adj.amount_ore == -4550
     assert adj.reason == "Manglende køb okt. 2023"
+    into = Posting.objects.get(transfer=adj.transfer, amount_ore__gt=0)
+    assert (into.account, into.amount_ore) == (accounts().adjustments, 4550)  # a charge into Justeringer
+    assert adj.transfer.kind == Transfer.Kind.CHARGE
     entry = LogEntry.objects.filter(message__contains="Manuel justering").get()
     assert "oek-sales@gahk.dk" in entry.message and "Manglende køb okt. 2023" in entry.message
 
@@ -303,7 +302,7 @@ def test_adjustment_can_also_credit(make_resident: Callable) -> None:
     )
 
     assert Adjustment.objects.get(shopper=shopper).amount_ore == 1000
-    assert shopper.balance_ore == -2100 + 1000
+    assert balance(shopper) == -2100 + 1000
 
 
 @pytest.mark.django_db
@@ -319,7 +318,7 @@ def test_adjustment_requires_reason_and_nonzero_amount(make_resident: Callable) 
     c.post(url, {"direction": "subtract", "amount_kr": "abc", "reason": "Ikke et tal"})
 
     assert not Adjustment.objects.exists()
-    assert shopper.balance_ore == -2100  # untouched by every rejected attempt
+    assert balance(shopper) == -2100  # untouched by every rejected attempt
 
 
 @pytest.mark.django_db
@@ -356,9 +355,8 @@ def test_adjustment_can_be_voided_and_is_idempotent(make_resident: Callable) -> 
     c.post(url)
     c.post(url)  # double submit
 
-    adj.refresh_from_db()
-    assert adj.is_valid is False
-    assert shopper.balance_ore == -2100  # correction rolled back
+    assert Transfer.objects.filter(reverses=adj.transfer).count() == 1
+    assert balance(shopper) == -2100  # correction rolled back
     assert LogEntry.objects.filter(message__contains="annulleret").count() == 1
 
 
@@ -376,4 +374,48 @@ def test_adjustment_endpoints_are_oelkaelder_only(make_resident: Callable) -> No
 
     assert resp.status_code == 403
     assert not Adjustment.objects.exists()
-    assert shopper.balance_ore == -2100
+    assert balance(shopper) == -2100
+
+
+@pytest.mark.django_db
+def test_a_sharer_who_was_not_part_of_it_moves_their_share_to_the_executor(make_resident: Callable) -> None:
+    txn = _sale(make_resident, ("Anders", "Bo"), ("Cecilie", "Dam"), qty=1)  # 10,50: Anders 5,25 + 5,25
+    executor, other = PurchaseShare.objects.filter(transaction=txn).order_by("pk")
+    c = _oek(make_resident)
+    html = c.get(reverse(SALES), WIDE).content.decode()
+    move = reverse("oelkaelder:move_share", args=[other.pk])
+    assert move in html
+    assert reverse("oelkaelder:move_share", args=[executor.pk]) not in html  # the executor cannot
+
+    c.post(move, WIDE)
+    c.post(move, WIDE)  # a double submit moves once
+
+    assert balance(executor.shopper) == -1050
+    assert balance(other.shopper) == 0
+    other.refresh_from_db()
+    charge = other.moved_transfer
+    assert charge.kind == Transfer.Kind.CHARGE
+    assert charge.postings.get(amount_ore__lt=0).text == f"Køb #{txn.pk}: Cecilie Dams andel flyttet til dig"
+    assert Transfer.objects.filter(reverses=other.transfer).count() == 1
+    assert counted_sales().filter(pk=txn.pk).exists()  # still a sale
+    page = c.get(reverse(SALES), WIDE).content.decode()
+    assert "Cecilie Dam (ikke med; betalt af Anders Bo)" in page
+    assert move not in page
+
+    # Voiding the sale afterwards refunds the executor's charge too.
+    c.post(reverse("oelkaelder:void_sale", args=[txn.pk]), WIDE)
+    assert (balance(executor.shopper), balance(other.shopper)) == (0, 0)
+    assert not counted_sales().filter(pk=txn.pk).exists()
+
+
+@pytest.mark.django_db
+def test_voided_sales_drop_out_of_the_reports(make_resident: Callable) -> None:
+    kept = _sale(make_resident, ("Anders", "Bo"), qty=1)
+    gone = _sale(make_resident, ("Cecilie", "Dam"), qty=3)
+    c = _oek(make_resident)
+    c.post(reverse("oelkaelder:void_sale", args=[gone.pk]), WIDE)
+
+    body = c.get(reverse("oelkaelder:report_sales"), {**WIDE, "format": "csv"}).content.decode("utf-8-sig")
+
+    assert "Fadøl" in body and ",1," in body.replace(";", ",")
+    assert counted_sales().filter(pk=kept.pk).exists()

@@ -443,6 +443,7 @@ erDiagram
         int id PK
         int resident_id FK
         bool active
+        int credit_account_id FK
     }
 
     oelkaelder_Deposit {
@@ -450,13 +451,13 @@ erDiagram
         int shopper_id FK
         int amount_ore
         datetime created_at
-        bool is_valid
+        int transfer_id FK
     }
 
     oelkaelder_Transaction {
         int id PK
         datetime created_at
-        bool is_valid
+        string dedupe_token
     }
 
     oelkaelder_TransactionItem {
@@ -472,6 +473,8 @@ erDiagram
         int transaction_id FK
         int shopper_id FK
         int share_ore
+        int transfer_id FK
+        int moved_transfer_id FK
     }
 
     oelkaelder_Warning {
@@ -494,7 +497,7 @@ erDiagram
         string kind
         string reason
         datetime created_at
-        bool is_valid
+        int transfer_id FK
     }
 
     oelkaelder_InterestPolicy {
@@ -504,10 +507,14 @@ erDiagram
         int threshold_ore
     }
 
-    oelkaelder_PurchasePolicy {
+    oelkaelder_InterestExemption {
         int id PK
-        bool active
-        int block_below_ore
+        int credit_account_id FK
+        string reason
+        date starts_on
+        date ends_on
+        int created_by_id FK
+        datetime created_at
     }
 
     stats_DailyVisitCount {
@@ -1186,12 +1193,19 @@ erDiagram
     rooms_RoomConditionScore }o--|| rooms_RoomCondition : "condition"
     rooms_RoomConditionScore }o--|| rooms_RoomCriterion : "criterion"
     oelkaelder_Shopper }o--|| residents_Account : "resident"
+    oelkaelder_Shopper ||--|| credit_CreditAccount : "credit_account"
     oelkaelder_Deposit }o--|| oelkaelder_Shopper : "shopper"
+    oelkaelder_Deposit ||--|o credit_Transfer : "transfer"
     oelkaelder_TransactionItem }o--|| oelkaelder_Transaction : "transaction"
     oelkaelder_TransactionItem }o--|| oelkaelder_Product : "product"
     oelkaelder_PurchaseShare }o--|| oelkaelder_Transaction : "transaction"
     oelkaelder_PurchaseShare }o--|| oelkaelder_Shopper : "shopper"
+    oelkaelder_PurchaseShare ||--|o credit_Transfer : "transfer"
+    oelkaelder_PurchaseShare ||--|o credit_Transfer : "moved_transfer"
     oelkaelder_Adjustment }o--|| oelkaelder_Shopper : "shopper"
+    oelkaelder_Adjustment ||--|o credit_Transfer : "transfer"
+    oelkaelder_InterestExemption }o--|| credit_CreditAccount : "credit_account"
+    oelkaelder_InterestExemption }o--|o residents_Account : "created_by"
     den_hurtige_QuickPost }o--|| residents_Account : "author"
     den_hurtige_QuickComment }o--|| den_hurtige_QuickPost : "post"
     den_hurtige_QuickComment }o--|| residents_Account : "author"
@@ -2179,6 +2193,7 @@ erDiagram
         int id PK
         int resident_id FK
         bool active
+        int credit_account_id FK
     }
 
     oelkaelder_Deposit {
@@ -2186,13 +2201,13 @@ erDiagram
         int shopper_id FK
         int amount_ore
         datetime created_at
-        bool is_valid
+        int transfer_id FK
     }
 
     oelkaelder_Transaction {
         int id PK
         datetime created_at
-        bool is_valid
+        string dedupe_token
     }
 
     oelkaelder_TransactionItem {
@@ -2208,6 +2223,8 @@ erDiagram
         int transaction_id FK
         int shopper_id FK
         int share_ore
+        int transfer_id FK
+        int moved_transfer_id FK
     }
 
     oelkaelder_Warning {
@@ -2230,7 +2247,7 @@ erDiagram
         string kind
         string reason
         datetime created_at
-        bool is_valid
+        int transfer_id FK
     }
 
     oelkaelder_InterestPolicy {
@@ -2240,21 +2257,36 @@ erDiagram
         int threshold_ore
     }
 
-    oelkaelder_PurchasePolicy {
+    oelkaelder_InterestExemption {
         int id PK
-        bool active
-        int block_below_ore
+        int credit_account_id FK
+        string reason
+        date starts_on
+        date ends_on
+        int created_by_id FK
+        datetime created_at
     }
+
+    credit_CreditAccount { }
+
+    credit_Transfer { }
 
     residents_Account { }
 
     oelkaelder_Shopper }o--|| residents_Account : "resident"
+    oelkaelder_Shopper ||--|| credit_CreditAccount : "credit_account"
     oelkaelder_Deposit }o--|| oelkaelder_Shopper : "shopper"
+    oelkaelder_Deposit ||--|o credit_Transfer : "transfer"
     oelkaelder_TransactionItem }o--|| oelkaelder_Transaction : "transaction"
     oelkaelder_TransactionItem }o--|| oelkaelder_Product : "product"
     oelkaelder_PurchaseShare }o--|| oelkaelder_Transaction : "transaction"
     oelkaelder_PurchaseShare }o--|| oelkaelder_Shopper : "shopper"
+    oelkaelder_PurchaseShare ||--|o credit_Transfer : "transfer"
+    oelkaelder_PurchaseShare ||--|o credit_Transfer : "moved_transfer"
     oelkaelder_Adjustment }o--|| oelkaelder_Shopper : "shopper"
+    oelkaelder_Adjustment ||--|o credit_Transfer : "transfer"
+    oelkaelder_InterestExemption }o--|| credit_CreditAccount : "credit_account"
+    oelkaelder_InterestExemption }o--|o residents_Account : "created_by"
 ```
 
 ## opslagstavle

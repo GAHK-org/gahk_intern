@@ -8,7 +8,10 @@ from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import Client
 from django.urls import reverse
 
+from credit.models import Transfer
+from oelkaelder.ledger import accounts, balance, open_shopper
 from oelkaelder.models import Deposit, Product, Shopper, Warning
+from oelkaelder.services import record_deposit
 
 from .media_samples import heic_bytes
 
@@ -37,19 +40,62 @@ def test_product_create_and_price_update(make_resident: Callable) -> None:
 
 
 @pytest.mark.django_db
-def test_void_deposit_drops_out_of_derived_balance(make_resident: Callable) -> None:
+def test_a_deposit_is_a_transfer_from_the_bank_recorded_by_a_manager(make_resident: Callable) -> None:
     oek = make_resident(email="oek2@gahk.dk", roles=("oelkaelder",))
-    shopper = Shopper.objects.create(resident=make_resident(email="buyer@gahk.dk"))
-    dep = Deposit.objects.create(shopper=shopper, amount_ore=5000)
-    assert shopper.balance_ore == 5000
+    shopper = open_shopper(make_resident(email="buyer@gahk.dk", first_name="Bo", last_name="Dam"))
+    c = Client()
+    c.force_login(oek)
+
+    form = c.get(reverse("oelkaelder:admin")).content.decode()
+    token = form.split('name="token" value="')[1].split('"')[0]
+    post = {"amount_kr": "50,00", "token": token}
+    c.post(reverse("oelkaelder:deposit", args=[shopper.pk]), post)
+    c.post(reverse("oelkaelder:deposit", args=[shopper.pk]), post)  # the same form twice: one deposit
+
+    deposit = Deposit.objects.get()
+    assert (deposit.amount_ore, balance(shopper)) == (5000, 5000)
+    transfer = deposit.transfer
+    assert transfer.created_by == oek
+    sides = {p.account: (p.amount_ore, p.text) for p in transfer.postings.all()}
+    assert sides == {
+        accounts().bank: (-5000, "Indbetaling fra Bo Dam"),
+        shopper.credit_account: (5000, "Indbetaling"),
+    }
+
+
+@pytest.mark.django_db
+def test_void_deposit_reverses_its_transfer(make_resident: Callable) -> None:
+    oek = make_resident(email="oek2@gahk.dk", roles=("oelkaelder",))
+    shopper = open_shopper(make_resident(email="buyer@gahk.dk"))
+    dep = record_deposit(shopper, 5000, actor=oek)
+    assert balance(shopper) == 5000
 
     c = Client()
     c.force_login(oek)
     c.post(reverse("oelkaelder:void_deposit", args=[dep.id]))
+    c.post(reverse("oelkaelder:void_deposit", args=[dep.id]))  # a double submit reverses once
 
-    dep.refresh_from_db()
-    assert dep.is_valid is False
-    assert shopper.balance_ore == 0  # derived balance excludes the voided deposit
+    assert balance(shopper) == 0
+    assert Transfer.objects.filter(reverses=dep.transfer).count() == 1
+    # Gone from the admin page's recent deposits, kept in the ledger and the record.
+    assert (
+        reverse("oelkaelder:void_deposit", args=[dep.id])
+        not in c.get(reverse("oelkaelder:admin")).content.decode()
+    )
+
+
+@pytest.mark.django_db
+def test_only_the_books_managers_record_deposits(make_resident: Callable) -> None:
+    """An administrator sees the ølkælder pages, but the money is Ølkælderen's to move."""
+    admin = make_resident(email="admin@gahk.dk", roles=("administrator",))
+    shopper = open_shopper(make_resident(email="buyer@gahk.dk"))
+    c = Client()
+    c.force_login(admin)
+
+    c.post(reverse("oelkaelder:deposit", args=[shopper.pk]), {"amount_kr": "50"})
+
+    assert not Deposit.objects.exists()
+    assert balance(shopper) == 0
 
 
 @pytest.mark.django_db
@@ -65,7 +111,7 @@ def test_product_management_is_oelkaelder_only(make_resident: Callable) -> None:
 @pytest.mark.django_db
 def test_deactivate_reactivate_and_add_shopper(make_resident: Callable) -> None:
     oek = make_resident(email="oek@gahk.dk", roles=("oelkaelder",))
-    s = Shopper.objects.create(resident=make_resident(email="s@gahk.dk"))
+    s = open_shopper(make_resident(email="s@gahk.dk"))
     c = Client()
     c.force_login(oek)
 
@@ -79,7 +125,13 @@ def test_deactivate_reactivate_and_add_shopper(make_resident: Callable) -> None:
 
     r = make_resident(email="new@gahk.dk")
     c.post(reverse("oelkaelder:add_shopper"), {"resident": r.id})
-    assert Shopper.objects.filter(resident=r).exists()
+    added = Shopper.objects.get(resident=r)
+    assert added.credit_account.holder.person == r.person  # their own account in the Ølkælder book
+    assert added.credit_account.book == accounts().book
+
+    script = make_resident(email="script@gahk.dk", person=None)  # a login that is no one
+    c.post(reverse("oelkaelder:add_shopper"), {"resident": script.id})
+    assert not Shopper.objects.filter(resident=script).exists()
 
 
 @pytest.mark.django_db
@@ -99,8 +151,8 @@ def test_update_warning_stores_kr_as_ore(make_resident: Callable) -> None:
 @pytest.mark.django_db
 def test_reports_render_and_export(make_resident: Callable) -> None:
     oek = make_resident(email="oek3@gahk.dk", roles=("oelkaelder",))
-    s = Shopper.objects.create(resident=make_resident(email="d@gahk.dk"))
-    Deposit.objects.create(shopper=s, amount_ore=5000)
+    s = open_shopper(make_resident(email="d@gahk.dk"))
+    record_deposit(s, 5000, actor=None)
     c = Client()
     c.force_login(oek)
     q = {"start": "2000-01-01", "end": "2100-01-01"}

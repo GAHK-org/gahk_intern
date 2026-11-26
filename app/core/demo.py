@@ -1,16 +1,16 @@
 """Demo mail for `manage.py seed_demo`: an outbox (core.mail) with a mail of every kind and status.
 
 Every mail is made by the code that sends it in real life — a password reset through the reset form,
-the ølkælder's monthly overview and debt warnings, the admissions auto-reply, the administrators'
-monthly summary — so subject, recipients, kind and lifetime are what the app stores (and, on a branch
-that adds a sender name or Reply-To, what it adds). Then each is given the state the deliverer
+GAHK-konto's monthly statements, the ølkælder's debt warnings, the admissions auto-reply, the
+administrators' monthly summary — so subject, recipients, kind and lifetime are what the app stores
+(and, on a branch that adds a sender name or Reply-To, what it adds). Then each is given the state the deliverer
 (core.mail.deliver) would have left it in, at a time relative to now: content emptied once sent or
 expired, an error text as smtplib words it, attempts counted the way deliver counts them.
 
 What it shows:
 
-  * the ølkælder overview, a bulk send under way: sent in batches of MAIL_RATE_LIMIT, the last one
-    two minutes ago, so the window is full and the rest wait for it — with one recipient's mailbox
+  * GAHK-konto's monthly statements for last month (signed PDFs; the ølkælder seed's history reaches
+    back into it), a bulk send under way: sent in batches of MAIL_RATE_LIMIT, the last one two minutes ago, so the window is full and the rest wait for it — with one recipient's mailbox
     full (waiting again) and one address gone (failed);
   * password resets (interactive): one sent at once, one greylisted and waiting again, one given up on
     while one.com throttled the account;
@@ -32,8 +32,8 @@ Never sent, here or later by itself:
     other kind is never held. Long enough to see the page's "masseudsendelser venter", short enough
     not to stand in the way.
 
-The ølkælder overview really goes out on the 1st at 06:10; it is seeded as under way now because the
-rate limit only holds mail in the five minutes after a batch. Alumneregninger, the other bulk mail,
+The statements really go out on the 1st; they are seeded as under way now because the rate limit
+only holds mail in the five minutes after a batch. Alumneregninger, the other bulk mail,
 are left out: their mail is made from e-conomic, and an AlumneregningSend row would mark a period as
 sent to that resident, so a send you try yourself would skip them (and dev only logs them anyway,
 ALUMNEREGNING_SEND_MAIL).
@@ -84,9 +84,10 @@ def seed(residents: list[Account], now: datetime, rng: random.Random) -> int:
 
 
 def _bulk_overview(now: datetime, may_wait: bool) -> None:
-    from oelkaelder.tasks import send_monthly_statements
+    from credit import statements
 
-    mails = _queued(send_monthly_statements)
+    year, month = statements.previous_month(timezone.localdate(now))
+    mails = _queued(lambda: statements.send_month(year, month))
     limit = settings.MAIL_RATE_LIMIT
     # Held back only when the batch before them fills the window; with fewer shoppers than that, the
     # deliverer would have sent them all.
@@ -145,7 +146,7 @@ def _resets(residents: list[Account], now: datetime, may_wait: bool) -> None:
 
 def _debt_warnings(now: datetime, rng: random.Random) -> None:
     from oelkaelder.models import Shopper
-    from oelkaelder.services import send_debt_warnings
+    from oelkaelder.services import balances, send_debt_warnings
 
     def sent(mail: OutgoingMail) -> None:
         # Normal mail goes out on the worker's next run.
@@ -197,9 +198,9 @@ def _debt_warnings(now: datetime, rng: random.Random) -> None:
     cases = [sent, failed, sending, unknown, expired_in_outage, failed_and_purged]
     # The shoppers deepest in debt, each by the purchase that took them down through the 0 kr. warning
     # (oelkaelder 0004).
-    shoppers = sorted(
-        Shopper.objects.filter(active=True).select_related("resident"), key=lambda s: (s.balance_ore, s.pk)
-    )
+    active = list(Shopper.objects.filter(active=True).select_related("resident"))
+    balance = balances(active)
+    shoppers = sorted(active, key=lambda s: (balance[s.pk], s.pk))
     for shopper, case in zip(shoppers, cases, strict=False):
         new_ore = -rng.randint(1, 40) * 100
         for mail in _queued(partial(send_debt_warnings, shopper, new_ore + 5000, new_ore)):

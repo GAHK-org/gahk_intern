@@ -60,8 +60,11 @@ from gahkflix.models import Tag as GahkflixTag
 from gahkflix.models import Video as GahkflixVideo
 from notifications.demo import seed as seed_notifications
 from notifications.models import Notification, NotificationPreference, NotificationSettings
+from oelkaelder.demo import seed as seed_oelkaelder
 from oelkaelder.models import (
+    Adjustment,
     Deposit,
+    InterestExemption,
     Product,
     PurchaseShare,
     Shopper,
@@ -131,6 +134,18 @@ ROOM_CRITERIA = [
 ]
 
 # Deletion order: children before parents so PROTECT FKs don't block the wipe.
+# Ølkælder's records point at GAHK-konto's accounts and transfers, so they are truncated together with
+# the ledger (Postgres refuses to truncate a table another one references, rows or not).
+OELKAELDER_WIPE: list[type[models.Model]] = [
+    InterestExemption,
+    PurchaseShare,
+    TransactionItem,
+    Transaction,
+    Adjustment,
+    Deposit,
+    Shopper,
+]
+
 WIPE_ORDER: list[type[models.Model]] = [
     Rsvp,
     EventInvite,
@@ -139,11 +154,6 @@ WIPE_ORDER: list[type[models.Model]] = [
     NoticeReaction,
     NoticeComment,
     Notice,
-    PurchaseShare,
-    TransactionItem,
-    Transaction,
-    Deposit,
-    Shopper,
     Product,
     RoomConditionScore,
     RoomCondition,
@@ -260,7 +270,8 @@ class Command(BaseCommand):
         seed_den_hurtige(residents, self.now, self.rng)
         # Last: its rows link to the events, opslag and Den Hurtige posts seeded above.
         seed_notifications(residents, self.now, self.rng)
-        # After the roles: GAHK-konto's books are managed by embedsgrupper (credit.demo).
+        # After the roles and the ølkælder (whose Ølkælder book it sends money across to): GAHK-konto's
+        # books are managed by embedsgrupper (credit.demo).
         seed_credit(residents, self.now, self.rng)
         seed_credit_records(self.now)
         # After the ølkælder and admissions: its mails are theirs (core.demo).
@@ -275,7 +286,8 @@ class Command(BaseCommand):
             cursor.execute("SET CONSTRAINTS ALL IMMEDIATE")
             cursor.execute(
                 "TRUNCATE credit_statement, credit_closingbalance, credit_closing, credit_anchordelivery, "
-                "credit_anchor, credit_posting, credit_transfer, credit_creditaccount, credit_book, credit_holder"
+                "credit_anchor, credit_posting, credit_transfer, credit_creditaccount, credit_book, credit_holder, "
+                + ", ".join(m._meta.db_table for m in OELKAELDER_WIPE)
             )
             cursor.execute("SET CONSTRAINTS ALL DEFERRED")
         for model in WIPE_ORDER:
@@ -638,45 +650,7 @@ class Command(BaseCommand):
 
     # ----------------------------------------------------------- ølkælder
     def _seed_oelkaelder(self, residents: list[Account]) -> None:
-        products = [
-            Product.objects.create(name=n, price_ore=p, active=True, highlighted=h)
-            for n, p, h in [
-                ("Grøn Tuborg", 700, True),
-                ("Carlsberg", 700, False),
-                ("Sodavand", 500, False),
-                ("Fadøl", 1000, True),
-                ("Vand", 300, False),
-                ("Snacks", 1200, False),
-            ]
-        ]
-        # Roughly 2/3 of residents shop in the cellar.
-        shoppers = [
-            Shopper.objects.create(resident=r, active=True) for r in residents if self.rng.random() < 0.66
-        ]
-        for s in shoppers:
-            for _ in range(self.rng.randint(1, 3)):
-                Deposit.objects.create(
-                    shopper=s,
-                    amount_ore=self.rng.choice([5000, 10000, 20000]),
-                    created_at=self.now - timedelta(days=self.rng.randint(1, 90)),
-                )
-
-        for _ in range(80):  # 80 fake purchases
-            buyers = self.rng.sample(shoppers, k=self.rng.randint(1, min(4, len(shoppers))))
-            txn = Transaction.objects.create(created_at=self.now - timedelta(days=self.rng.randint(0, 60)))
-            total = 0
-            for _ in range(self.rng.randint(1, 3)):
-                prod = self.rng.choice(products)
-                qty = self.rng.randint(1, 3)
-                line = prod.price_ore * qty
-                total += line
-                TransactionItem.objects.create(transaction=txn, product=prod, quantity=qty, price_ore=line)
-            # Largest-remainder split so shares sum exactly to the total (mirrors the real POS).
-            base, extra = divmod(total, len(buyers))
-            for i, b in enumerate(buyers):
-                PurchaseShare.objects.create(
-                    transaction=txn, shopper=b, share_ore=base + (1 if i < extra else 0)
-                )
+        seed_oelkaelder(residents, self.now, self.rng)
 
     # ------------------------------------------------------------ admissions
     def _seed_admissions(self, residents: list[Account]) -> None:

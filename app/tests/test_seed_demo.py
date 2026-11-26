@@ -10,8 +10,29 @@ from access.api import real_roles
 from audit import trail
 from audit.models import AuditEvent
 from den_hurtige.models import QuickPost
+from oelkaelder.ledger import balance as oelkaelder_balance
 from oelkaelder.models import Shopper
 from residents.models import Account, active_period
+
+
+@pytest.fixture(autouse=True)
+def _pdf_signing(settings: Any) -> None:  # noqa: ANN401
+    """The seed sends last month's GAHK-konto statements (core.demo's bulk mail), signed PDFs. Dev
+    signs with a made-up certificate under DEBUG; the tests run without DEBUG, so they get one here."""
+    from credit import signing
+
+    settings.CREDIT_PDF_SIGNING_KEY, settings.CREDIT_PDF_SIGNING_CERT = (
+        part.decode() for part in _pdf_identity(signing)
+    )
+
+
+_IDENTITY: list[tuple[bytes, bytes]] = []
+
+
+def _pdf_identity(signing: Any) -> tuple[bytes, bytes]:  # noqa: ANN401
+    if not _IDENTITY:
+        _IDENTITY.append(signing.new_pdf_identity(days=5))
+    return _IDENTITY[0]
 
 
 @pytest.mark.django_db
@@ -50,9 +71,10 @@ def test_seed_demo_populates_and_is_idempotent() -> None:
     assert missing.count() == 2
     assert all(r.residencies.filter(year=year, month=month).exists() for r in missing)
 
-    # Derived ølkælder balance is computable (no crash, integer øre).
-    shopper = Shopper.objects.first()
-    assert isinstance(shopper.balance_ore, int)
+    # Every shopper has their account in the one Ølkælder book, and the balance comes from there.
+    shopper = Shopper.objects.select_related("credit_account__book").first()
+    assert shopper.credit_account.book.name == "Ølkælder"
+    assert isinstance(oelkaelder_balance(shopper), int)
 
     # The leaver/replacement pair: exactly one resident moved out this month and exactly one new
     # one arrived, so the regnskab page has a fraflytter while the alumneliste stays full.
@@ -279,7 +301,10 @@ def test_seed_demo_fills_the_outbox_with_every_kind_and_status(settings: object)
     assert {m.status for m in mails} == set(Status.values)
     assert {m.kind for m in mails} == set(Kind.values)
     residents = set(Account.objects.values_list("email", flat=True))
-    assert all(m.recipients in residents for m in mails.exclude(subject__contains="henvendelse"))
+    # An embedsgruppe's GAHK-konto statement goes to all its members, so a mail may have several.
+    assert all(
+        set(m.recipients.split(", ")) <= residents for m in mails.exclude(subject__contains="henvendelse")
+    )
 
     # The bulk send under way: the window full, three overviews held back by it.
     assert outbox.quota_wait(now) is not None
@@ -389,6 +414,7 @@ def test_seed_demo_writes_a_gahk_konto_ledger_that_passes_the_check() -> None:
     assert report.in_transit
     cellar = Book.objects.get(name="Ølkælder")
     assert ledger.book_total(cellar) == 0
+    _the_oelkaelder_states(cellar)
     # A closed period, and the next one ready to close on the book page.
     assert cellar.closings.count() == 1
     from credit import closing
@@ -397,3 +423,27 @@ def test_seed_demo_writes_a_gahk_konto_ledger_that_passes_the_check() -> None:
     # A second --fresh empties the append-only ledger and writes it again.
     call_command("seed_demo", "--fresh", "--force", "--residents", "12", verbosity=0)
     assert Book.objects.count() == 2
+
+
+def _the_oelkaelder_states(cellar: Any) -> None:  # noqa: ANN401 - a credit Book
+    """What the ølkælder seed shows, all through the ledger: history dated back, a shared basket, a
+    voided sale, a moved share, interest per account, an exemption, someone at the limit."""
+    from django.utils import timezone
+
+    from credit.models import Posting, Transfer
+    from oelkaelder.models import Adjustment, InterestExemption, PurchaseShare
+    from oelkaelder.services import counted_sales
+
+    assert Shopper.objects.exclude(credit_account__book=cellar).count() == 0
+    assert Posting.objects.filter(
+        transfer__created_at__lt=timezone.now() - timezone.timedelta(days=30)
+    ).exists()
+    assert Transfer.objects.filter(source__startswith="oelkaelder.history").exists()
+    shared = [t for t in counted_sales() if t.shares.count() == 3]
+    assert shared, "a basket three people share"
+    assert PurchaseShare.objects.filter(moved_transfer__isnull=False).exists()
+    assert Transfer.objects.filter(source__startswith="oelkaelder.void:").exists()
+    assert Adjustment.objects.filter(kind=Adjustment.Kind.INTEREST, transfer__isnull=False).exists()
+    assert InterestExemption.objects.exists()
+    plain = Shopper.objects.select_related("credit_account").get(resident__email="beboer@gahk.dk")
+    assert oelkaelder_balance(plain) == plain.credit_account.credit_limit_ore

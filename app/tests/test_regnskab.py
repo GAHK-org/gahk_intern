@@ -9,7 +9,9 @@ from django.utils import timezone
 
 from ak.models import AkEntry
 from core.models import Room, Workgroup
-from oelkaelder.models import Deposit, Shopper
+from oelkaelder.ledger import open_shopper_account
+from oelkaelder.models import Shopper
+from oelkaelder.services import record_deposit
 from regnskab import alumneregning, economic, tasks
 from residents.models import Account, Person, Residency, Resident, prev_period
 
@@ -44,7 +46,11 @@ def _setup_leaver_and_stayer(make_resident: Callable) -> None:
     )
     AkEntry.objects.create(resident=leaver, delta=-4)  # owes 4 krydser
     for amount in (5000, 2000):  # two accounts → 70,00 kr total, exercises the cross-account sum
-        Deposit.objects.create(shopper=Shopper.objects.create(resident=leaver), amount_ore=amount)
+        record_deposit(
+            Shopper.objects.create(resident=leaver, credit_account=open_shopper_account(leaver)),
+            amount,
+            actor=None,
+        )
 
 
 def _mock_entries(
