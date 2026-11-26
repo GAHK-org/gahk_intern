@@ -15,6 +15,7 @@ from .models import (
     FileVersion,
     Folder,
     LastDownload,
+    Share,
     SharedFolder,
     SharedMember,
 )
@@ -148,6 +149,26 @@ trail.register(
     labels={"shared": "Delt mappe", "resident": "Beboer", "role": "Rolle", "added_at": "Tilføjet"},
 )
 
+trail.register(
+    Share,
+    "drive.share",
+    name=lambda s: f"{(s.file or s.folder).name} med {s.recipient}",
+    label="Deling",
+    # What is shared, and with which resident, is as much the folder's business as its files' names.
+    private_name=True,
+    private={"resident"},
+    ignore={"uuid"},
+    labels={
+        "file": "Fil",
+        "folder": "Mappe",
+        "resident": "Beboer",
+        "workgroup": "Embedsgruppe",
+        "can_edit": "Kan redigere",
+        "created_by": "Delt af",
+        "created_at": "Delt",
+    },
+)
+
 trail.exempt(
     LastDownload,
     "the version a resident last downloaded, kept for the warning when they upload over a newer one; "
@@ -191,5 +212,7 @@ trail.actions(
         "drive.shared.deleted": "Lagde delt mappe i papirkurven",
         "drive.shared.purged": "Slettede delt mappe ved udløbet",
         "drive.shared.archived": "Arkiverede delt mappe ved udløbet",
+        "drive.share.given": "Delte",
+        "drive.share.stopped": "Stoppede en deling",
     }
 )
