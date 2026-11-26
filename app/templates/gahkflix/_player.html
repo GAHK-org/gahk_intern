@@ -8,8 +8,12 @@
   {# Subtitles, drawn here rather than by the browser, so they move up out of the way of the controls. #}
   <div class="flix-captions" aria-hidden="true" data-flix-captions></div>
   <div class="flix-player-top">
-    <a class="flix-back" href="{% url 'gahkflix:home' %}" aria-label="Tilbage" data-flix-back>←</a>
-    <h1><span data-flix-title></span><small data-flix-subtitle></small></h1>
+    {# The arrow and the title together are the way back: a corner on its own is too small a target. #}
+    <a class="flix-back" href="{% url 'gahkflix:home' %}" title="Tilbage" data-flix-back>
+      <span class="flix-back-arrow" aria-hidden="true">←</span>
+      <span class="sr-only">Tilbage:</span>
+      <h1><span data-flix-title></span><small data-flix-subtitle></small></h1>
+    </a>
     <label class="flix-autoplay"><input type="checkbox" role="switch" data-flix-autoplay checked> Autoplay</label>
   </div>
   {# A double tap on either side of the screen jumps 10 seconds; this shows which way. #}
@@ -17,6 +21,11 @@
   <span class="flix-jump is-ahead" aria-hidden="true" data-flix-jump="ahead">+10 s</span>
   {# A play or pause from a click on the picture, shown for a moment in the middle. #}
   <span class="flix-flash" aria-hidden="true" data-flix-flash></span>
+  {# Play/pause in the middle: with the controls on a touch screen, and while paused with a mouse. #}
+  <button class="flix-center" type="button" aria-label="Afspil" data-flix-center hidden>
+    <svg class="when-paused" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5v14l11-7z" fill="currentColor"/></svg>
+    <svg class="when-playing" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 5h3.5v14H7zM13.5 5H17v14h-3.5z" fill="currentColor"/></svg>
+  </button>
   <span class="flix-spinner" aria-hidden="true" data-flix-spinner hidden></span>
   <button class="flix-skip" type="button" data-flix-skip hidden>Spring intro over</button>
   <a class="flix-next" href="#" data-flix-next hidden>Næste afsnit ▸</a>
@@ -51,8 +60,9 @@
       </div>
       <span class="flix-time" data-flix-time>0:00 / 0:00</span>
       <span class="flix-controls-gap"></span>
-      <div class="flix-popup-wrap" data-flix-captions-wrap hidden>
-        <button class="flix-control" type="button" aria-label="Undertekster" title="Undertekster (c)" aria-haspopup="true" aria-expanded="false" data-flix-menu-button="captions">
+      {# Always there; dimmed, its menu saying so, when the video has no subtitles to choose. #}
+      <div class="flix-popup-wrap">
+        <button class="flix-control" type="button" aria-label="Undertekster" title="Undertekster (c)" data-flix-captions-button aria-haspopup="true" aria-expanded="false" data-flix-menu-button="captions">
           <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="5.5" width="18" height="13" rx="2.5" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M10.5 10.3a2.2 2.2 0 1 0 0 3.4M17 10.3a2.2 2.2 0 1 0 0 3.4" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
         </button>
         <div class="flix-popup" role="menu" aria-label="Undertekster" data-flix-menu="captions" hidden></div>
@@ -62,7 +72,8 @@
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 8.8a3.2 3.2 0 1 0 0 6.4 3.2 3.2 0 0 0 0-6.4z" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M19.4 13.5a7.6 7.6 0 0 0 0-3l2-1.6-2-3.4-2.4 1a7.5 7.5 0 0 0-2.6-1.5L14 2.5h-4l-.4 2.5A7.5 7.5 0 0 0 7 6.5l-2.4-1-2 3.4 2 1.6a7.6 7.6 0 0 0 0 3l-2 1.6 2 3.4 2.4-1a7.5 7.5 0 0 0 2.6 1.5l.4 2.5h4l.4-2.5a7.5 7.5 0 0 0 2.6-1.5l2.4 1 2-3.4z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/></svg>
         </button>
         <div class="flix-popup" role="menu" aria-label="Indstillinger" data-flix-menu="settings" hidden>
-          <div class="flix-popup-group" data-flix-quality-group>
+          {# Every quality there is, the ones this video lacks greyed out. #}
+          <div class="flix-popup-group">
             <p class="flix-popup-title">Kvalitet</p>
             <div data-flix-quality></div>
           </div>
