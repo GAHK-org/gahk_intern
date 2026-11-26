@@ -1,0 +1,77 @@
+{% comment %}
+  A list of audit events (audit.presentation.EventLine). Used by the audit page and by features
+  that show their own part of the trail. `link_entities` links names to their history on the audit
+  page (administrators only); without it they are plain text.
+{% endcomment %}
+<ol class="audit-events">
+  {% for event in events %}
+    <li class="audit-event{% if event.unclaimed %} is-unclaimed{% endif %}">
+      <div class="audit-line">
+        <time class="audit-time" datetime="{{ event.at|date:'c' }}">{{ event.at|date:"j. b Y H:i" }}</time>
+        <span class="audit-what">
+          {% if event.actor_name %}
+            {% if link_entities and event.actor_id %}<a class="audit-actor" href="{% url 'siteadmin:audit' %}?actor={{ event.actor_id }}">{{ event.actor_name }}</a>{% else %}<span class="audit-actor">{{ event.actor_name }}</span>{% endif %}
+          {% else %}
+            <span class="audit-actor muted">{% if event.source == "web" %}Ikke logget ind{% else %}System{% endif %}</span>
+          {% endif %}
+          <span class="audit-label">{{ event.label|lower }}</span>
+          {% with subject=event.shown_subject %}
+            {% if subject %}
+              {% if link_entities and subject.entity_id %}<a class="audit-subject" href="{% url 'siteadmin:audit' %}?kind={{ subject.kind }}&id={{ subject.entity_id }}">{{ subject.name|default:subject.kind_label }}</a>{% else %}<span class="audit-subject">{{ subject.name|default:subject.kind_label }}</span>{% endif %}
+            {% endif %}
+          {% endwith %}
+        </span>
+        <span class="audit-tags">
+          {% if event.source != "web" %}<span class="chip">{{ event.source_label }}</span>{% endif %}
+          {% if event.unclaimed %}<span class="chip chip-brass" title="Skrevet uden for en kendt handling: Django admin, en shell eller en kodefejl">Uden handling</span>{% endif %}
+        </span>
+      </div>
+      {% if event.has_more %}
+        <details class="audit-more">
+          <summary>Detaljer</summary>
+          {% if event.details or event.ip %}
+            <dl class="audit-details">
+              {% for key, value in event.details %}<div><dt>{{ key }}</dt><dd>{{ value }}</dd></div>{% endfor %}
+              {% if event.ip %}<div><dt>IP</dt><dd>{{ event.ip }}</dd></div>{% endif %}
+              <div><dt>Handling</dt><dd><code>{{ event.action }}</code></dd></div>
+            </dl>
+          {% endif %}
+          {% for entity in event.entities %}
+            <div class="audit-entity">
+              <div class="audit-entity-head">
+                <span class="chip audit-op-{{ entity.operation }}">{{ entity.operation_label }}</span>
+                <span class="muted">{{ entity.kind_label }}</span>
+                {% if link_entities and entity.entity_id %}<a href="{% url 'siteadmin:audit' %}?kind={{ entity.kind }}&id={{ entity.entity_id }}">{{ entity.name|default:"—" }}</a>{% else %}<span>{{ entity.name|default:"—" }}</span>{% endif %}
+                {% if entity.role and entity.role != "subject" %}<span class="muted text-sm">({{ entity.role }})</span>{% endif %}
+              </div>
+              {% if entity.changes %}
+                <div class="overflow-x-auto">
+                  <table class="audit-changes">
+                    <thead><tr><th>Felt</th><th>Før</th><th>Efter</th></tr></thead>
+                    <tbody>
+                      {% for change in entity.changes %}
+                        <tr>
+                          <th scope="row">{{ change.label }}</th>
+                          {% if change.redacted %}
+                            <td colspan="2" class="muted">ændret (værdien gemmes ikke)</td>
+                          {% elif change.hidden %}
+                            <td colspan="2" class="muted">ændret (vises ikke her)</td>
+                          {% else %}
+                            <td class="audit-before">{% if change.before_long %}<details><summary>{{ change.before|truncatechars:60 }}</summary><div class="audit-long">{{ change.before }}</div></details>{% else %}{{ change.before }}{% endif %}</td>
+                            <td>{% if change.after_long %}<details><summary>{{ change.after|truncatechars:60 }}</summary><div class="audit-long">{{ change.after }}</div></details>{% else %}{{ change.after }}{% endif %}</td>
+                          {% endif %}
+                        </tr>
+                      {% endfor %}
+                    </tbody>
+                  </table>
+                </div>
+              {% endif %}
+            </div>
+          {% endfor %}
+        </details>
+      {% endif %}
+    </li>
+  {% empty %}
+    <li class="audit-empty muted">Intet i sporet{% if filters.any %} med disse filtre{% endif %}.</li>
+  {% endfor %}
+</ol>
