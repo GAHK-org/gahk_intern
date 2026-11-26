@@ -5,7 +5,8 @@
 {% comment %}
   The standalone thread page. Two callers, both of which must work without any JavaScript:
 
-    * the "N svar" link's plain href, when htmx has not upgraded it (no JS, or a middle-click).
+    * the reply preview's plain href, when htmx has not upgraded it (no JS, or a middle-click),
+      and "Svar" without JavaScript, which has no composer to turn into a reply.
     * a reply push notification, which deep-links here so tapping "Anders svarede" lands on the
       conversation it is telling you about rather than the bottom of the channel.
 

@@ -32,6 +32,9 @@ urlpatterns = [
     path("<int:pk>/traad", views.thread, name="thread"),
     path("<int:pk>/slet", views.delete_post, name="delete_post"),
     path("<int:pk>/reaktion", views.toggle_reaction, name="toggle_reaction"),
+    # A reply's reaction, addressed by the reply alone: it knows its message, which is where every
+    # rule about it is checked (views.toggle_reply_reaction).
+    path("svar/<int:pk>/reaktion", views.toggle_reply_reaction, name="toggle_reply_reaction"),
     # Keep last: this pattern would otherwise swallow every fixed segment above.
     path("<slug:channel>/", views.feed, name="feed_channel"),
 ]

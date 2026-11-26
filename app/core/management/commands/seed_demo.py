@@ -49,7 +49,7 @@ from core.models import Cleaning, OutgoingMail, Room, WorkerJobLog, Workgroup
 from core.worker_jobs_demo import seed as seed_worker_jobs
 from core.worker_jobs_demo import wipe as wipe_worker_job_results
 from den_hurtige.demo import seed as seed_den_hurtige
-from den_hurtige.models import QuickComment, QuickPost, QuickReaction
+from den_hurtige.models import QuickComment, QuickCommentReaction, QuickPost, QuickReaction
 from events.demo import seed as seed_events
 from events.models import CalendarFeedToken, Event, EventInvite, Rsvp
 from gahkflix.demo import seed as seed_gahkflix
@@ -162,6 +162,7 @@ WIPE_ORDER: list[type[models.Model]] = [
     DailyVisitCount,
     PageViewDay,
     QuickReaction,
+    QuickCommentReaction,
     QuickComment,
     QuickPost,
     # Every job, like Celery's result rows (core.demo.wipe): jobs naming wiped media and films.

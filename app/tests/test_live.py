@@ -31,7 +31,7 @@ from core.consumers import REFUSED
 from den_hurtige import access as dh_access
 from den_hurtige import channels
 from den_hurtige.channels import Channel
-from den_hurtige.models import QuickPost
+from den_hurtige.models import QuickComment, QuickPost
 from events import access as events_access
 from events.models import Event, EventInvite, Visibility
 from notifications import categories
@@ -233,6 +233,20 @@ def test_a_reply_a_reaction_and_a_tombstone_signal_their_message(
 
     changed = ("den-hurtige.generelt", {"kind": "changed", "pk": post.pk})
     assert features(signals) == [changed, changed, changed]
+
+
+def test_a_reaction_on_a_reply_signals_the_message_it_answers(
+    client: Client, beboer: Resident, signals: list
+) -> None:
+    """Every signal names a MESSAGE (den_hurtige.live): the thread panel open on it is keyed by
+    the message, and that is what has to refresh when one of its replies is reacted to."""
+    post = QuickPost.objects.create(author=beboer, content="Kaffe?")
+    reply = QuickComment.objects.create(post=post, author=beboer, content="Ja")
+    client.force_login(beboer)
+
+    client.post(f"{FEED_URL}svar/{reply.pk}/reaktion", {"emoji": "👍"})
+
+    assert features(signals) == [("den-hurtige.generelt", {"kind": "changed", "pk": post.pk})]
 
 
 def test_a_message_deleted_outright_signals_the_pk_it_had(

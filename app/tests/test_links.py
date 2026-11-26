@@ -19,7 +19,7 @@ from django.test import Client
 from django.utils import timezone
 from django.utils.safestring import SafeString
 
-from core.links import MAX_LINK_TEXT, linkify, shorten
+from core.links import MAX_LINK_TEXT, linkify, shorten, shorten_urls
 from core.markdown import render_markdown
 from residents.models import Resident
 
@@ -157,6 +157,18 @@ def test_the_result_is_a_safestring() -> None:
     """Templates must not add |safe, and they can only skip it if this is already one."""
     assert isinstance(linkify(f"Se {LONG}"), SafeString)
     assert isinstance(linkify("ingen links her"), SafeString)
+
+
+def test_quoted_text_shows_a_url_the_way_its_link_would_but_links_nothing() -> None:
+    """shorten_urls is for text quoted inside something that is already a link (Den Hurtige's reply
+    previews), where an <a> is not allowed: the same short text a link would show, no markup at all,
+    and the same scheme allowlist — a `javascript:` URL is left exactly as typed."""
+    quoted = shorten_urls(f"Se {LONG} og skriv til anton@gahk.dk")
+
+    assert quoted == f"Se {shorten(LONG)} og skriv til anton@gahk.dk"
+    assert "<a" not in quoted
+    assert shorten_urls("javascript:alert(1)") == "javascript:alert(1)"
+    assert shorten_urls(None) == ""
 
 
 # --- the Markdown route --------------------------------------------------------------------------

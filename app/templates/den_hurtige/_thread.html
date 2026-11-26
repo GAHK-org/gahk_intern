@@ -91,7 +91,7 @@
             Deleted wins over archived on a tombstone that has since aged out: it is the reason the
             thread is read-only.
           {% endcomment %}
-          {% if channel %}{{ channel.name }} · {% endif %}{{ post.comments.all|length }} svar{% if deleted %} · slettet{% elif archived %} · arkiveret{% endif %}
+          {% if channel %}{{ channel.name }} · {% endif %}{{ replies|length }} svar{% if deleted %} · slettet{% elif archived %} · arkiveret{% endif %}
         </div>
       </div>
       <button type="button" class="thread-x" data-thread-close aria-label="Luk tråd">

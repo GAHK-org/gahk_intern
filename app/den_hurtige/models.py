@@ -54,6 +54,7 @@ from django.conf import settings
 from django.db import models, transaction
 from django.db.models.signals import post_delete
 from django.dispatch import receiver
+from django.urls import reverse
 from django.utils import timezone
 
 from core.clock import current_datetime
@@ -216,6 +217,18 @@ class QuickPost(models.Model):
     def __str__(self) -> str:
         return f"Opslag af {self.author} kl. {self.created_at:%H:%M}"
 
+    # The reaction widget (_reactions.html) serves messages and replies alike, and these two are all
+    # it needs to tell them apart: which endpoint a tap posts to, and an id suffix that cannot
+    # collide when a message and a reply with the same pk are on screen together (QuickComment's
+    # versions carry "svar-").
+    @property
+    def reaction_key(self) -> str:
+        return str(self.pk)
+
+    @property
+    def reaction_url(self) -> str:
+        return reverse("den_hurtige:toggle_reaction", args=[self.pk])
+
     @property
     def is_archived(self) -> bool:
         """Off the feed and read-only. Was `is_expired`, and renamed rather than aliased: the two
@@ -346,6 +359,15 @@ class QuickComment(models.Model):
     def __str__(self) -> str:
         return f"Kommentar af {self.author} på opslag #{self.post.pk}"
 
+    # See QuickPost.reaction_key: the same widget, a different endpoint and a prefixed id.
+    @property
+    def reaction_key(self) -> str:
+        return f"svar-{self.pk}"
+
+    @property
+    def reaction_url(self) -> str:
+        return reverse("den_hurtige:toggle_reply_reaction", args=[self.pk])
+
 
 @receiver(post_delete, sender=QuickPost)
 @receiver(post_delete, sender=QuickComment)
@@ -394,6 +416,38 @@ class QuickReaction(models.Model):
             # replaces yours; picking the one you already used clears it. The constraint is what
             # makes that safe under a double tap.
             models.UniqueConstraint(fields=["post", "author"], name="uniq_reaction_per_author")
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.emoji} af {self.author}"
+
+
+class QuickCommentReaction(models.Model):
+    """One emoji one resident put on one REPLY: QuickReaction, one level down.
+
+    A table of its own rather than a second, nullable foreign key on QuickReaction, for the reason
+    core.reactions gives for not going generic: each owner keeps a real foreign key and its own
+    unique constraint, so a cascade removes exactly its own rows and "one person, one emoji" holds
+    per reply in the database rather than by convention.
+
+    Same toggle, same notification policy: only the reply's author hears about it, grouped per reply
+    (services.notify_reply_reaction). A tombstoned message keeps its replies (QuickPost.soft_delete),
+    and these stay with them.
+    """
+
+    comment = models.ForeignKey(QuickComment, on_delete=models.CASCADE, related_name="reactions")
+    author = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="quick_comment_reactions"
+    )
+    emoji = models.CharField(max_length=32)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["created_at"]
+        verbose_name = "Reaktion på svar"
+        verbose_name_plural = "Reaktioner på svar"
+        constraints = [
+            models.UniqueConstraint(fields=["comment", "author"], name="uniq_reply_reaction_per_author")
         ]
 
     def __str__(self) -> str:

@@ -156,6 +156,39 @@ def test_seed_demo_leaves_one_tombstone_with_its_replies_intact() -> None:
 
 
 @pytest.mark.django_db
+def test_seed_demo_has_a_live_thread_longer_than_its_preview() -> None:
+    """The feed previews the newest two replies; one live message has more, with a run by one sender,
+    a reply by beboer@, a reply several people reacted to, and a mention and a link to preview."""
+    from django.db.models import Count
+    from django.utils import timezone
+
+    from den_hurtige.models import QuickCommentReaction
+
+    call_command("seed_demo", "--fresh", "--force", "--residents", "12", verbosity=0)
+    live = QuickPost.objects.filter(deleted_at__isnull=True, expires_at__gt=timezone.now())
+    thread = live.annotate(replies=Count("comments")).filter(replies__gt=2).get()
+    replies = list(thread.comments.order_by("created_at"))
+
+    assert replies[-1].author == replies[-2].author == thread.author, "a run of two by the asker"
+    assert any(r.author.email == "beboer@gahk.dk" for r in replies)
+    assert "@[" in replies[-1].content and "https://" in replies[-1].content
+    assert QuickCommentReaction.objects.filter(comment=replies[0]).count() > 1
+    # The feed previews it: the count, and the newest reply's mention as plain text.
+    from django.test import Client
+    from django.urls import reverse
+
+    client = Client()
+    client.force_login(Resident.objects.get(email="beboer@gahk.dk"))
+    feed = client.get(reverse("den_hurtige:feed")).content.decode()
+    assert "5 svar" in feed
+    assert "@Bente Beboer" in feed
+
+    # The matrix still has messages with one reply and with none.
+    counts = {p.replies for p in live.annotate(replies=Count("comments"))}
+    assert {0, 1, 2} <= counts
+
+
+@pytest.mark.django_db
 def test_seed_demo_gives_the_logins_notifications_in_every_state() -> None:
     """The bell and the notifications page need something to show on a fresh checkout."""
     from notifications import categories, services
