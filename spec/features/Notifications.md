@@ -29,12 +29,13 @@ Features decide **who** is told and **with what wording**; they call
 | Den Hurtige | `chat.replies` — replies to your message | Normal | yes |
 | Den Hurtige | `chat.likes` — reactions to your message | Lav | yes |
 | Opslagstavlen | `posts.new` | Normal | yes |
-| Opslagstavlen | `posts.replies` — comments on your post | Normal | yes |
-| Opslagstavlen | `posts.likes` — reactions to your post | Lav | yes |
+| Opslagstavlen | `posts.replies` — comments on your post, replies to your comment | Normal | yes |
+| Opslagstavlen | `posts.likes` — reactions to your post or comment | Lav | yes |
 | Begivenheder | `events.new` | Normal | yes |
 | Begivenheder | `events.changes` — moved or cancelled, for events you said ja to | Høj | yes |
 | Begivenheder | `events.personal` — RSVP deadline reminders, moved up from the venteliste | Høj | yes |
-| Begivenheder | `events.comments` — comments on events you host | Normal | yes |
+| Begivenheder | `events.comments` — comments on events you host, replies to your comment | Normal | yes |
+| Begivenheder | `events.likes` — reactions to your comment | Lav | yes |
 | Reparationer | `repairs` — new and handed-over tasks for your group | Normal | yes |
 | GAHKFlix | `gahkflix.new` — a video is published | Normal | yes |
 | GAHKFlix | `gahkflix.cast` — you are credited in a published video | Normal | yes |
@@ -106,12 +107,16 @@ they would get a 403 on opening. Acting on your own content never notifies you.
     the post as plain text, not Markdown.
   - Comments and reactions → grouped to the post's author only. There is no "underret alle": a
     noticeboard has no single shared audience the way a chat room does.
+  - A reply to a comment → also grouped `posts.replies` to that comment's author (per thread); a
+    reaction to a comment → grouped `posts.likes` to that comment's author (per comment).
 - **Begivenheder**
   - New → `events.new` to the event's audience (the invite list for invite-only events), except the
     organiser.
   - Moved or renamed → `events.changes` to those who said ja, except the organiser. Cancelled → the
     same, titled "Aflyst: …".
-  - Comments → grouped `events.comments` to each host (organiser and co-organisers).
+  - Comments → grouped `events.comments` to each host (organiser and co-organisers). A reply also
+    tells the comment's author (`events.comments`, per thread), if they can still see the event.
+  - A reaction to a comment → grouped `events.likes` to the comment's author.
   - RSVP deadline reminders and promotion from the venteliste → `events.personal`.
 - **Reparationer** → `repairs` to current holders of the responsible role (Viceværterne for a new
   report or one sent back, Reppergruppen for one handed over), plus administrators and superusers.

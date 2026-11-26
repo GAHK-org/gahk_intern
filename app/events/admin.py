@@ -33,7 +33,8 @@ class EventCommentInline(admin.TabularInline):
     model = EventComment
     extra = 0
     autocomplete_fields = ("author",)
-    readonly_fields = ("created_at",)
+    # `parent` read-only: as a select it would list every comment on every event, per row.
+    readonly_fields = ("parent", "created_at")
 
 
 @admin.register(Event)

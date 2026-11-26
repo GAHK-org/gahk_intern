@@ -118,6 +118,7 @@ EVENTS_NEW = "events.new"
 EVENTS_CHANGES = "events.changes"
 EVENTS_PERSONAL = "events.personal"
 EVENTS_COMMENTS = "events.comments"
+EVENTS_LIKES = "events.likes"
 REPAIRS = "repairs"
 GAHKFLIX_NEW = "gahkflix.new"
 GAHKFLIX_CAST = "gahkflix.cast"
@@ -160,12 +161,17 @@ def _build() -> tuple[Category, ...]:
             importance=Importance.LAV,
         ),
         Category(POSTS_NEW, "Nye opslag", "posts", "Når nogen slår op på tavlen."),
-        Category(POSTS_REPLIES, "Kommentarer på dine opslag", "posts", "Når nogen kommenterer dit opslag."),
+        Category(
+            POSTS_REPLIES,
+            "Kommentarer og svar",
+            "posts",
+            "Når nogen kommenterer dit opslag eller svarer på din kommentar.",
+        ),
         Category(
             POSTS_LIKES,
-            "Reaktioner på dine opslag",
+            "Reaktioner på dine opslag og kommentarer",
             "posts",
-            "Når nogen reagerer på dit opslag.",
+            "Når nogen reagerer på dit opslag eller din kommentar.",
             importance=Importance.LAV,
         ),
         Category(EVENTS_NEW, "Nye begivenheder", "events", "Når der oprettes en begivenhed, du kan se."),
@@ -185,9 +191,16 @@ def _build() -> tuple[Category, ...]:
         ),
         Category(
             EVENTS_COMMENTS,
-            "Kommentarer på dine begivenheder",
+            "Kommentarer og svar",
             "events",
-            "Når nogen kommenterer en begivenhed, du er vært for.",
+            "Når nogen kommenterer en begivenhed, du er vært for, eller svarer på din kommentar.",
+        ),
+        Category(
+            EVENTS_LIKES,
+            "Reaktioner på dine kommentarer",
+            "events",
+            "Når nogen reagerer på din kommentar til en begivenhed.",
+            importance=Importance.LAV,
         ),
         Category(REPAIRS, "Reparationer", "repairs", "Nye og overdragede reparationer for din gruppe."),
         Category(GAHKFLIX_NEW, "Nye videoer", "gahkflix", "Når en ny video udgives på GAHKFlix."),

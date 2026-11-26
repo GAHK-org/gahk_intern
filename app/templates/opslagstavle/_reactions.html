@@ -10,18 +10,26 @@
   See den_hurtige/_reactions.html for why both panels are fixed-position overlays behind a real
   backdrop rather than absolutely positioned beside their own summary.
 {% endcomment %}
-<div class="reactions{% if not reactions %} is-empty{% endif %}" id="reactions-{{ notice.pk }}">
+{% comment %}
+  `item` is the post (Notice) OR a comment (NoticeComment, events.EventComment) the row belongs to.
+  Each carries `reaction_url`, the toggle endpoint a tap posts to, and `reaction_key`, the suffix on
+  every id in here: a post's is its pk and a comment's is "kommentar-<pk>", so post 7 and comment 7
+  on one page still have one #reactions-7 and one #reactions-kommentar-7. Same contract as
+  den_hurtige/_reactions.html.
+{% endcomment %}
+{% with key=item.reaction_key toggle_url=item.reaction_url %}
+<div class="reactions{% if not reactions %} is-empty{% endif %}" id="reactions-{{ key }}">
   {% for r in reactions %}
     {% comment %}
       Tap toggles the reaction; hold/hover/right-click opens who. Those must not be the same
       gesture — a tap that both changed your reaction and opened a panel would be neither.
     {% endcomment %}
     <button type="button" class="reaction{% if r.mine %} is-mine{% endif %}"
-            data-who="who-{{ notice.pk }}-{{ forloop.counter }}"
+            data-who="who-{{ key }}-{{ forloop.counter }}"
             aria-haspopup="dialog"
-            hx-post="{% url 'opslagstavle:toggle_reaction' notice.pk %}"
+            hx-post="{{ toggle_url }}"
             hx-vals='{"emoji": "{{ r.emoji }}"}'
-            hx-target="#reactions-{{ notice.pk }}" hx-swap="outerHTML"
+            hx-target="#reactions-{{ key }}" hx-swap="outerHTML"
             aria-pressed="{% if r.mine %}true{% else %}false{% endif %}"
             aria-label="{{ r.emoji }} {{ r.count }}">{{ r.emoji }} <span class="n">{{ r.count }}</span></button>
   {% endfor %}
@@ -32,7 +40,7 @@
     can never disagree about counts or ordering.
   {% endcomment %}
   {% for r in reactions %}
-    <details class="pop who-picker" id="who-{{ notice.pk }}-{{ forloop.counter }}">
+    <details class="pop who-picker" id="who-{{ key }}-{{ forloop.counter }}">
       <summary class="sr-only">Hvem reagerede med {{ r.emoji }}</summary>
       <div class="pop-backdrop"></div>
       <div class="pop-panel">
@@ -56,7 +64,7 @@
     closes by itself because choosing an emoji swaps this whole row away. The free field keeps "any
     emoji" true, and on a phone focusing it opens the system emoji keyboard.
   {% endcomment %}
-  <details class="pop emoji-picker" id="picker-{{ notice.pk }}">
+  <details class="pop emoji-picker" id="picker-{{ key }}">
     <summary class="reaction reaction-add" title="Tilføj reaktion" aria-label="Tilføj reaktion">☺<span aria-hidden="true">+</span><span class="add-label"> Reagér</span></summary>
     <div class="pop-backdrop"></div>
     <div class="pop-panel">
@@ -64,19 +72,20 @@
       <div class="emoji-grid">
         {% for e in quick_emoji %}
           <button type="button" class="emoji-choice"
-                  hx-post="{% url 'opslagstavle:toggle_reaction' notice.pk %}"
+                  hx-post="{{ toggle_url }}"
                   hx-vals='{"emoji": "{{ e }}"}'
-                  hx-target="#reactions-{{ notice.pk }}" hx-swap="outerHTML"
+                  hx-target="#reactions-{{ key }}" hx-swap="outerHTML"
                   aria-label="Reagér med {{ e }}">{{ e }}</button>
         {% endfor %}
       </div>
       <form class="emoji-other"
-            hx-post="{% url 'opslagstavle:toggle_reaction' notice.pk %}"
-            hx-target="#reactions-{{ notice.pk }}" hx-swap="outerHTML">
-        <label class="sr-only" for="emoji-b-{{ notice.pk }}">Anden emoji</label>
-        <input type="text" id="emoji-b-{{ notice.pk }}" name="emoji" maxlength="32"
+            hx-post="{{ toggle_url }}"
+            hx-target="#reactions-{{ key }}" hx-swap="outerHTML">
+        <label class="sr-only" for="emoji-b-{{ key }}">Anden emoji</label>
+        <input type="text" id="emoji-b-{{ key }}" name="emoji" maxlength="32"
                autocomplete="off" enterkeyhint="send" placeholder="Anden emoji…">
       </form>
     </div>
   </details>
 </div>
+{% endwith %}

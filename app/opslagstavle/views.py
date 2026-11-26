@@ -25,6 +25,7 @@ from django.shortcuts import get_object_or_404, redirect, render
 from django.utils import timezone
 from django.views.decorators.http import require_POST
 
+from core.comment_threads import comments_with_reactions, reply_parent, threads
 from core.emoji import EMOJI_SHORTLIST
 from core.markdown import embed_references, image_sources, render_markdown
 from core.reactions import CREATED, apply_toggle, reaction_rows
@@ -45,10 +46,12 @@ from .forms import NoticeCommentForm, NoticeForm, ReactionForm
 from .images import sync_images
 from .models import (
     MAX_BODY_CHARS,
+    MAX_COMMENT_CHARS,
     MAX_PINNED,
     Category,
     Notice,
     NoticeComment,
+    NoticeCommentReaction,
     NoticeImage,
     NoticeQuerySet,
     NoticeReaction,
@@ -191,14 +194,18 @@ def detail(request: HttpRequest, pk: int) -> HttpResponse:
 
 def _detail_context(request: HttpRequest, pk: int) -> dict[str, object]:
     """Everything the detail page draws, shared with `live_detail` so the two cannot differ."""
-    notice = get_object_or_404(_list_queryset(request).prefetch_related("comments__author"), pk=pk)
+    notice = get_object_or_404(_list_queryset(request), pk=pk)
     _decorate([notice], request)
-    comments = list(notice.comments.all())
+    # Two queries for the whole thread (comments with authors, reactions with theirs), grouped into
+    # top-level comments and their replies in Python. See core.comment_threads.
+    comments = list(comments_with_reactions(notice.comments.all(), NoticeCommentReaction))
     for comment in comments:
-        comment.can_delete = can_delete_comment(request, comment)  # type: ignore[attr-defined]
+        comment.can_delete = can_delete_comment(request, comment)
     return {
         "notice": notice,
-        "comments": comments,
+        "comments": threads(comments, current_resident(request).pk),
+        "comment_count": len(comments),
+        "max_comment_chars": MAX_COMMENT_CHARS,
         "comment_form": NoticeCommentForm(),
         "can_moderate": can_moderate(request),
         "events_allowed": events_allowed(request),
@@ -420,12 +427,13 @@ def create_comment(request: HttpRequest, pk: int) -> HttpResponseRedirect:
 
     comment.notice = notice
     comment.author = current_resident(request)
+    comment.parent = reply_parent(request, notice.comments.all())
     if image is not None:
         comment.image = image
     comment.save()
     services.notify_new_comment(comment)
     live.notice_changed(notice.pk)
-    return redirect("opslagstavle:detail", pk=notice.pk)
+    return HttpResponseRedirect(services.comment_url(comment))
 
 
 @require_POST
@@ -468,8 +476,40 @@ def toggle_reaction(request: HttpRequest, pk: int) -> HttpResponse:
         request,
         "opslagstavle/_reactions.html",
         {
-            "notice": notice,
+            "item": notice,
             "reactions": reaction_rows(notice.reactions.select_related("author"), resident.pk),
+            "quick_emoji": EMOJI_SHORTLIST,
+        },
+    )
+
+
+@require_POST
+@access_required
+def toggle_comment_reaction(request: HttpRequest, pk: int) -> HttpResponse:
+    """toggle_reaction for a comment: same row, same rules. Reached through the posts this reader
+    may see, so the kitchen account cannot react under somebody else's post. A NEW reaction tells
+    the comment's author (services.notify_comment_reaction)."""
+    comment = get_object_or_404(
+        NoticeComment.objects.select_related("notice", "author").filter(notice__in=_visible(request)),
+        pk=pk,
+    )
+    resident = current_resident(request)
+    form = ReactionForm(request.POST)
+    if form.is_valid():
+        emoji = form.cleaned_data["emoji"]
+        if (
+            apply_toggle(NoticeCommentReaction.objects, author=resident, emoji=emoji, comment=comment)
+            == CREATED
+        ):
+            services.notify_comment_reaction(comment, resident, emoji)
+        live.notice_changed(comment.notice_id)
+    # Re-read after the write, for the reason toggle_reaction gives.
+    return render(
+        request,
+        "opslagstavle/_reactions.html",
+        {
+            "item": comment,
+            "reactions": reaction_rows(comment.reactions.select_related("author"), resident.pk),
             "quick_emoji": EMOJI_SHORTLIST,
         },
     )

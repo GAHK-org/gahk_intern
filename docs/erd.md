@@ -554,6 +554,7 @@ erDiagram
         int id PK
         string author_embedsgruppe
         int notice_id FK
+        int parent_id FK
         int author_id FK
         text body
         string image
@@ -563,6 +564,14 @@ erDiagram
     opslagstavle_NoticeReaction {
         int id PK
         int notice_id FK
+        int author_id FK
+        string emoji
+        datetime created_at
+    }
+
+    opslagstavle_NoticeCommentReaction {
+        int id PK
+        int comment_id FK
         int author_id FK
         string emoji
         datetime created_at
@@ -617,9 +626,18 @@ erDiagram
     events_EventComment {
         int id PK
         int event_id FK
+        int parent_id FK
         int author_id FK
         text body
         string image
+        datetime created_at
+    }
+
+    events_EventCommentReaction {
+        int id PK
+        int comment_id FK
+        int author_id FK
+        string emoji
         datetime created_at
     }
 
@@ -1073,9 +1091,12 @@ erDiagram
     opslagstavle_Notice }o--|o residents_Resident : "pinned_by"
     opslagstavle_Notice }o--|o events_Event : "event"
     opslagstavle_NoticeComment }o--|| opslagstavle_Notice : "notice"
+    opslagstavle_NoticeComment }o--|o opslagstavle_NoticeComment : "parent"
     opslagstavle_NoticeComment }o--|| residents_Resident : "author"
     opslagstavle_NoticeReaction }o--|| opslagstavle_Notice : "notice"
     opslagstavle_NoticeReaction }o--|| residents_Resident : "author"
+    opslagstavle_NoticeCommentReaction }o--|| opslagstavle_NoticeComment : "comment"
+    opslagstavle_NoticeCommentReaction }o--|| residents_Resident : "author"
     opslagstavle_NoticeImage }o--|o opslagstavle_Notice : "notice"
     opslagstavle_NoticeImage }o--|o residents_Resident : "uploaded_by"
     events_Event }o--|| residents_Resident : "organiser"
@@ -1086,7 +1107,10 @@ erDiagram
     events_Rsvp }o--|| events_Event : "event"
     events_Rsvp }o--|| residents_Resident : "resident"
     events_EventComment }o--|| events_Event : "event"
+    events_EventComment }o--|o events_EventComment : "parent"
     events_EventComment }o--|| residents_Resident : "author"
+    events_EventCommentReaction }o--|| events_EventComment : "comment"
+    events_EventCommentReaction }o--|| residents_Resident : "author"
     events_CalendarFeedToken ||--|| residents_Resident : "resident"
     reparationer_RepairTask }o--|| residents_Resident : "reported_by"
     reparationer_RepairComment }o--|| reparationer_RepairTask : "task"
@@ -1577,9 +1601,18 @@ erDiagram
     events_EventComment {
         int id PK
         int event_id FK
+        int parent_id FK
         int author_id FK
         text body
         string image
+        datetime created_at
+    }
+
+    events_EventCommentReaction {
+        int id PK
+        int comment_id FK
+        int author_id FK
+        string emoji
         datetime created_at
     }
 
@@ -1602,7 +1635,10 @@ erDiagram
     events_Rsvp }o--|| events_Event : "event"
     events_Rsvp }o--|| residents_Resident : "resident"
     events_EventComment }o--|| events_Event : "event"
+    events_EventComment }o--|o events_EventComment : "parent"
     events_EventComment }o--|| residents_Resident : "author"
+    events_EventCommentReaction }o--|| events_EventComment : "comment"
+    events_EventCommentReaction }o--|| residents_Resident : "author"
     events_CalendarFeedToken ||--|| residents_Resident : "resident"
 ```
 
@@ -1961,6 +1997,7 @@ erDiagram
         int id PK
         string author_embedsgruppe
         int notice_id FK
+        int parent_id FK
         int author_id FK
         text body
         string image
@@ -1970,6 +2007,14 @@ erDiagram
     opslagstavle_NoticeReaction {
         int id PK
         int notice_id FK
+        int author_id FK
+        string emoji
+        datetime created_at
+    }
+
+    opslagstavle_NoticeCommentReaction {
+        int id PK
+        int comment_id FK
         int author_id FK
         string emoji
         datetime created_at
@@ -1992,9 +2037,12 @@ erDiagram
     opslagstavle_Notice }o--|o residents_Resident : "pinned_by"
     opslagstavle_Notice }o--|o events_Event : "event"
     opslagstavle_NoticeComment }o--|| opslagstavle_Notice : "notice"
+    opslagstavle_NoticeComment }o--|o opslagstavle_NoticeComment : "parent"
     opslagstavle_NoticeComment }o--|| residents_Resident : "author"
     opslagstavle_NoticeReaction }o--|| opslagstavle_Notice : "notice"
     opslagstavle_NoticeReaction }o--|| residents_Resident : "author"
+    opslagstavle_NoticeCommentReaction }o--|| opslagstavle_NoticeComment : "comment"
+    opslagstavle_NoticeCommentReaction }o--|| residents_Resident : "author"
     opslagstavle_NoticeImage }o--|o opslagstavle_Notice : "notice"
     opslagstavle_NoticeImage }o--|o residents_Resident : "uploaded_by"
 ```

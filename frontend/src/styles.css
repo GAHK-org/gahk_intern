@@ -1893,6 +1893,22 @@
   .notice-comments { @apply mt-6; }
   .notice-comments h2 { @apply text-base font-semibold mb-2; }
   .comment-form { @apply mt-4; }
+  /* Threads under a post or an event (core.comment_threads): a comment, its replies indented one
+     level under it, and the reply box "Svar" opens at the end. One level only, so the indent never
+     compounds on a phone. */
+  .comment-thread + .comment-thread { margin-top: 4px; }
+  .comment-replies { margin-left: 22px; }
+  .comment-actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-top: 4px; }
+  /* A comment carries "☺+" and "Svar" side by side; the "Reagér" word a post's empty row shows
+     would make every quiet comment a row of labels. */
+  .comment-actions .reactions.is-empty .reaction-add .add-label { display: none; }
+  .comment-reply-btn { border: 0; background: none; padding: 2px 4px; font: inherit; font-size: 13px;
+    font-weight: 600; color: var(--muted); cursor: pointer; }
+  .comment-reply-btn:hover { color: var(--ink); text-decoration: underline; }
+  .comment-reply-form { margin: 8px 0 4px 22px; }
+  .comment-reply-form[hidden] { display: none; }
+  .comment-reply-bar { display: flex; align-items: center; gap: 8px; margin-top: 6px; }
+  .comment-reply-bar .reply-attach { margin-right: auto; }
 
   /* Compose form: toolbar + zero-JS tab panels. The radios live outside the panels so the CSS
      sibling selectors below can reach them; they are visually hidden, not display:none, so they stay
