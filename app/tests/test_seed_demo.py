@@ -273,6 +273,7 @@ def test_seed_demo_fills_drive_for_every_login() -> None:
     _check_drive_sharing(seeded)
     _check_drive_standing(seeded)
     _check_drive_preview(seeded)
+    _check_drive_search(seeded)
 
 
 class _DriveSeed:
@@ -511,6 +512,23 @@ def _check_drive_preview(seeded: _DriveSeed) -> None:
     assert "Beløb" in preview.text(till.latest_version(), till.name).text
     sales = File.objects.get(name="Salgshistorik.csv")
     assert preview.text(sales.latest_version(), sales.name).more_rows
+
+
+def _check_drive_search(seeded: _DriveSeed) -> None:
+    """Search finds a name in several places, filtered by who may see them, and a folder has enough
+    files to sort."""
+    from drive import search
+    from drive.models import Folder
+
+    def found(email: str, text: str, **filters: str) -> set[str]:
+        hits = search.search(seeded.viewer(email, oversees=email == "formand@gahk.dk"), text, **filters).hits
+        return {hit.where for hit in hits}
+
+    regnskab = found("regnskab@gahk.dk", "referat")
+    assert len(regnskab) >= 3
+    assert len(found("regnskab@gahk.dk", "budget")) > len(found("beboer@gahk.dk", "budget"))
+    assert found("oel@gahk.dk", "referat", space="group")
+    assert Folder.objects.get(name="Indkøb").files.filter(deleted_at__isnull=True).count() >= 12
 
 
 @pytest.mark.django_db

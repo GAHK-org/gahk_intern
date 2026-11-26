@@ -174,12 +174,12 @@ function initUpload(): void {
   })
 }
 
-/** The bar for ticked items: how many, and move, copy or delete them. */
+/** The bar for ticked items: how many, and download as a zip, move, copy or delete them. */
 function initSelection(): void {
   const bar = document.querySelector<HTMLElement>("[data-drive-selection]")
   const raw = document.getElementById("drive-selection-config")?.textContent
   if (!bar || !raw) return
-  const config = JSON.parse(raw) as { moveUrl: string; deleteUrl: string }
+  const config = JSON.parse(raw) as { moveUrl: string; deleteUrl: string; zipUrl: string }
   const ticks = Array.from(document.querySelectorAll<HTMLInputElement>("input[data-drive-tick]"))
   const count = bar.querySelector<HTMLElement>("[data-selection-count]")!
   const ticked = () => ticks.filter((tick) => tick.checked)
@@ -196,11 +196,11 @@ function initSelection(): void {
     if (!button) return
     const op = button.dataset.selectionOp!
     const items = ticked().map((tick): [string, string] => [tick.dataset.driveTick!, tick.value])
-    if (op === "delete") {
-      if (!window.confirm(`Læg ${items.length} i papirkurven?`)) return
+    if (op === "delete" || op === "zip") {
+      if (op === "delete" && !window.confirm(`Læg ${items.length} i papirkurven?`)) return
       const form = document.createElement("form")
       form.method = "post"
-      form.action = config.deleteUrl
+      form.action = op === "delete" ? config.deleteUrl : config.zipUrl
       const fields: [string, string][] = [["csrfmiddlewaretoken", csrfToken()], ...items]
       for (const [name, value] of fields) {
         const input = document.createElement("input")
@@ -287,15 +287,19 @@ function initViewer(): void {
       if (dx < 0 && next) next.click()
     })
   }
-  if (document.querySelector('[data-drive-preview-pending]')) {
-    const key = `drive-preview-wait:${location.pathname}`
-    let tries = 0
-    try { tries = Number(sessionStorage.getItem(key) ?? 0) } catch { /* storage off: one try */ }
-    if (tries < 10) {
-      try { sessionStorage.setItem(key, String(tries + 1)) } catch { /* ignore */ }
-      window.setTimeout(() => location.reload(), 3000)
-    }
-  }
+  // An image preview takes seconds; a big zip can take minutes.
+  if (document.querySelector('[data-drive-preview-pending]')) waitAndReload(10)
+  if (document.querySelector('[data-drive-wait]')) waitAndReload(200)
+}
+
+/** Load the page again in a few seconds, at most `limit` times for this page. */
+function waitAndReload(limit: number): void {
+  const key = `drive-wait:${location.pathname}`
+  let tries = 0
+  try { tries = Number(sessionStorage.getItem(key) ?? 0) } catch { /* storage off: one try */ }
+  if (tries >= limit) return
+  try { sessionStorage.setItem(key, String(tries + 1)) } catch { /* ignore */ }
+  window.setTimeout(() => location.reload(), 3000)
 }
 
 initUpload()

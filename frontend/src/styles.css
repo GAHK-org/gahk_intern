@@ -2131,6 +2131,16 @@
   .drive-table th { position:sticky; top:0; background:var(--surface); font-weight:600; }
   .drive-markdown { padding:12px 14px; border:1px solid var(--border); border-radius:8px; background:var(--surface); overflow-wrap:anywhere; }
   .drive-preview-note { margin:0; font-size:13px; }
+  .drive-search { display:flex; align-items:center; gap:8px; max-width:520px; margin-top:0; }
+  .drive-search input[type=search] { flex:1 1 auto; min-width:0; margin:0; }
+  .drive-search-form { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
+  .drive-search-form input[type=search] { flex:1 1 260px; min-width:0; margin:0; }
+  .drive-search-form select { width:auto; max-width:100%; margin:0; flex:0 1 auto; }
+  .drive-where { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; flex:0 1 auto; min-width:0; max-width:50%; }
+  .drive-sort { display:flex; align-items:center; gap:6px 14px; flex-wrap:wrap; font-size:13px; }
+  .drive-sort a { color:var(--brass); text-decoration:none; }
+  .drive-sort a:hover { text-decoration:underline; }
+  .drive-sort a[aria-current] { font-weight:600; color:var(--ink); }
   .drive-member { flex-wrap:wrap; }
   .drive-list .ni.drive-locked { width:14px; height:14px; color:var(--muted); }
   .drive-pending { font-size:12px; }
@@ -2144,6 +2154,9 @@
   @media (max-width: 560px) {
     /* The metadata goes first: on a phone the name is the point. */
     .drive-meta { display:none; }
+    /* In search results, where a hit lives is the point: it goes under the name instead. */
+    .drive-results li { flex-wrap:wrap; row-gap:2px; }
+    .drive-results .drive-where { display:block; flex:1 1 100%; max-width:none; white-space:normal; padding-left:28px; }
   }
 
    /* --- Photo album ------------------------------------------------------------------------- */
