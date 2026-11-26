@@ -17,7 +17,6 @@ from django.utils import timezone
 from admissions.models import Application
 from config import settings as config_settings
 from residents.models import Account, Role, active_period
-from residents.permissions import CMS_EDITOR_ROLES, has_active_role
 
 
 @pytest.mark.parametrize("debug", ["0", "1"])
@@ -423,7 +422,7 @@ def test_pr_embedsgruppe_grants_cms_access(make_resident: Callable) -> None:
     _sync_month_roles(r.house.pk, pr_group, y, m, admins=set())  # what the next-month editor runs
 
     assert r.has_role("pr", (y, m))
-    assert has_active_role(r, *CMS_EDITOR_ROLES)
+    assert r.has_perm("access.website_manage")
 
 
 @pytest.mark.django_db

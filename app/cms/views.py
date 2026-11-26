@@ -4,9 +4,9 @@ Every write goes through cms.services, which cleans the input, keeps page versio
 ContentChange and publishes to gahk.dk after the commit. The views only check who may do what, shape
 the forms' input into the services' `data`, and show the result.
 
-Who: CMS_EDITOR_ROLES (administrator, indstilling, inspektion, pr) and superusers, through the same
-role check as the rest of the intranet (so "vis siden som rolle" applies here too). Deleting a page
-and asking gahk.dk to update its code are for administrators only.
+Who: website.manage (access.policy: administrator, indstilling, inspektion, pr), asked the same way
+as the rest of the intranet (so "vis siden som rolle" applies here too). Deleting a page and asking
+gahk.dk to update its code are website.administer: administrators only.
 
 gahk.dk's "Rediger siden" links here (/hjemmeside/sider/<id>/ and /hjemmeside/), shown to browsers
 that carry the `gahk_editor` hint cookie, which cms.middleware keeps for editors. It grants
@@ -34,8 +34,9 @@ from django.utils import timezone
 from django.utils.dateparse import parse_datetime
 from django.views.decorators.http import require_POST
 
-from residents.models import Account, Role
-from residents.permissions import CMS_EDITOR_ROLES, current_resident, request_has_role, role_required
+from access.api import permission_required
+from residents.models import Account
+from residents.permissions import current_resident
 
 from . import services
 from .diff import DiffRow, html_diff
@@ -64,12 +65,13 @@ PENDING_TIMEOUT = datetime.timedelta(minutes=3)
 PUBLISH_PENDING_KEY = "cms_publish_requested"
 UPDATE_PENDING_KEY = "cms_update_requested"
 
-# Only CMS editors (the effective roles, so a role preview applies here as everywhere).
-editor_view: Callable[[View], View] = role_required(*CMS_EDITOR_ROLES)
+# Only those who edit gahk.dk (honouring a preview, as everywhere).
+editor_view: Callable[[View], View] = permission_required("access.website_manage")
 
 
 def is_administrator(request: HttpRequest) -> bool:
-    return request_has_role(request, Role.ADMINISTRATOR)
+    """Deleting a page: administrators only."""
+    return request.user.has_perm("access.website_administer")
 
 
 def _require_administrator(request: HttpRequest) -> None:

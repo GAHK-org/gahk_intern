@@ -58,9 +58,9 @@
           <a href="{% url 'directory' %}"><svg><use href="#i-list"></use></svg>Alumneliste</a>
           <a href="{% url 'ak:index' %}"><svg><use href="#i-check"></use></svg>Mine AK-krydser</a>
           <a href="{% url 'oelkaelder:my' %}"><svg><use href="#i-beer"></use></svg>Min ølkælder-saldo</a>
-          {% if "oelkaelder" in roles %}<a href="{% url 'oelkaelder:admin' %}"><svg><use href="#i-beer"></use></svg>Ølkælder-admin</a>{% endif %}
-          {% if "ak" in roles %}<a href="{% url 'ak:overview' %}"><svg><use href="#i-check"></use></svg>AK-oversigt</a>{% endif %}
-          {% if "indstilling" in roles %}<a href="{% url 'admissions:list' %}"><svg><use href="#i-inbox"></use></svg>Ansøgninger</a>{% endif %}
+          {% if perms.access.oelkaelder_manage %}<a href="{% url 'oelkaelder:admin' %}"><svg><use href="#i-beer"></use></svg>Ølkælder-admin</a>{% endif %}
+          {% if perms.access.ak_manage %}<a href="{% url 'ak:overview' %}"><svg><use href="#i-check"></use></svg>AK-oversigt</a>{% endif %}
+          {% if perms.access.admissions_manage %}<a href="{% url 'admissions:list' %}"><svg><use href="#i-inbox"></use></svg>Ansøgninger</a>{% endif %}
         </div>
         <div class="kv" style="margin-top:14px"><span class="l">WiFi-kode</span><span class="r"><span class="code">{{ wifi_password|default:"(sæt WIFI_PASSWORD)" }}</span></span></div>
         <div class="kv"><span class="l">Fælleskalender</span><span class="r">{{ calendar_user|default:"(ikke sat)" }}{% if calendar_password %} / {{ calendar_password }}{% endif %}</span></div>

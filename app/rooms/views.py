@@ -27,10 +27,11 @@ from django.http import HttpRequest, HttpResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.utils import timezone
 
+from access.api import permission_required
 from core.exports import csv_or_xlsx_response
 from core.models import Room
 from core.uploads import prepare_image_upload
-from residents.permissions import current_resident, role_required
+from residents.permissions import current_resident
 
 from .models import RoomCondition, RoomConditionScore, RoomCriterion
 
@@ -48,7 +49,7 @@ class _AkRow(TypedDict):
     scores: list[int | None]  # one per criterion, in the same order as the header
 
 
-@role_required("ak")
+@permission_required("access.vaerelsestjek_manage")
 def akoverview(request: HttpRequest) -> HttpResponse:
     """Every room's current scores as one row, restoring the legacy comparison matrix + export.
 

@@ -474,7 +474,7 @@ def test_roles_admin_access_preview_and_refusals(make_resident: Callable[..., Ac
     denied = AuditEvent.objects.get(action="auth.access.denied")
     assert (denied.actor_id, denied.details) == (
         anna.pk,
-        {"path": "/admin/roles", "roles": ["administrator"]},
+        {"path": "/admin/roles", "permission": "access.site_admin_view"},
     )
 
 

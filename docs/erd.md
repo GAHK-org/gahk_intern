@@ -128,6 +128,10 @@ erDiagram
         text error
     }
 
+    access_AccessRule {
+        int id PK
+    }
+
     residents_Person {
         int id PK
         string first_name
@@ -1152,6 +1156,15 @@ erDiagram
     regnskab_EconomicLedgerEntry }o--|| residents_Account : "resident"
     regnskab_AlumneregningSend }o--|| residents_Account : "resident"
     regnskab_AlumneregningSend }o--|o core_OutgoingMail : "mail"
+```
+
+## access
+
+```mermaid
+erDiagram
+    access_AccessRule {
+        int id PK
+    }
 ```
 
 ## admissions

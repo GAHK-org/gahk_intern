@@ -42,10 +42,11 @@ from django.template.loader import render_to_string
 from django.urls import reverse
 from django.utils.safestring import SafeString
 
+from access.api import request_roles
 from core import embeds as embed_syntax
 from core.embeds import Embed
 from core.markdown import embed_references
-from residents.permissions import current_resident, effective_roles, is_kitchen
+from residents.permissions import current_resident
 
 from .models import Notice
 
@@ -265,7 +266,7 @@ def _key(name: str, value: str) -> int | None:
 def albums_allowed(request: HttpRequest) -> bool:
     from photo_album import access
 
-    return not is_kitchen(request) and access.roles_allowed(effective_roles(request))
+    return request.user.has_perm("access.photo_album_view") and access.roles_allowed(request_roles(request))
 
 
 def _album_widgets(request: HttpRequest, wanted: set[Embed]) -> dict[Embed, object]:
@@ -476,7 +477,7 @@ def videos_allowed(request: HttpRequest) -> bool:
     button that answers 403."""
     from gahkflix import access
 
-    return not is_kitchen(request) and access.request_allowed(request)
+    return access.request_allowed(request)
 
 
 def _video_widgets(request: HttpRequest, wanted: set[Embed]) -> dict[Embed, object]:

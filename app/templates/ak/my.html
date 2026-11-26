@@ -3,7 +3,7 @@
 {% block title %}AK - GAHK Intern{% endblock %}
 {% block content %}
   <h1>Dine aktivitetskrydser</h1>
-  {% if "ak" in effective_roles %}
+  {% if perms.access.ak_manage %}
     <p><a class="btn" href="{% url 'ak:overview' %}">Se alle beboeres krydser (AK-oversigt)</a></p>
   {% endif %}
   <p>Saldo: <strong class="{{ balance|sign_class }}">{{ balance }}</strong>

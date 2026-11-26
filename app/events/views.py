@@ -23,6 +23,7 @@ from django.urls import reverse
 from django.utils import timezone
 from django.views.decorators.http import require_GET, require_POST
 
+from access.api import fragment
 from core.clock import current_date, current_datetime
 from core.danish import MONTHS, WEEKDAYS_SHORT
 from core.uploads import attached_image
@@ -237,6 +238,7 @@ def detail(request: HttpRequest, pk: int) -> HttpResponse:
     return render(request, "events/detail.html", _detail_context(request, pk))
 
 
+@fragment
 def live_detail(request: HttpRequest, pk: int) -> HttpResponse:
     """The detail page's live region, re-read on a signal for this event (events.live).
 

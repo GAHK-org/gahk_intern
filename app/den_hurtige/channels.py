@@ -21,7 +21,7 @@ from dataclasses import dataclass
 
 from django.urls import reverse
 
-from residents.permissions import KITCHEN
+from access.api import KITCHEN
 
 
 @dataclass(frozen=True)
@@ -102,9 +102,9 @@ CHANNELS: tuple[Channel, ...] = (
 # is stored on posts.
 DEFAULT = CHANNELS[0]
 
-# The kitchen staff's channel. Its slug is the kitchen pseudo-role's; core.middleware.kitchen_home
-# sends the kitchen account here.
-KITCHEN_CHANNEL = KITCHEN
+# The kitchen staff's channel, the one they read (see `allowed`); core.middleware.kitchen_home
+# sends them here.
+KITCHEN_CHANNEL = "koekken"
 
 BY_SLUG: dict[str, Channel] = {c.slug: c for c in CHANNELS}
 

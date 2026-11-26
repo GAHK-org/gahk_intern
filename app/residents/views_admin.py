@@ -10,15 +10,19 @@ import pickle  # nosec B403: _ResultUnpickler rejects every global/class lookup.
 import re
 from collections.abc import Mapping
 from dataclasses import dataclass, field
+from functools import wraps
 from typing import Any, Never
 
 from django.conf import settings
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
+from django.contrib.auth.views import redirect_to_login
+from django.core.exceptions import PermissionDenied
 from django.core.paginator import Paginator
 from django.db import DatabaseError, connection, transaction
 from django.db.models import Avg, F
 from django.http import Http404, HttpRequest, HttpResponse, HttpResponseRedirect, QueryDict
+from django.http.response import HttpResponseBase
 from django.shortcuts import redirect, render
 from django.template.defaultfilters import filesizeformat
 from django.utils import timezone
@@ -27,6 +31,7 @@ from django.views.decorators.http import require_POST
 from django_celery_beat.models import PeriodicTask
 from kombu.exceptions import DecodeError
 
+from access.api import KITCHEN, PREVIEW_SESSION_KEY, can_preview, fragment
 from audit import trail
 from config.celery import app as celery_app
 from core.models import WorkerJobLog
@@ -35,17 +40,9 @@ from core.worker_logs import SENT_AT_HEADER, parse_sent_at
 
 from . import admin_access
 from .models import Account, AdminAccessGrant, Role, RoleAssignment, active_period
-from .permissions import (
-    KITCHEN,
-    PREVIEW_SESSION_KEY,
-    current_resident,
-    effective_roles,
-    require_can_preview,
-    role_required,
-)
+from .permissions import View, current_resident
 
 
-@role_required("administrator")
 def home(request: HttpRequest) -> HttpResponse:
     # The pending list rides on the front page as well as its own screen: the mail in
     # residents.tasks is best-effort, and this is the one page every administrator opens.
@@ -1117,7 +1114,6 @@ def _state_counts(counts: Mapping[str, int], selected: str = "") -> list[tuple[s
     ]
 
 
-@role_required("administrator")
 def worker_jobs(request: HttpRequest) -> HttpResponse:
     now = timezone.now()
     filters = JobFilters.from_query(request.GET)
@@ -1147,19 +1143,19 @@ def worker_jobs(request: HttpRequest) -> HttpResponse:
     )
 
 
+@fragment
 def worker_jobs_live(request: HttpRequest) -> HttpResponse:
     """The top of the worker-jobs page, for its own poll.
 
-    Not decorated, like den_hurtige's feed poll: role_required redirects to the login page or
+    Asks for itself, like den_hurtige's feed poll: a permission decorator redirects to the login page or
     raises, and htmx would swap the login page or a 403 body into the dashboard. A 204 makes htmx
     leave it as it is, and hands an unauthorised caller nothing either way.
     """
-    if not request.user.is_authenticated or Role.ADMINISTRATOR not in effective_roles(request):
+    if not request.user.has_perm("access.site_admin_view"):
         return HttpResponse(status=204)
     return render(request, "siteadmin/_worker_jobs_live.html", _live_context(timezone.now()))
 
 
-@role_required("administrator")
 def worker_job_detail(request: HttpRequest, task_id: str) -> HttpResponse:
     now = timezone.now()
     details = _job_details(task_id, now)
@@ -1180,7 +1176,6 @@ def worker_job_detail(request: HttpRequest, task_id: str) -> HttpResponse:
     )
 
 
-@role_required("administrator")
 def roles(request: HttpRequest) -> HttpResponse:
     year, month = active_period()
     if request.method == "POST":
@@ -1226,6 +1221,21 @@ def roles(request: HttpRequest) -> HttpResponse:
         "siteadmin/roles.html",
         {"rows": rows, "all_roles": Role.choices, "period": f"{year}-{month:02d}"},
     )
+
+
+def require_can_preview(view: View) -> View:
+    """Gate the preview switcher on the REAL administrator role, so previewing a plain resident cannot
+    lock an administrator out of ending the preview."""
+
+    @wraps(view)
+    def wrapped(request: HttpRequest, *args: object, **kwargs: object) -> HttpResponseBase:
+        if not request.user.is_authenticated:
+            return redirect_to_login(request.get_full_path())
+        if not can_preview(request.user):
+            raise PermissionDenied
+        return view(request, *args, **kwargs)
+
+    return wrapped
 
 
 # ---- Role preview ("view site as role") — gated on the REAL admin role (require_can_preview) so an
@@ -1293,7 +1303,6 @@ def dev_clock_set(request: HttpRequest) -> HttpResponseRedirect:
     return redirect("dashboard")
 
 
-@role_required("administrator")
 def admin_access_view(request: HttpRequest) -> HttpResponse:
     """Accept or refuse a new administrator's Django-admin access (the two-person rule).
 
