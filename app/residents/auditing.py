@@ -2,7 +2,7 @@
 
 from audit import trail
 
-from .models import Account, AdminAccessGrant, Person, Residency, Resident, RoleAssignment
+from .models import Account, AdminAccessGrant, Person, Residency, Resident
 
 trail.register(
     Account,
@@ -65,13 +65,9 @@ trail.register(
         "month": "Måned",
     },
 )
-trail.register(
-    RoleAssignment,
-    "residents.role",
-    name=lambda r: f"{r.resident.full_name}: {r.get_role_display()} {r.year}-{r.month:02d}",
-    label="Rolle",
-    labels={"resident": "Beboer", "role": "Rolle", "year": "År", "month": "Måned"},
-)
+# A role held for one month, before roles came from the list or a grant (access.models.Grant). The
+# table is gone; its history stays under this name.
+trail.kind_labels({"residents.role": "Rolle (en måned)"})
 trail.register(
     AdminAccessGrant,
     "residents.admin_access",

@@ -10,7 +10,7 @@ The gate (access.middleware) has already checked the page's feature by the time 
 for a request that changes nothing, use for one that may. A view only asks for more than that.
 """
 
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from functools import wraps
 
 from django.contrib.auth.views import redirect_to_login
@@ -18,30 +18,40 @@ from django.core.exceptions import PermissionDenied
 from django.http import HttpRequest
 from django.http.response import HttpResponseBase
 
-from .features import Feature, Grade, feature_of, feature_of_url, in_feature
+from .features import HOME_FEATURES, Feature, Grade, feature_of, feature_of_url, in_feature
 from .permissions import all_codenames, name
-from .policy import ADMINISTRATOR, KITCHEN, RESIDENT, ROLE_LABELS
+from .policy import ADMINISTRATOR, GROUPS, KITCHEN, RESIDENT, ROLE_LABELS, STAGES
 from .roles import (
+    NO_STAGE,
     PREVIEW_SESSION_KEY,
+    ROLE_CODES,
     can_preview,
     holders,
     holding,
     previewed_roles,
     real_roles,
     request_roles,
+    roles_of_many,
     sync,
     sync_soon,
     syncing_once,
 )
+from .stages import STAGE_LABELS, Stage
 
 __all__ = [
     "ADMINISTRATOR",
+    "GROUPS",
     "KITCHEN",
+    "NO_STAGE",
     "PREVIEW_SESSION_KEY",
     "RESIDENT",
+    "ROLE_CODES",
     "ROLE_LABELS",
+    "STAGES",
+    "STAGE_LABELS",
     "Feature",
     "Grade",
+    "Stage",
     "can_preview",
     "check",
     "feature_of",
@@ -52,11 +62,13 @@ __all__ = [
     "in_feature",
     "is_kitchen",
     "may_open",
+    "may_open_many",
     "own_perm",
     "permission_required",
     "previewed_roles",
     "real_roles",
     "request_roles",
+    "roles_of_many",
     "sync",
     "sync_soon",
     "syncing_once",
@@ -80,10 +92,33 @@ def is_kitchen(request: HttpRequest) -> bool:
     return request.user.is_authenticated and KITCHEN in request_roles(request)
 
 
+def _opening(feature: Feature) -> list[str]:
+    """The permissions any one of which opens a link to a page of `feature`. The front page does for
+    anyone with a home to be sent on to (access.middleware)."""
+    if feature == Feature.DASHBOARD:
+        return [name(f, "view") for f in (Feature.DASHBOARD, *HOME_FEATURES)]
+    return [name(feature, "view")]
+
+
 def may_open(user: object, url: str) -> bool:
-    """Whether a GET of the page at `url` gets through the gate for this account."""
+    """Whether a GET of the page at `url` gets through the gate for this account. A link that is no
+    page of ours refuses nobody."""
     feature = feature_of_url(url)
-    return feature is None or bool(getattr(user, "has_perm", lambda _p: False)(name(feature, "view")))
+    has_perm = getattr(user, "has_perm", lambda _p: False)
+    return feature is None or any(has_perm(p) for p in _opening(feature))
+
+
+def may_open_many(account_ids: Iterable[int], url: str) -> list[int]:
+    """Those of `account_ids` whose own groups open the page at `url`, in their order. Nobody is told
+    about a page they cannot open: what a notification's recipients are narrowed by."""
+    ids = list(dict.fromkeys(account_ids))
+    feature = feature_of_url(url)
+    if feature is None or not ids:
+        return ids
+    allowed: set[int] = set()
+    for permission in _opening(feature):
+        allowed |= set(holders(permission).filter(pk__in=ids).values_list("pk", flat=True))
+    return [pk for pk in ids if pk in allowed]
 
 
 KNOWN = frozenset(f"access.{codename}" for codename, _ in all_codenames())

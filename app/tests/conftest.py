@@ -1,10 +1,11 @@
+import datetime
 import hashlib
 from collections.abc import Callable, Iterator
 from pathlib import Path
 
 import pytest
 
-from residents.models import Account, Person, Resident, RoleAssignment, active_period
+from residents.models import Account, Person, Resident, active_period
 
 # What make_resident puts on the person, and on the resident, rather than the account.
 PERSON_FACTS = ("birthday", "phone")
@@ -115,6 +116,18 @@ def mail_stays_queued(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(outbox, "_schedule_delivery", lambda mail_kind: None)
 
 
+@pytest.fixture(autouse=True)
+def _accounts_live_here(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A test's account needs no months on the alumneliste to use the site: one never on a list
+    counts as living here (access.stages.NEVER_LISTED). A test of the stages themselves is marked
+    `real_stages` and gets production's rule, where such an account has no access."""
+    if request.node.get_closest_marker("real_stages") is None:
+        from access import stages
+        from access.stages import Stage
+
+        monkeypatch.setattr(stages, "NEVER_LISTED", Stage.RESIDENT)
+
+
 @pytest.fixture
 def make_resident(db: None) -> Callable[[str, str, bool, tuple], Account]:
     def _make(
@@ -144,10 +157,16 @@ def make_resident(db: None) -> Callable[[str, str, bool, tuple], Account]:
         else:
             r.set_password(password)
         r.save()
+        # Roles given by hand from the start of the month in effect (access.models.Grant): a test's
+        # account holds them whether or not it is on a list.
+        from access.models import Grant
+        from core.clock import current_date
+
         year, month = active_period()
+        since = min(datetime.date(year, month, 1), current_date())
         for role in roles:
-            RoleAssignment.objects.create(resident=r, role=role, year=year, month=month)
-        if roles:
+            Grant.objects.create(account=r, role=role, reason="Test", starts_on=since)
+        if roles:  # as the role page's accounts were: Django admin lets staff in
             Account.objects.filter(id=r.id).update(is_staff=True)
         return r
 

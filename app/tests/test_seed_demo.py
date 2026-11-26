@@ -192,7 +192,8 @@ def test_seed_demo_writes_weeks_of_audit_history(settings: Any) -> None:  # noqa
     from django.test import Client
     from django.utils import timezone
 
-    from residents.models import Role, RoleAssignment
+    from access.models import Grant
+    from residents.models import Role
 
     settings.AUDIT_FALLBACK = True  # as outside the tests, so the shell fix is recorded (as System)
     call_command("seed_demo", "--fresh", "--force", "--residents", "12", verbosity=0)
@@ -241,7 +242,7 @@ def test_seed_demo_writes_weeks_of_audit_history(settings: Any) -> None:  # noqa
     # The history ends at the seeded data: the two administrators it approved and refused lost the
     # role again, and the passwords it changed are still the documented one.
     assert set(
-        RoleAssignment.objects.filter(role=Role.ADMINISTRATOR).values_list("resident__email", flat=True)
+        Grant.objects.active().filter(role=Role.ADMINISTRATOR).values_list("account__email", flat=True)
     ) == {"formand@gahk.dk"}
     for email in ("ak@gahk.dk", "oel@gahk.dk"):
         assert Account.objects.get(email=email).check_password("demo1234")

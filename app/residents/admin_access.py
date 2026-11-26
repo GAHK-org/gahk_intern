@@ -15,20 +15,17 @@ from django.utils import timezone
 
 from audit import trail
 
-from .models import Account, AdminAccessGrant, Role, active_period
+from .models import Account, AdminAccessGrant, Role
 
 
 def approvers() -> QuerySet[Account]:
-    """Residents who may decide a grant: accepted administrators for the active period, or superusers."""
-    year, month = active_period()
+    """Accounts that may decide an approval: administrators today whose own was accepted, or
+    superusers."""
+    from access.models import Grant
+
+    current = Grant.objects.active().filter(role=Role.ADMINISTRATOR).values("account_id")
     return Account.objects.filter(
-        Q(is_superuser=True)
-        | Q(
-            role_assignments__role=Role.ADMINISTRATOR,
-            role_assignments__year=year,
-            role_assignments__month=month,
-            admin_access__status=AdminAccessGrant.Status.APPROVED,
-        ),
+        Q(is_superuser=True) | Q(pk__in=current, admin_access__status=AdminAccessGrant.Status.APPROVED),
         is_active=True,
     ).distinct()
 

@@ -15,10 +15,12 @@ from django.utils import timezone
 from django.utils.encoding import force_bytes
 from django.utils.http import urlsafe_base64_encode
 
+from access.models import Grant
 from audit import trail
 from audit.models import AppendOnlyError, AuditChange, AuditEntity, AuditEvent
+from core.clock import current_date
 from core.models import OutgoingMail
-from residents.models import Account, AdminAccessGrant, Role, RoleAssignment, active_period
+from residents.models import Account, AdminAccessGrant, Role
 
 LOGIN = "/admin/login"
 
@@ -164,15 +166,15 @@ def test_deleting_a_resident_leaves_their_history_as_it_was(make_resident: Calla
 def test_an_event_captures_creations_changes_and_deletions(make_resident: Callable[..., Account]) -> None:
     admin = make_resident(email="admin@gahk.dk", first_name="Ada", last_name="Min")
     anna = make_resident(email="anna@gahk.dk", first_name="Anna", last_name="Berg", bio="111")
-    year, month = active_period()
-    old_role = RoleAssignment.objects.create(resident=anna, role=Role.AK, year=year, month=month)
+    today = current_date()
+    old_role = Grant.objects.create(account=anna, role=Role.AK, reason="x", starts_on=today)
 
     with trail.event("test.several", actor=admin, subject=anna, details={"why": "test"}):
         anna.bio = "222"
         anna.save()
         anna.bio = "333"  # two writes of one field: one change, first before to last after
         anna.save()
-        RoleAssignment.objects.create(resident=anna, role=Role.PR, year=year, month=month)
+        Grant.objects.create(account=anna, role=Role.PR, reason="x", starts_on=today)
         old_role.delete()
 
     event = AuditEvent.objects.get()
@@ -185,7 +187,7 @@ def test_an_event_captures_creations_changes_and_deletions(make_resident: Callab
     subject = event.entities.get(kind="residents.resident")
     assert (subject.role, subject.operation, subject.name) == ("subject", "updated", "Anna Berg")
     assert _changes(event, "residents.resident") == {"bio": ("111", "333")}
-    roles = {e.operation: e for e in event.entities.filter(kind="residents.role")}
+    roles = {e.operation: e for e in event.entities.filter(kind="access.grant")}
     assert {c.field: c.after for c in roles["created"].changes.all()}["role"] == Role.PR
     assert {c.field: c.before for c in roles["deleted"].changes.all()}["role"] == Role.AK
 
@@ -464,11 +466,11 @@ def test_roles_admin_access_preview_and_refusals(make_resident: Callable[..., Ac
     added = AuditEvent.objects.get(action="residents.role.added")
     kinds = set(added.entities.values_list("kind", "operation"))
     # The role, and the approval it opened, with who asked for it.
-    assert {("residents.role", "created"), ("residents.admin_access", "created")} <= kinds
+    assert {("access.grant", "created"), ("residents.admin_access", "created")} <= kinds
     assert _changes(added, "residents.admin_access")["requested_by"] == (None, admin.pk)
     removed = AuditEvent.objects.get(action="residents.role.removed")
     assert set(removed.entities.values_list("kind", "operation")) >= {
-        ("residents.role", "deleted"),
+        ("access.grant", "deleted"),  # given today: removing it the same day leaves nothing
         ("residents.admin_access", "deleted"),
     }
     denied = AuditEvent.objects.get(action="auth.access.denied")

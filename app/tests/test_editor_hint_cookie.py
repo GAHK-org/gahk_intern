@@ -15,8 +15,9 @@ from django.urls import reverse
 from django.utils.functional import SimpleLazyObject
 
 from access.api import PREVIEW_SESSION_KEY
+from access.models import Grant
 from cms.middleware import EDITOR_HINT_COOKIE, EditorHintCookie
-from residents.models import Account, RoleAssignment
+from residents.models import Account
 
 PASSWORD = "hemmelig"
 
@@ -119,7 +120,7 @@ def test_it_follows_real_roles_not_a_role_preview(make_resident: Callable[..., A
 @pytest.mark.django_db
 def test_it_is_deleted_on_the_first_response_after_the_role_is_gone(editor: Account) -> None:
     client = _signed_in(editor, hint="1")
-    RoleAssignment.objects.filter(resident=editor).delete()
+    Grant.objects.filter(account=editor).delete()
 
     _assert_deleted(_hint(client.get("/")))
 
@@ -148,7 +149,7 @@ def test_static_files_and_media_never_carry_it(editor: Account) -> None:
     for path in ("/static/nothing-here.css", "/media/cms/2026/11/nothing-here.jpg"):
         assert _hint(client.get(path)) is None
     client.cookies[EDITOR_HINT_COOKIE] = "1"
-    RoleAssignment.objects.filter(resident=editor).delete()
+    Grant.objects.filter(account=editor).delete()
     assert _hint(client.get("/media/cms/2026/11/nothing-here.jpg")) is None
 
 

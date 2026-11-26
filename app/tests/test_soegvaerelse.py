@@ -375,16 +375,17 @@ def test_dev_clock_set_is_404_in_prod(make_resident: Callable) -> None:
 def test_end_round_evicts_departing_occupant_no_clash(make_resident: Callable) -> None:
     """The room-clash bug: a winner taking an offered room must not end up sharing it with the
     previous occupant carried forward. That occupant (the leaver) is dropped from the room."""
-    from residents.models import RoleAssignment, active_period
+    from core.models import Workgroup
+    from residents.models import active_period
 
     cy, cm = active_period()
     ny, nm = next_period((cy, cm))
     m = month_index(ny, nm)
     room = Room.objects.create(legacy_index=90, number=90, floor="stuen", side="mod gaden")
+    ak = Workgroup.objects.get_or_create(name="AK-gruppen")[0]
 
     leaver = make_resident(email="leaver2@gahk.dk")
-    Residency.objects.create(resident=leaver.house, room=room, year=cy, month=cm)  # currently in 090
-    RoleAssignment.objects.create(resident=leaver, role="ak", year=cy, month=cm)
+    Residency.objects.create(resident=leaver.house, room=room, workgroup=ak, year=cy, month=cm)  # in 090
 
     winner = make_resident(email="winner3@gahk.dk")
     app = _application(winner, m, k=9.0)
@@ -401,8 +402,8 @@ def test_end_round_evicts_departing_occupant_no_clash(make_resident: Callable) -
     )
     assert occupants == [winner.house.pk]  # exactly one — the winner, not the leaver
     assert not Residency.objects.filter(resident=leaver.house, year=ny, month=nm).exists()  # leaver evicted
-    # and the leaver's carried-forward role for the target month is cleared too
-    assert not RoleAssignment.objects.filter(resident=leaver, year=ny, month=nm).exists()
+    # and with the month goes the role its embedsgruppe gave
+    assert not leaver.has_role("ak", (ny, nm))
 
 
 @pytest.mark.django_db
@@ -410,19 +411,20 @@ def test_end_round_cascade_relocating_winner_keeps_room_and_roles(make_resident:
     """Musical chairs: two rooms settled in one round where a winner's OLD room is also being won.
     The eviction must remove only the true leaver, never a relocating winner (nor strip their roles),
     regardless of processing order."""
-    from residents.models import RoleAssignment, active_period
+    from core.models import Workgroup
+    from residents.models import active_period
 
     cy, cm = active_period()
     ny, nm = next_period((cy, cm))
     m = month_index(ny, nm)
+    ak = Workgroup.objects.get_or_create(name="AK-gruppen")[0]
     a = Room.objects.create(legacy_index=100, number=100, floor="stuen", side="mod gaden")
     b = Room.objects.create(legacy_index=101, number=101, floor="stuen", side="mod gaden")
 
     leaver = make_resident(email="leave3@gahk.dk")
     Residency.objects.create(resident=leaver.house, room=a, year=cy, month=cm)  # A freed by leaver
     w = make_resident(email="w4@gahk.dk")  # currently in B, wins A -> frees B
-    Residency.objects.create(resident=w.house, room=b, year=cy, month=cm)
-    RoleAssignment.objects.create(resident=w, role="ak", year=cy, month=cm)
+    Residency.objects.create(resident=w.house, room=b, workgroup=ak, year=cy, month=cm)
     w2 = make_resident(email="w5@gahk.dk")  # newcomer-ish, wins B (w's freed room)
     Residency.objects.create(resident=w2.house, room=a, year=cy, month=cm)  # placeholder current room
 
@@ -440,7 +442,7 @@ def test_end_round_cascade_relocating_winner_keeps_room_and_roles(make_resident:
 
     # w relocated B->A and is intact, with roles preserved (never caught by the eviction)
     assert Residency.objects.get(resident=w.house, year=ny, month=nm).room_id == a.id
-    assert RoleAssignment.objects.filter(resident=w, role="ak", year=ny, month=nm).exists()
+    assert w.has_role("ak", (ny, nm))
     assert Residency.objects.get(resident=w2.house, year=ny, month=nm).room_id == b.id
     assert not Residency.objects.filter(
         resident=leaver.house, year=ny, month=nm

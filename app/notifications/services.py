@@ -30,10 +30,11 @@ from django.db.models import Q, QuerySet
 from django.urls import reverse
 from django.utils.http import url_has_allowed_host_and_scheme
 
+from access.api import KITCHEN, ROLE_CODES, STAGES, holding, may_open_many
 from core import push
 from core.clock import current_datetime
 from core.models import PushSubscription
-from residents.models import Account, Residency, RoleAssignment, active_period
+from residents.models import Account, Residency, active_period
 
 from . import categories, live
 from .categories import Importance
@@ -78,7 +79,7 @@ def everyone() -> QuerySet[Account]:
     """
     year, month = active_period()
     living = Residency.objects.filter(year=year, month=month).values("resident_id")
-    roles = RoleAssignment.objects.filter(year=year, month=month).values("resident_id")
+    roles = holding(ROLE_CODES - STAGES - {KITCHEN}).values("pk")
     devices = PushSubscription.objects.values("user_id")
     # Not the kitchen account: its push device would otherwise put it in every feature's audience.
     return Account.objects.filter(is_active=True, is_kitchen=False).filter(
@@ -193,7 +194,9 @@ def notify(
     expires_at = expires_at or _default_expiry(now)
     if expires_at <= now:
         return 0
-    ids = [rid for rid in _ids(recipients) if rid != exclude]
+    # Nobody is told about a page they cannot open: someone who once commented on a post in a
+    # feature they have since lost (moving out) gets no replies from it.
+    ids = may_open_many([rid for rid in _ids(recipients) if rid != exclude], url)
     if not ids:
         return 0
 
@@ -288,6 +291,8 @@ def notify_grouped(
     if expires_at <= now:
         return None
 
+    if not may_open_many([recipient_id], url):
+        return None
     decision = _decisions([recipient_id], cat, level)[recipient_id]
     pushed = decision.push and recipient_id in _with_devices([recipient_id])
     if not (decision.in_app or pushed):

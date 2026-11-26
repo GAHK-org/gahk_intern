@@ -638,6 +638,10 @@ def calendar_feed(request: HttpRequest, token: str) -> HttpResponse:
         .order_by("starts_at")
         .distinct()
     )
+    # Someone whose roles have lost Begivenheder (moved out over a year ago) gets the same empty
+    # calendar as anyone with no answers: their client empties it rather than showing an error.
+    if not resident.has_perm("access.events_view"):
+        mine = mine.none()
     entries = [(event, _my_state(event, resident) == "venteliste") for event in mine]
 
     body = icalendar.feed(entries, name="GAHK – mine begivenheder")

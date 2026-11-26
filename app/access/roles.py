@@ -4,14 +4,19 @@ step with the facts by a sync.
 An account's roles:
 
   * the kitchen staff's account: KITCHEN, and nothing else;
-  * every other account: RESIDENT, and the role of each embedsgruppe it holds in the month in effect
-    (residents.models.active_period);
-  * a superuser: ADMINISTRATOR as well.
+  * its stage, from its resident's months on the alumneliste (access.stages): moving in, resident,
+    moved out …;
+  * the role of its embedsgruppe on the list in effect (residents.models.active_period,
+    WORKGROUP_ROLE);
+  * every role granted to it that holds today (access.models.Grant): administrator, the exceptions;
+  * a superuser: ADMINISTRATOR, and RESIDENT whatever its months say.
 
-The sync writes these into the account's groups. It runs when the facts change (a role given or
-taken back, an account saved, a list that makes a newer month the one in effect), just after
-midnight (a list made ahead takes effect on the 1st) and after every migrate (which also writes each
-group's permissions from the table). Everything else reads the groups, the standard way.
+An account with none of these has no access at all, and the front page says so.
+
+The sync writes these into the account's groups. It runs when the facts change (a grant given or
+ended, an account saved, a resident's months changed), just after midnight (a list made ahead takes
+effect on the 1st, the months pass, grants start and end) and after every migrate (which also writes
+each group's permissions from the table). Everything else reads the groups, the standard way.
 
 "Se side som": an administrator may look at the site with other roles. The middleware puts them on
 the request's account (PREVIEW_ATTRIBUTE), and Account.has_perm answers from them instead.
@@ -25,27 +30,52 @@ from django.contrib.auth.models import Group, Permission
 from django.db.models import QuerySet
 from django.http import HttpRequest
 
-from residents.models import PREVIEW_ATTRIBUTE, Account, RoleAssignment, active_period
+from residents.models import PREVIEW_ATTRIBUTE, WORKGROUP_ROLE, Account, Residency, active_period
 
+from . import stages
+from .models import Grant
 from .permissions import APP_LABEL, codenames_of
-from .policy import ADMINISTRATOR, KITCHEN, POLICY, RESIDENT, ROLE_LABELS
+from .policy import ADMINISTRATOR, KITCHEN, POLICY, RESIDENT, ROLE_LABELS, STAGES
+from .stages import Stage, month_index, stages_of
 
 # The session key of "Se side som": the roles the site is shown as, a list of role codes.
 PREVIEW_SESSION_KEY = "preview_roles"
+# In a preview's list instead of a stage: the account has no stage at all.
+NO_STAGE = "none"
 ROLE_CODES = frozenset(POLICY)
 
 # ---- the rule ---------------------------------------------------------------------------------------
 
 
+def combine(
+    stage: Stage | None, listed: Iterable[str], granted: Iterable[str], superuser: bool
+) -> frozenset[str]:
+    """An account's roles from its facts (the kitchen aside)."""
+    roles = {*listed, *granted}
+    if superuser:
+        roles.add(ADMINISTRATOR)
+        stage = Stage.RESIDENT
+    elif stage is None:
+        stage = stages.NEVER_LISTED
+    if stage is not None:
+        roles.add(stage.value)
+    return frozenset(roles)
+
+
 def roles_of_many(account_ids: Iterable[int]) -> dict[int, frozenset[str]]:
-    """Each active account's roles by the facts, in two queries however many. Inactive ones have none."""
+    """Each account's roles by the facts, in four queries however many. Inactive ones have none."""
     ids = list(dict.fromkeys(account_ids))
     year, month = active_period()
-    groups: dict[int, set[str]] = {}
-    for pk, role in RoleAssignment.objects.filter(resident_id__in=ids, year=year, month=month).values_list(
-        "resident_id", "role"
-    ):
-        groups.setdefault(pk, set()).add(role)
+    stage = stages_of(ids, now=month_index(year, month))
+    listed: dict[int, set[str]] = {}
+    for pk, workgroup in Residency.objects.filter(
+        resident__person__account__in=ids, year=year, month=month, workgroup__isnull=False
+    ).values_list("resident__person__account", "workgroup__name"):
+        if given := WORKGROUP_ROLE.get(workgroup):
+            listed.setdefault(pk, set()).add(given)
+    granted: dict[int, set[str]] = {}
+    for pk, role in Grant.objects.active().filter(account_id__in=ids).values_list("account_id", "role"):
+        granted.setdefault(pk, set()).add(role)
     out: dict[int, frozenset[str]] = {}
     for pk, active, kitchen, superuser in Account.objects.filter(pk__in=ids).values_list(
         "pk", "is_active", "is_kitchen", "is_superuser"
@@ -55,10 +85,7 @@ def roles_of_many(account_ids: Iterable[int]) -> dict[int, frozenset[str]]:
         elif kitchen:
             out[pk] = frozenset({KITCHEN})
         else:
-            roles = {RESIDENT, *groups.get(pk, ())}
-            if superuser:
-                roles.add(ADMINISTRATOR)
-            out[pk] = frozenset(roles)
+            out[pk] = combine(stage.get(pk), listed.get(pk, ()), granted.get(pk, ()), superuser)
     return out
 
 
@@ -160,13 +187,19 @@ def can_preview(account: object) -> bool:
 
 def previewed_roles(request: HttpRequest) -> frozenset[str] | None:
     """The roles "Se side som" shows the site as, or None when it is off. Checked against the real
-    roles every time, so a forged or stale session on anyone else is ignored."""
+    roles every time, so a forged or stale session on anyone else is ignored.
+
+    The list names roles; with no stage in it the site is shown as a resident holding them, unless
+    it says NO_STAGE. The kitchen is shown as the kitchen alone."""
     if PREVIEW_SESSION_KEY not in request.session or not can_preview(request.user):
         return None
-    chosen = {role for role in request.session.get(PREVIEW_SESSION_KEY) or [] if role in ROLE_LABELS}
+    chosen = set(request.session.get(PREVIEW_SESSION_KEY) or [])
     if KITCHEN in chosen:
         return frozenset({KITCHEN})
-    return frozenset({RESIDENT, *chosen})
+    roles = {role for role in chosen if role in ROLE_LABELS}
+    if NO_STAGE not in chosen and not roles & STAGES:
+        roles.add(RESIDENT)
+    return frozenset(roles)
 
 
 def request_roles(request: HttpRequest) -> frozenset[str]:

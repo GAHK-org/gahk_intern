@@ -13,20 +13,20 @@ from django.urls import reverse
 from residents.models import PREVIEW_ATTRIBUTE
 
 from .api import FRAGMENT_ATTRIBUTE, audit_denied
-from .features import ANONYMOUS, Feature, feature_of
+from .features import ANONYMOUS, HOME_FEATURES, Feature, feature_of
 from .permissions import name
 from .roles import previewed_roles
 
 SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
 
-# Where an account without the dashboard lands: its first of these it may open.
-HOMES = (
-    (Feature.DEN_HURTIGE, "den_hurtige:feed"),
-    (Feature.OPSLAGSTAVLE, "opslagstavle:board"),
-    (Feature.EVENTS, "events:index"),
-    (Feature.PHOTO_ALBUM, "photo_album:index"),
-    (Feature.STAMTREE, "stamtree"),
-)
+# The page of each home feature (access.features.HOME_FEATURES).
+HOME_PAGES = {
+    Feature.DEN_HURTIGE: "den_hurtige:feed",
+    Feature.OPSLAGSTAVLE: "opslagstavle:board",
+    Feature.EVENTS: "events:index",
+    Feature.PHOTO_ALBUM: "photo_album:index",
+    Feature.STAMTREE: "stamtree",
+}
 
 
 class AccessPreview:
@@ -80,7 +80,9 @@ class AccessGate:
         if quiet:
             return HttpResponse(status=204)
         if request.resolver_match and request.resolver_match.view_name == "dashboard":
-            home = next((url for f, url in HOMES if request.user.has_perm(name(f, "view"))), None)
+            home = next(
+                (HOME_PAGES[f] for f in HOME_FEATURES if request.user.has_perm(name(f, "view"))), None
+            )
             if home is None:
                 return render(request, "no_access.html", status=403)
             return HttpResponseRedirect(reverse(home))

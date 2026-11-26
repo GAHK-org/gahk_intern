@@ -14,14 +14,20 @@ from collections.abc import Iterable, Mapping
 from residents.models import Role
 
 from .features import ALWAYS, EXTRAS, GRADE_ACTIONS, Feature, Grade
+from .stages import STAGE_LABELS, Stage
 
-# Roles that are no embedsgruppe. A group's role is its residents.models.Role value.
-RESIDENT = "resident"  # lives here: every account but the kitchen's
-KITCHEN = "kitchen"  # the kitchen staff
+# Roles that are no embedsgruppe. A group's role is its residents.models.Role value; a stage's is its
+# access.stages.Stage value (one each, from the alumneliste).
+RESIDENT = Stage.RESIDENT.value  # lives here
+KITCHEN = "kitchen"  # the kitchen staff, who are no residents
 ADMINISTRATOR = Role.ADMINISTRATOR.value  # Netværksgruppen: everything (also superusers)
 
+STAGES = frozenset(stage.value for stage in Stage)
+# The embedsgrupper's roles: the ones the alumneliste gives.
+GROUPS = frozenset(Role.values) - {ADMINISTRATOR}
+
 ROLE_LABELS: dict[str, str] = {
-    RESIDENT: "Beboer",
+    **{stage.value: label for stage, label in STAGE_LABELS.items()},
     KITCHEN: "Køkkenet",
     **{value: str(label) for value, label in Role.choices},
 }
@@ -47,7 +53,41 @@ def _all(features: Iterable[Feature], grade: Grade) -> dict[Feature, Grade | str
 
 
 POLICY: dict[str, Entry] = {
-    RESIDENT: {**_all(_RESIDENT_FEATURES, Grade.USE)},
+    # ---- the stages: what living here, arriving and leaving give ----
+    Stage.MOVING_IN: _all(_RESIDENT_FEATURES - {Feature.PHOTO_ALBUM, Feature.GAHKFLIX}, Grade.USE),
+    Stage.RESIDENT: _all(_RESIDENT_FEATURES, Grade.USE),
+    Stage.MOVED_OUT_UNDER_1_MONTH: _all(_RESIDENT_FEATURES - {Feature.SOEGVAERELSE}, Grade.USE),
+    # Their AK page and Ølkælder balance to look at, but no more krydser.
+    Stage.MOVED_OUT_1_TO_3_MONTHS: {
+        **_all(
+            _RESIDENT_FEATURES
+            - {
+                Feature.SOEGVAERELSE,
+                Feature.VAERELSESTJEK,
+                Feature.REPARATIONER,
+                Feature.AK,
+                Feature.OELKAELDER,
+            },
+            Grade.USE,
+        ),
+        Feature.AK: Grade.VIEW,
+        Feature.OELKAELDER: Grade.VIEW,
+    },
+    # The social side, with the bell for its notifications and the composers' @-picker.
+    Stage.MOVED_OUT_3_TO_12_MONTHS: _all(
+        {
+            Feature.FILES,
+            Feature.DEN_HURTIGE,
+            Feature.OPSLAGSTAVLE,
+            Feature.EVENTS,
+            Feature.PHOTO_ALBUM,
+            Feature.NOTIFICATIONS,
+            Feature.MENTIONS,
+        },
+        Grade.USE,
+    ),
+    Stage.MOVED_OUT_OVER_A_YEAR: _all({Feature.FILES, Feature.STAMTREE}, Grade.USE),
+    # ---- the rest ----
     # Den Hurtige's Køkkenet channel and their own opslag only: the features narrow it further inside.
     KITCHEN: _all(
         {
@@ -93,8 +133,8 @@ def roles_with(feature: Feature, action: str) -> frozenset[str]:
 
 def _gives(entry: Entry, feature: Feature, action: str) -> bool:
     value = entry.get(feature, Grade.NONE)
-    if isinstance(value, str):
-        return value == action
+    if isinstance(value, str):  # an extra, which opens its feature for use (access.permissions)
+        return value == action or GRADE_ACTIONS.get(action, Grade.ADMINISTER) <= Grade.USE
     if action in EXTRAS.get(feature, frozenset()):
         return value >= Grade.MANAGE
     return value >= GRADE_ACTIONS[action]

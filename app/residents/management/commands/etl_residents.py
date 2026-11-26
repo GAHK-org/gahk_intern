@@ -19,10 +19,11 @@ from django.core.management.base import BaseCommand, CommandError
 from django.core.management.color import no_style
 from django.db import connection, transaction
 
+from access.models import Grant
 from audit import trail
 from core.etl import decode_month_number, fetch_all
 from core.models import Cleaning, Room, Workgroup
-from residents.models import Account, Person, Residency, Resident, Role, RoleAssignment
+from residents.models import WORKGROUP_ROLE, Account, Person, Residency, Resident, Role
 
 FLAG_TO_ROLE = [
     ("indstilling", Role.INDSTILLING),
@@ -33,6 +34,7 @@ FLAG_TO_ROLE = [
     ("administrator", Role.ADMINISTRATOR),
     # legacy `editpage` intentionally omitted — no CMS editing
 ]
+ETL_REASON = "Fra det gamle intranet"
 
 
 def _date(value: datetime.datetime | datetime.date | None) -> datetime.date | None:
@@ -124,21 +126,6 @@ class Command(BaseCommand):
             raise CommandError("No months in intern_alumne_liste — nothing to migrate.")
         active_year, active_month = decoded
 
-        # ---- 3. roles for the active month (gahk_admin_user flags) ------------------------------
-        RoleAssignment.objects.all().delete()
-        role_residents = set()
-        for a in fetch_all("SELECT * FROM gahk_admin_user"):
-            rid = id_remap.get(a["alumne_id"])
-            if not rid:
-                continue
-            for flag, role in FLAG_TO_ROLE:
-                if a[flag]:
-                    RoleAssignment.objects.update_or_create(
-                        resident_id=rid, role=role, year=active_year, month=active_month
-                    )
-                    role_residents.add(rid)
-        Account.objects.filter(id__in=role_residents).update(is_staff=True)
-
         # ---- 4. residency per month -------------------------------------------------------------
         rooms_by_number = {room.number: room for room in Room.objects.all()}
         wg_cache: dict[str, Workgroup] = {}
@@ -174,6 +161,32 @@ class Command(BaseCommand):
             )
             residencies += 1
 
+        # ---- 4b. roles (gahk_admin_user flags) -----------------------------------------------
+        # An embedsgruppe's role comes from the list in effect; a flag it does not give becomes a
+        # grant from the first of that month until someone ends it (access.models.Grant).
+        listed = {
+            (account_id, WORKGROUP_ROLE.get(name))
+            for account_id, name in Residency.objects.filter(
+                year=active_year, month=active_month, resident__person__account__isnull=False
+            ).values_list("resident__person__account", "workgroup__name")
+        }
+        accounts = set(Account.objects.values_list("id", flat=True))
+        Grant.objects.filter(reason=ETL_REASON).delete()
+        granted = 0
+        for a in fetch_all("SELECT * FROM gahk_admin_user"):
+            rid = id_remap.get(a["alumne_id"])
+            if rid not in accounts:
+                continue
+            for flag, role in FLAG_TO_ROLE:
+                if a[flag] and (rid, role) not in listed:
+                    Grant.objects.create(
+                        account_id=rid,
+                        role=role,
+                        reason=ETL_REASON,
+                        starts_on=datetime.date(active_year, active_month, 1),
+                    )
+                    granted += 1
+
         # ---- 5. fylgje -> sponsor (unambiguous full-name match) --------------------------------
         name_index: dict[str, list[int]] = {}
         for rid_, fn, ln in Resident.objects.values_list("id", "person__first_name", "person__last_name"):
@@ -191,8 +204,8 @@ class Command(BaseCommand):
         self.stdout.write(
             self.style.SUCCESS(
                 f"Residents: {len(kept)} kept (merged {merged} dup, {len(no_login)} without e-mail kept with no login). "
-                f"Active period {active_year}-{active_month:02d}: {RoleAssignment.objects.count()} role "
-                f"assignments across {len(role_residents)} residents. Residencies: {residencies} "
+                f"Active period {active_year}-{active_month:02d}: {granted} roles granted beyond the list. "
+                f"Residencies: {residencies} "
                 f"(orphan-resident {orphan_resident}, unmapped-room {orphan_room}). "
                 f"Sponsors set {sponsor_set} (ambiguous {sponsor_ambiguous})."
             )
