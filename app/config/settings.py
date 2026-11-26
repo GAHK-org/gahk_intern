@@ -84,6 +84,7 @@ INSTALLED_APPS = [
     "notifications",
     "gahkflix",
     "regnskab",
+    "credit",
 ]
 
 MIDDLEWARE = [
@@ -418,6 +419,12 @@ CELERY_BEAT_SCHEDULE = {
     "gahkflix-warn-unpublished-premieres": {
         "task": "gahkflix.tasks.warn_unpublished_premieres",
         "schedule": crontab(minute=20, hour=10),
+    },
+    # GAHK-konto: every hash chain, balance and book total recomputed from the rows (credit.checks).
+    # A fault goes to the log and the audit trail; nothing is ever corrected by the check itself.
+    "credit-check-ledger": {
+        "task": "credit.tasks.check_ledger",
+        "schedule": crontab(minute=50, hour=2),
     },
     "purge-worker-job-logs": {
         "task": "core.tasks.purge_worker_job_logs",

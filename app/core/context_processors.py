@@ -78,6 +78,8 @@ def _nav_intern(request: HttpRequest, roles: frozenset[str], user_pk: int) -> li
     grupper: list[NavItem] = []
     if opens(Feature.AK):
         grupper.append((reverse("ak:index"), "AK-krydser", "check"))
+    if opens(Feature.CREDIT):
+        grupper.append((reverse("credit:index"), "GAHK-konto", "wallet"))
     if opens(Feature.OELKAELDER):
         grupper.append((reverse("oelkaelder:my"), "Ølkælder", "beer"))
     if opens(Feature.AK, "manage"):

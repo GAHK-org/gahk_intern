@@ -1,0 +1,64 @@
+{% extends "base.html" %}
+{% load credit_extras ui_extras %}
+{% block title %}{{ account }} - GAHK-konto{% endblock %}
+{% block content %}
+  <p class="muted"><a href="{% url 'credit:index' %}">GAHK-konto</a>{% if manages %} · <a href="{% url 'credit:book' account.book.pk %}">{{ account.book.name }}</a>{% endif %}</p>
+  <h1>{{ account.holder.name }} · {{ account.name }}</h1>
+  <p class="mb-4">
+    Saldo <strong class="{{ balance|sign_class }}">{{ balance|kr }}</strong>
+    · Kontofører {{ account.book.name }}
+    {% if account.credit_limit_ore is not None and account.credit_limit_ore < 0 %} · Kreditgrænse {{ account.credit_limit_ore|kr }}{% endif %}
+    {% if account.bank_reference %} · Bankkonto {{ account.bank_reference }}{% endif %}
+    {% if account.closed_at %} · <strong>Lukket {{ account.closed_at|date:"Y-m-d" }}</strong>{% endif %}
+  </p>
+  {% if own and not account.closed_at %}
+    <p class="mb-4"><a class="btn" href="{% url 'credit:transfer' %}?from={{ account.pk }}">Overfør fra denne konto</a></p>
+  {% endif %}
+
+  <h2>Kontoudtog</h2>
+  <div class="card overflow-x-auto mb-6">
+    <table cellpadding="6" class="text-sm" style="width:100%; border-collapse:collapse">
+      <thead><tr style="text-align:left; border-bottom:1px solid var(--border-strong)">
+        <th>Dato</th><th>Til / fra</th><th>Tekst</th><th style="text-align:right">Beløb</th><th style="text-align:right">Saldo</th><th></th></tr></thead>
+      <tbody>
+      {% for line in lines %}
+        <tr style="border-bottom:1px solid var(--border)">
+          <td class="whitespace-nowrap">{{ line.transfer.created_at|date:"Y-m-d H:i" }}</td>
+          <td>{% if line.posting.amount_ore < 0 %}Til{% else %}Fra{% endif %} {{ line.counterparty.holder.name }} · {{ line.counterparty.name }}</td>
+          <td>{{ line.posting.text }}{% if line.transfer.reversed_by %} <span class="muted">(tilbageført)</span>{% endif %}</td>
+          <td class="text-right whitespace-nowrap {{ line.posting.amount_ore|sign_class }}">{{ line.posting.amount_ore|kr }}</td>
+          <td class="text-right whitespace-nowrap">{{ line.posting.balance_after|kr }}</td>
+          <td>
+            {% if line.transfer.pk in reversible %}
+              <form method="post" action="{% url 'credit:reverse' line.transfer.pk %}" class="inline"
+                    onsubmit="return confirm('Tilbagefør overførsel #{{ line.transfer.pk }}?')">
+                {% csrf_token %}<input type="hidden" name="back" value="{{ account.pk }}">
+                <input type="hidden" name="token" value="{% credit_token %}">
+                <button type="submit" class="btn-danger text-sm">Tilbagefør</button>
+              </form>
+            {% endif %}
+          </td>
+        </tr>
+      {% empty %}
+        <tr><td colspan="6" class="muted">Ingen posteringer endnu.</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  {% if manages and account.credit_limit_ore is not None and not account.is_mellemregning and not account.closed_at %}
+    <div class="card mb-4" style="max-width:32rem">
+      <h2>Kreditgrænse</h2>
+      <form method="post" action="{% url 'credit:set_limit' account.pk %}" class="flex flex-wrap items-center gap-2">
+        {% csrf_token %}{{ limit_form.credit_limit }}
+        <button type="submit" class="btn">Gem</button>
+      </form>
+      <p class="muted text-sm mt-2">Hvor langt under 0 kontoen må gå ved køb i {{ account.book.name }}. 0 = ingen kredit.</p>
+    </div>
+  {% endif %}
+  {% if own or manages %}{% if not account.closed_at and balance == 0 and not account.bank_reference and not account.is_mellemregning %}
+    <form method="post" action="{% url 'credit:close' account.pk %}" onsubmit="return confirm('Luk kontoen for altid?')">
+      {% csrf_token %}<button type="submit" class="btn-danger">Luk kontoen</button>
+    </form>
+  {% endif %}{% endif %}
+{% endblock %}

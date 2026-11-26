@@ -94,7 +94,7 @@ def test_administer_is_the_administrators_alone() -> None:
     assert all(f"{feature}_administer" in administrator for feature in Feature)
 
 
-def test_the_kitchen_gets_its_four_features_and_the_account_pages() -> None:
+def test_the_kitchen_gets_its_five_features_and_the_account_pages() -> None:
     kitchen = {c.rsplit("_", 1)[0] for c in codenames_of({KITCHEN}) if c.endswith("_view")}
     assert kitchen == {
         "account",
@@ -104,6 +104,7 @@ def test_the_kitchen_gets_its_four_features_and_the_account_pages() -> None:
         "opslagstavle",
         "reparationer",
         "notifications",
+        "credit",  # their own GAHK-konto: kitchen staff are people with accounts too
     }
 
 

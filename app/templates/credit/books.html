@@ -1,0 +1,35 @@
+{% extends "base.html" %}
+{% block title %}Kontoførere - GAHK-konto{% endblock %}
+{% block content %}
+  <p class="muted"><a href="{% url 'credit:index' %}">GAHK-konto</a></p>
+  <h1>Kontoførere</h1>
+  <p class="muted mb-4">En kontofører er én pulje rigtige penge med sine egne ansvarlige: hvem der har en bankkonto for sig.
+    Konti, der hører til samme penge, står i samme bog.</p>
+  <div class="card overflow-x-auto mb-6">
+    <table cellpadding="6" style="width:100%; border-collapse:collapse">
+      <thead><tr style="text-align:left; border-bottom:1px solid var(--border-strong)">
+        <th>Navn</th><th>Ansvarlige</th><th>Bankkonti</th></tr></thead>
+      <tbody>
+      {% for book in books %}
+        <tr style="border-bottom:1px solid var(--border)">
+          <td>{{ book.name }}{% if book.is_main %} <span class="muted">(hovedbog)</span>{% endif %}</td>
+          <td>{{ book.holder.name }}</td>
+          <td>{% for account in book.accounts.all %}{% if account.bank_reference %}{{ account.name }} ({{ account.bank_reference }}) {% endif %}{% endfor %}</td>
+        </tr>
+      {% empty %}
+        <tr><td colspan="3" class="muted">Ingen kontoførere endnu.</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  <form method="post" class="card" style="max-width:36rem">
+    {% csrf_token %}
+    <h2>Ny kontofører</h2>
+    {% if form.non_field_errors %}<p class="text-neg mb-2">{{ form.non_field_errors|join:" " }}</p>{% endif %}
+    {% for field in form %}
+      <p class="mb-2"><label for="{{ field.id_for_label }}">{{ field.label }}</label><br>{{ field }}
+        {% if field.errors %}<br><span class="text-neg text-sm">{{ field.errors|join:" " }}</span>{% endif %}</p>
+    {% endfor %}
+    <button type="submit" class="btn">Opret</button>
+  </form>
+{% endblock %}

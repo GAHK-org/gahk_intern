@@ -47,6 +47,7 @@ from cms.models import ContentChange, NewsItem, Page, PageVersion, PylonEvent
 from cms.models import Event as CmsEvent
 from core.demo import seed as seed_mail
 from core.models import Cleaning, OutgoingMail, Room, Workgroup
+from credit.demo import seed as seed_credit
 from den_hurtige.demo import seed as seed_den_hurtige
 from den_hurtige.models import QuickComment, QuickPost, QuickReaction
 from events.demo import seed as seed_events
@@ -258,12 +259,22 @@ class Command(BaseCommand):
         seed_den_hurtige(residents, self.now, self.rng)
         # Last: its rows link to the events, opslag and Den Hurtige posts seeded above.
         seed_notifications(residents, self.now, self.rng)
+        # After the roles: GAHK-konto's books are managed by embedsgrupper (credit.demo).
+        seed_credit(residents, self.now, self.rng)
         # After the ølkælder and admissions: its mails are theirs (core.demo).
         seed_mail(residents, self.now, self.rng)
         return residents
 
     # ---------------------------------------------------------------- wipe
     def _wipe(self) -> None:
+        # GAHK-konto's ledger is append-only and its rows PROTECT the people and embedsgrupper they
+        # belong to, so it goes first, the one way it allows: TRUNCATE, by the tables' owner.
+        with connection.cursor() as cursor:
+            cursor.execute("SET CONSTRAINTS ALL IMMEDIATE")
+            cursor.execute(
+                "TRUNCATE credit_posting, credit_transfer, credit_creditaccount, credit_book, credit_holder"
+            )
+            cursor.execute("SET CONSTRAINTS ALL DEFERRED")
         for model in WIPE_ORDER:
             if model is Album:
                 # A sub-album PROTECTs its parent, so the tree is cleared from the leaves up.
