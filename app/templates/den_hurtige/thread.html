@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% load send_once %}
 {% block title %}Tråd - {{ channel.name }} - GAHK Intern{% endblock %}
 {% block content_width %}max-w-3xl{% endblock %}
 
@@ -38,7 +39,7 @@
     {% else %}
     <form class="reply-form" method="post" enctype="multipart/form-data"
           action="{% url 'den_hurtige:create_comment' post.pk %}">
-      {% csrf_token %}
+      {% csrf_token %}{% send_token %}
       <label class="reply-attach" for="id_reply_image_{{ post.pk }}" title="Vedhæft billede">
         <span aria-hidden="true">📎</span>
         <span class="sr-only">Vedhæft billede til svar</span>

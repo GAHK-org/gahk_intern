@@ -40,6 +40,9 @@ CSRF_COOKIE_SECURE = not DEBUG
 SESSION_COOKIE_DOMAIN = None
 SESSION_COOKIE_NAME = "intern_sessionid" if DEBUG else "__Host-intern_sessionid"
 CSRF_COOKIE_NAME = "intern_csrftoken" if DEBUG else "__Host-intern_csrftoken"
+# When this browser last changed something here, so a page brought back by Back can tell it is out of
+# date (core.back_navigation). Not a secret: it holds a time and nothing else.
+LAST_WRITE_COOKIE_NAME = "intern_last_write" if DEBUG else "__Host-intern_last_write"
 
 # Absolute base of THIS site, for links that leave the request: mail sent off the request thread
 # (residents.tasks, core.admin_summary), push payloads opened by a service worker, calendar exports.
@@ -101,6 +104,8 @@ MIDDLEWARE = [
     "cms.middleware.EditorHintCookie",
     "core.middleware.KitchenAccountGate",
     "django.contrib.messages.middleware.MessageMiddleware",
+    # Stamps each page with its request time and sets the last-write cookie; see core/back_navigation.py.
+    "core.back_navigation.LastWriteCookie",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
     # No visit counter: gahk.dk counts its own visits, and cms.tasks.sync_gahk_web pulls the totals.
     # DEBUG only: presigned URLs follow the host the page was opened on, so a phone on the LAN works.
@@ -140,6 +145,7 @@ TEMPLATES = [
                 "django.contrib.auth.context_processors.auth",
                 "django.contrib.messages.context_processors.messages",
                 "core.context_processors.navigation",
+                "core.back_navigation.rendered",
                 "notifications.context_processors.notifications",
             ],
         },

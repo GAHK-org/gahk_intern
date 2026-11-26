@@ -97,6 +97,17 @@
   @keyframes spinner-spin { to { rotate:360deg; } }
   @media (prefers-reduced-motion:reduce) { .spinner { animation-duration:2.4s; } }
   .btn[aria-busy="true"] { cursor:progress; opacity:.85; }
+  /* A send on its way (send-once.ts): the pressed button gets the same ring, after its label, so a
+     slow send shows that the press was heard. A round icon button (Den Hurtige's ↑) swaps its icon
+     for the ring. */
+  button[data-sending] { cursor:progress; }
+  button[data-sending]::after { content:""; display:inline-block; vertical-align:-2px; margin-left:7px;
+    width:14px; height:14px; box-sizing:border-box; border:2px solid currentColor; border-top-color:transparent;
+    border-radius:50%; animation:spinner-spin .8s linear infinite; }
+  .btn[data-sending]::after { margin-left:0; }
+  .composer-send[data-sending] { font-size:0; }
+  .composer-send[data-sending]::after { margin:0; width:16px; height:16px; vertical-align:middle; }
+  @media (prefers-reduced-motion:reduce) { button[data-sending]::after { animation-duration:2.4s; } }
   :focus-visible { outline:2px solid var(--green); outline-offset:2px; border-radius:8px; }
 
   .chip { display:inline-flex; align-items:center; gap:5px; font-size:12px; font-weight:650; line-height:1.4;

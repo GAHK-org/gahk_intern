@@ -1123,12 +1123,27 @@ if (composer instanceof HTMLFormElement) {
   // beside the composer is the no-JS path; with this file running it is hidden and de-required, so
   // the question is asked exactly once, here.
   //
-  // The sheet writes its answer INTO that same <select>, so submitting carries it with no extra
-  // field and no state of our own. `confirmed` is the one flag: it lets the second requestSubmit
-  // through instead of re-opening the sheet forever.
+  // The sheet writes its answer INTO that same <select>, so the request carries it with no extra
+  // field and no state of our own.
+  //
+  // HELD AT htmx:confirm, not by cancelling `submit`. The composer posts with htmx (feed.html), and
+  // htmx hears the submit on the form itself, whether or not another listener cancelled it. Its
+  // confirm event is the hook made for exactly this: an answer the request waits for. The request
+  // is then sent by `issueRequest`, which reads the form at that moment, chosen duration included.
   const sheet = document.getElementById("js-duration-sheet");
   const durationWrap = document.getElementById("js-composer-duration");
   const duration = composer.querySelector<HTMLSelectElement>('select[name="duration"]');
+  const confirm = sheet?.querySelector<HTMLButtonElement>(".duration-confirm");
+
+  // Back to unanswered: after a cancel, and after a send, so the next message is asked again.
+  const unanswer = (): void => {
+    if (!(sheet && duration)) return;
+    duration.value = "";
+    for (const option of sheet.querySelectorAll<HTMLButtonElement>(".duration-option")) {
+      option.classList.remove("is-chosen");
+    }
+    if (confirm) confirm.disabled = true;
+  };
 
   if (sheet instanceof HTMLDetailsElement && duration && durationWrap) {
     durationWrap.hidden = true;
@@ -1137,8 +1152,8 @@ if (composer instanceof HTMLFormElement) {
     // a send button that silently does nothing.
     duration.required = false;
 
-    const confirm = sheet.querySelector<HTMLButtonElement>(".duration-confirm");
-    let confirmed = false;
+    // The request htmx is holding until the sheet is answered.
+    let held: (() => void) | null = null;
 
     const choose = (minutes: string): void => {
       duration.value = minutes;
@@ -1148,15 +1163,13 @@ if (composer instanceof HTMLFormElement) {
       if (confirm) confirm.disabled = false;
     };
 
-    const close = (): void => {
-      sheet.open = false;
-    };
-
-    composer.addEventListener("submit", (event: SubmitEvent) => {
-      if (confirmed) return;
-      // Native validation has already passed by the time `submit` fires, so an empty message never
-      // reaches the sheet — the browser has asked for the text first, which is the right order.
+    composer.addEventListener("htmx:confirm", (event: Event) => {
+      const detail = (event as CustomEvent<{ elt: Element; issueRequest: (skip?: boolean) => void }>).detail;
+      if (detail.elt !== composer) return;
+      // Native validation has already passed by the time htmx gets the submit, so an empty message
+      // never reaches the sheet: the browser has asked for the text first, which is the right order.
       event.preventDefault();
+      held = () => detail.issueRequest(true);
       sheet.open = true;
       sheet.querySelector<HTMLButtonElement>(".duration-option")?.focus();
     });
@@ -1169,27 +1182,44 @@ if (composer instanceof HTMLFormElement) {
         return;
       }
       if (target.closest(".duration-cancel")) {
-        close();
+        sheet.open = false;
         return;
       }
-      if (target.closest(".duration-confirm") && duration.value) {
-        confirmed = true;
-        close();
-        composer.requestSubmit();
+      if (target.closest(".duration-confirm") && duration.value && held) {
+        const send = held;
+        held = null;
+        send(); // before closing: the toggle below would otherwise clear the answer first
+        sheet.open = false;
       }
     });
 
-    // The message was not sent, so the choice should not persist as though it had been: reopening
-    // the sheet after a cancel must ask again rather than sit there already answered.
+    // Closed without sending: the choice should not persist as though it had been sent, so
+    // reopening the sheet asks again rather than sitting there already answered.
     sheet.addEventListener("toggle", () => {
-      if (sheet.open || confirmed) return;
-      duration.value = "";
-      for (const option of sheet.querySelectorAll<HTMLButtonElement>(".duration-option")) {
-        option.classList.remove("is-chosen");
-      }
-      if (confirm) confirm.disabled = true;
+      if (sheet.open || !held) return;
+      held = null;
+      unanswer();
     });
   }
+
+  // Sent: empty the composer and show the message. The response is the live list (views.create_post),
+  // already swapped in; this follows it to the bottom even if the reader had scrolled up, because
+  // their own message is the one thing they certainly want to see.
+  //
+  // A refusal does not land here: the server answers it with a reload that shows the warning, the
+  // text kept for them (views._reject). A network failure leaves the text where it is.
+  composer.addEventListener("htmx:afterRequest", (event: Event) => {
+    const detail = (event as CustomEvent<{ elt: Element; successful: boolean }>).detail;
+    if (detail.elt !== composer || !detail.successful) return;
+    composer.reset();
+    unanswer();
+    textarea?.dispatchEvent(new Event("input")); // shrink back to one row
+    if (fileNote) {
+      fileNote.textContent = "";
+      fileNote.hidden = true;
+    }
+    if (scroller) toBottom(scroller);
+  });
 
   // Confirm the attachment landed — a file input styled as a paperclip gives no other feedback.
   if (fileInput && fileNote) {

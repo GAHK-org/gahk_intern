@@ -264,3 +264,25 @@ class OutgoingMail(models.Model):
 
     def __str__(self) -> str:
         return f"{self.subject} → {self.recipients} ({self.get_status_display()})"
+
+
+class SentForm(models.Model):
+    """A form send already saved, by the token the form carried (core/send_once.py).
+
+    A second request with the same token is the same send arriving again, and is answered as the
+    first was instead of being saved twice. `landed` is where the first one went, for the views
+    whose answer depends on what was saved (the new post's page).
+
+    Kept a day: a page older than that is reloaded long before anyone sends from it again.
+    """
+
+    resident = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="+")
+    token = models.UUIDField()
+    landed = models.CharField(max_length=500, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        constraints = [models.UniqueConstraint(fields=["resident", "token"], name="sentform_once_per_token")]
+
+    def __str__(self) -> str:
+        return f"{self.resident_id} {self.token}"

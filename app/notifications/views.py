@@ -17,6 +17,7 @@ from django.urls import reverse
 from django.views.decorators.http import require_POST
 
 from core import push
+from core.back_navigation import not_a_write
 from gahkflix import access as gahkflix_access
 from residents.permissions import current_resident, is_kitchen
 
@@ -194,6 +195,7 @@ def preferences(request: HttpRequest) -> HttpResponse:
     )
 
 
+@not_a_write  # sent by push.ts on page load, to check this device's state
 @require_POST
 @login_required
 def subscription(request: HttpRequest) -> HttpResponse:
