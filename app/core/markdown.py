@@ -221,18 +221,33 @@ def _trimmed(children: list[Token]) -> list[Token]:
         children = children[1:]
     while children and _is_blank(children[-1:]):
         children = children[:-1]
+    if children and children[0].type == "text":
+        children = [children[0].copy(content=children[0].content.lstrip()), *children[1:]]
+    if children and children[-1].type == "text":
+        children = [*children[:-1], children[-1].copy(content=children[-1].content.rstrip())]
     return children
+
+
+def _paragraph(tokens: list[Token], children: list[Token]) -> list[Token]:
+    """`tokens` (paragraph_open, inline, paragraph_close) holding only `children`, or nothing when
+    they are blank: the text on one side of a widget."""
+    children = _trimmed(children)
+    if _is_blank(children):
+        return []
+    opening, inline, closing = tokens
+    return [opening.copy(), inline.copy(children=children), closing.copy()]
 
 
 def _embeds(state: StateCore) -> None:
     """markdown-it core rule: put each feature's widget where the body embeds it (core.embeds).
 
     The widgets come from whoever renders, in `env["embeds"]` (reference → HTML), because they are
-    drawn for a reader, from rows this module never sees. Each one the reader gets is lifted out of
-    its paragraph and placed right after it, as a block of its own (a widget inside a <p> is not
-    HTML), behind a marker that render_markdown swaps for the widget once nh3 is done: nh3 would
-    strip the widget's markup, which is the renderer's own and not the author's. The marker carries
-    a nonce drawn per render, so text an author writes can never be taken for one.
+    drawn for a reader, from rows this module never sees. Each one the reader gets is drawn where it
+    stands, as a block of its own: its paragraph is split there (a widget inside a <p> is not HTML),
+    the text before it above the widget and the text after it below. The widget is put behind a
+    marker that render_markdown swaps for it once nh3 is done: nh3 would strip the widget's markup,
+    which is the renderer's own and not the author's. The marker carries a nonce drawn per render,
+    so text an author writes can never be taken for one.
 
     Every other embed, or every one when there are no widgets (plain text, a page that draws none),
     leaves its name as text. `env["place"] = False` leaves out the ones that have widgets instead:
@@ -261,35 +276,38 @@ def _embeds(state: StateCore) -> None:
             out.append(token)
             index += 1
             continue
-        lifted: list[str] = []
-        kept: list[Token] = []
+        # The paragraph's text cut where each widget stands: runs[n] is the text before between[n],
+        # the reference of a widget drawn there, and the last run the text after the last widget.
+        runs: list[list[Token]] = [[]]
+        between: list[str] = []
         for child in inline.children or ():
             embed = _embed_of(child)
             if embed is None:
-                kept.append(child)
+                runs[-1].append(child)
                 continue
             reference = str(child.attrGet("src"))  # as written: core.embeds keys widgets by it
             if paragraph:
                 found.append(reference)
                 if not plain and widgets is not None and reference in widgets:
                     if place:
-                        lifted.append(reference)
+                        between.append(reference)
+                        runs.append([])
                     continue
-            kept.append(_name_of(child, embed.kind, plain=plain))
-        inline.children = _trimmed(kept)
+            runs[-1].append(_name_of(child, embed.kind, plain=plain))
         if not paragraph:
+            inline.children = _trimmed(runs[0])
             out.append(token)
             index += 1
             continue
-        if not _is_blank(inline.children):
-            out.extend(tokens[index : index + 3])
-        for reference in lifted:
+        out.extend(_paragraph(tokens[index : index + 3], runs[0]))
+        for reference, run in zip(between, runs[1:], strict=True):
             marker = f"gahk-embed-{env.get('nonce', '')}-{len(placed)}"
             placed.append((marker, reference))
             block = Token("html_block", "", 0)
             block.content = f"{marker}\n"
             block.block = True
             out.append(block)
+            out.extend(_paragraph(tokens[index : index + 3], run))
         index += 3
     state.tokens = out
 

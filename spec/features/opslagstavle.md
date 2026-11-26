@@ -102,9 +102,10 @@ widget where it stands:
 - **A film** as a small GAHKFlix hero: the banner, the red wordmark, series, title, episode, release
   date, length, quality and description, `Afspil` (the player) and `Mere info` (the film's page), and
   the reader's red progress bar. On a phone the words go under the banner.
-- In the text an embed is `![Julefrokost 2026](album:12)`: a reference, not an address. An embed
-  in the middle of a sentence is drawn right after its paragraph. The feed shows the text and the
-  first widget under it; the post's own page draws up to ten, each where it stands.
+- In the text an embed is `![Julefrokost 2026](album:12)`: a reference, not an address. A widget
+  is drawn where its embed stands, between the text before it and the text after it, even on the
+  next line or in the middle of a sentence. The feed shows the text and the first widget under it;
+  the post's own page draws up to ten.
 - In the composer, `Indsæt` → `Fotoalbum` / `Video fra GAHKFlix` opens a picker of the newest albums
   or published films, searched by name (and series) as you type; picking one puts its embed at the
   cursor. The widgets show under the text as they will in the post, each with `Fjern`, and the
