@@ -74,7 +74,7 @@
         </p>
 
         {% comment %}
-          The albums and films the body embeds (`![Julefrokost 2026](album:12)`), drawn as the post
+          The albums, films and Drive files and folders the body embeds (`![Julefrokost 2026](album:12)`), drawn as the post
           will draw them and re-drawn by the server a moment after typing stops (views.embedded). The
           buttons open the pickers below the form, which put an embed in the body at the cursor; the
           toolbar's and the pickers' insertions dispatch `input`, so they count as typing.
@@ -86,7 +86,7 @@
              hx-swap="innerHTML">
           {% include "opslagstavle/_embedded.html" %}
         </div>
-        {% if albums_allowed or videos_allowed %}
+        {% if albums_allowed or videos_allowed or drive_allowed %}
           <div class="board-embed-buttons">
             <span>Indsæt</span>
             {% if albums_allowed %}
@@ -97,6 +97,11 @@
             {% if videos_allowed %}
               <button type="button" class="board-embed-button is-gahkflix" data-embed-open="gahkflix">
                 <b aria-hidden="true">G</b>Video fra GAHKFlix
+              </button>
+            {% endif %}
+            {% if drive_allowed %}
+              <button type="button" class="board-embed-button is-drive" data-embed-open="drive">
+                <svg class="ni" aria-hidden="true"><use href="#i-folder"></use></svg>Fil fra Drive
               </button>
             {% endif %}
           </div>
@@ -169,6 +174,24 @@
              hx-get="{% url 'opslagstavle:embed_gahkflix' %}" hx-trigger="input changed delay:250ms, search, embed-open"
              hx-target="#js-embed-gahkflix-results" hx-sync="this:replace">
       <div class="board-picker-results" id="js-embed-gahkflix-results" aria-live="polite"></div>
+    </dialog>
+  {% endif %}
+  {% if drive_allowed %}
+    {% comment %}
+      Drive's picker: the files the author may open that changed most recently, or the files and
+      folders whose name holds what is typed (Drive's own search). What not every resident may open
+      says so here already, and its widget says it again under the text and on the post.
+    {% endcomment %}
+    <dialog class="board-picker" id="js-embed-drive" aria-labelledby="embed-drive-title">
+      <div class="board-picker-head">
+        <h2 id="embed-drive-title">Vælg fra Drive</h2>
+        <button type="button" class="board-picker-close" data-embed-close aria-label="Luk">&times;</button>
+      </div>
+      <input type="search" name="q" class="board-picker-search" placeholder="Søg efter en fil eller mappe …" autocomplete="off"
+             aria-label="Søg efter en fil eller mappe"
+             hx-get="{% url 'opslagstavle:embed_drive' %}" hx-trigger="input changed delay:250ms, search, embed-open"
+             hx-target="#js-embed-drive-results" hx-sync="this:replace">
+      <div class="board-picker-results" id="js-embed-drive-results" aria-live="polite"></div>
     </dialog>
   {% endif %}
 {% endblock %}

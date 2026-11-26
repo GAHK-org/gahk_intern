@@ -1,16 +1,18 @@
 {% comment %}
-  The picker's list (views.embed_choices): the newest albums or films, or those matching what is
-  typed. Picking one puts its Markdown (`![Julefrokost 2026](album:12)`) in the body at the cursor,
+  The picker's list (views.embed_choices): the newest albums or films, the files the author may open
+  that changed most recently, or those matching what is typed. A Drive file or folder not every
+  resident may open says so (drive.embeds). Picking one puts its Markdown (`![Julefrokost 2026](album:12)`) in the body at the cursor,
   on a line of its own, and closes the picker (opslagstavle.ts).
 {% endcomment %}
 {% for choice in choices %}
   <button type="button" class="board-choice is-{{ kind }}" data-embed-pick data-embed="{{ choice.markdown }}">
-    <span class="board-choice-img">{% if choice.picture %}<img src="{{ choice.picture }}" alt="" loading="lazy" decoding="async">{% endif %}</span>
-    <span class="board-choice-text"><strong>{{ choice.title }}</strong><small>{{ choice.detail }}</small></span>
+    <span class="board-choice-img">{% if choice.picture %}<img src="{{ choice.picture }}" alt="" loading="lazy" decoding="async">{% elif choice.icon %}<svg class="ni" aria-hidden="true"><use href="#i-{{ choice.icon }}"></use></svg>{% endif %}</span>
+    <span class="board-choice-text"><strong>{{ choice.title }}</strong><small>{{ choice.detail }}</small>{% if choice.warning %}<small class="board-choice-warning"><svg class="ni" aria-hidden="true"><use href="#i-lock"></use></svg>Ikke alle kan åbne den</small>{% endif %}</span>
   </button>
 {% empty %}
   <p class="board-choice-none">
-    {% if query %}Ingen {% if kind == "album" %}albummer{% else %}videoer{% endif %} matcher «{{ query }}».
+    {% if kind == "drive" %}{% if query|length > 1 %}Ingen filer eller mapper matcher «{{ query }}».{% else %}Der er ingen filer, du kan åbne, i Drive endnu.{% endif %}
+    {% elif query %}Ingen {% if kind == "album" %}albummer{% else %}videoer{% endif %} matcher «{{ query }}».
     {% elif kind == "album" %}Der er ingen albummer endnu.
     {% else %}Der er ingen udgivne videoer endnu.{% endif %}
   </p>

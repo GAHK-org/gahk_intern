@@ -255,11 +255,11 @@ function initPictures(area: HTMLTextAreaElement): void {
   });
 }
 
-/** The composer's pickers for an album and a film (form.html's <dialog>s), and "Fjern" on the
- * widgets under the textarea (_embedded.html).
+/** The composer's pickers for an album, a film and a Drive file or folder (form.html's <dialog>s),
+ * and "Fjern" on the widgets under the textarea (_embedded.html).
  *
  * Opening a picker empties its search and fires `embed-open`, which its hx-trigger answers with the
- * newest albums or films. Picking one embeds it in the body, where the cursor was, and the widgets
+ * newest albums or films, or the files changed most recently. Picking one embeds it in the body, where the cursor was, and the widgets
  * under the textarea re-draw on the `input` that fires. Clicking the backdrop closes a picker, as
  * Escape does by itself.
  */

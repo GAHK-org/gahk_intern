@@ -109,6 +109,7 @@ Drive
 - A folder can be deleted only when it holds no files or subfolders. Files in the bin do not count; restoring one brings its folder back.
 - Deleted files go to their space's bin for 30 days, then are removed with all their versions. Anyone who can write in a folder sees its binned files and can restore them. A restored file whose name has been taken meanwhile is numbered.
 - A file's creator (who uploaded the first version) is notified when someone else deletes it (with a link to restore it), renames it or moves it. One notification per action, not per file, and only while the creator can still see the folder.
+- A file or folder can be put in a post on opslagstavlen (`Del på opslagstavlen`). Everyone reading the post sees it, but only those who may open it get in; what not every resident may open is marked as such (spec/features/opslagstavle.md).
 - Several files or a whole folder download as one zip of at most 5 GB. Subfolders the reader cannot see are left out without a trace.
 - A zip is built in the background, and its page waits for it. Only the resident who asked can fetch it, for 24 hours, and only while they can still read everything in it.
 - A folder shows how many files its whole subtree holds, counting what the reader can see.

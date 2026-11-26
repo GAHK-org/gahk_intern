@@ -277,8 +277,8 @@ def create(request: HttpRequest) -> HttpResponse:
     """Compose on its own page, not inline: title + category + Markdown + toolbar + preview is a
     form, and an inline composer on a paginated list would lose a long draft on any navigation.
 
-    `?album=` or `?gahkflix=` is "Del på opslagstavlen" on that album's or film's page: the body starts
-    with it embedded, below an empty line, and the cursor sits in that line for the text.
+    `?album=`, `?gahkflix=` or `?drive=` is "Del på opslagstavlen" on that album's, film's, file's or
+    folder's page: the body starts with it embedded, below an empty line, and the cursor sits in that line for the text.
     """
     shared = embeds.shared_body(request) if request.method == "GET" else ""
     form = NoticeForm(
@@ -336,6 +336,7 @@ def _form_page(request: HttpRequest, form: NoticeForm, notice: Notice | None) ->
             "embedded": embeds.for_body(request, form["body"].value() or "", compose=True),
             "albums_allowed": embeds.albums_allowed(request),
             "videos_allowed": embeds.videos_allowed(request),
+            "drive_allowed": embeds.drive_allowed(request),
         },
     )
 
@@ -521,7 +522,8 @@ def embed_album_pictures(request: HttpRequest, pk: int) -> HttpResponse:
 
 @access_required
 def embed_choices(request: HttpRequest, kind: str) -> HttpResponse:
-    """The picker's list (form.html): the newest albums or films, or those matching `?q=`."""
+    """The picker's list (form.html): the newest albums or films, the files the reader may open that
+    changed most recently, or those matching `?q=`."""
     query = request.GET.get("q", "").strip()[:100]
     found = embeds.KINDS[kind]
     choices = found.choices(request, query) if found.allowed(request) else []
