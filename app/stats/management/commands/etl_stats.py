@@ -10,6 +10,7 @@ import datetime
 from django.core.management.base import BaseCommand
 from django.db import transaction
 
+from audit import trail
 from core.etl import fetch_all
 from stats.models import DailyVisitCount
 
@@ -18,6 +19,11 @@ class Command(BaseCommand):
     help = "Migrate the per-date visit counter from the legacy DB."
 
     @transaction.atomic
+    def execute(self, *args: object, **options: object) -> str | None:
+        # Loading old data (or demo data) is nobody's action: not one audit event per row.
+        with trail.unaudited():
+            return super().execute(*args, **options)
+
     def handle(self, *args, **opts) -> None:  # noqa: ANN002, ANN003
         rows = fetch_all("SELECT dato, count FROM gahk_counterdato")
         ok = bad = 0

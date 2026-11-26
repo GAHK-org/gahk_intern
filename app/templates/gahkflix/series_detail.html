@@ -3,7 +3,7 @@
 {% block title %}{{ series.title }} – GAHKFlix{% endblock %}
 {% block body_class %}flix-detail{% endblock %}
 {% block content %}
-  {% picture_url cover "banner" as banner %}
+  {% if cover.is_released %}{% picture_url cover "banner" as banner %}{% endif %}
   <section class="flix-hero">
     <div class="flix-hero-img" style="background-image:url('{{ banner }}')" role="img" aria-label="{{ series.title }}"></div>
     <div class="flix-hero-body">
@@ -15,7 +15,7 @@
       </div>
       {% if series.description %}<p class="flix-hero-desc">{{ series.description }}</p>{% endif %}
       <div class="flix-hero-actions">
-        {% if cover %}<a class="flix-btn flix-btn-play" href="{% url 'gahkflix:play' cover.pk %}" data-flix-play><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M7 4.5v15l12-7.5z"/></svg>Afspil første afsnit</a>{% endif %}
+        {% if cover.is_released %}<a class="flix-btn flix-btn-play" href="{% url 'gahkflix:play' cover.pk %}" data-flix-play><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M7 4.5v15l12-7.5z"/></svg>Afspil første afsnit</a>{% endif %}
         {% if can_edit %}<a class="flix-btn flix-btn-info" href="{% url 'gahkflix:series_edit' series.pk %}">Rediger</a>{% endif %}
       </div>
     </div>

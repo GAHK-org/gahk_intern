@@ -2,7 +2,7 @@
 
     THE RULES USED TO EXIST ONLY AS SHELL SOMEBODY RAN ONCE.
 
-That is the reason this command exists. The nine rules below were applied to production by hand,
+That is the reason this command exists. The rules below were applied to production by hand,
 which left no way to tell whether a bucket had them, no way to give a second environment the same
 ones, and no record in the repository of what the intended state even was. A rebuilt bucket would
 have looked fine and quietly kept every expired object for ever.
@@ -13,13 +13,14 @@ covering that prefix removes it. Every deletion rule here therefore comes in par
 that looks complete but has only the first part is the failure this whole module is shaped around -
 it was the state `media/` had been in since the bucket was created.
 
-**Prefix matching is literal**, so `arkiv/` does not cover `arkiv-thumb/`, and one rule with a bare
-`arkiv` prefix would cover all four and overlap the zip rules, where providers differ on how
-overlaps resolve. One rule per prefix, spelled out, is verbose and unambiguous.
+**Prefix matching is literal**, so `photo-album/` does not cover `photo-album-zips/`, and a bare
+prefix would overlap other rules, where providers differ on how overlaps resolve. One rule per
+prefix, spelled out, is verbose and unambiguous.
 
 **Merges rather than replaces.** `put_bucket_lifecycle_configuration` replaces the ENTIRE
 configuration, so the naive call silently drops every rule it does not mention. Anything whose ID
-this file does not claim is carried through untouched.
+this file does not claim is carried through untouched, except the IDs in RETIRED: rules this file
+used to declare, which would otherwise be kept for ever as if somebody had added them by hand.
 """
 
 import argparse
@@ -29,18 +30,25 @@ from typing import Any
 from django.core.files.storage import storages
 from django.core.management.base import BaseCommand, CommandError
 
-# How long a superseded or deleted object's bytes stay recoverable. The archive's originals get a
-# month, because the button that destroys them says "Slet permanent" and an operator emptying a
-# folder by mistake needs longer than a weekend to notice. Everything derived gets a day or a week,
-# because it can simply be rebuilt.
-ARCHIVE_UNDO_DAYS = 30
+# How long a superseded or deleted object's bytes stay recoverable. Uploaded media gets a month,
+# because an operator deleting something by mistake needs longer than a weekend to notice.
+# Everything derived gets a day or a week, because it can simply be rebuilt.
+MEDIA_UNDO_DAYS = 30
 DERIVED_UNDO_DAYS = 1
 BACKUP_UNDO_DAYS = 7
 
-# Built zips are disposable by construction: `selection_key` names each after the selection it
-# holds, so a rebuilt one lands under the same key. A week is arbitrary and safe - the cost of being
-# wrong is one rebuild.
+# Built zips are disposable by construction: a download that finds its zip gone builds it again. A
+# week is arbitrary and safe - the cost of being wrong is one rebuild.
 ZIP_KEEP_DAYS = 7
+
+# Arkiv is gone (core 0020 drops its tables), and what it left in the bucket goes too: without the
+# tables its objects are bare sha256 keys that nothing can find. `Days: 1` makes each one noncurrent
+# the day after these rules are applied, since every Arkiv object is older than that. The noncurrent
+# days are the undo window, counted from then, so a database backup taken just before the deploy can
+# still find its files for a month. Once the prefixes are empty (a month and a few days after
+# applying), move the `retire-arkiv*` IDs to RETIRED and delete these rules.
+ARKIV_PREFIXES = ("arkiv/", "arkiv-thumb/", "arkiv-preview/", "arkiv-zip/")
+ARKIV_UNDO_DAYS = 30
 
 # Rules this project owns, by ID. Anything else in the bucket is left alone.
 RULES: list[dict[str, Any]] = [
@@ -51,42 +59,8 @@ RULES: list[dict[str, Any]] = [
         "Filter": {"Prefix": ""},
         "AbortIncompleteMultipartUpload": {"DaysAfterInitiation": 7},
     },
-    # --- the archive itself, and its two derived sizes -------------------------------------------
-    # NO `Expiration` on any of these: nothing here expires on a clock. What they need is for a
-    # deletion to actually free the bytes, which on a versioned bucket it does not.
-    *(
-        {
-            "ID": f"expire-noncurrent-{prefix.rstrip('/')}",
-            "Status": "Enabled",
-            "Filter": {"Prefix": prefix},
-            "NoncurrentVersionExpiration": {"NoncurrentDays": days},
-        }
-        for prefix, days in (
-            ("arkiv/", ARCHIVE_UNDO_DAYS),
-            ("arkiv-thumb/", DERIVED_UNDO_DAYS),
-            ("arkiv-preview/", DERIVED_UNDO_DAYS),
-        )
-    ),
-    # --- built zips: the one prefix that does expire on a clock ----------------------------------
-    {
-        "ID": "expire-built-zips",
-        "Status": "Enabled",
-        "Filter": {"Prefix": "arkiv-zip/"},
-        "Expiration": {"Days": ZIP_KEEP_DAYS},
-        "NoncurrentVersionExpiration": {"NoncurrentDays": DERIVED_UNDO_DAYS},
-        "AbortIncompleteMultipartUpload": {"DaysAfterInitiation": 1},
-    },
-    # A second rule on the same prefix, because `Days` and `ExpiredObjectDeleteMarker` cannot share
-    # one `Expiration` block - S3 rejects it. Without this the markers left by the rule above
-    # accumulate for ever.
-    {
-        "ID": "expire-built-zip-markers",
-        "Status": "Enabled",
-        "Filter": {"Prefix": "arkiv-zip/"},
-        "Expiration": {"ExpiredObjectDeleteMarker": True},
-    },
-    # Photoalbum ZIP downloads are likewise disposable: the job record deletes them after seven
-    # days, and this guards against a worker outage leaving an object behind indefinitely.
+    # Photo album ZIP downloads are disposable: the job record deletes them after seven days, and
+    # this guards against a worker outage leaving an object behind indefinitely.
     {
         "ID": "expire-photo-album-zips",
         "Status": "Enabled",
@@ -95,6 +69,9 @@ RULES: list[dict[str, Any]] = [
         "NoncurrentVersionExpiration": {"NoncurrentDays": DERIVED_UNDO_DAYS},
         "AbortIncompleteMultipartUpload": {"DaysAfterInitiation": 1},
     },
+    # A second rule on the same prefix, because `Days` and `ExpiredObjectDeleteMarker` cannot share
+    # one `Expiration` block - S3 rejects it. Without this the markers left by the rule above
+    # accumulate for ever.
     {
         "ID": "expire-photo-album-zip-markers",
         "Status": "Enabled",
@@ -106,7 +83,7 @@ RULES: list[dict[str, Any]] = [
         "ID": "expire-noncurrent-versions",
         "Status": "Enabled",
         "Filter": {"Prefix": "media/"},
-        "NoncurrentVersionExpiration": {"NoncurrentDays": ARCHIVE_UNDO_DAYS},
+        "NoncurrentVersionExpiration": {"NoncurrentDays": MEDIA_UNDO_DAYS},
     },
     {
         "ID": "expire-media-markers",
@@ -122,9 +99,9 @@ RULES: list[dict[str, Any]] = [
     *(
         rule
         for name, prefix, days in (
-            ("photo-album", "photo-album/", ARCHIVE_UNDO_DAYS),
+            ("photo-album", "photo-album/", MEDIA_UNDO_DAYS),
             ("photo-album-imports", "photo-album-imports/", DERIVED_UNDO_DAYS),
-            ("gahkflix", "gahkflix/", ARCHIVE_UNDO_DAYS),
+            ("gahkflix", "gahkflix/", MEDIA_UNDO_DAYS),
         )
         for rule in (
             {
@@ -135,6 +112,26 @@ RULES: list[dict[str, Any]] = [
             },
             {
                 "ID": f"expire-{name}-markers",
+                "Status": "Enabled",
+                "Filter": {"Prefix": prefix},
+                "Expiration": {"ExpiredObjectDeleteMarker": True},
+            },
+        )
+    ),
+    # --- Arkiv's leftovers, until the prefixes are empty ------------------------------------------
+    *(
+        rule
+        for prefix in ARKIV_PREFIXES
+        for rule in (
+            {
+                "ID": f"retire-{prefix.rstrip('/')}",
+                "Status": "Enabled",
+                "Filter": {"Prefix": prefix},
+                "Expiration": {"Days": 1},
+                "NoncurrentVersionExpiration": {"NoncurrentDays": ARKIV_UNDO_DAYS},
+            },
+            {
+                "ID": f"retire-{prefix.rstrip('/')}-markers",
                 "Status": "Enabled",
                 "Filter": {"Prefix": prefix},
                 "Expiration": {"ExpiredObjectDeleteMarker": True},
@@ -163,6 +160,17 @@ RULES: list[dict[str, Any]] = [
 ]
 
 OWNED = {rule["ID"] for rule in RULES}
+
+# Rules this file used to declare. The command removes them from the bucket; anything else it does
+# not own it leaves alone.
+RETIRED = {
+    # Arkiv's own rules, replaced by the retire-arkiv* rules above.
+    "expire-noncurrent-arkiv",
+    "expire-noncurrent-arkiv-thumb",
+    "expire-noncurrent-arkiv-preview",
+    "expire-built-zips",
+    "expire-built-zip-markers",
+}
 
 
 class Command(BaseCommand):
@@ -195,7 +203,7 @@ class Command(BaseCommand):
 
         # Carried through untouched: a rule somebody added by hand for a reason this file does not
         # know about should survive a run of this command, not be quietly deleted by it.
-        foreign = [rule for rule in existing if rule.get("ID") not in OWNED]
+        foreign = [rule for rule in existing if rule.get("ID") not in OWNED | RETIRED]
         before = {rule.get("ID") for rule in existing}
 
         added = sorted(OWNED - before)
@@ -204,6 +212,8 @@ class Command(BaseCommand):
             self.stdout.write(f"  + {rule_id}")
         for rule_id in kept:
             self.stdout.write(f"    {rule_id} (already there - replaced with the declared version)")
+        for rule_id in sorted(RETIRED & before):
+            self.stdout.write(f"  - {rule_id} (retired, removed)")
         for rule in foreign:
             self.stdout.write(f"    {rule.get('ID')} (not ours, left alone)")
 

@@ -32,22 +32,26 @@ from django.utils import timezone
 from django.utils.http import urlencode
 from django.views.decorators.http import require_GET, require_POST
 
-from arkiv.storage import content_disposition
+from core.downloads import content_disposition
 from core.media import REDIRECT_CACHE_CONTROL
 from residents.models import Resident
 from residents.permissions import current_resident
 
-from . import access, cache, dating, services
+from . import access, cache, dating, encoding, services
 from .forms import DeletionRequestForm, SeriesForm, VideoDetailsForm, VoteForm
 from .models import (
+    MAX_DRAFTS,
     CastMember,
     ChangeRequest,
     FileState,
+    PremiereBlur,
     Series,
     Tag,
     Video,
     VideoEvent,
+    VideoFile,
     VideoFrame,
+    VideoSubtitle,
     ViewEvent,
     key_of,
 )
@@ -104,7 +108,6 @@ def _base_context(request: HttpRequest) -> dict[str, Any]:
     return {
         "is_administrator": access.is_administrator(request),
         "limited_rollout": access.gate.is_limited(),
-        "pending_upload": services.pending_upload(resident),
         "open_requests": (
             ChangeRequest.objects.filter(state=ChangeRequest.State.OPEN)
             .exclude(requested_by=resident)
@@ -126,12 +129,14 @@ def _render(request: HttpRequest, template: str, context: dict[str, Any] | None 
 @access.access_required
 def home(request: HttpRequest) -> HttpResponse:
     resident = current_resident(request)
-    newest = list(services.published().order_by("-published_at", "-pk")[:ROW_LENGTH])
+    newest = list(services.released().order_by(*services.newest_first())[:ROW_LENGTH])
     trending = services.trending()
     series = list(services.series_with_episodes().order_by(Lower("title"))[:ROW_LENGTH])
     rows: list[dict[str, Any]] = []
     if resume := services.continue_watching(resident):
         rows.append({"title": "Fortsæt med at se", "videos": resume, "resume": True})
+    if upcoming := services.upcoming()[:ROW_LENGTH]:
+        rows.append({"title": "Kommer snart", "videos": upcoming})
     if trending:
         rows.append({"title": "Top 10 på GAHKFlix lige nu", "videos": trending, "ranked": True})
     if newest:
@@ -284,7 +289,7 @@ def search(request: HttpRequest) -> HttpResponse:
 
 def _people_matching(query: str) -> list[dict[str, Any]]:
     """Credited people whose name matches: residents first, then external names."""
-    credits = CastMember.objects.filter(video__in=Video.objects.published())
+    credits = CastMember.objects.filter(video__in=Video.objects.released())
     people: list[dict[str, Any]] = []
     residents = Resident.objects.filter(pk__in=credits.exclude(resident=None).values("resident_id"))
     for word in query.split()[:4]:
@@ -307,7 +312,7 @@ def _people_matching(query: str) -> list[dict[str, Any]]:
 def tag(request: HttpRequest, name: str) -> HttpResponse:
     tag = get_object_or_404(Tag, name__iexact=name)
     videos = _with_progress(
-        request, list(services.published().filter(tags=tag).order_by(*services.sort_date_ordering()))
+        request, list(services.released().filter(tags=tag).order_by(*services.sort_date_ordering()))
     )
     return _render(request, "gahkflix/grid.html", {"title": f"#{tag.name}", "videos": videos})
 
@@ -368,15 +373,32 @@ def mine(request: HttpRequest) -> HttpResponse:
     resident = current_resident(request)
     videos = _with_latest_file(Video.objects.filter(uploaded_by=resident).order_by("-created_at"))
     drafts: list[Video] = []
+    upcoming: list[Video] = []
     live: list[Video] = []
     binned: list[Video] = []
     for video in videos:
-        (binned if video.is_binned else drafts if video.is_draft else live).append(video)
+        if video.is_binned:
+            binned.append(video)
+        elif video.is_draft:
+            drafts.append(video)
+        else:
+            (upcoming if video.is_upcoming else live).append(video)
+    if request.GET.get("partial") == "drafts":
+        # The drafts alone, which the page fetches again while any of them is processed (gahkflix.ts).
+        return render(request, "gahkflix/_draft_list.html", {"drafts": drafts})
+    upcoming.sort(key=lambda video: video.premiere_at)  # type: ignore[arg-type, return-value]
     requests = ChangeRequest.objects.filter(requested_by=resident).select_related("video", "series")[:20]
     return _render(
         request,
         "gahkflix/mine.html",
-        {"drafts": drafts, "live": _with_progress(request, live), "binned": binned, "requests": requests},
+        {
+            "drafts": drafts,
+            "upcoming": upcoming,
+            "live": _with_progress(request, live),
+            "binned": binned,
+            "requests": requests,
+            "max_drafts": MAX_DRAFTS,
+        },
     )
 
 
@@ -414,6 +436,45 @@ def detail(request: HttpRequest, pk: int) -> HttpResponse:
 
 
 QUALITY_LABELS = {"fullhd": "Full HD", "hd": "HD"}
+
+# A subtitle track's language as the player's menu names it, by the ISO 639-2 code the file gives
+# (both the bibliographic and the terminological one where they differ).
+LANGUAGE_NAMES = {
+    "dan": "Dansk", "eng": "Engelsk", "swe": "Svensk", "nor": "Norsk", "nob": "Norsk",
+    "nno": "Nynorsk", "isl": "Islandsk", "ice": "Islandsk", "fao": "Færøsk", "fin": "Finsk",
+    "deu": "Tysk", "ger": "Tysk", "fra": "Fransk", "fre": "Fransk", "spa": "Spansk", "ita": "Italiensk",
+    "nld": "Hollandsk", "dut": "Hollandsk", "por": "Portugisisk", "pol": "Polsk", "rus": "Russisk",
+    "ukr": "Ukrainsk", "tur": "Tyrkisk", "ara": "Arabisk", "zho": "Kinesisk", "chi": "Kinesisk",
+    "jpn": "Japansk", "kor": "Koreansk", "grc": "Oldgræsk", "ell": "Græsk", "gre": "Græsk",
+    "lat": "Latin",
+}  # fmt: skip
+
+
+def _subtitle_label(track: VideoSubtitle, number: int) -> str:
+    """ "Dansk", "Engelsk (Kommentarspor)", "Dansk – kun tvungne"; "Spor 2" when the file says nothing."""
+    language = LANGUAGE_NAMES.get(track.language.lower(), track.language)
+    title = track.title.strip()
+    if language and title and title.lower() != language.lower():
+        label = f"{language} ({title})"
+    else:
+        label = language or title or f"Spor {number}"
+    return f"{label} – kun tvungne" if track.is_forced else label
+
+
+def _subtitle_tracks(video_file: VideoFile, video: Video) -> list[dict[str, Any]]:
+    return [
+        {
+            "id": track.pk,
+            "label": _subtitle_label(track, number),
+            "language": track.language,
+            "url": reverse("gahkflix:subtitles", args=[video.pk, track.pk]),
+            "default": track.is_default,
+            "forced": track.is_forced,
+        }
+        for number, track in enumerate(video_file.subtitles.all(), start=1)
+    ]
+
+
 UP_NEXT_DESCRIPTION = 200
 
 
@@ -451,6 +512,7 @@ def _player_config(video: Video, start_at: float, resident: Resident) -> dict[st
         "subtitle": subtitle,
         "streams": {q: reverse("gahkflix:stream", args=[video.pk, q]) for q in video.file.qualities},
         "qualityLabels": QUALITY_LABELS,
+        "subtitles": _subtitle_tracks(video.file, video),
         "startAt": start_at,
         "viewUrl": reverse("gahkflix:record_view", args=[video.pk]),
         "positionUrl": reverse("gahkflix:position", args=[video.pk]),
@@ -478,9 +540,9 @@ def play(request: HttpRequest, pk: int) -> HttpResponse:
     config = _player_config(
         video, float(start) if start.replace(".", "", 1).isdecimal() else resume, resident
     )
-    # Opened in the player: a viewing for the statistics, which the player reports on. A draft's
-    # uploader trying it out is not one.
-    config["viewing"] = services.open_viewing(video, resident).pk if video.is_published else None
+    # Opened in the player: a viewing for the statistics, which the player reports on. A draft's or an
+    # upcoming premiere's uploader trying it out is not one.
+    config["viewing"] = services.open_viewing(video, resident).pk if video.is_released else None
     if wants_json:
         return JsonResponse(config)
     return _render(request, "gahkflix/play.html", {"video": video, "player": config})
@@ -515,6 +577,24 @@ def stream(request: HttpRequest, pk: int, quality: str) -> HttpResponseBase:
     if video.file is None or field is None or not getattr(video.file, field):
         raise Http404("no such rendition")
     return _serve(key_of(getattr(video.file, field)), content_type="video/mp4", expire=STREAM_URL_TTL)
+
+
+@access.access_required
+def subtitles(request: HttpRequest, pk: int, track: int) -> HttpResponseBase:
+    """A subtitle track, from here rather than redirected to the bucket: a browser reads a <track> only
+    from the page's own origin (or with CORS the bucket does not send), and the files are small."""
+    video = _visible_video(request, pk)
+    if video.file is None:
+        raise Http404("no file")
+    subtitle = get_object_or_404(VideoSubtitle, pk=track, file=video.file)
+    try:
+        with get_video_storage().open(key_of(subtitle.track), "rb") as handle:
+            body = handle.read()
+    except (FileNotFoundError, OSError) as exc:
+        raise Http404("subtitle file not found") from exc
+    response = HttpResponse(body, content_type="text/vtt; charset=utf-8")
+    response.headers["Cache-Control"] = "private, max-age=3600"
+    return response
 
 
 # What "Hent" offers: variant -> (field on VideoFile, label).
@@ -561,12 +641,49 @@ def _picture_response(key: str) -> HttpResponseBase:
     return _serve(key, content_type="image/jpeg")
 
 
+def _premiere_response(video: Video, level: str, *, cacheable: bool) -> HttpResponseBase:
+    """The thumbnail as an upcoming premiere shows it: blurred as `level` says."""
+    key = key_of(video.thumbnail)
+    if level == PremiereBlur.NONE:
+        return _picture_response(key)
+    if not key:
+        raise Http404("no picture")
+    data = None
+    if (cached := cache.cached_picture(key)) is not None:
+        try:
+            data = cached.read_bytes()
+        except OSError:
+            pass  # swept meanwhile: from storage, as _picture_response does
+    if data is None:
+        try:
+            with get_video_storage().open(key, "rb") as handle:
+                data = handle.read()
+        except OSError as exc:
+            raise Http404("file not found") from exc
+    response = HttpResponse(encoding.premiere_jpeg(data, level), content_type="image/jpeg")
+    response.headers["Cache-Control"] = PICTURE_CACHE_CONTROL if cacheable else "no-store"
+    response.headers["Vary"] = "Cookie"
+    return response
+
+
 @access.access_required
 def picture(request: HttpRequest, pk: int, kind: str) -> HttpResponseBase:
-    video = _visible_video(request, pk)
+    """A thumbnail or a banner. `?premiere=<blur>` asks for the thumbnail as an upcoming premiere
+    shows it (picture_url adds it), which the uploader and the administrators may also ask for at
+    any level to see what it looks like. Anybody else gets an upcoming premiere's thumbnail only as
+    its uploader chose, and never its banner."""
+    video = get_object_or_404(Video.objects.select_related("file", "series", "uploaded_by"), pk=pk)
     if kind not in PICTURES:
         raise Http404("no such picture")
-    return _picture_response(key_of(getattr(video, kind)))
+    level = request.GET.get("premiere", "")
+    if access.can_see(request, video):
+        if kind == "thumbnail" and level in PremiereBlur.values:
+            return _premiere_response(video, level, cacheable=True)
+        return _picture_response(key_of(getattr(video, kind)))
+    if kind == "thumbnail" and access.can_see_premiere(video):
+        # A URL that names the blur it gets may be kept; any other must not outlive the premiere.
+        return _premiere_response(video, video.premiere_blur, cacheable=level == video.premiere_blur)
+    raise Http404("no such video")
 
 
 @access.access_required
@@ -589,7 +706,7 @@ def _viewing(request: HttpRequest, video: Video, data: dict[str, Any]) -> ViewEv
 @require_POST
 def record_view(request: HttpRequest, pk: int) -> JsonResponse:
     video = _visible_video(request, pk)
-    if not video.is_published:
+    if not video.is_released:
         return JsonResponse({"counted": False})
     viewing = _viewing(request, video, _json_body(request))
     return JsonResponse({"counted": services.record_view(video, current_resident(request), viewing=viewing)})
@@ -616,12 +733,16 @@ def save_position(request: HttpRequest, pk: int) -> JsonResponse:
 # --- Uploading ----------------------------------------------------------------------------------
 
 
-def _upload_config(video: Video | None = None) -> dict[str, Any]:
+def _upload_config(video: Video | None = None, *, drafts_left: int = 1) -> dict[str, Any]:
     return {
         "beginUrl": reverse("gahkflix:upload_begin"),
         "commitUrl": reverse("gahkflix:upload_commit"),
         "video": video.pk if video else None,
         "maxBytes": max_upload_bytes(),
+        # How many files may be picked at once: a new version is one file, new videos one each up to
+        # the limit on drafts (services.drafts_left).
+        "maxFiles": 1 if video else drafts_left,
+        "maxDrafts": MAX_DRAFTS,
     }
 
 
@@ -635,13 +756,19 @@ def upload(request: HttpRequest) -> HttpResponse:
         .filter(Q(published_at__isnull=True) | Q(created_at__gt=timezone.now() - RECENT_UPLOADS))
         .order_by("-created_at")
     )
+    if request.GET.get("partial") == "recent":
+        # The list alone, which the page fetches again as files arrive and are processed (gahkflix.ts).
+        return render(request, "gahkflix/_recent_list.html", {"recent": recent})
+    drafts_left = services.drafts_left(resident)
     return _render(
         request,
         "gahkflix/upload.html",
         {
             "max_gb": max_upload_bytes() / 1024**3,
-            "pending": services.pending_upload(resident),
-            "upload_config": _upload_config(),
+            "drafts_left": drafts_left,
+            "draft_count": services.draft_count(resident),
+            "max_drafts": MAX_DRAFTS,
+            "upload_config": _upload_config(drafts_left=drafts_left),
             "recent": recent,
         },
     )
@@ -798,7 +925,7 @@ def edit(request: HttpRequest, pk: int) -> HttpResponse:
                 return redirect("gahkflix:edit", video.pk)
         return _edit_page(request, video, form)
     initial = services.snapshot(video)
-    initial.update(VideoDetailsForm.release_initial(initial.pop("released_on")))
+    initial.update(VideoDetailsForm.release_initial(initial.pop("released_on"), initial.pop("premiere_at")))
     # The editors (gahkflix.ts) read and write these two as JSON in their hidden inputs.
     initial["cast"] = json.dumps(initial["cast"], ensure_ascii=False)
     initial["tags"] = json.dumps(initial["tags"], ensure_ascii=False)
@@ -823,12 +950,15 @@ def _edit_page(request: HttpRequest, video: Video, form: VideoDetailsForm) -> Ht
             "open_edit": services.open_request(video, ChangeRequest.Kind.EDIT),
             "open_delete": services.open_request(video, ChangeRequest.Kind.DELETE),
             "missing": services.missing_for_publishing(video) if video.is_draft else [],
+            # What the details sent with "Udgiv" cannot fix: the button waits for it.
+            "publish_blocked": bool(services.missing_for_publishing(video, details=False)),
             "past_pictures": [
                 picture
                 for kind in PICTURES
                 for picture in services.past_pictures(video, kind)[:PAST_PICTURES_SHOWN]
             ],
             "can_upload_revision": access.can_upload_revision(request, video),
+            "can_unpublish": access.can_unpublish(request, video),
             "can_delete": access.can_delete_directly(request, video),
             "can_request_deletion": access.can_request_deletion(request, video),
             "days_left": {"edit": max(0, (video.edit_window_ends - now).days)},
@@ -929,7 +1059,7 @@ def publish(request: HttpRequest, pk: int) -> HttpResponse:
         return redirect("gahkflix:detail", video.pk)
     resident = current_resident(request)
     if "title" in request.POST:
-        form = VideoDetailsForm(request.POST, video=video)
+        form = VideoDetailsForm(request.POST, video=video, publishing=True)
         if not form.is_valid():
             return _edit_page(request, video, form)
         try:
@@ -949,8 +1079,33 @@ def publish(request: HttpRequest, pk: int) -> HttpResponse:
         for message in exc.messages:
             messages.error(request, message)
         return redirect("gahkflix:edit", video.pk)
-    messages.success(request, f"{video.title} er udgivet.")
+    if video.is_upcoming:
+        messages.success(
+            request,
+            f"{video.title} er udgivet og har premiere {video.premiere_label}. Indtil da kan alle se titlen, "
+            "tidspunktet og miniaturen, men kun du og administratorerne kan åbne den.",
+        )
+    else:
+        messages.success(request, f"{video.title} er udgivet.")
     return redirect("gahkflix:detail", video.pk)
+
+
+@access.access_required
+@require_POST
+def unpublish(request: HttpRequest, pk: int) -> HttpResponse:
+    """Make a video a draft again: an upcoming premiere, or one out for less than a day."""
+    video = _editable(request, pk)
+    if not access.can_unpublish(request, video):
+        messages.error(
+            request, "Videoen har været ude i mere end et døgn og kan ikke gøres til en kladde igen."
+        )
+        return redirect("gahkflix:edit", video.pk)
+    services.unpublish(video, current_resident(request))
+    messages.success(
+        request,
+        f"{video.title} er en kladde igen: kun du og administratorerne kan se den. Udgiv den, når den er klar.",
+    )
+    return redirect("gahkflix:edit", video.pk)
 
 
 # --- History ------------------------------------------------------------------------------------
@@ -1208,6 +1363,8 @@ DETAIL_LABELS = {
     "title": "Titel",
     "description": "Beskrivelse",
     "released_on": "Udgivelsesdato",
+    "premiere_at": "Premiere",
+    "premiere_blur": "Miniature før premieren",
     "series": "Serie",
     "season": "Sæson",
     "episode": "Afsnit",
@@ -1229,6 +1386,10 @@ def _shown(key: str, value: Any, series_names: dict[int, str]) -> str:  # noqa: 
         return ", ".join(f"#{name}" for name in value)
     if key == "released_on":
         return dating.label(value) or str(value)
+    if key == "premiere_at":
+        return dating.premiere_label(dating.parse_premiere(value)) or str(value)
+    if key == "premiere_blur":
+        return PremiereBlur(value).label if value in PremiereBlur.values else str(value)
     return str(value)
 
 
