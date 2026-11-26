@@ -442,7 +442,7 @@ def test_every_old_image_goes_to_gahk_dk_used_or_not_until_it_is_deleted(
 def test_applications_are_stored_once_and_acknowledged(
     gahk_web: FakeGahkWeb, front_page: Page, django_capture_on_commit_callbacks: Callable[..., Any]
 ) -> None:
-    tour, sublet = _application(), _application("sublet", motivation="x" * 2000)
+    tour, sublet = _application(), _application("sublet", motivation="x" * 500)
     gahk_web.outbox["applications"] = [tour, sublet]
     mail.outbox = []
 
@@ -530,14 +530,17 @@ def test_a_500_character_motivation_is_accepted(gahk_web: FakeGahkWeb, front_pag
 
 
 @pytest.mark.django_db
-def test_a_long_sublet_motivation_that_gahk_dk_accepted_is_stored(
-    gahk_web: FakeGahkWeb, front_page: Page
-) -> None:
-    """gahk.dk caps a form post at 64 KiB and the sublet motivation at nothing else, so intern
-    must take any field up to that size: dropping it would also delete gahk.dk's only copy."""
-    gahk_web.outbox["applications"] = [_application("sublet", motivation="a" * 60_000)]
+def test_a_sublet_motivation_is_capped_at_500_too(gahk_web: FakeGahkWeb, front_page: Page) -> None:
+    """Issue #480: gahk.dk's sublet form caps the motivation at 500 like the tour form, so a longer
+    one is not from that form and is dropped."""
+    fits, too_long = (
+        _application("sublet", motivation="a" * 500),
+        _application("sublet", motivation="a" * 501),
+    )
+    gahk_web.outbox["applications"] = [fits, too_long]
     tasks.sync_gahk_web()
-    assert len(Application.objects.get().motivation) == 60_000
+    assert str(Application.objects.get().external_id) == fits["id"]
+    assert GahkWebSync.load().rejected_applications == 1
 
 
 @pytest.mark.django_db
