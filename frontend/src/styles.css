@@ -2774,4 +2774,28 @@
     fill:none; stroke:currentColor; stroke-width:1.8; stroke-linecap:round; stroke-linejoin:round; }
   .install-done { margin:16px 0; padding:10px 14px; border:1px solid var(--green-100); border-radius:10px;
     background:var(--green-050); color:var(--green-700); font-weight:600; }
+
+  /* --- Din embedsgruppe (workgroups/workgroup.html): members beside Drive and the group's pages.
+     The link lists reuse the dashboard's .quick; a link there may carry a second, quieter line. --- */
+  /* The sprite's symbols are outlines; .btn sizes its icon but leaves the default black fill. */
+  .wg-wiki svg { fill:none; stroke:currentColor; }
+  .wg-side { display:flex; flex-direction:column; gap:20px; min-width:0; }
+  .wg-members { list-style:none; margin:0; padding:0; }
+  .wg-member { display:flex; align-items:center; gap:12px; padding:10px 18px; }
+  .wg-member + .wg-member { border-top:1px solid var(--border); }
+  .wg-member img, .wg-member .avatar { width:36px; height:36px; border-radius:50%; object-fit:cover; flex:none; }
+  .wg-member-body { display:flex; flex-direction:column; flex:1; min-width:0; }
+  .wg-member-name { font-weight:650; color:var(--ink); }
+  .wg-member-name:hover { color:var(--green-700); text-decoration:underline; }
+  .wg-member-meta { font-size:13px; color:var(--muted); overflow-wrap:anywhere; }
+  /* Quiet, like the text around them: dev's base rule underlines a bare link (#440). */
+  .wg-member-meta a { color:inherit; text-decoration:none; }
+  .wg-member-meta a:hover { text-decoration:underline; }
+  .wg-changes { display:grid; gap:4px; padding:12px 18px; border-top:1px solid var(--border); font-size:13.5px; }
+  .wg-changes a { font-weight:600; }
+  .quick .wg-link-text { display:flex; flex-direction:column; flex:1; min-width:0; }
+  .wg-link-note { font-size:12.5px; font-weight:500; color:var(--muted); }
+  .wg-others-card { margin-top:20px; }
+  .wg-others { display:flex; flex-wrap:wrap; gap:8px; }
+  .wg-others .chip { text-decoration:none; }
 }

@@ -1,0 +1,112 @@
+{% extends "base.html" %}
+{% block title %}{% if workgroup %}{{ workgroup.name }}{% else %}Din embedsgruppe{% endif %} - GAHK Intern{% endblock %}
+{% block content %}
+  <div class="page-head">
+    <div>
+      <div class="eyebrow">{% if own %}Din embedsgruppe{% else %}Embedsgruppe{% endif %}</div>
+      <h1>{% if workgroup %}{{ workgroup.name }}{% else %}Din embedsgruppe{% endif %}</h1>
+    </div>
+    {% if workgroup %}
+      <div class="head-actions">
+        <a class="btn btn-secondary wg-wiki" href="{{ wiki_url }}" target="_blank" rel="noopener">
+          <svg aria-hidden="true"><use href="#i-book"></use></svg>Gruppens side i wikien</a>
+      </div>
+    {% endif %}
+  </div>
+
+  {% if not workgroup %}
+    <div class="card card-pad">
+      <p>Du er ikke i en embedsgruppe i {{ month|date:"F Y" }}. Indstillingen sætter embedsgrupperne på månedens alumneliste.</p>
+    </div>
+  {% else %}
+    <div class="glance">
+      <span class="g"><span class="gk">Måned</span> <b>{{ month|date:"F Y" }}</b></span>
+      <span class="g"><span class="gk">Medlemmer</span> <b>{{ members|length }}</b></span>
+    </div>
+
+    <div class="grid2">
+      <div class="card-flat">
+        <div class="card-head"><h2>Medlemmer</h2></div>
+        <ul class="wg-members">
+          {% for m in members %}
+            <li class="wg-member">
+              {% if m.resident.profile_picture %}
+                <img src="{{ m.resident.avatar_url }}" alt="">
+              {% else %}
+                <span class="avatar" aria-hidden="true">{{ m.resident.first_name|slice:":1" }}{{ m.resident.last_name|slice:":1" }}</span>
+              {% endif %}
+              <span class="wg-member-body">
+                <a class="wg-member-name" href="{% url 'resident_profile' m.resident.pk %}">{{ m.resident.full_name }}</a>
+                <span class="wg-member-meta">
+                  Værelse {{ m.room.number|stringformat:"03d" }}
+                  {% if m.resident.phone %} · <a href="tel:{{ m.resident.phone }}">{{ m.resident.phone }}</a>{% endif %}
+                  · <a href="mailto:{{ m.resident.email }}">{{ m.resident.email }}</a>
+                </span>
+              </span>
+              {% if m.resident_id == user.pk %}<span class="chip chip-quiet">Dig</span>{% endif %}
+            </li>
+          {% empty %}
+            <li class="wg-member muted">Ingen er i gruppen i {{ month|date:"F" }}.</li>
+          {% endfor %}
+        </ul>
+        {% if next_month %}
+          <div class="wg-changes">
+            <b>Fra {{ next_month.month|date:"F" }}</b>
+            {% if next_month.joining %}<div>Kommer med: {% for r in next_month.joining %}<a href="{% url 'resident_profile' r.pk %}">{{ r.full_name }}</a>{% if not forloop.last %}, {% endif %}{% endfor %}</div>{% endif %}
+            {% if next_month.leaving %}<div>Stopper: {% for r in next_month.leaving %}<a href="{% url 'resident_profile' r.pk %}">{{ r.full_name }}</a>{% if not forloop.last %}, {% endif %}{% endfor %}</div>{% endif %}
+          </div>
+        {% endif %}
+      </div>
+
+      <div class="wg-side">
+        {% if drive is not None %}
+          <div class="card-flat">
+            <div class="card-head"><h2>Drive</h2></div>
+            <div class="card-pad">
+              {% if drive %}
+                <div class="quick">
+                  {% for row in drive %}
+                    <a href="{% url 'drive:folder' row.folder.uuid %}">
+                      <svg aria-hidden="true"><use href="#i-folder"></use></svg>
+                      <span class="wg-link-text">{{ row.folder.name }}<span class="wg-link-note">{{ row.note }}</span></span>
+                      {% if row.writable %}<span class="chip">Du kan redigere</span>{% else %}<span class="chip chip-quiet">Kun læse</span>{% endif %}
+                    </a>
+                  {% endfor %}
+                </div>
+              {% else %}
+                <p class="muted">Du har ikke adgang til gruppens mapper.</p>
+              {% endif %}
+            </div>
+          </div>
+        {% endif %}
+
+        {% if links %}
+          <div class="card-flat">
+            <div class="card-head"><h2>Gruppens sider</h2></div>
+            <div class="card-pad">
+              <div class="quick">
+                {% for link in links %}
+                  <a href="{{ link.url }}">
+                    <svg aria-hidden="true"><use href="#i-{{ link.icon }}"></use></svg>
+                    <span class="wg-link-text">{{ link.label }}<span class="wg-link-note">{{ link.note }}</span></span>
+                  </a>
+                {% endfor %}
+              </div>
+            </div>
+          </div>
+        {% endif %}
+      </div>
+    </div>
+  {% endif %}
+
+  {% if others %}
+    <div class="card-flat wg-others-card">
+      <div class="card-head"><h2>{% if workgroup %}Andre embedsgrupper{% else %}Embedsgrupper{% endif %}</h2></div>
+      <div class="card-pad wg-others">
+        {% for group in others %}
+          <a class="chip chip-quiet" href="{% url 'workgroups:detail' group.pk %}">{{ group.name }} · {{ group.members }}</a>
+        {% endfor %}
+      </div>
+    </div>
+  {% endif %}
+{% endblock %}
