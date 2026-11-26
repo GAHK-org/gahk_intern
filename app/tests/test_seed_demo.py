@@ -111,6 +111,39 @@ def test_seed_demo_fills_the_board_including_the_two_awkward_cases() -> None:
 
 
 @pytest.mark.django_db
+def test_seed_demo_gives_the_gahkflix_player_everything_it_offers() -> None:
+    """The player's menus only show what a film has: subtitles from the file, a second quality from a
+    Full HD original. The demo has both, and a film with neither for their empty states."""
+    from gahkflix import services
+    from gahkflix.models import Video
+    from gahkflix.views import _subtitle_tracks
+
+    call_command("seed_demo", "--fresh", "--force", "--residents", "12", verbosity=0)
+
+    def menu(title: str) -> list[tuple[str, bool, bool]]:
+        video = Video.objects.get(title=title)
+        return [(t["label"], t["default"], t["forced"]) for t in _subtitle_tracks(video.file, video)]
+
+    assert menu("Pilot") == menu("Opvasken") == [("Dansk", True, False), ("Engelsk", False, False)]
+    assert menu("Revy") == [
+        ("Dansk", True, False),
+        ("Engelsk (Kommentarer)", False, False),
+        ("Dansk (Skilte) – kun tvungne", False, True),
+    ]
+    assert menu("Julefrokost") == []
+    revy = Video.objects.get(title="Revy")
+    assert revy.file.qualities == ["fullhd", "hd"]
+    assert all(Video.objects.get(title=t).file.qualities == ["hd"] for t in ("Pilot", "Julefrokost"))
+    upright = Video.objects.get(title="Julefrokost").file
+    assert upright.height > upright.width
+    # Long enough for `Næste afsnit` (the last 20 seconds) to come after the start, and to resume in.
+    assert Video.objects.get(title="Pilot").duration > 20
+    beboer = Resident.objects.get(email="beboer@gahk.dk")
+    assert services.continue_watching(beboer) == [revy]
+    assert services.resume_position(revy, beboer) == 12.0
+
+
+@pytest.mark.django_db
 def test_seed_demo_leaves_one_tombstone_with_its_replies_intact() -> None:
     """Awkward to reach by hand — deleting a freshly posted message takes the silent path — so the
     seeder makes one, with replies."""
