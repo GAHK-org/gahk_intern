@@ -1,5 +1,5 @@
 """Roles from the facts: stages from the alumneliste, an embedsgruppe's role from the list in effect,
-grants with dates, and what they open. Marked real_stages: an account never on a list has no access
+grants with dates, the kitchen staff, and what they open. Marked real_stages: an account never on a list has no access
 here, as in production."""
 
 import datetime
@@ -7,6 +7,7 @@ from collections.abc import Callable
 from itertools import count
 
 import pytest
+from django.core import mail
 from django.test import Client
 
 from access.api import ADMINISTRATOR, KITCHEN, RESIDENT, Stage, holders, real_roles, roles_of_many, sync
@@ -258,3 +259,70 @@ def test_the_role_page_shows_a_list_role_it_cannot_remove(
     admin = _client(make_resident(email="admin@gahk.dk", is_superuser=True))
     page = admin.get("/admin/roles").content.decode()
     assert 'title="Fra alumnelisten">ak<' in page
+
+
+# ---- the kitchen staff and the Adgang page -------------------------------------------------------------
+
+
+def _with_role(make_resident: Callable[..., Account], email: str, role: str) -> Client:
+    return _client(_on_list(make_resident(email=email, roles=(role,)), 0))
+
+
+def test_the_kitchen_staff_are_people_with_no_resident(house: dict[str, Account]) -> None:
+    kitchen = house["kitchen"]
+    assert kitchen.person is not None and kitchen.house is None
+    assert real_roles(kitchen) == {KITCHEN}
+
+
+def test_koekkengruppen_adds_one_of_the_kitchen_staff(
+    house: dict[str, Account], make_resident: Callable[..., Account]
+) -> None:
+    c = _with_role(make_resident, "kg@gahk.dk", Role.KOKKENGRUPPE)
+    assert "Køkkenpersonale" in c.get("/access/").content.decode()
+    c.post("/access/kitchen-staff/add", {"first_name": "Mette", "last_name": "Kok", "email": "mette@kok.dk"})
+    mette = Account.objects.get(email="mette@kok.dk")
+    assert real_roles(mette) == {KITCHEN}
+    assert mette.person.first_name == "Mette" and mette.house is None
+    assert not mette.has_usable_password()
+    assert mail.outbox[-1].to == ["mette@kok.dk"]
+    assert _client(mette).get("/reparationer/").status_code == 200
+
+
+def test_koekkengruppen_ends_the_kitchens_access_but_no_other(
+    house: dict[str, Account], make_resident: Callable[..., Account]
+) -> None:
+    c = _with_role(make_resident, "kg@gahk.dk", Role.KOKKENGRUPPE)
+    kitchen = Grant.objects.get(account=house["kitchen"])
+    other = Grant.objects.create(
+        account=house["over_a_year"],
+        role=Role.REGNSKAB,
+        reason="Gør regnskabet færdigt",
+        starts_on=current_date() - datetime.timedelta(days=5),
+    )
+    assert c.post(f"/access/grants/{other.pk}/end").status_code == 403
+    c.post(f"/access/grants/{kitchen.pk}/end")
+    assert real_roles(_fresh(house["kitchen"])) == frozenset()
+    assert "Givet i hånden" not in c.get("/access/").content.decode()
+
+
+def test_the_indstilling_sees_and_ends_grants_but_not_administrator(
+    house: dict[str, Account], make_resident: Callable[..., Account]
+) -> None:
+    c = _with_role(make_resident, "ind@gahk.dk", Role.INDSTILLING)
+    gone = house["over_a_year"]
+    other = Grant.objects.create(
+        account=gone, role=Role.REGNSKAB, reason="Gør regnskabet færdigt", starts_on=current_date()
+    )
+    admin = Grant.objects.create(account=gone, role=ADMINISTRATOR, reason="Netværk", starts_on=current_date())
+    page = c.get("/access/").content.decode()
+    assert "Gør regnskabet færdigt" in page and "Netværk" not in page
+    assert c.post(f"/access/grants/{admin.pk}/end").status_code == 403
+    c.post(f"/access/grants/{other.pk}/end")
+    assert not Grant.objects.filter(pk=other.pk).exists()  # began today: removed, not ended
+    assert Role.REGNSKAB not in real_roles(_fresh(gone))
+
+
+def test_a_plain_resident_has_no_adgang_page(house: dict[str, Account]) -> None:
+    c = _client(house["resident"])
+    assert c.get("/access/").status_code == 403
+    assert c.post("/access/kitchen-staff/add", {}).status_code == 403

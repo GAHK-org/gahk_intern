@@ -26,7 +26,6 @@ trail.register(
         "facebook_link": "Facebook",
         "instagram_handle": "Instagram",
         "is_active": "Aktiv",
-        "is_kitchen": "Køkkenkonto",
         "date_joined": "Oprettet",
     },
 )

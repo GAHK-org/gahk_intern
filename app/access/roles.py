@@ -3,12 +3,12 @@ step with the facts by a sync.
 
 An account's roles:
 
-  * the kitchen staff's account: KITCHEN, and nothing else;
   * its stage, from its resident's months on the alumneliste (access.stages): moving in, resident,
     moved out …;
   * the role of its embedsgruppe on the list in effect (residents.models.active_period,
     WORKGROUP_ROLE);
-  * every role granted to it that holds today (access.models.Grant): administrator, the exceptions;
+  * every role granted to it that holds today (access.models.Grant): administrator, the kitchen
+    staff's KITCHEN, the exceptions;
   * a superuser: ADMINISTRATOR, and RESIDENT whatever its months say.
 
 An account with none of these has no access at all, and the front page says so.
@@ -55,7 +55,7 @@ def combine(
     if superuser:
         roles.add(ADMINISTRATOR)
         stage = Stage.RESIDENT
-    elif stage is None:
+    elif stage is None and KITCHEN not in roles:  # the kitchen staff are no residents
         stage = stages.NEVER_LISTED
     if stage is not None:
         roles.add(stage.value)
@@ -77,13 +77,11 @@ def roles_of_many(account_ids: Iterable[int]) -> dict[int, frozenset[str]]:
     for pk, role in Grant.objects.active().filter(account_id__in=ids).values_list("account_id", "role"):
         granted.setdefault(pk, set()).add(role)
     out: dict[int, frozenset[str]] = {}
-    for pk, active, kitchen, superuser in Account.objects.filter(pk__in=ids).values_list(
-        "pk", "is_active", "is_kitchen", "is_superuser"
+    for pk, active, superuser in Account.objects.filter(pk__in=ids).values_list(
+        "pk", "is_active", "is_superuser"
     ):
         if not active:
             out[pk] = frozenset()
-        elif kitchen:
-            out[pk] = frozenset({KITCHEN})
         else:
             out[pk] = combine(stage.get(pk), listed.get(pk, ()), granted.get(pk, ()), superuser)
     return out
@@ -216,4 +214,5 @@ def holders(permission: str) -> QuerySet[Account]:
 
 def holding(roles: Iterable[str]) -> QuerySet[Account]:
     """The active accounts in any of these roles' groups."""
-    return Account.objects.filter(is_active=True, groups__name__in=list(roles)).distinct()
+    held = Account.groups.through.objects.filter(group__name__in=list(roles)).values("account_id")
+    return Account.objects.filter(is_active=True, pk__in=held)

@@ -19,6 +19,7 @@ from photo_album.views import serve_media as serve_photo_album_media
 urlpatterns = [
     path("django-admin/", in_feature(Feature.DJANGO_ADMIN, admin.site.urls)),
     path("optagelse/", in_feature(Feature.ADMISSIONS, include("admissions.urls"))),
+    path("access/", in_feature(Feature.ACCESS, include("access.urls"))),
     path(
         "admin/", in_feature(Feature.SITE_ADMIN, include("residents.urls_admin"))
     ),  # site-admin tools (roles, worker jobs, …)

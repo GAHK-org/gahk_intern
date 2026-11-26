@@ -54,7 +54,8 @@ An account holds a set of roles:
   last day. Administrator is always given this way; the others when the list says nothing or the
   wrong thing (someone finishing their group's accounts after moving out).
 - **Administrator and Beboer** for every superuser.
-- **Køkkenet**: the kitchen staff, and nothing else.
+- **Køkkenet**: the kitchen staff, by a grant. Each has an account of their own and a person, but no
+  resident: they do not live here.
 
 An account with none of these has no access at all; the front page says so.
 
@@ -70,6 +71,9 @@ An account with none of these has no access at all; the front page says so.
 - **Over a year out**: Stamtræ.
 - **Køkkenet**: use of Den Hurtige, Opslagstavlen, Reparationer and notifications. Inside them the
   kitchen sees only the Køkkenet channel and its own opslag.
+- **Køkkengruppen**: adds and ends the kitchen staff's accounts on the Adgang page.
+- **Indstillingen** also: the Adgang page, where it sees and ends roles given by hand (not
+  administrator).
 - **Indstillingen**: manages Optagelse, Alumneliste, Søg værelse and Hjemmeside.
 - **Inspektionen**: manages Den Hurtige, Opslagstavlen, Reparationer and Hjemmeside.
 - **AK**: manages AK and Værelsestjek.
@@ -96,6 +100,9 @@ Someone with several roles gets the highest grade any of them gives. No role tak
   Begivenheder.
 - The role page (/admin/roles) gives a role from today until removed; removing it ends it
   yesterday. A role from the list shows there but is changed on the list.
+- The Adgang page (/access/): Køkkengruppen and Indstillingen add one of the kitchen staff (a person,
+  an account, the kitchen role from today, and a mail with a link to set the password) and end their
+  access. The old shared kitchen login became a grant and works until someone ends it there.
 - Django admin lets in superusers and holders of an administrator grant, once a second
   administrator has approved it.
 - An account's groups follow the facts: synced when a grant is given or ended, an account is saved
@@ -112,7 +119,7 @@ Someone with several roles gets the highest grade any of them gives. No role tak
 - **A page in no feature is closed to everyone.** A test fails while one exists, so a new page is
   only opened by someone deciding whose it is.
 - **Django's groups and permissions, kept in step by a sync.** Roles come from facts (the month's
-  list, the kitchen flag), so groups are written from them rather than edited by hand; a nightly and
+  list, the grants), so groups are written from them rather than edited by hand; a nightly and
   on-change sync is simpler than a permission system of our own. The table stays in code and is
   written into the groups at every migrate.
 - **"Se side som" answers from the previewed roles.** Account.has_perm reads the preview's

@@ -244,12 +244,8 @@ class Account(AbstractBaseUser, PermissionsMixin):
     instagram_handle = models.CharField(max_length=50, blank=True)
     # django auth
     is_active = models.BooleanField(default=True)
-    is_staff = models.BooleanField(
-        default=False
-    )  # = holds any role in the active period (set by ETL/signals)
-    # The shared kitchen-staff login: not a resident, sees only Den Hurtige's køkken channel,
-    # Reparationer and its own opslag (access.policy).
-    is_kitchen = models.BooleanField(default=False)
+    # Lets into Django admin: while the account has an administrator grant (residents.signals).
+    is_staff = models.BooleanField(default=False)
     date_joined = models.DateTimeField(default=timezone.now)
 
     objects = AccountManager()

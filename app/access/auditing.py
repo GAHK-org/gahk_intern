@@ -23,3 +23,10 @@ trail.register(
         "created_at": "Oprettet",
     },
 )
+
+trail.actions(
+    {
+        "access.grant.ended": "Afsluttede en rolle",
+        "access.kitchen_staff.added": "Oprettede køkkenpersonale",
+    }
+)
