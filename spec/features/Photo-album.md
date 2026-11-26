@@ -110,8 +110,11 @@ The photo album stores and presents photos and videos. Hereafter, "media" means 
 - `?media=<pk>` on an album page is a deep link: the grid opens at that item, the viewer opens on it, and the address follows the viewer as the reader browses.
 - On desktop, selecting media opens a modal with the high-definition variant, metadata in a right sidebar, an original-download action, and deletion where permitted. Previous/next arrows and keyboard arrow keys navigate without looping past either end.
 - On mobile, selecting media opens a full-screen viewer that shows only the media, its name, and capture date (or its approximate date, or the upload date, when it has none). A kebab menu contains metadata, original download, and deletion where permitted.
-- Mobile users swipe left/right to browse without looping and pinch to zoom images or videos between $1\times$ and $4\times$. Swiping is disabled while zoomed.
+- Mobile users swipe left/right to browse without looping and pinch to zoom images or videos between $1\times$ and $4\times$. The pinch zooms about the point between the fingers, and a zoomed item is dragged with one finger to look around it, never past its edges. A double-tap zooms an image to $2.5\times$ at that point, or back out. Swiping is disabled while zoomed: a sideways drag pans instead.
+- On desktop, the mouse wheel and a double-click zoom an image about the cursor, a drag pans a zoomed image, and `+`, `-` and `0` zoom in, out and back. A drag that ends outside the picture does not close the viewer.
+- Moving to another item resets the zoom.
 - Viewer details are fetched when an item is opened, not rendered into every grid tile.
+- The viewer opens on the stretched grid thumbnail and swaps in the high-definition image when it arrives. The details and high-definition images of the items either side are fetched ahead, so browsing lands straight on the high-definition image without showing the thumbnail first. Videos are not fetched ahead.
 
 ### View counts
 
