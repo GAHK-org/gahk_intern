@@ -54,6 +54,8 @@
                           <th scope="row">{{ change.label }}</th>
                           {% if change.redacted %}
                             <td colspan="2" class="muted">ændret (værdien gemmes ikke)</td>
+                          {% elif change.hidden %}
+                            <td colspan="2" class="muted">ændret (vises ikke her)</td>
                           {% else %}
                             <td class="audit-before">{% if change.before_long %}<details><summary>{{ change.before|truncatechars:60 }}</summary><div class="audit-long">{{ change.before }}</div></details>{% else %}{{ change.before }}{% endif %}</td>
                             <td>{% if change.after_long %}<details><summary>{{ change.after|truncatechars:60 }}</summary><div class="audit-long">{{ change.after }}</div></details>{% else %}{{ change.after }}{% endif %}</td>
