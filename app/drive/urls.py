@@ -10,6 +10,7 @@ from . import (
     views_shared,
     views_sharing,
     views_standing,
+    views_text,
 )
 
 app_name = "drive"
@@ -19,7 +20,8 @@ urlpatterns = [
     path("search/", views_search.search_page, name="search"),
     path("file/<uuid:uuid>/office", views_office.editor, name="office"),
     path("file/<uuid:uuid>/office/copy", views_office.convert, name="office_convert"),
-    path("folder/<uuid:uuid>/new-document", views_office.new_document, name="office_new"),
+    path("folder/<uuid:uuid>/new-file", views_text.new_file, name="new_file"),
+    path("file/<uuid:uuid>/edit", views_text.edit, name="edit_text"),
     # Called by the Document Server, not by a browser: no login, a signed token instead.
     path("office/fetch/<str:token>", views_office.fetch, name="office_fetch"),
     path("office/callback/<str:token>", views_office.callback, name="office_callback"),

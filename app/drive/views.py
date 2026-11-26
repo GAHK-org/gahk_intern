@@ -24,7 +24,7 @@ from photo_album import direct_upload
 from photo_album.forms import DirectUploadSignForm
 from residents.permissions import current_resident
 
-from . import access, locks, office, operations, preview, services, shared, sharing
+from . import access, locks, office, operations, preview, services, shared, sharing, text
 from .access import Level, Viewer
 from .models import MAX_UNLOCK_DAYS, ApprovalRequest, File, FileVersion, Folder, SharedMember, Space
 from .periods import period_containing
@@ -177,6 +177,7 @@ def folder(request: HttpRequest, uuid: UUID) -> HttpResponse:
     )
     rows = _rows(viewer, _sorted_children(current))
     can_change_files = viewer.can_change_file_in(current)
+    can_put = level >= Level.WRITE and viewer.can_upload_to(current)
     shared_folder = current.shared if current.kind == Folder.Kind.SHARED else None
     instead = _instead(viewer, current)
     shared_files, shared_folders = sharing.shared_ids(files, [row["folder"] for row in rows])
@@ -195,7 +196,7 @@ def folder(request: HttpRequest, uuid: UUID) -> HttpResponse:
             "group_shared": bool(sharing.shared_with_group(viewer, current)),
             **_share_context(viewer, folder=current),
             "files": files,
-            "can_write": level >= Level.WRITE and viewer.can_upload_to(current),
+            "can_write": can_put,
             "can_create_folder": viewer.can_create_in(current),
             "can_change_folder": viewer.can_change_folder(current),
             **_lock_context(viewer, current),
@@ -208,12 +209,10 @@ def folder(request: HttpRequest, uuid: UUID) -> HttpResponse:
             "can_change_files": can_change_files,
             "in_bin": operations.bin_count(viewer, current),
             "upload_config": {**_upload_config(current), "instead": instead},
-            # Shown to whoever may put files here, and switched off with a word on why while live
-            # editing is off or not answering.
-            "office_new": office.NEW if level >= Level.WRITE and viewer.can_upload_to(current) else {},
-            "office_state": office.state()
-            if level >= Level.WRITE and viewer.can_upload_to(current)
-            else None,
+            # `Ny fil`, for whoever may put files here (drive/text.py). Its office kinds are greyed
+            # out, with a word on why, while live editing is off or not answering.
+            "new_files": text.new_file_kinds() if can_put else [],
+            "office_state": office.state() if can_put else None,
             "instead": instead,
             "standing_item": current.standing if current.kind == Folder.Kind.STANDING else None,
             "space_root": current.kind in (Folder.Kind.COMMON_ROOT, Folder.Kind.GROUP),
@@ -263,7 +262,7 @@ def _instead(viewer: Viewer, folder: Folder) -> dict[str, object] | None:
         "beginUrl": reverse("drive:upload_begin", args=[current.uuid]),
         "directUrl": reverse("drive:upload_direct", args=[current.uuid]),
         "createUrl": reverse("drive:create_folder", args=[current.uuid]),
-        "officeUrl": reverse("drive:office_new", args=[current.uuid]),
+        "newFileUrl": reverse("drive:new_file", args=[current.uuid]),
     }
 
 
@@ -443,6 +442,7 @@ def file_page(request: HttpRequest, uuid: UUID) -> HttpResponse:
             "can_version": viewer.can_version(file),
             "can_copy": viewer.level(file.folder) >= Level.READ,
             "office": _office_context(viewer, file),
+            "text_edit": text.editable(file) and viewer.can_version(file),
             "move_query": f"file={file.uuid}",
             **_share_context(viewer, file=file),
         },
