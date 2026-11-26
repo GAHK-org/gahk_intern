@@ -216,6 +216,8 @@ erDiagram
         text body
         string background_image
         string description
+        string page_type
+        json fields
         datetime updated_at
         int updated_by_id FK
     }
@@ -269,6 +271,7 @@ erDiagram
         text body
         string background_image
         string description
+        json fields
         datetime created_at
         int created_by_id FK
         string note
@@ -1268,6 +1271,8 @@ erDiagram
         text body
         string background_image
         string description
+        string page_type
+        json fields
         datetime updated_at
         int updated_by_id FK
     }
@@ -1321,6 +1326,7 @@ erDiagram
         text body
         string background_image
         string description
+        json fields
         datetime created_at
         int created_by_id FK
         string note

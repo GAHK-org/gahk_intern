@@ -319,6 +319,39 @@ def test_seed_demo_leaves_no_mail_waiting_for_a_backend_that_really_sends(settin
 
 
 @pytest.mark.django_db
+def test_seed_demo_gives_the_admissions_page_its_texts_and_history() -> None:
+    """/optagelse is a typed page with every text filled in, and the history cms 0012 leaves on a real
+    database plus one edit: a version from before the texts (restoring it warns), and a change to an
+    HTML text and a plain one, which the history and the change log show per text."""
+    from django.test import Client
+    from django.urls import reverse
+
+    from cms.models import ContentChange, Page
+    from cms.page_types import page_type_of
+    from cms.services import restore_version
+
+    call_command("seed_demo", "--fresh", "--force", "--residents", "12", verbosity=0)
+    page = Page.objects.get(slug="optagelse")
+    oldest, migrated, edited = page.versions.order_by("created_at", "id")
+
+    assert page_type_of(page) is not None and page.body == ""
+    assert set(page.fields) == {f.name for f in page_type_of(page).fields} and all(page.fields.values())
+    assert not oldest.fields and oldest.body, "a version from before the page had texts"
+    assert migrated.fields != edited.fields == page.fields
+    change = ContentChange.objects.get(kind=ContentChange.Kind.PAGE, object_id=page.pk)
+    assert {"fields.criteria", "fields.quote"} <= set(change.changes)
+
+    editor = Resident.objects.get(email="formand@gahk.dk")
+    client = Client()
+    client.force_login(editor)
+    assert (
+        "Før siden fik faste felter"
+        in client.get(reverse("cms:page_history", args=[page.pk])).content.decode()
+    )
+    assert restore_version(page, oldest, editor).warnings, "restoring it leaves the texts, with a warning"
+
+
+@pytest.mark.django_db
 def test_seed_demo_fills_the_worker_jobs_page_in_every_state(client: Client) -> None:
     """No worker has run in a seeded database, and none on a Mac measures memory, so the page would
     be empty: every state it shows comes from the seed, through the page's own queries."""
