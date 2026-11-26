@@ -67,7 +67,8 @@ trail.register(
     private_name=True,
     private={"name"},
     # changed_by and changed_at are who and when, which the event says; name_key follows the name.
-    ignore={"name_key", "uuid", "changed_by", "changed_at"},
+    # editing_key and editing_at mark a live editing session, which the Document Server reports.
+    ignore={"name_key", "uuid", "changed_by", "changed_at", "editing_key", "editing_at"},
     labels={
         "folder": "Mappe",
         "name": "Navn",
@@ -97,6 +98,7 @@ trail.register(
         "created_by": "Lagt op af",
         "created_at": "Lagt op",
         "restored_from": "Gendannet fra version",
+        "editors": "Redigeret af",
     },
 )
 
@@ -252,5 +254,7 @@ trail.actions(
         "drive.share.stopped": "Stoppede en deling",
         "drive.standing.defined": "Oprettede stående mappe",
         "drive.standing.stopped": "Stoppede stående mappe",
+        "drive.file.edited": "Gemte en redigering",
+        "drive.file.edited_beside": "Gemte en redigering ved siden af (filen var låst)",
     }
 )

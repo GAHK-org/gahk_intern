@@ -49,6 +49,7 @@ from django.db import transaction
 from django.urls import reverse
 from django.utils import timezone
 
+from audit import trail
 from residents.models import Resident
 
 from . import history, services
@@ -370,7 +371,7 @@ def _new_file(
 ) -> File:
     actor = editors[0] if editors else None
     now = timezone.now()
-    file = File.objects.create(
+    file = File(
         folder=folder,
         name=services.free_name(folder, name),
         size=size,
@@ -379,11 +380,13 @@ def _new_file(
         changed_by=actor,
         changed_at=now,
     )
-    version = FileVersion.objects.create(
-        file=file, number=1, key=key, size=size, content_type=content_type, created_by=actor
-    )
-    version.editors.set(editors)
-    history.record(Event.Action.CREATED, actor=actor, file=file, name=file.name)
+    with trail.event("drive.file.edited_beside", subject=file, actor=actor, involve=[(folder, "folder")]):
+        file.save()
+        version = FileVersion.objects.create(
+            file=file, number=1, key=key, size=size, content_type=content_type, created_by=actor
+        )
+        version.editors.set(editors)
+        history.record(Event.Action.CREATED, actor=actor, file=file, name=file.name)
     return file
 
 

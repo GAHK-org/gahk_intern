@@ -238,21 +238,34 @@ def add_edited_version(
     file: File, *, key: str, size: int, content_type: str, editors: list[Resident]
 ) -> FileVersion:
     """The result of a live editing session (drive/office.py), listing everyone who edited in it."""
-    version = _new_version(
-        file, key=key, size=size, content_type=content_type, resident=editors[0] if editors else None
+    return _new_version(
+        file,
+        key=key,
+        size=size,
+        content_type=content_type,
+        resident=editors[0] if editors else None,
+        action="drive.file.edited",
+        editors=editors,
     )
-    version.editors.set(editors)
-    return version
 
 
 def _new_version(
-    file: File, *, key: str, size: int, content_type: str, resident: Resident | None
+    file: File,
+    *,
+    key: str,
+    size: int,
+    content_type: str,
+    resident: Resident | None,
+    action: str = "drive.file.version_uploaded",
+    editors: list[Resident] | None = None,
 ) -> FileVersion:
     number = (file.versions.order_by("-number").values_list("number", flat=True).first() or 0) + 1
-    with trail.event("drive.file.version_uploaded", subject=file, actor=resident):
+    with trail.event(action, subject=file, actor=resident):
         version = FileVersion.objects.create(
             file=file, number=number, key=key, size=size, content_type=content_type, created_by=resident
         )
+        if editors:
+            version.editors.set(editors)
         file.size, file.content_type = size, content_type
         file.changed_by, file.changed_at = resident, timezone.now()
         file.save()
