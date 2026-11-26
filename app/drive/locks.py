@@ -16,11 +16,11 @@ a locked folder is unlocked by unlocking the folder, which leaves the folder's f
 from datetime import datetime, timedelta
 
 from django.core.exceptions import PermissionDenied, ValidationError
-from django.db import transaction
 from django.db.models import Q, QuerySet
 from django.urls import reverse
 from django.utils import timezone
 
+from audit import trail
 from notifications import categories
 from notifications import services as notifications
 from residents.models import Resident
@@ -53,21 +53,21 @@ def _lock(target: Target, actor: Resident | None, now: datetime) -> None:
     history.record(Event.Action.LOCKED, actor=actor, name=target.name, automatic=actor is None, **kind)
 
 
-@transaction.atomic
 def lock_file(viewer: Viewer, file: File, actor: Resident) -> None:
     """By hand. Also ends an unlock early."""
     if file.deleted_at is not None or not viewer.can_change_file(file):
         raise PermissionDenied
-    _lock(file, actor, timezone.now())
+    with trail.event("drive.file.locked", subject=file, actor=actor):
+        _lock(file, actor, timezone.now())
 
 
-@transaction.atomic
 def lock_folder(viewer: Viewer, folder: Folder, actor: Resident) -> None:
     if folder.is_system or folder.deleted_at is not None or folder.lock_active():
         raise PermissionDenied
     if not viewer.may_write(folder) or viewer.lock_holder(folder) is not None:
         raise PermissionDenied
-    _lock(folder, actor, timezone.now())
+    with trail.event("drive.folder.locked", subject=folder, actor=actor):
+        _lock(folder, actor, timezone.now())
 
 
 def auto_lock(now: datetime | None = None) -> tuple[int, int]:
@@ -75,7 +75,7 @@ def auto_lock(now: datetime | None = None) -> tuple[int, int]:
     now = now or timezone.now()
     cutoff = now - timedelta(days=LOCK_AFTER_DAYS)
     files = 0
-    with transaction.atomic():
+    with trail.event("drive.items.auto_locked", actor=None, only_if_changed=True):
         for file in File.objects.filter(locked_at__isnull=True, deleted_at__isnull=True).exclude(
             versions__created_at__gte=cutoff
         ):
@@ -111,8 +111,16 @@ def _pending(**target: object) -> bool:
     return ApprovalRequest.objects.filter(state=ApprovalRequest.State.PENDING, **target).exists()
 
 
-@transaction.atomic
 def request_unlock(
+    viewer: Viewer, target: Target, days: int, reason: str, actor: Resident
+) -> ApprovalRequest:
+    with trail.event("drive.unlock.requested", actor=actor, involve=[(target, "target")]) as event:
+        request = _request_unlock(viewer, target, days, reason, actor)
+        event.involve(request, "subject")
+        return request
+
+
+def _request_unlock(
     viewer: Viewer, target: Target, days: int, reason: str, actor: Resident
 ) -> ApprovalRequest:
     if not target.lock_active() or target.deleted_at is not None:
@@ -143,11 +151,19 @@ def request_unlock(
     return request
 
 
-@transaction.atomic
 def request_purge(
     viewer: Viewer, file: File, number: int | None, reason: str, actor: Resident
 ) -> ApprovalRequest:
     """`number`: one old version of a file; None: a file in the bin, with all its versions."""
+    with trail.event("drive.purge.requested", actor=actor, involve=[(file, "target")]) as event:
+        request = _request_purge(viewer, file, number, reason, actor)
+        event.involve(request, "subject")
+        return request
+
+
+def _request_purge(
+    viewer: Viewer, file: File, number: int | None, reason: str, actor: Resident
+) -> ApprovalRequest:
     if number is None:
         if file.deleted_at is None:
             raise ValidationError("Kun en fil i papirkurven kan slettes permanent.")
@@ -228,8 +244,15 @@ def _purge(request: ApprovalRequest, approver: Resident) -> None:
     services.drop_unreferenced({key})
 
 
-@transaction.atomic
 def decide(viewer: Viewer, request: ApprovalRequest, *, approve: bool, reason: str, actor: Resident) -> None:
+    action = f"drive.{request.kind}.{'approved' if approve else 'rejected'}"
+    with trail.event(
+        action, subject=request, actor=actor, involve=[(request.file or request.folder, "target")]
+    ):
+        _decide(viewer, request, approve=approve, reason=reason, actor=actor)
+
+
+def _decide(viewer: Viewer, request: ApprovalRequest, *, approve: bool, reason: str, actor: Resident) -> None:
     request = ApprovalRequest.objects.select_for_update().get(pk=request.pk)
     if not (viewer.moderates(request.shared_id) if request.shared_id else viewer.oversees):
         raise PermissionDenied

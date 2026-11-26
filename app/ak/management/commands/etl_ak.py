@@ -13,6 +13,7 @@ from django.db import transaction
 from django.utils import timezone
 
 from ak.models import AkEntry
+from audit import trail
 from core.etl import epoch_to_dt, fetch_all, resident_id_remap
 
 
@@ -20,6 +21,11 @@ class Command(BaseCommand):
     help = "Migrate AK krydser into the ledger from the legacy DB."
 
     @transaction.atomic
+    def execute(self, *args: object, **options: object) -> str | None:
+        # Loading old data (or demo data) is nobody's action: not one audit event per row.
+        with trail.unaudited():
+            return super().execute(*args, **options)
+
     def handle(self, *args, **opts) -> None:  # noqa: ANN002, ANN003
         from residents.models import Resident
 
