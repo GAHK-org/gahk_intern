@@ -373,7 +373,7 @@ def test_no_film_widget_for_a_reader_gahkflix_keeps_out(beboer: Resident, member
 
 
 def test_the_kitchen_account_gets_no_widgets(make_resident: Callable[..., Resident]) -> None:
-    """It can open neither the photo album nor GAHKFlix (core.middleware.KitchenAccountGate)."""
+    """It can open neither the photo album nor GAHKFlix (core.middleware.AccountKindGate)."""
     kitchen = make_resident(email="koekken@gahk.dk", is_kitchen=True)
     post(kitchen, f"Fra køkkenet\n\n{embed(album())}")
 
@@ -603,7 +603,7 @@ def test_the_composer_endpoints_are_for_residents(client: Client, method: str, u
     response = getattr(client, method)(BOARD + url)
 
     assert response.status_code == 302
-    assert response["Location"].startswith("/admin/login")
+    assert response["Location"].startswith("/login")
 
 
 def test_an_albums_widget_in_the_composer_offers_to_pick_its_pictures(
@@ -694,7 +694,8 @@ def test_no_pictures_to_pick_for_an_album_that_is_gone_or_for_the_kitchen(
     kitchen = make_resident(email="koekken@gahk.dk", is_kitchen=True)
 
     assert client_for(beboer).get(f"{BOARD}indlejr/album/{party.pk + 1}/billeder").status_code == 404
-    assert client_for(kitchen).get(f"{BOARD}indlejr/album/{party.pk}/billeder").status_code == 404
+    # Not opened to the kitchen kind at all (core.middleware.AccountKindGate).
+    assert client_for(kitchen).get(f"{BOARD}indlejr/album/{party.pk}/billeder").status_code == 403
 
 
 # --- "Del på opslagstavlen" -------------------------------------------------------------------------

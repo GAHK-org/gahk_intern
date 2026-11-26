@@ -10,7 +10,7 @@ from django.urls import reverse
 from audit import trail
 from residents.models import Resident
 
-LOGIN = "/admin/login"
+LOGIN = "/login"
 
 
 @pytest.mark.django_db
@@ -75,7 +75,7 @@ def test_a_stale_login_form_goes_back_to_a_fresh_one(caplog: pytest.LogCaptureFi
 
     assert response.status_code == 302
     assert response["Location"] == f"{LOGIN}?next=%2Fden-hurtige%2F"
-    assert "CSRF refused POST /admin/login" in caplog.text
+    assert "CSRF refused POST /login" in caplog.text
     assert "Siden var udløbet" in c.get(response["Location"]).content.decode()
 
 

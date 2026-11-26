@@ -179,3 +179,101 @@ def seed(residents: list[Resident], now: datetime, rng: random.Random) -> int:
             defaults={"in_app": True, "push": False, "vibrate": False},
         )
     return len(rows)
+
+
+def seed_kitchen(kitchen: Resident, residents: list[Resident], now: datetime) -> int:
+    """The kitchen account's bell: one row in each category it can be sent (KITCHEN_CATEGORIES), linked
+    to the Køkkenet posts and opslag seeded for it, plus the same Kritisk broadcast every login gets.
+    Its settings page lists only these categories, so this is also what that page is about."""
+    from den_hurtige import channels
+    from den_hurtige.models import QuickPost
+    from opslagstavle.models import Notice
+
+    if len(residents) < 5:
+        return 0
+    kitchen_posts = QuickPost.objects.filter(channel=channels.KITCHEN_CHANNEL)
+    own_post = kitchen_posts.filter(author=kitchen, comments__isnull=False).first()
+    their_post = kitchen_posts.exclude(author=kitchen).first()
+    notice = Notice.objects.filter(author=kitchen, comments__isnull=False).first()
+    channel_url = channels.BY_SLUG[channels.KITCHEN_CHANNEL].url
+    own_url = f"{channel_url}?traad={own_post.pk}" if own_post else channel_url
+    their_url = f"{channel_url}?traad={their_post.pk}" if their_post else channel_url
+    notice_url = reverse("opslagstavle:detail", args=[notice.pk]) if notice else reverse("opslagstavle:board")
+    a, b, c = residents[2], residents[3], residents[4]
+    specs = [
+        _Row(
+            categories.SYSTEM,
+            Importance.KRITISK,
+            "Vandet lukkes torsdag kl. 9-12",
+            "VVS'eren skifter stigrør i opgang B. Fyld en kande inden.",
+            channel_url,
+            timedelta(minutes=25),
+        ),
+        _Row(
+            categories.chat_room_key(channels.KITCHEN_CHANNEL),
+            Importance.NORMAL,
+            residents[1].full_name,
+            their_post.content[:60] if their_post else "",
+            their_url,
+            timedelta(minutes=30),
+        ),
+        _Row(
+            categories.CHAT_REPLIES,
+            Importance.NORMAL,
+            f"{a.first_name} svarede på din besked",
+            "Kan man stadig nå at bestille den vegetariske?",
+            own_url,
+            timedelta(hours=1, minutes=55),
+            group_key="chat.replies:demo-kitchen",
+            actors=(a,),
+        ),
+        _Row(
+            categories.CHAT_LIKES,
+            Importance.LAV,
+            "3 personer reagerede på din besked",
+            f"👍 {own_post.content[:60]}" if own_post else "👍",
+            own_url,
+            timedelta(hours=1),
+            group_key="chat.likes:demo-kitchen",
+            actors=(b, c, residents[5] if len(residents) > 5 else a),
+        ),
+        _Row(
+            categories.POSTS_REPLIES,
+            Importance.NORMAL,
+            f"{residents[1].first_name} og {a.first_name} kommenterede",
+            "Kan vi låne køkkenet til en julefrokost?",
+            notice_url,
+            timedelta(hours=19),
+            group_key="posts.replies:demo-kitchen",
+            actors=(residents[1], a),
+            seen=True,
+        ),
+        _Row(
+            categories.GENERAL,
+            Importance.NORMAL,
+            "Husmøde i næste uge",
+            "Dagsordenen ligger på opslagstavlen.",
+            channel_url,
+            timedelta(days=3),
+            seen=True,
+        ),
+    ]
+    rows = [
+        Notification(
+            recipient=kitchen,
+            category=spec.category,
+            importance=spec.importance,
+            title=spec.title,
+            body=spec.body,
+            url=spec.url,
+            group_key=spec.group_key,
+            actors=[{"id": r.pk, "name": r.full_name} for r in spec.actors],
+            created_at=now - spec.age,
+            updated_at=now - spec.age,
+            expires_at=now + timedelta(days=7),
+            seen_at=now - spec.age + timedelta(minutes=10) if spec.seen else None,
+        )
+        for spec in specs
+    ]
+    Notification.objects.bulk_create(rows)
+    return len(rows)

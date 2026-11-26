@@ -310,7 +310,7 @@ def _passwords(cast: _Cast, now: datetime) -> list[Moment]:
             _new_password(oel, "auth.password_reset.completed", oel),
             oel,
             PHONES[1],
-            "/admin/reset/done",
+            reverse("password_reset_complete"),
         ),
     ]
 

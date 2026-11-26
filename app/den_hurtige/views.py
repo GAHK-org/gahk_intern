@@ -42,7 +42,7 @@ from core.reactions import CREATED, apply_toggle, reaction_rows
 from core.uploads import attached_image
 from notifications.categories import chat_room_key
 from notifications.models import NotificationPreference
-from residents.permissions import current_resident, effective_roles
+from residents.permissions import AccountKind, current_resident, effective_roles, open_to
 
 from . import channels, live, services
 from .access import access_required, can_moderate, is_limited, request_allowed
@@ -275,6 +275,7 @@ def _requested_thread_pk(request: HttpRequest) -> int | None:
     return int(raw)
 
 
+@open_to(AccountKind.KITCHEN)
 @access_required
 def feed(request: HttpRequest, channel: str | None = None) -> HttpResponse:
     resolved = _channel_or_404(request, channel)
@@ -314,6 +315,7 @@ def feed(request: HttpRequest, channel: str | None = None) -> HttpResponse:
     )
 
 
+@open_to(AccountKind.KITCHEN)
 def feed_items(request: HttpRequest) -> HttpResponse:
     """Just the post list, for the 20-second poll that keeps the feed live.
 
@@ -343,6 +345,7 @@ def feed_items(request: HttpRequest) -> HttpResponse:
     )
 
 
+@open_to(AccountKind.KITCHEN)
 def channel_menu(request: HttpRequest) -> HttpResponse:
     """The channel picker's menu alone, with fresh live-post counts.
 
@@ -496,6 +499,7 @@ def _archive_context(request: HttpRequest, channel: Channel) -> dict[str, object
     }
 
 
+@open_to(AccountKind.KITCHEN)
 def archive(request: HttpRequest) -> HttpResponseBase:
     """One chunk of the archive: prepended into the feed by htmx, or a standalone page.
 
@@ -530,6 +534,7 @@ def _archive_page(request: HttpRequest) -> HttpResponse:
     return render(request, "den_hurtige/archive.html", _archive_context(request, channel))
 
 
+@open_to(AccountKind.KITCHEN)
 def thread(request: HttpRequest, pk: int) -> HttpResponseBase:
     """One message and its replies: the side panel, or a standalone page without htmx.
 
@@ -664,6 +669,7 @@ def _posting_channel(request: HttpRequest) -> Channel:
     return channel
 
 
+@open_to(AccountKind.KITCHEN)
 @require_POST
 @access_required
 def create_post(request: HttpRequest) -> HttpResponseRedirect:
@@ -730,6 +736,7 @@ def _comment_response(request: HttpRequest, post: QuickPost, back: str) -> HttpR
     return redirect("den_hurtige:thread", pk=post.pk)
 
 
+@open_to(AccountKind.KITCHEN)
 @require_POST
 @access_required
 def create_comment(request: HttpRequest, pk: int) -> HttpResponse:
@@ -782,6 +789,7 @@ def create_comment(request: HttpRequest, pk: int) -> HttpResponse:
     return _comment_response(request, post, back)
 
 
+@open_to(AccountKind.KITCHEN)
 @require_POST
 @access_required
 def toggle_reaction(request: HttpRequest, pk: int) -> HttpResponse:
@@ -840,6 +848,7 @@ def _reaction_row(
     )
 
 
+@open_to(AccountKind.KITCHEN)
 @require_POST
 @access_required
 def delete_post(request: HttpRequest, pk: int) -> HttpResponseRedirect:
