@@ -143,6 +143,14 @@
     </form>
   {% endif %}
 
+  {% if readme %}
+    {% comment %} The folder's README.md (views._readme): rendered, above the list it is also in. {% endcomment %}
+    <section class="drive-readme mb-4" aria-labelledby="drive-readme-name">
+      <p id="drive-readme-name" class="drive-readme-name"><a href="{% url 'drive:file' readme.file.uuid %}">{{ readme.file.name }}</a>{% if readme.text.truncated %} · kun den første MB vises{% endif %}</p>
+      <div class="prose-gahk drive-markdown">{{ readme.text.html }}</div>
+    </section>
+  {% endif %}
+
   {% if not rows and not files and not group_shared %}
     <p class="muted">{% if folder %}Mappen er tom.{% else %}Der er ingen mapper, du har adgang til.{% endif %}</p>
   {% endif %}

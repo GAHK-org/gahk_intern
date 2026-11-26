@@ -8,7 +8,8 @@ is the uploader's to choose. The kind decides the icon in the list and what the 
     every browser, and a 20 MB photo is not what a phone loads to look at it;
   * a PDF, a video, a sound: the browser's own viewer or player, on the stored bytes, served inline
     under a type chosen here;
-  * text: the first TEXT_BYTES, a CSV as a table and markdown rendered;
+  * text: the first TEXT_BYTES, a CSV as a table and markdown rendered - and a folder's README.md
+    rendered above its list (readme);
   * anything else - office files when live editing is off - is only downloaded.
 """
 
@@ -22,6 +23,7 @@ from pathlib import Path, PurePosixPath
 from uuid import uuid4
 
 from django.conf import settings
+from django.core.cache import cache
 from django.core.files import File as DjangoFile
 from django.db import transaction
 from django.utils import timezone
@@ -39,6 +41,9 @@ PREVIEW_PREFIX = "drive/previews/"
 # How much of a text file is shown, and how many rows of a CSV.
 TEXT_BYTES = 1024 * 1024
 CSV_ROWS = 2000
+# The file a folder shows above its list, compared as File.name_key compares names.
+README = "readme.md"
+README_CACHE_SECONDS = 24 * 3600
 # A build that failed this often is given up on: the image gets the icon, and is downloaded.
 MAX_ATTEMPTS = 3
 
@@ -306,3 +311,18 @@ def _table(source: str, *, truncated: bool, tabs: bool) -> tuple[list[list[str]]
             return rows, True
         rows.append(row)
     return rows, truncated
+
+
+def readme(version: FileVersion) -> Text | None:
+    """A folder's README.md, rendered for the top of its list. Kept in the cache by the bytes' key,
+    which never changes, so a visit to the folder does not fetch it from the bucket each time; None
+    while the bytes cannot be read (the file can still be opened and downloaded)."""
+    cache_key = f"drive:readme:{version.key}"
+    shown = cache.get(cache_key)
+    if shown is None:
+        try:
+            shown = text(version, README)
+        except OSError:
+            return None
+        cache.set(cache_key, shown, README_CACHE_SECONDS)
+    return shown

@@ -224,8 +224,19 @@ def folder(request: HttpRequest, uuid: UUID) -> HttpResponse:
             },
             "sort_links": _sort_links(sort, descending),
             "descending": descending,
+            "readme": _readme(viewer, files),
         },
     )
+
+
+def _readme(viewer: Viewer, files: list[File]) -> dict[str, object] | None:
+    """The folder's README.md, rendered above the list for whoever may open it."""
+    file = next((file for file in files if file.name_key == preview.README), None)
+    if file is None or viewer.file_level(file) < Level.READ:
+        return None
+    version = file.latest_version()
+    shown = preview.readme(version) if version else None
+    return {"file": file, "text": shown} if shown else None
 
 
 def _instead(viewer: Viewer, folder: Folder) -> dict[str, object] | None:
