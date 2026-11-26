@@ -95,6 +95,9 @@ erDiagram
         float progress
         string progress_step
         datetime progressed_at
+        string peak_memory
+        string peak_program
+        string peak_program_memory
     }
 
     core_PushDeliveryDay {
@@ -1447,6 +1450,9 @@ erDiagram
         float progress
         string progress_step
         datetime progressed_at
+        string peak_memory
+        string peak_program
+        string peak_program_memory
     }
 
     core_PushDeliveryDay {
