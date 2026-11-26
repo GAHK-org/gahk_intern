@@ -90,6 +90,9 @@ trail.register(
     "drive.request",
     name=lambda r: f"{r.get_kind_display()}: {r.name}",
     label="Anmodning",
+    # The item's name and path, and the reasons, which may say what is in it.
+    private_name=True,
+    private={"name", "where", "reason", "decision_reason"},
     ignore={"uuid"},
     labels={
         "kind": "Slags",
