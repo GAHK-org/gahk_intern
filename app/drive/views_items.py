@@ -144,6 +144,7 @@ def move(request: HttpRequest, uuid: UUID) -> HttpResponse:
         if op == MOVE and not context["problem"] and operations.changes_access(selection, at):
             context["access_before"] = operations.access_note(source)
             context["access_after"] = operations.access_note(at)
+            context["shares_ending"] = operations.ends_shares(selection, at)
     return _render(request, "drive/move.html", context)
 
 

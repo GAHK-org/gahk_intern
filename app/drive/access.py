@@ -29,6 +29,7 @@ from datetime import date
 from enum import IntEnum
 
 from django.conf import settings
+from django.db.models import Q
 from django.http import HttpRequest
 from django.utils import timezone
 
@@ -37,7 +38,7 @@ from core.rollout import Gate
 from residents.models import Residency, Resident, Role, RoleAssignment, active_period
 from residents.permissions import current_resident, has_active_role, request_has_role
 
-from .models import File, Folder, SharedFolder, SharedMember, Space
+from .models import File, Folder, Share, SharedFolder, SharedMember, Space
 from .periods import Period, period_containing
 
 # Where nothing is put directly: residents' things go in the timeless, period and year folders.
@@ -76,6 +77,36 @@ def _next_month(year: int, month: int) -> tuple[int, int]:
     return (year + 1, 1) if month == 12 else (year, month + 1)
 
 
+@dataclass(frozen=True)
+class Grant:
+    """One share, as access needs it: the item (a folder's path, or a file), the item's period, and
+    to whom - the resident (workgroup_id None) or a group."""
+
+    path: str
+    file_id: int | None
+    period_start: date | None
+    workgroup_id: int | None
+    can_edit: bool
+
+    @classmethod
+    def load(cls, resident_id: int, groups: set[int]) -> list["Grant"]:
+        rows = Share.objects.filter(Q(resident_id=resident_id) | Q(workgroup_id__in=groups)).select_related(
+            "folder", "file__folder"
+        )
+        grants = []
+        for share in rows:
+            if share.folder is not None and share.folder.deleted_at is None:
+                grants.append(
+                    cls(
+                        share.folder.path, None, share.folder.period_start, share.workgroup_id, share.can_edit
+                    )
+                )
+            elif share.file is not None and share.file.deleted_at is None:
+                period = share.file.folder.period_start
+                grants.append(cls("", share.file_id, period, share.workgroup_id, share.can_edit))
+        return grants
+
+
 @dataclass
 class Viewer:
     resident_id: int
@@ -89,6 +120,8 @@ class Viewer:
     shared_roles: dict[int, str] = field(default_factory=dict)
     # The archived Delte mapper, read by everyone.
     archived: set[int] = field(default_factory=set)
+    # What has been shared with the viewer, or with a group they have been in.
+    grants: list["Grant"] = field(default_factory=list)
     # folder id -> the folder whose lock covers it, per request.
     _locks: dict[int, Folder | None] = field(default_factory=dict, repr=False, compare=False)
 
@@ -147,6 +180,7 @@ class Viewer:
                 SharedMember.objects.filter(resident_id=resident_id).values_list("shared_id", "role")
             ),
             archived=set(SharedFolder.objects.filter(archived_at__isnull=False).values_list("pk", flat=True)),
+            grants=Grant.load(resident_id, set(months)),
         )
 
     def was_member(self, workgroup: int, period: Period) -> bool:
@@ -154,14 +188,60 @@ class Viewer:
         mine = self.months.get(workgroup, set())
         return any(month in mine for month in period.months())
 
-    def level(self, folder: Folder) -> Level:
+    def level(self, folder: Folder, *, shares: bool = True) -> Level:
+        """`shares=False`: the access table alone, without what has been shared with the viewer."""
         if not self.living:
             return Level.NONE
         if folder.space == Space.COMMON:
             return self._common(folder)
         if folder.space == Space.SHARED:
             return self._shared(folder)
-        return self._group(folder)
+        own = self._group(folder)
+        if not shares or own == Level.WRITE:
+            return own
+        via = [self._via(grant) for grant in self.grants if grant.path and folder.path.startswith(grant.path)]
+        return max([own, *via])
+
+    def file_level(self, file: File) -> Level:
+        """A file's folder's level, or more where the file itself is shared with the viewer."""
+        own = self.level(file.folder)
+        via = [self._via(grant) for grant in self.grants if grant.file_id == file.pk]
+        return max([own, *via]) if self.living else Level.NONE
+
+    def _via(self, grant: "Grant") -> Level:
+        """What a share gives: read, or write when it is an edit share and the item's period can
+        still be written. A group's share reaches only those its own matching folder lets in -
+        as members, never as overseers."""
+        current = period_containing(self.today)
+        open_period = grant.period_start is None or Period(grant.period_start) >= current.previous()
+        writes = grant.can_edit and open_period
+        if grant.workgroup_id is None:
+            return Level.WRITE if writes else Level.READ
+        theirs = Folder(
+            kind=Folder.Kind.FOLDER,
+            space=Space.GROUP,
+            workgroup_id=grant.workgroup_id,
+            period_start=grant.period_start,
+        )
+        recipient = self._group(theirs, oversight_counts=False)
+        if recipient < Level.READ:
+            return Level.NONE
+        return Level.WRITE if writes and recipient == Level.WRITE else Level.READ
+
+    def can_share(self, folder: Folder) -> bool:
+        """Share a file in `folder`, or `folder` itself: things in a group's space, by who can write
+        there by the access table - not by a share."""
+        return (
+            folder.space == Space.GROUP
+            and folder.kind not in _ROOTS
+            and self.level(folder, shares=False) >= Level.WRITE
+        )
+
+    def can_version(self, file: File) -> bool:
+        """Add a version: whoever may change the file, or anyone it is shared with to edit."""
+        if file.lock_active() or self.lock_holder(file.folder) is not None:
+            return False
+        return self.can_change_file_in(file.folder) or self.file_level(file) >= Level.WRITE
 
     def _shared(self, folder: Folder) -> Level:
         if folder.kind in (Folder.Kind.SHARED_ROOT, Folder.Kind.ARCHIVE_YEAR):
@@ -193,7 +273,8 @@ class Viewer:
         # The current year, the next once it has a folder, and the most recent previous one.
         return Level.WRITE if folder.period_start.year >= self.today.year - 1 else Level.READ
 
-    def _group(self, folder: Folder) -> Level:
+    def _group(self, folder: Folder, *, oversight_counts: bool = True) -> Level:
+        oversees = self.oversees and oversight_counts
         if folder.kind == Folder.Kind.GROUPS_ROOT:
             return Level.READ
         workgroup = folder.workgroup_id
@@ -203,11 +284,11 @@ class Viewer:
         if folder.kind == Folder.Kind.GROUP:
             # The way in to the periods: anyone who has ever been in the group, and the overseers.
             ever = workgroup in self.months
-            return Level.READ if ever or self.oversees else Level.NONE
+            return Level.READ if ever or oversees else Level.NONE
         if folder.period_start is None:  # Uden periode
             if workgroup in self.groups_now:
                 return Level.WRITE
-            return Level.READ if self.oversees else Level.NONE
+            return Level.READ if oversees else Level.NONE
 
         period = Period(folder.period_start)
         current = period_containing(self.today)
@@ -216,17 +297,17 @@ class Viewer:
         if period > current:
             # The next period, from LEAD before it begins: the group now and the group to come.
             mine = Level.WRITE if now or workgroup in self.groups_next else Level.NONE
-            oversight = Level.META if self.oversees else Level.NONE
+            oversight = Level.META if oversees else Level.NONE
         elif period == current:
             mine = Level.WRITE if now else Level.READ if was else Level.NONE
-            oversight = Level.META if self.oversees else Level.NONE
+            oversight = Level.META if oversees else Level.NONE
         elif period == current.previous():
             # Corrections after the period, by those who were in it and still are.
             mine = Level.WRITE if now and was else Level.READ if now or was else Level.NONE
-            oversight = Level.READ if self.oversees else Level.NONE
+            oversight = Level.READ if oversees else Level.NONE
         else:
             mine = Level.READ if now or was else Level.NONE
-            oversight = Level.READ if self.oversees else Level.NONE
+            oversight = Level.READ if oversees else Level.NONE
         return max(mine, oversight)
 
     def may_write(self, folder: Folder) -> bool:

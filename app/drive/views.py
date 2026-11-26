@@ -18,11 +18,12 @@ from django.urls import reverse
 from django.views.decorators.http import require_POST
 
 from core.downloads import content_disposition
+from core.models import Workgroup
 from photo_album import direct_upload
 from photo_album.forms import DirectUploadSignForm
 from residents.permissions import current_resident
 
-from . import access, locks, operations, services
+from . import access, locks, operations, services, shared, sharing
 from .access import Level, Viewer
 from .models import MAX_UNLOCK_DAYS, ApprovalRequest, File, FileVersion, Folder, SharedMember
 from .periods import period_containing
@@ -144,22 +145,29 @@ def folder(request: HttpRequest, uuid: UUID) -> HttpResponse:
     )
     rows = _rows(viewer, _sorted_children(current))
     can_change_files = viewer.can_change_file_in(current)
-    shared = current.shared if current.kind == Folder.Kind.SHARED else None
+    shared_folder = current.shared if current.kind == Folder.Kind.SHARED else None
+    shared_files, shared_folders = sharing.shared_ids(files, [row["folder"] for row in rows])
+    for file in files:
+        file.is_shared = file.pk in shared_files  # type: ignore[attr-defined]
+    for row in rows:
+        row["is_shared"] = row["folder"].pk in shared_folders
     return _render(
         request,
         "drive/folder.html",
         {
             "folder": current,
-            "ancestors": current.ancestors(),
+            "ancestors": crumbs(viewer, current, including=False),
             "rows": rows,
+            "group_shared": bool(sharing.shared_with_group(viewer, current)),
+            **_share_context(viewer, folder=current),
             "files": files,
             "can_write": level >= Level.WRITE and viewer.can_upload_to(current),
             "can_create_folder": viewer.can_create_in(current),
             "can_change_folder": viewer.can_change_folder(current),
             **_lock_context(viewer, current),
             "is_space": current.kind in (Folder.Kind.COMMON_ROOT, Folder.Kind.GROUP, Folder.Kind.SHARED),
-            "shared": shared,
-            "shared_members": shared.members.count() if shared else 0,
+            "shared": shared_folder,
+            "shared_members": shared_folder.members.count() if shared_folder else 0,
             "can_create_shared": current.kind == Folder.Kind.SHARED_ROOT and viewer.living,
             # Ticking is for moving, copying and deleting: residents' own folders and the files.
             "can_select": bool(files) or any(row["can_open"] and not row["folder"].is_system for row in rows),
@@ -193,6 +201,37 @@ def _lock_context(viewer: Viewer, folder: Folder) -> dict[str, object]:
     }
 
 
+def _share_context(
+    viewer: Viewer, *, file: File | None = None, folder: Folder | None = None
+) -> dict[str, object]:
+    """Who the item is shared with, shown to everyone who can read it, and the form to share it."""
+    where = file.folder if file is not None else folder
+    can_share = (
+        where is not None
+        and (file is not None or (folder is not None and folder.kind == Folder.Kind.FOLDER))
+        and viewer.can_share(where)
+    )
+    return {
+        "shares": sharing.shares_on(file=file, folder=folder)
+        if file or (folder and folder.kind == Folder.Kind.FOLDER)
+        else [],
+        "can_share": can_share,
+        "share_residents": shared.residents_to_invite() if can_share else [],
+        "share_groups": Workgroup.objects.exclude(pk=where.workgroup_id or 0).order_by("name")
+        if can_share and where
+        else [],
+    }
+
+
+def _version_config(file: File) -> dict[str, object]:
+    """`Upload ny version` on a file's page: through the file, so an edit share is enough."""
+    return {
+        **_upload_config(file.folder, version_of=file.name),
+        "beginUrl": reverse("drive:version_begin", args=[file.uuid]),
+        "directUrl": reverse("drive:version_direct", args=[file.uuid]),
+    }
+
+
 def _upload_config(target: Folder, *, version_of: str = "") -> dict[str, object]:
     return {
         "beginUrl": reverse("drive:upload_begin", args=[target.uuid]),
@@ -206,10 +245,27 @@ def _upload_config(target: Folder, *, version_of: str = "") -> dict[str, object]
 
 
 def live_file(request: HttpRequest, uuid: UUID, *, at_least: Level = Level.READ) -> tuple[File, Viewer]:
-    """A file outside the bin, in a folder the resident may open."""
+    """A file outside the bin that the resident may read: in a folder they may open, or shared with
+    them on its own."""
     file = get_object_or_404(File.objects.select_related("folder"), uuid=uuid, deleted_at__isnull=True)
-    _, viewer, _ = _folder(request, file.folder.uuid, at_least=at_least)
+    viewer = Viewer.for_request(request)
+    level = viewer.file_level(file)
+    if level < Level.READ:
+        if level == Level.NONE:
+            raise Http404("no such file")
+        raise PermissionDenied
+    if level < at_least:
+        raise PermissionDenied
     return file, viewer
+
+
+def crumbs(viewer: Viewer, folder: Folder, *, including: bool = True) -> list[Folder]:
+    """The path to `folder`, each marked with whether the viewer may open it: a share lets somebody
+    in partway down, and the folders above are then names, not links."""
+    path = [*folder.ancestors(), folder] if including else folder.ancestors()
+    for item in path:
+        item.can_open = viewer.level(item) >= Level.READ  # type: ignore[attr-defined]
+    return path
 
 
 @access.access_required
@@ -225,7 +281,7 @@ def file_page(request: HttpRequest, uuid: UUID) -> HttpResponse:
         {
             "file": file,
             "folder": file.folder,
-            "ancestors": [*file.folder.ancestors(), file.folder],
+            "ancestors": crumbs(viewer, file.folder),
             "versions": versions,
             "latest": versions[0],
             "events": file.events.select_related("actor")[:200],
@@ -244,8 +300,11 @@ def file_page(request: HttpRequest, uuid: UUID) -> HttpResponse:
                 ).values_list("version_number", flat=True)
             ),
             "max_unlock_days": MAX_UNLOCK_DAYS,
-            "upload_config": _upload_config(file.folder, version_of=file.name) if can_change else None,
+            "upload_config": _version_config(file) if viewer.can_version(file) else None,
+            "can_version": viewer.can_version(file),
+            "can_copy": viewer.level(file.folder) >= Level.READ,
             "move_query": f"file={file.uuid}",
+            **_share_context(viewer, file=file),
         },
     )
 
@@ -346,6 +405,19 @@ def upload_commit(request: HttpRequest) -> JsonResponse:
     target = Folder.objects.filter(uuid=upload["folder"]).first()
     viewer = Viewer.for_request(request)
     try:
+        if upload.get("file"):
+            versioned = File.objects.filter(uuid=upload["file"]).first()
+            if versioned is None:
+                raise PermissionDenied
+            services.add_version(
+                viewer,
+                versioned,
+                key=upload["key"],
+                size=upload["size"],
+                content_type=upload["contentType"],
+                resident=resident,
+            )
+            return JsonResponse({"ok": True, "name": versioned.name, "replaced": True}, status=201)
         if target is None:
             raise PermissionDenied
         added = services.add_upload(
@@ -431,3 +503,60 @@ def serve(version: FileVersion, name: str) -> HttpResponseBase:
     response = FileResponse(store.open(version.key, "rb"), content_type=version.content_type or None)
     response["Content-Disposition"] = content_disposition(name)
     return response
+
+
+@access.access_required
+@require_POST
+def version_begin(request: HttpRequest, uuid: UUID) -> JsonResponse:
+    """A new version of a file, from its page: a ticket for the bucket, or `{"direct": false}`."""
+    file, viewer = live_file(request, uuid)
+    size = _size(request)
+    try:
+        services.check_version(viewer, file, size, ignore_stale=bool(request.POST.get("ignore_stale")))
+    except services.Stale as exc:
+        return _error(" ".join(exc.messages), 409, stale=True)
+    except ValidationError as exc:
+        return _error(" ".join(exc.messages))
+    upload = direct_upload.ticket(
+        services.new_key(),
+        size,
+        purpose=UPLOAD_PURPOSE,
+        owner=current_resident(request).pk,
+        content_type=request.POST.get("type", "") or "application/octet-stream",
+        folder=str(file.folder.uuid),
+        name=file.name,
+        on_conflict=services.REPLACE,
+        file=str(file.uuid),
+    )
+    return JsonResponse({"direct": False} if upload is None else {"direct": True, **upload})
+
+
+@access.access_required
+@require_POST
+def version_direct(request: HttpRequest, uuid: UUID) -> JsonResponse:
+    """The no-bucket path for a new version."""
+    if direct_upload.available():
+        raise PermissionDenied("direct upload is only for local storage")
+    file, viewer = live_file(request, uuid)
+    upload = request.FILES.get("file")
+    if upload is None:
+        return _error("Der kom ingen fil med.")
+    try:
+        services.check_version(
+            viewer, file, upload.size or 0, ignore_stale=bool(request.POST.get("ignore_stale"))
+        )
+    except services.Stale as exc:
+        return _error(" ".join(exc.messages), 409, stale=True)
+    except ValidationError as exc:
+        return _error(" ".join(exc.messages))
+    key = services.new_key()
+    services.store_local(key, upload)
+    services.add_version(
+        viewer,
+        file,
+        key=key,
+        size=upload.size or 0,
+        content_type=upload.content_type or "application/octet-stream",
+        resident=current_resident(request),
+    )
+    return JsonResponse({"ok": True, "name": file.name, "replaced": True}, status=201)

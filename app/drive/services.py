@@ -197,22 +197,7 @@ def add_upload(
     if existing is not None and on_conflict == REPLACE and existing.lock_active():
         raise PermissionDenied
     if existing is not None and on_conflict == REPLACE:
-        number = (existing.versions.order_by("-number").values_list("number", flat=True).first() or 0) + 1
-        with trail.event("drive.file.version_uploaded", subject=existing, actor=resident):
-            FileVersion.objects.create(
-                file=existing,
-                number=number,
-                key=key,
-                size=size,
-                content_type=content_type,
-                created_by=resident,
-            )
-            existing.size, existing.content_type = size, content_type
-            existing.changed_by, existing.changed_at = resident, now
-            existing.save()
-            history.record(
-                Event.Action.VERSION, actor=resident, file=existing, name=existing.name, number=number
-            )
+        _new_version(existing, key=key, size=size, content_type=content_type, resident=resident)
         return Added(existing, replaced=True)
     if existing is not None:
         # Keep both - also when the other file appeared while this one was uploading.
@@ -242,6 +227,43 @@ def drop_unreferenced(keys: set[str]) -> None:
     if unreferenced:
         store = storage()
         transaction.on_commit(lambda: [store.delete(key) for key in sorted(unreferenced)])
+
+
+def _new_version(file: File, *, key: str, size: int, content_type: str, resident: Resident) -> FileVersion:
+    number = (file.versions.order_by("-number").values_list("number", flat=True).first() or 0) + 1
+    with trail.event("drive.file.version_uploaded", subject=file, actor=resident):
+        version = FileVersion.objects.create(
+            file=file, number=number, key=key, size=size, content_type=content_type, created_by=resident
+        )
+        file.size, file.content_type = size, content_type
+        file.changed_by, file.changed_at = resident, timezone.now()
+        file.save()
+        history.record(Event.Action.VERSION, actor=resident, file=file, name=file.name, number=number)
+    return version
+
+
+def check_version(viewer: Viewer, file: File, size: int, *, ignore_stale: bool = False) -> None:
+    """Before a byte of a new version is sent, from the file's own page: by whoever may change the
+    file, or anyone it is shared with to edit (access.Viewer.can_version)."""
+    if file.deleted_at is not None or not viewer.can_version(file):
+        raise PermissionDenied
+    if size <= 0:
+        raise ValidationError("Filen er tom.")
+    if size > max_upload_bytes():
+        raise ValidationError(f"Filen er for stor (over {settings.DRIVE_MAX_UPLOAD_GB:g} GB).")
+    if not ignore_stale:
+        check_stale(file, viewer.resident_id)
+
+
+@transaction.atomic
+def add_version(
+    viewer: Viewer, file: File, *, key: str, size: int, content_type: str, resident: Resident
+) -> File:
+    file = File.objects.select_for_update().select_related("folder").get(pk=file.pk)
+    if file.deleted_at is not None or not viewer.can_version(file):
+        raise PermissionDenied
+    _new_version(file, key=key, size=size, content_type=content_type, resident=resident)
+    return file
 
 
 def store_local(key: str, content: IO[bytes]) -> None:
