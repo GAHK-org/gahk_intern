@@ -5,6 +5,7 @@ from typing import Any
 
 import pytest
 from django.core.management import call_command
+from django.test import Client
 
 from audit import trail
 from audit.models import AuditEvent
@@ -105,6 +106,39 @@ def test_seed_demo_fills_the_board_including_the_two_awkward_cases() -> None:
     assert not hasattr(Notice.objects, "expired"), (
         "retention was removed from opslagstavlen; a reinstated expired() needs the spec updated too"
     )
+
+
+@pytest.mark.django_db
+def test_seed_demo_gives_the_gahkflix_player_everything_it_offers() -> None:
+    """The player's menus only show what a film has: subtitles from the file, a second quality from a
+    Full HD original. The demo has both, and a film with neither for their empty states."""
+    from gahkflix import services
+    from gahkflix.models import Video
+    from gahkflix.views import _subtitle_tracks
+
+    call_command("seed_demo", "--fresh", "--force", "--residents", "12", verbosity=0)
+
+    def menu(title: str) -> list[tuple[str, bool, bool]]:
+        video = Video.objects.get(title=title)
+        return [(t["label"], t["default"], t["forced"]) for t in _subtitle_tracks(video.file, video)]
+
+    assert menu("Pilot") == menu("Opvasken") == [("Dansk", True, False), ("Engelsk", False, False)]
+    assert menu("Revy") == [
+        ("Dansk", True, False),
+        ("Engelsk (Kommentarer)", False, False),
+        ("Dansk (Skilte) – kun tvungne", False, True),
+    ]
+    assert menu("Julefrokost") == []
+    revy = Video.objects.get(title="Revy")
+    assert revy.file.qualities == ["fullhd", "hd"]
+    assert all(Video.objects.get(title=t).file.qualities == ["hd"] for t in ("Pilot", "Julefrokost"))
+    upright = Video.objects.get(title="Julefrokost").file
+    assert upright.height > upright.width
+    # Long enough for `Næste afsnit` (the last 20 seconds) to come after the start, and to resume in.
+    assert Video.objects.get(title="Pilot").duration > 20
+    beboer = Resident.objects.get(email="beboer@gahk.dk")
+    assert services.continue_watching(beboer) == [revy]
+    assert services.resume_position(revy, beboer) == 12.0
 
 
 @pytest.mark.django_db
@@ -315,6 +349,61 @@ def test_seed_demo_gives_the_logins_calendar_subscriptions_in_each_state() -> No
         assert entry in everything, entry
     assert "Ikke svaret: " not in accepted_only and "fylder" not in accepted_only
     assert CalendarSubscription.objects.get(resident__email="ak@gahk.dk").rotated_at is not None
+
+
+@pytest.mark.django_db
+def test_seed_demo_fills_the_worker_jobs_page_in_every_state(client: Client) -> None:
+    """No worker has run in a seeded database, and none on a Mac measures memory, so the page would
+    be empty: every state it shows comes from the seed, through the page's own queries."""
+    from django.urls import reverse
+    from django.utils import timezone
+
+    from core.models import WorkerJobLog
+    from core.worker_jobs_demo import task_id
+    from residents.views_admin import JobFilters, _child_jobs, _history_counts, _job_details, _running
+
+    call_command("seed_demo", "--fresh", "--force", "--residents", "12", verbosity=0)
+    now = timezone.now()
+
+    running = _running(now)
+    live = [job for job in running if not job.over_time_limit]
+    assert {job.task for job in live} == {
+        "gahkflix.tasks.process_video_file",
+        "photo_album.tasks.build_media_derivatives",
+    }
+    encode = next(job for job in live if job.progress is not None)
+    assert encode.task_context.startswith("Video: ")
+    assert encode.task_context.endswith("(Revy)")
+    assert [job.task for job in running if job.over_time_limit] == ["gahkflix.tasks.recover_stalled"]
+
+    counts = _history_counts(JobFilters(include_children=True))
+    assert (counts["FAILURE"], counts["STARTED"]) == (3, 3)
+    assert counts["SUCCESS"] > 40
+
+    # Memory: so far while it runs, ffmpeg the largest; near the limit for the one that ran out; and
+    # "–" where it was not measured.
+    lost = WorkerJobLog.objects.get(task_id=task_id("encode-lost"))
+    assert lost.peak_memory > 1400 * 1024 * 1024
+    assert lost.peak_program == "ffmpeg"
+    assert WorkerJobLog.objects.get(task_id=task_id("encode-unmeasured")).peak_memory is None
+    assert WorkerJobLog.objects.get(task_id=task_id("upload/running")).peak_memory is None
+
+    # The import names its ZIP and albums, and lists a thumbnail sub-job per picture.
+    album_import, _record = _job_details(task_id("album-import"), now)
+    assert album_import.task_context.startswith("ZIP: sommerfest-2026.zip (mappe: 2026); albummer: ")
+    children, child_counts = _child_jobs(task_id("album-import"))
+    assert child_counts == {"SUCCESS": 17}
+    assert all(child.task_context.startswith("Medie: ") for child in children)
+
+    client.force_login(Resident.objects.get(email="formand@gahk.dk"))
+    assert client.get(reverse("siteadmin:worker_jobs")).status_code == 200
+    page = client.get(reverse("siteadmin:worker_job_detail", args=[task_id("encode-running")]))
+    assert "(ffmpeg) · indtil nu" in page.content.decode()
+
+    # Seeding again replaces the jobs rather than adding to them.
+    total = WorkerJobLog.objects.count()
+    call_command("seed_demo", "--fresh", "--force", "--residents", "12", verbosity=0)
+    assert WorkerJobLog.objects.count() == total
 
 
 @pytest.mark.django_db

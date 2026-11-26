@@ -34,6 +34,8 @@ from datetime import datetime
 from django.db import close_old_connections, connection
 from django.utils import timezone
 
+from . import job_memory
+
 logger = logging.getLogger(__name__)
 
 FLUSH_INTERVAL = 10.0  # seconds between writes of a job's progress and log
@@ -57,9 +59,23 @@ class LiveJob:
     # (monotonic time, fraction) as the monitor saw it, from its first report on, back to WINDOW ago.
     samples: deque[tuple[float, float]] = field(default_factory=deque)
     watched_from: float | None = None  # when the monitor first saw progress
-    written: tuple[float | None, str, int] = (None, "", 0)  # fraction, step, lines at the last write
+    # Its peak memory so far, in bytes (core/job_memory.py): its own process's, and the largest
+    # program's it ran, with that program's name.
+    peak_memory: int | None = None
+    largest_program: tuple[str, int] | None = None
+    written: "_State" = (None, "", 0, None, None)  # what _state was at the last write
     written_at: float = 0.0
     stopped: str = ""  # why the watchdog stopped it, once it has
+
+    def note_memory(self, own: int | None, program: tuple[str, int] | None) -> None:
+        """Keep the largest readings yet: a program's ends with it, and the next may be smaller."""
+        if own is not None:
+            self.peak_memory = max(self.peak_memory or 0, own)
+        if program is not None and (self.largest_program is None or program[1] > self.largest_program[1]):
+            self.largest_program = program
+
+
+_State = tuple[float | None, str, int, int | None, tuple[str, int] | None]
 
 
 _jobs: dict[str, LiveJob] = {}
@@ -154,7 +170,10 @@ def tick(now: float) -> None:
     """One look at every running job: sample, write what changed, stop what stalled."""
     with _lock:
         jobs = list(_jobs.values())
+    if jobs:  # the memory is the process's, so one reading serves every job in it
+        own, program = job_memory.own_peak(), job_memory.largest_program()
     for job in jobs:
+        job.note_memory(own, program)
         if job.fraction is not None:
             _sample(job, now)
             if not job.stopped and (reason := stalled(job, now)):
@@ -204,8 +223,17 @@ def _stop(job: LiveJob, reason: str) -> None:
         logger.warning("Job %s cannot be stopped from here; its hard time limit will.", job.task_id)
 
 
-def _state(job: LiveJob) -> tuple[float | None, str, int]:
-    return (job.fraction, job.step, len(job.lines))
+def _state(job: LiveJob) -> _State:
+    """What a write would change. Memory in whole MiB: it grows by the page, and a row written for
+    every few kB of it would be a write every round."""
+    program = job.largest_program
+    return (
+        job.fraction,
+        job.step,
+        len(job.lines),
+        None if job.peak_memory is None else job.peak_memory >> 20,
+        None if program is None else (program[0], program[1] >> 20),
+    )
 
 
 def write(job: LiveJob, now: float) -> None:
@@ -219,6 +247,7 @@ def write(job: LiveJob, now: float) -> None:
     fields: dict[str, object] = {"lines": [*job.earlier_lines, *lines[:room]]}
     if job.fraction is not None:
         fields |= {"progress": job.fraction, "progress_step": job.step, "progressed_at": timezone.now()}
+    fields |= memory_fields(job)
     try:
         # Not after its end: the job's own final write (worker_logs._finish) is the last word.
         WorkerJobLog.objects.filter(task_id=job.task_id, finished_at__isnull=True).update(**fields)
@@ -226,3 +255,13 @@ def write(job: LiveJob, now: float) -> None:
         logger.warning("Could not write the progress of job %s.", job.task_id, exc_info=True)
         return
     job.written, job.written_at = state, now
+
+
+def memory_fields(job: LiveJob) -> dict[str, object]:
+    """The job's peak memory as WorkerJobLog fields: only those measured, so nothing is blanked."""
+    fields: dict[str, object] = {}
+    if job.peak_memory is not None:
+        fields["peak_memory"] = job.peak_memory
+    if job.largest_program is not None:
+        fields["peak_program"], fields["peak_program_memory"] = job.largest_program
+    return fields
