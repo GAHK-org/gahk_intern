@@ -11,9 +11,9 @@ from django.utils import timezone
 
 from audit.models import AuditEvent
 from core.models import Workgroup
-from drive import locks, services
+from drive import history, locks, services
 from drive.access import Viewer
-from drive.models import ApprovalRequest, Event, File, FileVersion, Folder
+from drive.models import ApprovalRequest, File, FileVersion, Folder
 from drive.structure import ensure_structure
 from notifications.models import Notification
 from residents.models import Resident, Role
@@ -91,7 +91,9 @@ def test_a_file_locks_a_year_after_its_last_version_and_a_folder_after_a_year_wi
     assert Folder.objects.get(pk=old_folder.pk).lock_active()
     assert not Folder.objects.get(pk=new_folder.pk).lock_active()
     assert not Folder.objects.filter(kind__in=Folder.SYSTEM_KINDS, locked_at__isnull=False).exists()
-    assert old.events.filter(action=Event.Action.LOCKED, details__automatic=True).exists()
+    assert any(
+        line.action == history.Action.LOCKED and line.details["automatic"] for line in history.for_file(old)
+    )
     locked = AuditEvent.objects.get(action="drive.items.auto_locked")
     assert locked.actor_id is None
     assert set(locked.entities.values_list("name", "operation")) >= {("old.txt", "updated")}
@@ -260,7 +262,7 @@ def test_an_old_version_is_purged_only_with_a_second_person(
         )
     assert list(file.versions.values_list("number", flat=True)) == [2]
     assert not services.storage().exists(first_key)
-    line = file.events.get(action=Event.Action.PURGED)
+    (line,) = [line for line in history.for_file(file) if line.action == history.Action.PURGED]
     assert line.summary == (
         f"Version 1 af Budget.xlsx slettet permanent af {people['member'].full_name}, "
         f"godkendt af {people['inspector'].full_name}"
@@ -278,7 +280,9 @@ def test_a_binned_file_is_purged_from_the_bin(people: dict[str, Resident], group
     request = ApprovalRequest.objects.get()
     locks.decide(_viewer(people["inspector"]), request, approve=True, reason="", actor=people["inspector"])
     assert not File.objects.filter(pk=file.pk).exists()
-    assert Event.objects.filter(action=Event.Action.PURGED, file=None, name="Budget.xlsx").exists()
+    assert any(
+        line.action == history.Action.PURGED and line.name == "Budget.xlsx" for line in history.all_lines()
+    )
     # The trail keeps the file, its versions and the decision, by the one who decided.
     purged = AuditEvent.objects.get(action="drive.purge.approved")
     assert purged.actor_id == people["inspector"].pk

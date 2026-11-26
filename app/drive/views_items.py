@@ -7,7 +7,6 @@ from uuid import UUID
 
 from django.contrib import messages
 from django.core.exceptions import PermissionDenied, ValidationError
-from django.db.models import Q
 from django.http import Http404, HttpRequest, HttpResponse
 from django.shortcuts import get_object_or_404, redirect
 from django.views.decorators.http import require_POST
@@ -16,7 +15,7 @@ from residents.permissions import current_resident
 
 from . import access, history, operations
 from .access import Level, Viewer
-from .models import Event, File, Folder
+from .models import File, Folder
 from .views import _folder, _render, _sorted_children, as_uuid, live_file
 
 MOVE, COPY = "move", "copy"
@@ -211,12 +210,7 @@ def restore_version(request: HttpRequest, uuid: UUID, number: int) -> HttpRespon
 def folder_history(request: HttpRequest, uuid: UUID) -> HttpResponse:
     """The folder's own lines, and those of the files and folders in it now."""
     folder, viewer, _ = _folder(request, uuid)
-    events = history.visible(
-        viewer,
-        Event.objects.filter(
-            Q(folder=folder) | Q(folder__parent=folder) | Q(file__folder=folder)
-        ).select_related("actor"),
-    )
+    events = history.for_folder(viewer, folder)
     return _render(
         request,
         "drive/history.html",

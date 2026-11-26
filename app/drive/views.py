@@ -24,7 +24,7 @@ from photo_album import direct_upload
 from photo_album.forms import DirectUploadSignForm
 from residents.permissions import current_resident
 
-from . import access, locks, office, operations, preview, services, shared, sharing, text
+from . import access, history, locks, office, operations, preview, services, shared, sharing, text
 from .access import Level, Viewer
 from .models import MAX_UNLOCK_DAYS, ApprovalRequest, File, FileVersion, Folder, SharedMember, Space
 from .periods import period_containing
@@ -422,7 +422,7 @@ def file_page(request: HttpRequest, uuid: UUID) -> HttpResponse:
             "versions": versions,
             "latest": versions[0],
             "preview": _preview_context(viewer, file, versions[0]),
-            "events": file.events.select_related("actor")[:200],
+            "events": history.for_file(file),
             "can_change": can_change,
             "file_locked": locked,
             "folder_lock": viewer.lock_holder(file.folder),

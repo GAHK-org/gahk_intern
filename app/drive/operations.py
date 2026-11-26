@@ -32,7 +32,7 @@ from residents.models import Resident
 
 from . import history, services, sharing
 from .access import Level, Viewer
-from .models import BIN_DAYS, ApprovalRequest, Event, File, FileVersion, Folder, SharedFolder, Space, name_key
+from .models import BIN_DAYS, ApprovalRequest, File, FileVersion, Folder, SharedFolder, Space, name_key
 from .periods import Period
 
 
@@ -109,9 +109,9 @@ def rename_file(viewer: Viewer, file: File, name: str, actor: Resident) -> None:
     try:
         with trail.event("drive.file.renamed", subject=file, actor=actor):
             file.save(update_fields=["name", "name_key"])
+            history.record(history.Action.RENAMED, actor=actor, file=file, name=name, old=old)
     except IntegrityError as exc:
         raise _clash(file.folder, name) from exc
-    history.record(Event.Action.RENAMED, actor=actor, file=file, name=name, old=old)
     history.tell_creators([file], actor=actor, change=history.renamed(file, old))
 
 
@@ -133,9 +133,9 @@ def rename_folder(viewer: Viewer, folder: Folder, name: str, actor: Resident) ->
     try:
         with trail.event("drive.folder.renamed", subject=folder, actor=actor):
             folder.save()
+            history.record(history.Action.RENAMED, actor=actor, folder=folder, name=name, old=old)
     except IntegrityError as exc:
         raise _clash(parent, name) from exc
-    history.record(Event.Action.RENAMED, actor=actor, folder=folder, name=name, old=old)
 
 
 # --- Move and copy ---------------------------------------------------------------------------------
@@ -242,11 +242,13 @@ def _move(viewer: Viewer, selection: Selection, destination: Folder, actor: Resi
             destination.workgroup,
             destination.period_start,
         )
-        history.record(Event.Action.MOVED, actor=actor, folder=folder, name=folder.name, origin=origin, to=to)
+        history.record(
+            history.Action.MOVED, actor=actor, folder=folder, name=folder.name, origin=origin, to=to
+        )
     for file in selection.files:
         file.folder = destination
         file.save(update_fields=["folder"])
-        history.record(Event.Action.MOVED, actor=actor, file=file, name=file.name, origin=origin, to=to)
+        history.record(history.Action.MOVED, actor=actor, file=file, name=file.name, origin=origin, to=to)
     history.tell_creators(selection.files, actor=actor, change=history.moved(destination))
 
 
@@ -278,7 +280,7 @@ def _copy_file(file: File, destination: Folder, actor: Resident, now: datetime) 
         created_by=actor,
     )
     history.record(
-        Event.Action.COPIED, actor=actor, file=copy, name=copy.name, origin=file.folder.display_path()
+        history.Action.COPIED, actor=actor, file=copy, name=copy.name, origin=file.folder.display_path()
     )
     return copy
 
@@ -296,7 +298,7 @@ def _copy_folder(folder: Folder, destination: Folder, actor: Resident, now: date
     )
     copy.save()
     history.record(
-        Event.Action.COPIED,
+        history.Action.COPIED,
         actor=actor,
         folder=copy,
         name=copy.name,
@@ -361,11 +363,11 @@ def _delete(viewer: Viewer, selection: Selection, actor: Resident) -> None:
         if event is not None:  # a queryset update, which the trail does not see on its own
             event.change(folder, "deleted_at", None, now)
             event.change(folder, "deleted_by", None, actor.pk)
-        history.record(Event.Action.DELETED, actor=actor, folder=folder, name=folder.name)
+        history.record(history.Action.DELETED, actor=actor, folder=folder, name=folder.name)
     for file in selection.files:
         file.deleted_at, file.deleted_by = now, actor
         file.save(update_fields=["deleted_at", "deleted_by"])
-        history.record(Event.Action.DELETED, actor=actor, file=file, name=file.name)
+        history.record(history.Action.DELETED, actor=actor, file=file, name=file.name)
     history.tell_creators(selection.files, actor=actor, change=history.deleted(selection.source))
 
 
@@ -443,12 +445,12 @@ def _restore(viewer: Viewer, file: File, actor: Resident) -> File:
             event.change(folder, "name", folder.name, name)
             event.change(folder, "deleted_at", folder.deleted_at, None)
             event.change(folder, "deleted_by", folder.deleted_by_id, None)
-        history.record(Event.Action.RESTORED, actor=actor, folder=folder, name=name)
+        history.record(history.Action.RESTORED, actor=actor, folder=folder, name=name)
     if services.taken(file.folder, file.name_key):
         file.name = services.free_name(file.folder, file.name)
     file.deleted_at, file.deleted_by = None, None
     file.save()
-    history.record(Event.Action.RESTORED, actor=actor, file=file, name=file.name)
+    history.record(history.Action.RESTORED, actor=actor, file=file, name=file.name)
     return file
 
 
@@ -506,7 +508,7 @@ def _restore_version(viewer: Viewer, file: File, number: int, actor: Resident) -
     file.changed_by, file.changed_at = actor, timezone.now()
     file.save()
     history.record(
-        Event.Action.VERSION_RESTORED,
+        history.Action.VERSION_RESTORED,
         actor=actor,
         file=file,
         name=file.name,

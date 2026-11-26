@@ -669,11 +669,12 @@ def test_private_names_and_fields_are_kept_but_not_shown_or_searched(
     )
     monkeypatch.setitem(trail._registry, Resident, hidden)
     monkeypatch.setitem(trail._by_kind, "residents.resident", hidden)
+    monkeypatch.setattr(trail, "_private_details", {"notes"})
     admin = make_resident(email="admin@gahk.dk", roles=[Role.ADMINISTRATOR])
     # Values with spaces: a random token on the page (a nonce, an asset's hash) never has one.
     before, after = "55 11 11 11", "55 22 22 22"
     anna = make_resident(email="anna@gahk.dk", first_name="Anna", last_name="Berg", phone=before)
-    with trail.event("residents.resident.updated", actor=admin, subject=anna):
+    with trail.event("residents.resident.updated", actor=admin, subject=anna, details={"notes": "Anna Berg"}):
         anna.phone = after
         anna.save()
     event = AuditEvent.objects.get(action="residents.resident.updated")

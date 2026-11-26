@@ -24,7 +24,7 @@ from residents.models import Resident
 
 from . import history
 from .access import Level, Viewer
-from .models import Event, File, Folder, Share, Space
+from .models import File, Folder, Share, Space
 from .shared import residents_to_invite
 
 READ, EDIT = "read", "edit"
@@ -115,7 +115,7 @@ def _share(
     row.save()
     name = (file or folder).name  # type: ignore[union-attr]
     history.record(
-        Event.Action.SHARED,
+        history.Action.SHARED,
         actor=actor,
         name=name,
         **item,
@@ -145,7 +145,7 @@ def _stop(row: Share, item: File | Folder | None, actor: Resident) -> None:
     recipient = row.recipient
     row.delete()
     history.record(
-        Event.Action.UNSHARED,
+        history.Action.UNSHARED,
         actor=actor,
         name=item.name,  # type: ignore[union-attr]
         file=row.file,

@@ -76,6 +76,7 @@ from django.core.files.base import ContentFile
 from django.urls import reverse
 from django.utils import timezone
 
+from audit import trail
 from core.models import Workgroup
 from notifications.models import Notification
 from residents.models import Residency, Resident, Role
@@ -85,7 +86,6 @@ from . import locks, office, operations, preview, services, shared, sharing, sta
 from .access import Viewer
 from .models import (
     ApprovalRequest,
-    Event,
     File,
     FileVersion,
     Folder,
@@ -392,11 +392,20 @@ def _year_folder(year: int) -> Folder:
     return folder
 
 
-def seed(residents: list[Resident], now: datetime, _rng: random.Random) -> int:
+def seed(residents: list[Resident], now: datetime, rng: random.Random) -> int:
     """Returns the number of files made. Wipe first (`wipe`): names are unique within a folder, and a
-    second run would add versions instead."""
+    second run would add versions instead.
+
+    Run audited (core seed_demo): Drive's history is its part of the audit trail, so each step's
+    event is that history, dated when the step happened. What the demo writes by hand - the earlier
+    periods and years, a standing folder - is one event of its own."""
     if not all(email in {r.email for r in residents} for email in LOGINS):
         return 0
+    with trail.event("drive.demo.seeded", actor=None):
+        return _seed(residents, now, rng)
+
+
+def _seed(residents: list[Resident], now: datetime, _rng: random.Random) -> int:
     today = timezone.localdate(now)
     ensure_structure(today)
     s = _Seeder(residents, now)
@@ -1126,8 +1135,7 @@ def wipe() -> None:
     for archive in ZipDownload.objects.exclude(archive_key=""):
         store.delete(archive.archive_key)
     ZipDownload.objects.all().delete()
-    # History and requests outlive their items (SET_NULL), so they go by themselves.
-    Event.objects.all().delete()
+    # Requests outlive their items (SET_NULL), so they go by themselves.
     ApprovalRequest.objects.all().delete()
     File.objects.all().delete()
     while Folder.objects.exists():

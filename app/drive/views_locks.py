@@ -13,7 +13,7 @@ from residents.permissions import current_resident
 
 from . import access, history, locks
 from .access import Level, Viewer
-from .models import ApprovalRequest, Event, File, Folder
+from .models import ApprovalRequest, File, Folder
 from .views import _folder, _render, as_uuid, live_file
 
 
@@ -154,11 +154,7 @@ def activity(request: HttpRequest, uuid: UUID) -> HttpResponse:
     space, viewer, _ = _folder(request, uuid)
     if space.kind not in (Folder.Kind.COMMON_ROOT, Folder.Kind.GROUP, Folder.Kind.SHARED):
         raise Http404("not a space")
-    if space.kind == Folder.Kind.SHARED:
-        lines = Event.objects.filter(shared=space.shared_id)
-    else:
-        lines = Event.objects.filter(space=space.space, workgroup=space.workgroup, shared=None)
-    shown = history.visible(viewer, lines.select_related("actor"))
+    shown = history.for_space(viewer, space)
     return _render(
         request,
         "drive/history.html",

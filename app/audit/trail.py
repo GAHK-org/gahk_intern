@@ -103,6 +103,7 @@ _by_kind: dict[str, Registration] = {}
 _exempt: dict[type[models.Model], str] = {}
 _actions: dict[str, str] = {}
 _kind_labels: dict[str, str] = {}
+_private_details: set[str] = set()
 
 
 def register(
@@ -157,6 +158,16 @@ def exempt(model: type[models.Model], reason: str) -> None:
 def actions(labels: dict[str, str]) -> None:
     """Name actions for people: {"cms.page.published": "Udgav siden"}."""
     _actions.update(labels)
+
+
+def private_details(keys: Iterable[str]) -> None:
+    """Keys of `Event.details` the audit page shows only as present, like private fields: what an app
+    keeps there for its own pages that names what it keeps from administrators."""
+    _private_details.update(keys)
+
+
+def is_private_detail(key: str) -> bool:
+    return key in _private_details
 
 
 def kind_labels(labels: dict[str, str]) -> None:

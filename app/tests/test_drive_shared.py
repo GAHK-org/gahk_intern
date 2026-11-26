@@ -13,9 +13,9 @@ from django.utils import timezone
 from audit import presentation
 from audit.models import AuditEvent
 from core.models import Workgroup
-from drive import locks, services, shared
+from drive import history, locks, services, shared
 from drive.access import Level, Viewer
-from drive.models import ApprovalRequest, Event, File, Folder, SharedFolder, SharedMember
+from drive.models import ApprovalRequest, File, Folder, SharedFolder, SharedMember
 from drive.structure import ensure_structure
 from notifications.models import Notification
 from residents.models import Residency, Resident, Role
@@ -188,9 +188,9 @@ def test_never_fewer_than_three_and_always_a_moderator(people: dict[str, Residen
     shared.set_role(_viewer(anna), item, people["bo"].pk, "moderator", anna)
     shared.remove_member(_viewer(anna), item, anna.pk, anna)  # leaving, now that Bo moderates
     assert not item.members.filter(resident=anna).exists()
-    lines = list(Event.objects.filter(folder=folder).values_list("action", flat=True))
-    assert Event.Action.MEMBER_LEFT in lines
-    assert Event.Action.ROLE_CHANGED in lines
+    lines = [line.action for line in history.all_lines() if line.folder == folder.pk]
+    assert history.Action.MEMBER_LEFT in lines
+    assert history.Action.ROLE_CHANGED in lines
 
 
 def test_a_member_who_moves_out_still_counts_but_has_no_access(people: dict[str, Resident]) -> None:

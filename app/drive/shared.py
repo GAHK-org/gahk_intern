@@ -32,7 +32,6 @@ from .models import (
     SHARED_DEFAULT_MONTHS,
     SHARED_MAX_YEARS,
     SHARED_WARN_DAYS,
-    Event,
     File,
     FileVersion,
     Folder,
@@ -142,10 +141,10 @@ def _create(
     SharedMember.objects.create(shared=shared, resident=actor, role=Role.MODERATOR)
     for pk in invited:  # one by one, so the audit trail sees each (a bulk_create sends no signals)
         SharedMember.objects.create(shared=shared, resident_id=pk, role=Role.EDIT)
-    history.record(Event.Action.CREATED, actor=actor, folder=folder, name=folder.name)
+    history.record(history.Action.CREATED, actor=actor, folder=folder, name=folder.name)
     for resident in Resident.objects.filter(pk__in=invited):
         history.record(
-            Event.Action.MEMBER_ADDED,
+            history.Action.MEMBER_ADDED,
             actor=actor,
             folder=folder,
             name=folder.name,
@@ -192,7 +191,7 @@ def _add_member(viewer: Viewer, shared: SharedFolder, resident_id: int, role: st
         raise ValidationError("Vedkommende er allerede medlem.")
     resident = Resident.objects.get(pk=resident_id)
     history.record(
-        Event.Action.MEMBER_ADDED,
+        history.Action.MEMBER_ADDED,
         actor=actor,
         folder=folder,
         name=folder.name,
@@ -223,7 +222,7 @@ def _set_role(viewer: Viewer, shared: SharedFolder, resident_id: int, role: str,
     member.role = role
     member.save(update_fields=["role"])
     history.record(
-        Event.Action.ROLE_CHANGED,
+        history.Action.ROLE_CHANGED,
         actor=actor,
         folder=folder,
         name=folder.name,
@@ -255,10 +254,10 @@ def _remove_member(viewer: Viewer, shared: SharedFolder, resident_id: int, actor
     _check_still_whole(shared, without=resident_id)
     member.delete()
     if leaving:
-        history.record(Event.Action.MEMBER_LEFT, actor=actor, folder=folder, name=folder.name)
+        history.record(history.Action.MEMBER_LEFT, actor=actor, folder=folder, name=folder.name)
     else:
         history.record(
-            Event.Action.MEMBER_REMOVED,
+            history.Action.MEMBER_REMOVED,
             actor=actor,
             folder=folder,
             name=folder.name,
@@ -290,7 +289,7 @@ def _set_expiry(
     shared.expires_on, shared.on_expiry = expires_on, on_expiry
     shared.save(update_fields=["expires_on", "on_expiry"])
     history.record(
-        Event.Action.EXPIRY_CHANGED,
+        history.Action.EXPIRY_CHANGED,
         actor=actor,
         folder=folder,
         name=folder.name,
@@ -312,7 +311,7 @@ def _rename(viewer: Viewer, shared: SharedFolder, name: str, actor: Resident) ->
     old = folder.name
     folder.name = name
     folder.save()
-    history.record(Event.Action.RENAMED, actor=actor, folder=folder, name=name, old=old)
+    history.record(history.Action.RENAMED, actor=actor, folder=folder, name=name, old=old)
 
 
 def delete(viewer: Viewer, shared: SharedFolder, actor: Resident) -> None:
@@ -333,7 +332,7 @@ def _delete(viewer: Viewer, shared: SharedFolder, actor: Resident) -> None:
     if (event := trail.current()) is not None:  # a queryset update, unseen by the trail
         event.change(folder, "deleted_at", None, now)
         event.change(folder, "deleted_by", None, actor.pk)
-    history.record(Event.Action.DELETED, actor=actor, folder=folder, name=folder.name)
+    history.record(history.Action.DELETED, actor=actor, folder=folder, name=folder.name)
 
 
 # --- Expiry ----------------------------------------------------------------------------------------
@@ -383,7 +382,7 @@ def _archive(shared: SharedFolder) -> None:
     shared.archived_at = timezone.now()
     shared.save(update_fields=["archived_at"])
     top.refresh_from_db()
-    history.record(Event.Action.ARCHIVED, actor=None, folder=top, name=top.name)
+    history.record(history.Action.ARCHIVED, actor=None, folder=top, name=top.name)
 
 
 def run_expiry(today: date | None = None) -> tuple[int, int, int]:

@@ -138,7 +138,7 @@ Drive
 - Each space has an activity page for its members. A Delt mappe's page also shows member and role changes.
 - Admins and Inspektionen have a page of pending unlock and purge requests, and of past decisions, showing names and paths only.
 - History outlives what it describes: a purged version leaves its entry ("Version 3 slettet permanent af Mette, godkendt af Jonas").
-- Every change is also in the general audit trail (audit-trail.md), with each changed field before and after, including the folders the system makes. The audit page names Drive's files and folders only by a tag (`Fil 3f2c9a`) and does not show their names, so it tells administrators no more than Drive does.
+- The history is Drive's part of the general audit trail (audit-trail.md): every change is one event there, with each changed field before and after, including the folders the system makes. The audit page names Drive's files and folders only by a tag (`Fil 3f2c9a`) and shows neither their names nor the history's lines, so it tells administrators no more than Drive does.
 
 ## Preview and live editing
 

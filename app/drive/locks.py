@@ -27,7 +27,7 @@ from residents.models import Resident
 
 from . import history, services
 from .access import Viewer
-from .models import LOCK_AFTER_DAYS, MAX_UNLOCK_DAYS, ApprovalRequest, Event, File, FileVersion, Folder
+from .models import LOCK_AFTER_DAYS, MAX_UNLOCK_DAYS, ApprovalRequest, File, FileVersion, Folder
 
 Target = File | Folder
 
@@ -50,7 +50,7 @@ def _lock(target: Target, actor: Resident | None, now: datetime) -> None:
     target.locked_at, target.locked_by, target.unlocked_until = now, actor, None
     target.save(update_fields=["locked_at", "locked_by", "unlocked_until"])
     kind = {"file": target} if isinstance(target, File) else {"folder": target}
-    history.record(Event.Action.LOCKED, actor=actor, name=target.name, automatic=actor is None, **kind)
+    history.record(history.Action.LOCKED, actor=actor, name=target.name, automatic=actor is None, **kind)
 
 
 def lock_file(viewer: Viewer, file: File, actor: Resident) -> None:
@@ -146,7 +146,7 @@ def _request_unlock(
         **kind,
     )
     history.record(
-        Event.Action.UNLOCK_REQUESTED, actor=actor, name=target.name, days=days, reason=reason, **kind
+        history.Action.UNLOCK_REQUESTED, actor=actor, name=target.name, days=days, reason=reason, **kind
     )
     return request
 
@@ -188,7 +188,7 @@ def _request_purge(
         shared_id=file.folder.shared_id,
     )
     history.record(
-        Event.Action.PURGE_REQUESTED, actor=actor, file=file, name=file.name, number=number, reason=reason
+        history.Action.PURGE_REQUESTED, actor=actor, file=file, name=file.name, number=number, reason=reason
     )
     return request
 
@@ -218,7 +218,7 @@ def _purge(request: ApprovalRequest, approver: Resident) -> None:
 
     def record() -> None:
         history.record(
-            Event.Action.PURGED,
+            history.Action.PURGED,
             actor=approver,
             file=file,
             name=file.name,
@@ -274,7 +274,7 @@ def _decide(viewer: Viewer, request: ApprovalRequest, *, approve: bool, reason: 
             target.save(update_fields=["unlocked_until"])
         until = timezone.localtime(target.unlocked_until).strftime("%-d/%-m %Y") if approve and target else ""
         history.record(
-            Event.Action.UNLOCK_DECIDED,
+            history.Action.UNLOCK_DECIDED,
             actor=actor,
             name=request.name,
             approved=approve,
@@ -288,7 +288,7 @@ def _decide(viewer: Viewer, request: ApprovalRequest, *, approve: bool, reason: 
             request.file = None
     else:
         history.record(
-            Event.Action.PURGE_DECIDED,
+            history.Action.PURGE_DECIDED,
             actor=actor,
             name=request.name,
             number=request.version_number,

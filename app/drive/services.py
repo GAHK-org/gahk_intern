@@ -24,7 +24,7 @@ from residents.models import Resident
 
 from . import history, preview
 from .access import Viewer
-from .models import Event, File, FileVersion, Folder, LastDownload, name_key, normalize_name, validate_name
+from .models import File, FileVersion, Folder, LastDownload, name_key, normalize_name, validate_name
 
 KEY_PREFIX = "drive/"
 
@@ -89,9 +89,9 @@ def create_folder(viewer: Viewer, parent: Folder, name: str, resident: Resident)
             "drive.folder.created", subject=folder, actor=resident, involve=[(parent, "parent")]
         ):
             folder.save()
+            history.record(history.Action.CREATED, actor=resident, folder=folder, name=folder.name)
     except IntegrityError as exc:
         raise ValidationError(f"Der er allerede noget, der hedder „{name}“, i mappen.") from exc
-    history.record(Event.Action.CREATED, actor=resident, folder=folder, name=folder.name)
     return folder
 
 
@@ -226,7 +226,7 @@ def add_upload(
             file=file, number=1, key=key, size=size, content_type=content_type, created_by=resident
         )
         preview.ensure(version, file.name)
-        history.record(Event.Action.CREATED, actor=resident, file=file, name=file.name)
+        history.record(history.Action.CREATED, actor=resident, file=file, name=file.name)
     return Added(file, replaced=False)
 
 
@@ -276,7 +276,7 @@ def _new_version(
         file.changed_by, file.changed_at = resident, timezone.now()
         file.save()
         preview.ensure(version, file.name)
-        history.record(Event.Action.VERSION, actor=resident, file=file, name=file.name, number=number)
+        history.record(history.Action.VERSION, actor=resident, file=file, name=file.name, number=number)
     return version
 
 
