@@ -12,7 +12,7 @@ from django.urls import reverse
 from core.images import square_jpeg
 
 from .admin_access import approvers
-from .models import PROFILE_THUMBNAIL_SIZE, AdminAccessGrant, Resident
+from .models import PROFILE_THUMBNAIL_SIZE, Account, AdminAccessGrant
 
 logger = logging.getLogger(__name__)
 
@@ -47,7 +47,7 @@ def notify_admin_access_request(grant_id: int) -> int:
 def make_profile_thumbnail(resident_id: int, picture: str) -> bool:
     """Make the thumbnail of `picture`, if it is still the resident's picture and has none (#177).
 
-    Queued by Resident.queue_profile_thumbnail. Anything else is a job that is no longer wanted: the
+    Queued by Account.queue_profile_thumbnail. Anything else is a job that is no longer wanted: the
     resident is gone, has changed picture since (that picture has its own job), or a duplicate job
     got there first. The final update repeats the same conditions, so a job racing a change of
     picture or another job cannot store a thumbnail of the wrong picture; the loser deletes its file.
@@ -56,7 +56,7 @@ def make_profile_thumbnail(resident_id: int, picture: str) -> bool:
     picture Pillow cannot read, or that is missing from the bucket, gets no thumbnail, and its avatar
     keeps drawing the original. Returns whether a thumbnail was stored.
     """
-    pending = Resident.objects.filter(pk=resident_id, profile_picture=picture, profile_thumbnail="")
+    pending = Account.objects.filter(pk=resident_id, profile_picture=picture, profile_thumbnail="")
     resident = pending.first()
     if resident is None:
         return False

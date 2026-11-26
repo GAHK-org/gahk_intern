@@ -25,14 +25,14 @@ from photo_album.models import (
 )
 from photo_album.services import build_derivatives, delete, upload_media
 from photo_album.views import PAGE_SIZE
-from residents.models import Resident, Role
+from residents.models import Account, Role
 
 from .media_samples import image_upload, jpeg_bytes
 
 START = datetime(2024, 1, 1, 12, 0, tzinfo=UTC)
 
 
-def _media(album: Album, resident: Resident, *, at: datetime | None = None, **fields: object) -> Media:
+def _media(album: Album, resident: Account, *, at: datetime | None = None, **fields: object) -> Media:
     defaults: dict[str, object] = {
         "title": "photo",
         "original": "a",
@@ -48,7 +48,7 @@ def _ids(content: str) -> list[int]:
     return [int(pk) for pk in re.findall(r'data-media-id="(\d+)"', content)]
 
 
-def _series(album: Album, resident: Resident, count: int) -> list[Media]:
+def _series(album: Album, resident: Account, count: int) -> list[Media]:
     """`count` items one day apart, returned newest first — the order the pages show them in."""
     items = [_media(album, resident, at=START + timedelta(days=day), title=f"p{day}") for day in range(count)]
     return items[::-1]
@@ -59,7 +59,7 @@ def _series(album: Album, resident: Resident, count: int) -> list[Media]:
 
 @pytest.mark.django_db
 def test_album_pages_continue_older_and_newer_from_a_tile(
-    client: Client, make_resident: Callable[..., Resident]
+    client: Client, make_resident: Callable[..., Account]
 ) -> None:
     resident = make_resident()
     album = Album.objects.create(folder="2024", name="Fest")
@@ -81,7 +81,7 @@ def test_album_pages_continue_older_and_newer_from_a_tile(
 
 @pytest.mark.django_db
 def test_a_deep_link_opens_the_page_around_that_item(
-    client: Client, make_resident: Callable[..., Resident]
+    client: Client, make_resident: Callable[..., Account]
 ) -> None:
     resident = make_resident()
     album = Album.objects.create(folder="2024", name="Fest")
@@ -103,7 +103,7 @@ def test_a_deep_link_opens_the_page_around_that_item(
 
 @pytest.mark.django_db
 def test_an_unknown_paging_anchor_is_a_404_not_a_leak(
-    client: Client, make_resident: Callable[..., Resident]
+    client: Client, make_resident: Callable[..., Account]
 ) -> None:
     """A pending item of someone else is not in the reader's scope, so it cannot anchor a page."""
     resident = make_resident()
@@ -119,7 +119,7 @@ def test_an_unknown_paging_anchor_is_a_404_not_a_leak(
 
 @pytest.mark.django_db
 def test_timeline_spans_albums_and_jumps_to_a_year(
-    client: Client, make_resident: Callable[..., Resident]
+    client: Client, make_resident: Callable[..., Account]
 ) -> None:
     resident = make_resident()
     first = Album.objects.create(folder="2023", name="Gammel")
@@ -142,7 +142,7 @@ def test_timeline_spans_albums_and_jumps_to_a_year(
 
 @pytest.mark.django_db
 def test_timeline_tiles_carry_their_month_for_the_rulers(
-    client: Client, make_resident: Callable[..., Resident]
+    client: Client, make_resident: Callable[..., Account]
 ) -> None:
     resident = make_resident()
     album = Album.objects.create(folder="2025", name="Fest")
@@ -162,7 +162,7 @@ def test_timeline_tiles_carry_their_month_for_the_rulers(
 
 @pytest.mark.django_db
 def test_sub_albums_are_listed_and_can_be_shown_with_their_media(
-    client: Client, make_resident: Callable[..., Resident]
+    client: Client, make_resident: Callable[..., Account]
 ) -> None:
     resident = make_resident()
     root = Album.objects.create(folder="2024", name="Sommerfest")
@@ -185,7 +185,7 @@ def test_sub_albums_are_listed_and_can_be_shown_with_their_media(
 
 @pytest.mark.django_db
 def test_sub_albums_can_be_created_one_level_below_a_root_only(
-    client: Client, make_resident: Callable[..., Resident]
+    client: Client, make_resident: Callable[..., Account]
 ) -> None:
     photographer = make_resident(roles=(Role.FOTO,))
     root = Album.objects.create(folder="2024", name="Sommerfest")
@@ -204,7 +204,7 @@ def test_sub_albums_can_be_created_one_level_below_a_root_only(
 
 @pytest.mark.django_db
 def test_sibling_names_must_differ_regardless_of_case(
-    client: Client, make_resident: Callable[..., Resident]
+    client: Client, make_resident: Callable[..., Account]
 ) -> None:
     photographer = make_resident(roles=(Role.FOTO,))
     root = Album.objects.create(folder="2024", name="Sommerfest")
@@ -221,7 +221,7 @@ def test_sibling_names_must_differ_regardless_of_case(
 
 @pytest.mark.django_db
 def test_plain_residents_cannot_create_sub_albums(
-    client: Client, make_resident: Callable[..., Resident]
+    client: Client, make_resident: Callable[..., Account]
 ) -> None:
     root = Album.objects.create(folder="2024", name="Sommerfest")
     client.force_login(make_resident())
@@ -233,7 +233,7 @@ def test_plain_residents_cannot_create_sub_albums(
 
 @pytest.mark.django_db
 def test_albums_can_be_renamed_until_they_are_locked(
-    client: Client, make_resident: Callable[..., Resident]
+    client: Client, make_resident: Callable[..., Account]
 ) -> None:
     photographer = make_resident(roles=(Role.FOTO,))
     root = Album.objects.create(folder="2024", name="Sommerfest")
@@ -256,7 +256,7 @@ def test_albums_can_be_renamed_until_they_are_locked(
 
 @pytest.mark.django_db
 def test_unlocking_an_album_locked_by_its_parent_names_the_parent(
-    client: Client, make_resident: Callable[..., Resident]
+    client: Client, make_resident: Callable[..., Account]
 ) -> None:
     photographer = make_resident(roles=(Role.FOTO,))
     root = Album.objects.create(folder="2024", name="Sommerfest", manually_locked_at=timezone.now())
@@ -272,7 +272,7 @@ def test_unlocking_an_album_locked_by_its_parent_names_the_parent(
 
 @pytest.mark.django_db
 def test_a_sub_album_can_be_locked_without_its_parent(
-    client: Client, make_resident: Callable[..., Resident]
+    client: Client, make_resident: Callable[..., Account]
 ) -> None:
     photographer = make_resident(roles=(Role.FOTO,))
     root = Album.objects.create(folder="2024", name="Sommerfest")
@@ -287,7 +287,7 @@ def test_a_sub_album_can_be_locked_without_its_parent(
 
 @pytest.mark.django_db
 def test_deleting_a_sub_album_returns_to_its_parent(
-    client: Client, make_resident: Callable[..., Resident]
+    client: Client, make_resident: Callable[..., Account]
 ) -> None:
     photographer = make_resident(roles=(Role.FOTO,))
     root = Album.objects.create(folder="2024", name="Sommerfest")
@@ -305,7 +305,7 @@ def test_deleting_a_sub_album_returns_to_its_parent(
 
 @pytest.mark.django_db
 def test_an_album_bin_holds_its_subtree_and_nothing_else(
-    client: Client, make_resident: Callable[..., Resident]
+    client: Client, make_resident: Callable[..., Account]
 ) -> None:
     administrator = make_resident(roles=(Role.ADMINISTRATOR,))
     root = Album.objects.create(folder="2024", name="Sommerfest")
@@ -331,9 +331,7 @@ def test_an_album_bin_holds_its_subtree_and_nothing_else(
 
 
 @pytest.mark.django_db
-def test_selection_approves_only_pending_items(
-    client: Client, make_resident: Callable[..., Resident]
-) -> None:
+def test_selection_approves_only_pending_items(client: Client, make_resident: Callable[..., Account]) -> None:
     photographer = make_resident(roles=(Role.FOTO,))
     uploader = make_resident(email="beboer@gahk.dk")
     album = Album.objects.create(folder="2024", name="Fest")
@@ -353,7 +351,7 @@ def test_selection_approves_only_pending_items(
 
 @pytest.mark.django_db
 def test_selection_approval_is_for_fotogruppen_only(
-    client: Client, make_resident: Callable[..., Resident]
+    client: Client, make_resident: Callable[..., Account]
 ) -> None:
     resident = make_resident()
     album = Album.objects.create(folder="2024", name="Fest")
@@ -367,7 +365,7 @@ def test_selection_approval_is_for_fotogruppen_only(
 
 @pytest.mark.django_db
 def test_selection_delete_touches_only_what_the_resident_may_remove(
-    client: Client, make_resident: Callable[..., Resident]
+    client: Client, make_resident: Callable[..., Account]
 ) -> None:
     resident = make_resident()
     other = make_resident(email="other@gahk.dk")
@@ -385,7 +383,7 @@ def test_selection_delete_touches_only_what_the_resident_may_remove(
 
 @pytest.mark.django_db
 def test_selection_delete_checks_each_item_as_well_as_its_album(
-    client: Client, make_resident: Callable[..., Resident]
+    client: Client, make_resident: Callable[..., Account]
 ) -> None:
     """An open album does not open every item in it: a curator's 30 days still run per item."""
     photographer = make_resident(roles=(Role.FOTO,))
@@ -408,7 +406,7 @@ def test_selection_delete_checks_each_item_as_well_as_its_album(
 
 @pytest.mark.django_db
 def test_selection_delete_sees_the_lock_its_own_removals_bring_on(
-    client: Client, make_resident: Callable[..., Resident]
+    client: Client, make_resident: Callable[..., Account]
 ) -> None:
     """Binning the newest approved item can lock its album, and the rest of the selection obeys it."""
     photographer = make_resident(roles=(Role.FOTO,))
@@ -429,7 +427,7 @@ def test_selection_delete_sees_the_lock_its_own_removals_bring_on(
 
 @pytest.mark.django_db
 def test_selection_delete_works_out_each_albums_lock_once(
-    client: Client, make_resident: Callable[..., Resident]
+    client: Client, make_resident: Callable[..., Account]
 ) -> None:
     """It used to be worked out for every item: about 1000 queries for 500 of them."""
     photographer = make_resident(roles=(Role.FOTO,))
@@ -452,7 +450,7 @@ def test_selection_delete_works_out_each_albums_lock_once(
 
 @pytest.mark.django_db
 def test_selection_download_queues_only_visible_items(
-    client: Client, make_resident: Callable[..., Resident]
+    client: Client, make_resident: Callable[..., Account]
 ) -> None:
     resident = make_resident()
     other = make_resident(email="other@gahk.dk")
@@ -475,7 +473,7 @@ def test_selection_download_queues_only_visible_items(
 
 @pytest.mark.django_db
 def test_an_empty_selection_or_unknown_action_is_refused(
-    client: Client, make_resident: Callable[..., Resident]
+    client: Client, make_resident: Callable[..., Account]
 ) -> None:
     resident = make_resident()
     album = Album.objects.create(folder="2024", name="Fest")
@@ -494,7 +492,7 @@ def test_an_empty_selection_or_unknown_action_is_refused(
 
 @pytest.mark.django_db
 def test_album_download_covers_the_subtree_and_is_not_queued_twice(
-    client: Client, make_resident: Callable[..., Resident]
+    client: Client, make_resident: Callable[..., Account]
 ) -> None:
     resident = make_resident()
     root = Album.objects.create(folder="2024", name="Sommerfest")
@@ -516,7 +514,7 @@ def test_album_download_covers_the_subtree_and_is_not_queued_twice(
 
 @pytest.mark.django_db
 def test_album_download_can_leave_the_sub_albums_out(
-    client: Client, make_resident: Callable[..., Resident]
+    client: Client, make_resident: Callable[..., Account]
 ) -> None:
     resident = make_resident()
     root = Album.objects.create(folder="2024", name="Sommerfest")
@@ -552,7 +550,7 @@ def test_album_download_can_leave_the_sub_albums_out(
 
 @pytest.mark.django_db
 def test_an_expired_ready_download_is_queued_afresh(
-    client: Client, make_resident: Callable[..., Resident]
+    client: Client, make_resident: Callable[..., Account]
 ) -> None:
     resident = make_resident()
     album = Album.objects.create(folder="2024", name="Fest")
@@ -574,7 +572,7 @@ def test_an_expired_ready_download_is_queued_afresh(
 
 @pytest.mark.django_db
 def test_an_unknown_download_variant_is_refused(
-    client: Client, make_resident: Callable[..., Resident]
+    client: Client, make_resident: Callable[..., Account]
 ) -> None:
     resident = make_resident()
     album = Album.objects.create(folder="2024", name="Fest")
@@ -588,7 +586,7 @@ def test_an_unknown_download_variant_is_refused(
 
 @pytest.mark.django_db
 def test_downloads_page_lists_only_the_residents_own(
-    client: Client, make_resident: Callable[..., Resident]
+    client: Client, make_resident: Callable[..., Account]
 ) -> None:
     resident = make_resident()
     other = make_resident(email="other@gahk.dk")
@@ -607,7 +605,7 @@ def test_downloads_page_lists_only_the_residents_own(
 
 @pytest.mark.django_db
 def test_views_are_counted_once_per_window_and_reported_unique_and_total(
-    client: Client, make_resident: Callable[..., Resident]
+    client: Client, make_resident: Callable[..., Account]
 ) -> None:
     resident = make_resident()
     other = make_resident(email="other@gahk.dk")
@@ -628,7 +626,7 @@ def test_views_are_counted_once_per_window_and_reported_unique_and_total(
 
 
 @pytest.mark.django_db
-def test_views_of_hidden_items_are_refused(client: Client, make_resident: Callable[..., Resident]) -> None:
+def test_views_of_hidden_items_are_refused(client: Client, make_resident: Callable[..., Account]) -> None:
     uploader = make_resident()
     stranger = make_resident(email="stranger@gahk.dk")
     album = Album.objects.create(folder="2024", name="Fest")
@@ -641,7 +639,7 @@ def test_views_of_hidden_items_are_refused(client: Client, make_resident: Callab
 
 @pytest.mark.django_db
 def test_viewer_details_include_album_path_link_counts_and_map(
-    client: Client, make_resident: Callable[..., Resident]
+    client: Client, make_resident: Callable[..., Account]
 ) -> None:
     resident = make_resident()
     root = Album.objects.create(folder="2024", name="Sommerfest")
@@ -659,7 +657,7 @@ def test_viewer_details_include_album_path_link_counts_and_map(
 
 
 @pytest.mark.django_db
-def test_a_nonsense_location_gets_no_map_link(client: Client, make_resident: Callable[..., Resident]) -> None:
+def test_a_nonsense_location_gets_no_map_link(client: Client, make_resident: Callable[..., Account]) -> None:
     resident = make_resident()
     album = Album.objects.create(folder="2024", name="Fest")
     media = _media(album, resident, metadata={"Sted": "nowhere"})
@@ -670,7 +668,7 @@ def test_a_nonsense_location_gets_no_map_link(client: Client, make_resident: Cal
 
 @pytest.mark.django_db
 def test_serve_media_refuses_a_key_that_borrows_another_items_uuid(
-    client: Client, make_resident: Callable[..., Resident]
+    client: Client, make_resident: Callable[..., Account]
 ) -> None:
     """The uuid finds the row; the rest of the key must still be one of that row's own files."""
     resident = make_resident()
@@ -689,7 +687,7 @@ def test_serve_media_refuses_a_key_that_borrows_another_items_uuid(
 
 @pytest.mark.django_db
 def test_uploading_the_same_file_twice_skips_it_and_says_so(
-    client: Client, make_resident: Callable[..., Resident]
+    client: Client, make_resident: Callable[..., Account]
 ) -> None:
     administrator = make_resident(roles=(Role.ADMINISTRATOR,))
     album = Album.objects.create(folder="2024", name="Fest")
@@ -717,7 +715,7 @@ def test_uploading_the_same_file_twice_skips_it_and_says_so(
 
 @pytest.mark.django_db
 def test_upload_keeps_the_browsers_file_modified_time(
-    client: Client, make_resident: Callable[..., Resident]
+    client: Client, make_resident: Callable[..., Account]
 ) -> None:
     administrator = make_resident(roles=(Role.ADMINISTRATOR,))
     album = Album.objects.create(folder="2024", name="Fest")
@@ -740,7 +738,7 @@ def test_upload_keeps_the_browsers_file_modified_time(
 
 @pytest.mark.django_db
 @override_settings(PHOTO_ALBUM_IMPORT_TOKEN="migration-token")
-def test_system_albums_lists_root_albums_of_a_folder(make_resident: Callable[..., Resident]) -> None:
+def test_system_albums_lists_root_albums_of_a_folder(make_resident: Callable[..., Account]) -> None:
     resident = make_resident()
     root = Album.objects.create(folder="2024", name="Sommerfest")
     child = Album.objects.create(name="Fredag", parent=root)
@@ -762,7 +760,7 @@ def test_system_albums_lists_root_albums_of_a_folder(make_resident: Callable[...
 
 @pytest.mark.django_db
 def test_import_status_reports_every_reason_a_zip_was_refused(
-    client: Client, make_resident: Callable[..., Resident]
+    client: Client, make_resident: Callable[..., Account]
 ) -> None:
     administrator = make_resident(roles=(Role.ADMINISTRATOR,))
     album_import = AlbumImport.objects.create(
@@ -787,7 +785,7 @@ def test_import_status_reports_every_reason_a_zip_was_refused(
 
 @pytest.mark.django_db
 def test_import_page_explains_that_folders_become_sub_albums(
-    client: Client, make_resident: Callable[..., Resident]
+    client: Client, make_resident: Callable[..., Account]
 ) -> None:
     client.force_login(make_resident(roles=(Role.ADMINISTRATOR,)))
     page = client.get(reverse("photo_album:import_zip")).content.decode()
@@ -796,7 +794,7 @@ def test_import_page_explains_that_folders_become_sub_albums(
 
 
 @pytest.mark.django_db
-def test_import_status_lists_the_created_tree(client: Client, make_resident: Callable[..., Resident]) -> None:
+def test_import_status_lists_the_created_tree(client: Client, make_resident: Callable[..., Account]) -> None:
     administrator = make_resident(roles=(Role.ADMINISTRATOR,))
     root = Album.objects.create(folder="2024", name="Sommerfest")
     child = Album.objects.create(name="Fredag", parent=root)

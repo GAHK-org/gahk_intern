@@ -26,7 +26,7 @@ from django.db.models import Min, Q
 from django.utils import timezone
 
 from core.markdown import plain_text
-from residents.models import Resident
+from residents.models import Account
 
 from .models import NoticeQuerySet
 
@@ -67,7 +67,7 @@ def search(qs: NoticeQuerySet, query: str) -> NoticeQuerySet:
         match = Q(body__icontains=word)
         # A list rather than a join: an OR across a join stops Postgres combining the two indexes.
         authors = list(
-            Resident.objects.filter(Q(first_name__icontains=word) | Q(last_name__icontains=word)).values_list(
+            Account.objects.filter(Q(first_name__icontains=word) | Q(last_name__icontains=word)).values_list(
                 "pk", flat=True
             )[:200]
         )

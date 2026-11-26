@@ -8,7 +8,7 @@ from django.utils import timezone
 
 from core.danish import MONTHS
 from photo_album.models import validate_tag_name
-from residents.models import Resident
+from residents.models import Account
 
 from .dating import FIRST_YEAR, DatePrecision, PartialDate, parse_premiere, premiere_value
 from .models import PREMIERE_MAX_AHEAD, PremiereBlur, Series, Video, normalize_name
@@ -132,7 +132,7 @@ class VideoDetailsForm(forms.Form):
             raise ValidationError("Medvirkende kunne ikke læses.")
         ids = [item.get("resident") for item in raw if isinstance(item, dict) and item.get("resident")]
         known = dict(
-            Resident.objects.filter(pk__in=[i for i in ids if isinstance(i, int)]).values_list(
+            Account.objects.filter(pk__in=[i for i in ids if isinstance(i, int)]).values_list(
                 "pk", "first_name"
             )
         )

@@ -33,7 +33,7 @@ from core.models import PushSubscription, Room
 from notifications import categories, services, tasks
 from notifications.categories import Importance
 from notifications.models import Notification, NotificationPreference, NotificationSettings
-from residents.models import Residency, Resident, Role, RoleAssignment, active_period
+from residents.models import Account, Residency, Role, RoleAssignment, active_period
 
 pytestmark = pytest.mark.django_db
 
@@ -63,7 +63,7 @@ def pushes(monkeypatch: pytest.MonkeyPatch, settings: object) -> Recorded:
     return recorded
 
 
-def device(user: Resident, endpoint: str | None = None) -> PushSubscription:
+def device(user: Account, endpoint: str | None = None) -> PushSubscription:
     """Register a fake push device. One per device, for everything — no topic flags any more."""
     return PushSubscription.objects.create(
         user=user,
@@ -74,12 +74,12 @@ def device(user: Resident, endpoint: str | None = None) -> PushSubscription:
     )
 
 
-def prefer(resident: Resident, category: str, **flags: bool) -> NotificationPreference:
+def prefer(resident: Account, category: str, **flags: bool) -> NotificationPreference:
     """One exception to the all-on default, as the settings page stores it."""
     return NotificationPreference.objects.create(resident=resident, category=category, **flags)
 
 
-def make_notification(recipient: Resident, **fields: object) -> Notification:
+def make_notification(recipient: Account, **fields: object) -> Notification:
     """A row as services.notify would write it, with whatever the test is about overridden."""
     now = timezone.now()
     defaults: dict[str, object] = {
@@ -96,7 +96,7 @@ def make_notification(recipient: Resident, **fields: object) -> Notification:
 
 
 @pytest.fixture
-def two(make_resident: Callable[..., Resident]) -> tuple[Resident, Resident]:
+def two(make_resident: Callable[..., Account]) -> tuple[Account, Account]:
     """Two residents, each with a device, everything at the defaults."""
     a = make_resident(email="a@gahk.dk", first_name="Anders", last_name="And")
     b = make_resident(email="b@gahk.dk", first_name="Bente", last_name="Bo")
@@ -109,7 +109,7 @@ def two(make_resident: Callable[..., Resident]) -> tuple[Resident, Resident]:
 
 
 def test_notify_writes_a_row_per_resident_and_pushes_once(
-    pushes: Recorded, two: tuple[Resident, Resident]
+    pushes: Recorded, two: tuple[Account, Account]
 ) -> None:
     """Default settings: everyone gets the in-app row AND the push, and everyone vibrates — so the
     whole fan-out is ONE payload, not one per resident. The open-link carries the shared batch, which
@@ -117,7 +117,7 @@ def test_notify_writes_a_row_per_resident_and_pushes_once(
     a, b = two
 
     reached = services.notify(
-        Resident.objects.filter(pk__in=[a.pk, b.pk]),
+        Account.objects.filter(pk__in=[a.pk, b.pk]),
         category=categories.POSTS_NEW,
         title="Nyt opslag",
         body="Kaffe i stuen",
@@ -151,7 +151,7 @@ def test_notify_writes_a_row_per_resident_and_pushes_once(
 
 
 def test_a_resident_without_a_device_gets_the_row_but_no_push(
-    pushes: Recorded, make_resident: Callable[..., Resident]
+    pushes: Recorded, make_resident: Callable[..., Account]
 ) -> None:
     """In-app needs no device. `pushed` is statistics: it must say what actually happened."""
     lonely = make_resident(email="c@gahk.dk")
@@ -164,12 +164,12 @@ def test_a_resident_without_a_device_gets_the_row_but_no_push(
     assert pushes == []
 
 
-def test_the_resident_who_caused_it_is_excluded(pushes: Recorded, two: tuple[Resident, Resident]) -> None:
+def test_the_resident_who_caused_it_is_excluded(pushes: Recorded, two: tuple[Account, Account]) -> None:
     """Nobody is notified about their own post."""
     a, b = two
 
     reached = services.notify(
-        Resident.objects.all(), category=categories.POSTS_NEW, title="t", url=TARGET, exclude=a.pk
+        Account.objects.all(), category=categories.POSTS_NEW, title="t", url=TARGET, exclude=a.pk
     )
 
     assert reached == 1
@@ -178,7 +178,7 @@ def test_the_resident_who_caused_it_is_excluded(pushes: Recorded, two: tuple[Res
 
 
 def test_recipients_may_be_ids_and_duplicates_are_told_once(
-    pushes: Recorded, two: tuple[Resident, Resident]
+    pushes: Recorded, two: tuple[Account, Account]
 ) -> None:
     """Features build audiences by union (organiser + co-organisers + invitees); a resident in two
     of them must not get two rows and two banners."""
@@ -188,7 +188,7 @@ def test_recipients_may_be_ids_and_duplicates_are_told_once(
     assert Notification.objects.count() == 2
 
 
-def test_an_unknown_category_fails_loudly(pushes: Recorded, two: tuple[Resident, Resident]) -> None:
+def test_an_unknown_category_fails_loudly(pushes: Recorded, two: tuple[Account, Account]) -> None:
     """A typo at a call site must not notify under a category no settings toggle controls."""
     with pytest.raises(KeyError):
         services.notify([two[0].pk], category="posts.nwe", title="t", url=TARGET)
@@ -196,7 +196,7 @@ def test_an_unknown_category_fails_loudly(pushes: Recorded, two: tuple[Resident,
 
 
 def test_importance_defaults_to_the_category_and_can_be_raised(
-    pushes: Recorded, two: tuple[Resident, Resident]
+    pushes: Recorded, two: tuple[Account, Account]
 ) -> None:
     a, _b = two
 
@@ -213,7 +213,7 @@ def test_importance_defaults_to_the_category_and_can_be_raised(
 # --- notify: preferences ------------------------------------------------------------------------
 
 
-def test_in_app_off_still_pushes_and_hides_the_row(pushes: Recorded, two: tuple[Resident, Resident]) -> None:
+def test_in_app_off_still_pushes_and_hides_the_row(pushes: Recorded, two: tuple[Account, Account]) -> None:
     """The row still exists (it is what tapping the push marks seen, and what the statistics count),
     but it is not in the dropdown, the page or the badge."""
     a, b = two
@@ -229,9 +229,7 @@ def test_in_app_off_still_pushes_and_hides_the_row(pushes: Recorded, two: tuple[
     assert pushes[0][0] == sorted([a.pk, b.pk])
 
 
-def test_push_off_keeps_the_row_and_skips_the_device(
-    pushes: Recorded, two: tuple[Resident, Resident]
-) -> None:
+def test_push_off_keeps_the_row_and_skips_the_device(pushes: Recorded, two: tuple[Account, Account]) -> None:
     a, b = two
     prefer(a, categories.POSTS_NEW, push=False)
 
@@ -243,7 +241,7 @@ def test_push_off_keeps_the_row_and_skips_the_device(
     assert [ids for ids, _p, _t in pushes] == [[b.pk]]
 
 
-def test_both_off_means_nothing_at_all(pushes: Recorded, two: tuple[Resident, Resident]) -> None:
+def test_both_off_means_nothing_at_all(pushes: Recorded, two: tuple[Account, Account]) -> None:
     """A resident who turned a category fully off is not "reached", and has no row to see."""
     a, b = two
     prefer(a, categories.POSTS_NEW, in_app=False, push=False)
@@ -255,7 +253,7 @@ def test_both_off_means_nothing_at_all(pushes: Recorded, two: tuple[Resident, Re
 
 
 def test_a_preference_only_applies_to_its_own_category(
-    pushes: Recorded, two: tuple[Resident, Resident]
+    pushes: Recorded, two: tuple[Account, Account]
 ) -> None:
     a, _b = two
     prefer(a, categories.POSTS_NEW, in_app=False, push=False)
@@ -267,7 +265,7 @@ def test_a_preference_only_applies_to_its_own_category(
 
 
 def test_category_vibrate_off_puts_the_resident_in_the_silent_group(
-    pushes: Recorded, two: tuple[Resident, Resident]
+    pushes: Recorded, two: tuple[Account, Account]
 ) -> None:
     """Vibrating and silent residents need different payloads — two fan-outs, never one per
     resident."""
@@ -283,7 +281,7 @@ def test_category_vibrate_off_puts_the_resident_in_the_silent_group(
     assert pushes[0][1]["open"] == pushes[1][1]["open"]
 
 
-def test_global_vibrate_off_silences_every_category(pushes: Recorded, two: tuple[Resident, Resident]) -> None:
+def test_global_vibrate_off_silences_every_category(pushes: Recorded, two: tuple[Account, Account]) -> None:
     a, b = two
     NotificationSettings.objects.create(resident=a, vibrate=False)
 
@@ -293,7 +291,7 @@ def test_global_vibrate_off_silences_every_category(pushes: Recorded, two: tuple
 
 
 def test_vibrate_min_importance_silences_only_what_is_below_it(
-    pushes: Recorded, two: tuple[Resident, Resident]
+    pushes: Recorded, two: tuple[Account, Account]
 ) -> None:
     """ "Don't vibrate for likes": a NORMAL push arrives silently, a HØJ one still vibrates."""
     a, _b = two
@@ -305,7 +303,7 @@ def test_vibrate_min_importance_silences_only_what_is_below_it(
     assert [(p["head"], p["vibrate"]) for _ids, p, _ttl in pushes] == [("normal", False), ("hoej", True)]
 
 
-def test_kritisk_overrides_every_preference(pushes: Recorded, two: tuple[Resident, Resident]) -> None:
+def test_kritisk_overrides_every_preference(pushes: Recorded, two: tuple[Account, Account]) -> None:
     """The level's whole purpose: a resident who turned the category off — in-app, push and
     vibration, and vibration globally — still gets the row and a vibrating push."""
     a, _b = two
@@ -326,7 +324,7 @@ def test_kritisk_overrides_every_preference(pushes: Recorded, two: tuple[Residen
 
 
 def test_a_room_category_makes_rows_only_for_device_owners_with_push_on(
-    pushes: Recorded, make_resident: Callable[..., Resident]
+    pushes: Recorded, make_resident: Callable[..., Account]
 ) -> None:
     """A Den Hurtige room is push only: the chat itself is the in-app copy. So the only residents
     with a row are those a push actually reaches — no device, or the room muted, means no row."""
@@ -353,7 +351,7 @@ def test_a_room_category_makes_rows_only_for_device_owners_with_push_on(
 
 
 def test_push_only_rows_stay_out_of_the_in_app_lists(
-    pushes: Recorded, client: Client, two: tuple[Resident, Resident]
+    pushes: Recorded, client: Client, two: tuple[Account, Account]
 ) -> None:
     """Not in the badge, the dropdown or the page — a feed of every chat message would bury the
     notifications that are actually about you."""
@@ -367,7 +365,7 @@ def test_push_only_rows_stay_out_of_the_in_app_lists(
 
 
 def test_without_vapid_keys_push_only_categories_produce_nothing(
-    monkeypatch: pytest.MonkeyPatch, settings: object, make_resident: Callable[..., Resident]
+    monkeypatch: pytest.MonkeyPatch, settings: object, make_resident: Callable[..., Account]
 ) -> None:
     """The dev state: no push. In-app categories still write rows (marked not pushed); a push-only
     category writes none, rather than rows nobody could ever see."""
@@ -385,7 +383,7 @@ def test_without_vapid_keys_push_only_categories_produce_nothing(
 # --- TTL ----------------------------------------------------------------------------------------
 
 
-def test_the_default_ttl_is_seven_days(pushes: Recorded, two: tuple[Resident, Resident]) -> None:
+def test_the_default_ttl_is_seven_days(pushes: Recorded, two: tuple[Account, Account]) -> None:
     """On the row (it leaves the lists then) AND on the push (the service drops it then)."""
     a, _b = two
     before = timezone.now()
@@ -401,7 +399,7 @@ def test_the_default_ttl_is_seven_days(pushes: Recorded, two: tuple[Resident, Re
 
 
 def test_a_chat_message_lives_exactly_as_long_as_the_message(
-    pushes: Recorded, two: tuple[Resident, Resident]
+    pushes: Recorded, two: tuple[Account, Account]
 ) -> None:
     """A time-limited Den Hurtige message: its notification must not outlive it, on the device or in
     the app."""
@@ -416,9 +414,7 @@ def test_a_chat_message_lives_exactly_as_long_as_the_message(
     assert 2 * 3600 - 60 <= pushes[0][2] <= 2 * 3600
 
 
-def test_an_already_expired_notification_is_not_sent(
-    pushes: Recorded, two: tuple[Resident, Resident]
-) -> None:
+def test_an_already_expired_notification_is_not_sent(pushes: Recorded, two: tuple[Account, Account]) -> None:
     a, _b = two
 
     reached = services.notify(
@@ -434,7 +430,7 @@ def test_an_already_expired_notification_is_not_sent(
     assert pushes == []
 
 
-def test_an_expired_row_leaves_the_lists_at_once(make_resident: Callable[..., Resident]) -> None:
+def test_an_expired_row_leaves_the_lists_at_once(make_resident: Callable[..., Account]) -> None:
     """Expiry is a comparison, not a sweep — no waiting for the nightly purge."""
     a = make_resident(email="a@gahk.dk")
     make_notification(a, title="gammel", expires_at=timezone.now() - datetime.timedelta(seconds=1))
@@ -456,7 +452,7 @@ def test_an_expired_row_leaves_the_lists_at_once(make_resident: Callable[..., Re
 )
 def test_the_ttl_is_seven_days_across_a_change_of_clock(
     pushes: Recorded,
-    two: tuple[Resident, Resident],
+    two: tuple[Account, Account],
     monkeypatch: pytest.MonkeyPatch,
     local_now: datetime.datetime,
 ) -> None:
@@ -489,7 +485,7 @@ def test_grouped_title(names: list[str], expected: str) -> None:
     assert services.grouped_title(actors, "reagerede") == expected
 
 
-def test_grouping_rewrites_one_row(pushes: Recorded, make_resident: Callable[..., Resident]) -> None:
+def test_grouping_rewrites_one_row(pushes: Recorded, make_resident: Callable[..., Account]) -> None:
     """The spec's example: A liked it, then B — the first notification is REPLACED by "B og A…",
     and a third makes it a count. One row throughout, newest actor first, unseen again each time."""
     author = make_resident(email="author@gahk.dk")
@@ -498,7 +494,7 @@ def test_grouping_rewrites_one_row(pushes: Recorded, make_resident: Callable[...
     bente = make_resident(email="b@gahk.dk", first_name="Bente", last_name="Bo")
     carl = make_resident(email="c@gahk.dk", first_name="Carl", last_name="Cykel")
 
-    def like(actor: Resident) -> Notification | None:
+    def like(actor: Account) -> Notification | None:
         return services.notify_grouped(
             author.pk,
             category=categories.CHAT_LIKES,
@@ -534,7 +530,7 @@ def test_grouping_rewrites_one_row(pushes: Recorded, make_resident: Callable[...
 
 
 def test_the_same_actor_again_moves_to_the_front_without_counting_twice(
-    pushes: Recorded, make_resident: Callable[..., Resident]
+    pushes: Recorded, make_resident: Callable[..., Account]
 ) -> None:
     author = make_resident(email="author@gahk.dk")
     anders = make_resident(email="a@gahk.dk", first_name="Anders", last_name="And")
@@ -554,7 +550,7 @@ def test_the_same_actor_again_moves_to_the_front_without_counting_twice(
 
 
 def test_acting_on_your_own_post_notifies_nobody(
-    pushes: Recorded, make_resident: Callable[..., Resident]
+    pushes: Recorded, make_resident: Callable[..., Account]
 ) -> None:
     author = make_resident(email="author@gahk.dk")
     device(author)
@@ -574,7 +570,7 @@ def test_acting_on_your_own_post_notifies_nobody(
 
 
 def test_separate_group_keys_are_separate_rows(
-    pushes: Recorded, make_resident: Callable[..., Resident]
+    pushes: Recorded, make_resident: Callable[..., Account]
 ) -> None:
     author = make_resident(email="author@gahk.dk")
     anders = make_resident(email="a@gahk.dk")
@@ -587,7 +583,7 @@ def test_separate_group_keys_are_separate_rows(
 
 
 def test_an_expired_group_is_revived_with_a_fresh_actor_list(
-    pushes: Recorded, make_resident: Callable[..., Resident]
+    pushes: Recorded, make_resident: Callable[..., Account]
 ) -> None:
     """Last week's likers are not news. The row is reused (the unique constraint holds over expired
     rows too) but starts over."""
@@ -605,7 +601,7 @@ def test_an_expired_group_is_revived_with_a_fresh_actor_list(
     assert row.expires_at > timezone.now()
 
 
-def test_grouped_respects_preferences(pushes: Recorded, make_resident: Callable[..., Resident]) -> None:
+def test_grouped_respects_preferences(pushes: Recorded, make_resident: Callable[..., Account]) -> None:
     """Grouping goes through the same decisions as notify: likes fully off means no row."""
     author = make_resident(email="author@gahk.dk")
     device(author)
@@ -628,7 +624,7 @@ def test_grouped_respects_preferences(pushes: Recorded, make_resident: Callable[
 # --- seen / unseen ------------------------------------------------------------------------------
 
 
-def test_mark_seen_stamps_only_what_was_unseen(make_resident: Callable[..., Resident]) -> None:
+def test_mark_seen_stamps_only_what_was_unseen(make_resident: Callable[..., Account]) -> None:
     """Re-marking must not move the "seen at" of something seen yesterday."""
     a = make_resident(email="a@gahk.dk")
     earlier = timezone.now() - datetime.timedelta(days=1)
@@ -643,7 +639,7 @@ def test_mark_seen_stamps_only_what_was_unseen(make_resident: Callable[..., Resi
 
 
 def test_unseen_count_is_the_residents_own_visible_unseen_rows(
-    make_resident: Callable[..., Resident],
+    make_resident: Callable[..., Account],
 ) -> None:
     a = make_resident(email="a@gahk.dk")
     b = make_resident(email="b@gahk.dk")
@@ -668,7 +664,7 @@ def test_the_pages_require_login(client: Client) -> None:
 
 
 def test_index_lists_own_active_rows_most_important_first_then_newest(
-    client: Client, make_resident: Callable[..., Resident]
+    client: Client, make_resident: Callable[..., Account]
 ) -> None:
     """A cancelled event outranks a newer like — the ordering importance levels exist for."""
     a = make_resident(email="a@gahk.dk")
@@ -695,7 +691,7 @@ def test_index_lists_own_active_rows_most_important_first_then_newest(
 
 
 def test_unseen_come_first_then_most_important_then_newest(
-    client: Client, make_resident: Callable[..., Resident]
+    client: Client, make_resident: Callable[..., Account]
 ) -> None:
     """A seen Kritisk sinks below an unseen Lav: what is new is what people open the bell for."""
     a = make_resident(email="a@gahk.dk")
@@ -715,7 +711,7 @@ def test_unseen_come_first_then_most_important_then_newest(
 
 
 def test_index_by_category_groups_in_display_order(
-    client: Client, make_resident: Callable[..., Resident]
+    client: Client, make_resident: Callable[..., Account]
 ) -> None:
     a = make_resident(email="a@gahk.dk")
     make_notification(a, title="event", category=categories.EVENTS_NEW)
@@ -738,14 +734,14 @@ def test_index_by_category_groups_in_display_order(
 
 
 def test_an_unknown_view_falls_back_to_chronological(
-    client: Client, make_resident: Callable[..., Resident]
+    client: Client, make_resident: Callable[..., Account]
 ) -> None:
     client.force_login(make_resident(email="a@gahk.dk"))
 
     assert client.get(reverse("notifications:index"), {"visning": "x"}).context["view"] == "kronologisk"
 
 
-def test_the_dropdown_shows_the_ten_newest(client: Client, make_resident: Callable[..., Resident]) -> None:
+def test_the_dropdown_shows_the_ten_newest(client: Client, make_resident: Callable[..., Account]) -> None:
     a = make_resident(email="a@gahk.dk")
     now = timezone.now()
     for i in range(12):
@@ -759,7 +755,7 @@ def test_the_dropdown_shows_the_ten_newest(client: Client, make_resident: Callab
 
 
 def test_open_marks_seen_and_redirects_to_the_target(
-    client: Client, make_resident: Callable[..., Resident]
+    client: Client, make_resident: Callable[..., Account]
 ) -> None:
     a = make_resident(email="a@gahk.dk")
     row = make_notification(a, url="/begivenheder/3/")
@@ -774,7 +770,7 @@ def test_open_marks_seen_and_redirects_to_the_target(
 
 
 def test_open_refuses_someone_elses_notification(
-    client: Client, make_resident: Callable[..., Resident]
+    client: Client, make_resident: Callable[..., Account]
 ) -> None:
     row = make_notification(make_resident(email="a@gahk.dk"))
     client.force_login(make_resident(email="b@gahk.dk"))
@@ -786,7 +782,7 @@ def test_open_refuses_someone_elses_notification(
 
 @pytest.mark.parametrize("url", ["//evil.example/", "https://evil.example/", "/\\evil.example/"])
 def test_open_never_becomes_an_open_redirect(
-    client: Client, make_resident: Callable[..., Resident], url: str
+    client: Client, make_resident: Callable[..., Account], url: str
 ) -> None:
     a = make_resident(email="a@gahk.dk")
     row = make_notification(a, url=url)
@@ -798,7 +794,7 @@ def test_open_never_becomes_an_open_redirect(
 
 
 def test_open_batch_marks_the_tapping_residents_own_row(
-    pushes: Recorded, client: Client, two: tuple[Resident, Resident]
+    pushes: Recorded, client: Client, two: tuple[Account, Account]
 ) -> None:
     """The push payload is shared by the whole fan-out; tapping it marks only YOUR row seen."""
     a, b = two
@@ -815,7 +811,7 @@ def test_open_batch_marks_the_tapping_residents_own_row(
 
 
 def test_open_batch_also_marks_a_push_only_row(
-    pushes: Recorded, client: Client, two: tuple[Resident, Resident]
+    pushes: Recorded, client: Client, two: tuple[Account, Account]
 ) -> None:
     """A room message has no in-app row to click — the push is the only way it is ever seen."""
     a, _b = two
@@ -829,7 +825,7 @@ def test_open_batch_also_marks_a_push_only_row(
 
 
 def test_open_batch_without_a_row_lands_on_the_list(
-    client: Client, make_resident: Callable[..., Resident]
+    client: Client, make_resident: Callable[..., Account]
 ) -> None:
     """Purged, or a push meant for whoever owned this browser before: no error, just the list."""
     client.force_login(make_resident(email="a@gahk.dk"))
@@ -841,7 +837,7 @@ def test_open_batch_without_a_row_lands_on_the_list(
 
 
 def test_mark_all_seen_marks_only_own_visible_rows(
-    client: Client, make_resident: Callable[..., Resident]
+    client: Client, make_resident: Callable[..., Account]
 ) -> None:
     a = make_resident(email="a@gahk.dk")
     b = make_resident(email="b@gahk.dk")
@@ -859,7 +855,7 @@ def test_mark_all_seen_marks_only_own_visible_rows(
     assert others.seen_at is None
 
 
-def test_the_bell_badge_counts_unseen(client: Client, make_resident: Callable[..., Resident]) -> None:
+def test_the_bell_badge_counts_unseen(client: Client, make_resident: Callable[..., Account]) -> None:
     a = make_resident(email="a@gahk.dk")
     make_notification(a)
     make_notification(a)
@@ -885,7 +881,7 @@ def _all_on() -> dict[str, str]:
 
 
 def test_preferences_page_renders_every_category_and_room_anchor(
-    client: Client, make_resident: Callable[..., Resident]
+    client: Client, make_resident: Callable[..., Account]
 ) -> None:
     """Each chat room's indicator links to `#rum-<slug>`, so the anchor must be there."""
     client.force_login(make_resident(email="a@gahk.dk"))
@@ -905,7 +901,7 @@ def test_preferences_page_renders_every_category_and_room_anchor(
 
 
 def test_gahkflix_settings_follow_its_rollout_gate(
-    client: Client, make_resident: Callable[..., Resident]
+    client: Client, make_resident: Callable[..., Account]
 ) -> None:
     client.force_login(make_resident(email="foto@gahk.dk", roles=("foto",)))
 
@@ -923,7 +919,7 @@ def test_gahkflix_settings_follow_its_rollout_gate(
 
 
 def test_gahkflix_own_affairs_always_show_in_app_but_push_is_optional(
-    client: Client, make_resident: Callable[..., Resident]
+    client: Client, make_resident: Callable[..., Account]
 ) -> None:
     from notifications.models import Notification, NotificationPreference
     from notifications.services import notify
@@ -944,7 +940,7 @@ def test_gahkflix_own_affairs_always_show_in_app_but_push_is_optional(
 
 
 def test_system_and_general_come_last_on_the_settings_page(
-    client: Client, make_resident: Callable[..., Resident]
+    client: Client, make_resident: Callable[..., Account]
 ) -> None:
     client.force_login(make_resident(email="a@gahk.dk"))
 
@@ -955,7 +951,7 @@ def test_system_and_general_come_last_on_the_settings_page(
 
 @pytest.mark.parametrize("key", [categories.SYSTEM, categories.GENERAL])
 def test_system_and_general_cannot_be_turned_off_in_app(
-    client: Client, make_resident: Callable[..., Resident], key: str
+    client: Client, make_resident: Callable[..., Account], key: str
 ) -> None:
     """The box is drawn ticked and disabled; a hand-made POST without it is stored as on anyway."""
     a = make_resident(email="a@gahk.dk")
@@ -972,7 +968,7 @@ def test_system_and_general_cannot_be_turned_off_in_app(
 
 @pytest.mark.parametrize("key", [categories.SYSTEM, categories.GENERAL])
 def test_an_old_in_app_off_row_for_system_or_general_is_ignored(
-    pushes: Recorded, two: tuple[Resident, Resident], key: str
+    pushes: Recorded, two: tuple[Account, Account], key: str
 ) -> None:
     """A preference row saved before in-app was locked must not hide the house's own messages."""
     a, _b = two
@@ -984,7 +980,7 @@ def test_an_old_in_app_off_row_for_system_or_general_is_ignored(
     assert services.unseen_count(a.pk) == 1
 
 
-def test_saving_the_defaults_stores_nothing(client: Client, make_resident: Callable[..., Resident]) -> None:
+def test_saving_the_defaults_stores_nothing(client: Client, make_resident: Callable[..., Account]) -> None:
     """Preferences are exceptions: a category at all-on has no row."""
     a = make_resident(email="a@gahk.dk")
     client.force_login(a)
@@ -997,7 +993,7 @@ def test_saving_the_defaults_stores_nothing(client: Client, make_resident: Calla
     assert (s.vibrate, s.vibrate_min_importance) == (True, Importance.LAV)
 
 
-def test_preferences_round_trip(client: Client, make_resident: Callable[..., Resident]) -> None:
+def test_preferences_round_trip(client: Client, make_resident: Callable[..., Account]) -> None:
     """Unticking stores one row for that category only; the page shows it unticked; ticking it
     again deletes the row rather than storing an all-on one."""
     a = make_resident(email="a@gahk.dk")
@@ -1037,7 +1033,7 @@ def test_preferences_round_trip(client: Client, make_resident: Callable[..., Res
 
 
 def test_a_bogus_importance_falls_back_to_vibrating_for_everything(
-    client: Client, make_resident: Callable[..., Resident]
+    client: Client, make_resident: Callable[..., Account]
 ) -> None:
     a = make_resident(email="a@gahk.dk")
     client.force_login(a)
@@ -1048,7 +1044,7 @@ def test_a_bogus_importance_falls_back_to_vibrating_for_everything(
 
 
 def test_preferences_saved_on_the_page_steer_delivery(
-    pushes: Recorded, client: Client, two: tuple[Resident, Resident]
+    pushes: Recorded, client: Client, two: tuple[Account, Account]
 ) -> None:
     """End to end: muting a room on the settings page is what stops that room's pushes."""
     a, b = two
@@ -1066,14 +1062,14 @@ def test_preferences_saved_on_the_page_steer_delivery(
 
 
 @pytest.fixture
-def admin(make_resident: Callable[..., Resident]) -> Resident:
+def admin(make_resident: Callable[..., Account]) -> Account:
     return make_resident(
         email="admin@gahk.dk", roles=(Role.ADMINISTRATOR,), first_name="Ada", last_name="Min"
     )
 
 
 def test_the_admin_page_is_for_administrators_only(
-    client: Client, make_resident: Callable[..., Resident], admin: Resident
+    client: Client, make_resident: Callable[..., Account], admin: Account
 ) -> None:
     url = reverse("siteadmin:notifications")
 
@@ -1085,7 +1081,7 @@ def test_the_admin_page_is_for_administrators_only(
 
 
 def test_the_admin_page_lists_devices_and_statistics(
-    client: Client, make_resident: Callable[..., Resident], admin: Resident
+    client: Client, make_resident: Callable[..., Account], admin: Account
 ) -> None:
     owner = make_resident(email="a@gahk.dk", first_name="Anders", last_name="And")
     device(owner)
@@ -1105,7 +1101,7 @@ def test_the_admin_page_lists_devices_and_statistics(
 
 
 def test_an_administrator_can_cancel_a_device(
-    client: Client, make_resident: Callable[..., Resident], admin: Resident
+    client: Client, make_resident: Callable[..., Account], admin: Account
 ) -> None:
     target = device(make_resident(email="a@gahk.dk"))
     url = reverse("siteadmin:notification_device_cancel", args=[target.pk])
@@ -1119,7 +1115,7 @@ def test_an_administrator_can_cancel_a_device(
     assert not PushSubscription.objects.filter(pk=target.pk).exists()
 
 
-def test_a_resident_cannot_cancel_a_device(client: Client, make_resident: Callable[..., Resident]) -> None:
+def test_a_resident_cannot_cancel_a_device(client: Client, make_resident: Callable[..., Account]) -> None:
     owner = make_resident(email="a@gahk.dk")
     target = device(owner)
     client.force_login(make_resident(email="b@gahk.dk"))
@@ -1131,7 +1127,7 @@ def test_a_resident_cannot_cancel_a_device(client: Client, make_resident: Callab
 
 
 def test_broadcast_reaches_everyone(
-    pushes: Recorded, client: Client, make_resident: Callable[..., Resident], admin: Resident
+    pushes: Recorded, client: Client, make_resident: Callable[..., Account], admin: Account
 ) -> None:
     """The broadcast's audience is services.everyone(); KRITISK goes through even to a resident who
     turned general messages off."""
@@ -1160,7 +1156,7 @@ def test_broadcast_reaches_everyone(
 
 @pytest.mark.parametrize("url", ["https://evil.example/", "//evil.example/", "/\\evil.example/"])
 def test_broadcast_refuses_an_offsite_link(
-    client: Client, admin: Resident, make_resident: Callable[..., Resident], url: str
+    client: Client, admin: Account, make_resident: Callable[..., Account], url: str
 ) -> None:
     client.force_login(admin)
 
@@ -1177,7 +1173,7 @@ def test_broadcast_refuses_an_offsite_link(
 # --- purge --------------------------------------------------------------------------------------
 
 
-def test_purge_deletes_only_rows_long_expired(make_resident: Callable[..., Resident]) -> None:
+def test_purge_deletes_only_rows_long_expired(make_resident: Callable[..., Account]) -> None:
     """Rows stop showing at expiry, but are kept 30 days longer for the admin statistics."""
     a = make_resident(email="a@gahk.dk")
     now = timezone.now()
@@ -1189,7 +1185,7 @@ def test_purge_deletes_only_rows_long_expired(make_resident: Callable[..., Resid
     assert set(Notification.objects.values_list("title", flat=True)) == {"for nylig", "aktiv"}
 
 
-def test_the_purge_task_runs_the_purge(make_resident: Callable[..., Resident]) -> None:
+def test_the_purge_task_runs_the_purge(make_resident: Callable[..., Account]) -> None:
     a = make_resident(email="a@gahk.dk")
     make_notification(a, expires_at=timezone.now() - datetime.timedelta(days=60))
 
@@ -1201,7 +1197,7 @@ def test_the_purge_task_runs_the_purge(make_resident: Callable[..., Resident]) -
 
 
 def test_everyone_is_residents_role_holders_device_owners_and_superusers(
-    make_resident: Callable[..., Resident],
+    make_resident: Callable[..., Account],
 ) -> None:
     """Anyone living here this period, anyone holding a role this period (administrators need not
     live here), superusers — and anyone with a push device, which is who the audience used to be.
@@ -1209,7 +1205,7 @@ def test_everyone_is_residents_role_holders_device_owners_and_superusers(
     year, month = active_period()
     room = Room.objects.create(legacy_index=90, number=90, floor="stuen", side="mod gaden")
     living = make_resident(email="living@gahk.dk")
-    Residency.objects.create(resident=living, room=room, year=year, month=month)
+    Residency.objects.create(resident=living.house, room=room, year=year, month=month)
     role = make_resident(email="role@gahk.dk")
     RoleAssignment.objects.create(resident=role, role=Role.AK, year=year, month=month)
     owner = make_resident(email="device@gahk.dk")
@@ -1219,7 +1215,7 @@ def test_everyone_is_residents_role_holders_device_owners_and_superusers(
     moved_out = make_resident(email="former@gahk.dk")
     prev_year, prev_month = (year, month - 1) if month > 1 else (year - 1, 12)
     Residency.objects.create(
-        resident=moved_out,
+        resident=moved_out.house,
         room=Room.objects.create(legacy_index=91, number=91, floor="stuen", side="mod gaden"),
         year=prev_year,
         month=prev_month,
@@ -1277,7 +1273,7 @@ def _apps(mutes: list[SimpleNamespace], created: list[object] | None = None) -> 
 
 
 def test_each_channel_mute_becomes_a_room_preference_with_push_off(
-    make_resident: Callable[..., Resident],
+    make_resident: Callable[..., Account],
 ) -> None:
     """A mute meant "no push from this room". In-app and vibration stay at the default: a room is
     push only, and the mute said nothing about vibration."""
@@ -1303,7 +1299,7 @@ def test_each_channel_mute_becomes_a_room_preference_with_push_off(
 
 
 def test_the_migrated_mute_still_silences_the_room(
-    pushes: Recorded, make_resident: Callable[..., Resident]
+    pushes: Recorded, make_resident: Callable[..., Account]
 ) -> None:
     """The point of the migration: the room a resident muted before stays quiet after."""
     a = make_resident(email="a@gahk.dk")
@@ -1318,7 +1314,7 @@ def test_the_migrated_mute_still_silences_the_room(
     assert not Notification.objects.filter(recipient=a).exists()
 
 
-def test_the_mute_migration_tolerates_an_existing_preference(make_resident: Callable[..., Resident]) -> None:
+def test_the_mute_migration_tolerates_an_existing_preference(make_resident: Callable[..., Account]) -> None:
     """Re-running (or a row already there) must not crash the deploy on the unique constraint."""
     a = make_resident(email="a@gahk.dk")
     mutes = [SimpleNamespace(resident_id=a.pk, channel="tv-rezz")]
@@ -1329,7 +1325,7 @@ def test_the_mute_migration_tolerates_an_existing_preference(make_resident: Call
     assert NotificationPreference.objects.count() == 1
 
 
-def test_the_mute_migration_reverses_to_channel_mutes(make_resident: Callable[..., Resident]) -> None:
+def test_the_mute_migration_reverses_to_channel_mutes(make_resident: Callable[..., Account]) -> None:
     """Backwards turns only room preferences with push off back into mutes."""
     a = make_resident(email="a@gahk.dk")
     prefer(a, categories.chat_room_key("tv-rezz"), push=False)
@@ -1343,7 +1339,7 @@ def test_the_mute_migration_reverses_to_channel_mutes(make_resident: Callable[..
 
 
 @pytest.mark.django_db
-def test_notifications_live_in_the_topbar_not_the_sidebar(make_resident: Callable[..., Resident]) -> None:
+def test_notifications_live_in_the_topbar_not_the_sidebar(make_resident: Callable[..., Account]) -> None:
     """The bell is the one place to read them; their settings are in the avatar menu beside it."""
     c = Client()
     c.force_login(make_resident(email="menu@gahk.dk"))
@@ -1361,7 +1357,7 @@ def test_notifications_live_in_the_topbar_not_the_sidebar(make_resident: Callabl
 
 
 @pytest.mark.django_db
-def test_the_notifications_page_reloads_when_restored_by_back(make_resident: Callable[..., Resident]) -> None:
+def test_the_notifications_page_reloads_when_restored_by_back(make_resident: Callable[..., Account]) -> None:
     """Otherwise the browser's back-forward cache shows a notification just opened as still unread."""
     c = Client()
     c.force_login(make_resident(email="back@gahk.dk"))

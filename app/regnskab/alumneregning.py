@@ -16,7 +16,7 @@ from django.utils import timezone
 
 from core import mail as outbox
 from core.models import OutgoingMail
-from residents.models import Residency, Resident
+from residents.models import Account, Residency
 
 from . import economic, ledger, statement_pdf
 from .models import AlumneregningSend, AlumneregningSettings
@@ -35,7 +35,7 @@ class AccountNameMismatch(Exception):
 
 @dataclass(frozen=True)
 class AlumneregningResult:
-    resident: Resident
+    resident: Account
     outcome: Outcome
     detail: str = ""
     retryable: bool = False  # a failure that may pass if tried again shortly (e-conomic's rate limit)
@@ -43,7 +43,7 @@ class AlumneregningResult:
 
 @dataclass(frozen=True)
 class PreviewRow:
-    resident: Resident
+    resident: Account
     status: PreviewStatus
     detail: str = ""
 
@@ -52,7 +52,7 @@ class PreviewRow:
 class PreparedStatement:
     """Everything a send needs for one alumne except actually emailing it."""
 
-    resident: Resident
+    resident: Account
     account_number: int
     entries: list[economic.LedgerEntry]  # this period's postings, for display — may be empty
     balance: Decimal  # e-conomic's posted balance plus every currently outstanding draft
@@ -60,7 +60,7 @@ class PreparedStatement:
     body: str
 
 
-def _body(resident: Resident, balance: Decimal, message_template: str) -> str:
+def _body(resident: Account, balance: Decimal, message_template: str) -> str:
     saldo_line = (
         f"Din saldo er nu {_kr(balance)} kr. — det er din gæld til kollegiet."
         if balance >= 0
@@ -78,21 +78,21 @@ def _words(name: str) -> set[str]:
     return set(re.findall(r"\w+", name.casefold()))
 
 
-def account_name_matches(resident: Resident, account_name: str) -> bool:
+def account_name_matches(resident: Account, account_name: str) -> bool:
     """Every word of the resident's first and last name is in the e-conomic account's name. Lenient on
     purpose — middle names, initials and word order may differ — but a different person's account fails."""
     wanted = _words(f"{resident.first_name} {resident.last_name}")
     return bool(wanted) and wanted <= _words(account_name)
 
 
-def mismatch_message(resident: Resident, account_number: int, account_name: str) -> str:
+def mismatch_message(resident: Account, account_number: int, account_name: str) -> str:
     return (
         f'Kontonr. {account_number} hedder "{account_name}" i e-conomic, ikke {resident.full_name}. '
         "Tjek nummeret, eller ret navnet i e-conomic."
     )
 
 
-def residents_in_period(date_from: date, date_to: date) -> QuerySet[Resident]:
+def residents_in_period(date_from: date, date_to: date) -> QuerySet[Account]:
     """Residents with a Residency within [date_from, date_to], with or without an account number."""
     lower = date_from.year * 12 + date_from.month
     upper = date_to.year * 12 + date_to.month
@@ -102,22 +102,22 @@ def residents_in_period(date_from: date, date_to: date) -> QuerySet[Resident]:
         .values_list("resident_id", flat=True)
         .distinct()
     )
-    return Resident.objects.filter(pk__in=resident_ids).order_by("first_name", "last_name")
+    return Account.objects.filter(person__resident__in=resident_ids).order_by("first_name", "last_name")
 
 
-def residents_billable_for(date_from: date, date_to: date) -> QuerySet[Resident]:
+def residents_billable_for(date_from: date, date_to: date) -> QuerySet[Account]:
     """Residents with an e-conomic account number and a Residency within [date_from, date_to]."""
     return residents_in_period(date_from, date_to).filter(economic_account_number__isnull=False)
 
 
-def residents_missing_account_number(date_from: date, date_to: date) -> QuerySet[Resident]:
+def residents_missing_account_number(date_from: date, date_to: date) -> QuerySet[Account]:
     """Residents in the period with no e-conomic account number, who get no alumneregning. regnskab.views
     lists and warns about them, so nobody who lived here goes unbilled without anyone noticing."""
     return residents_in_period(date_from, date_to).filter(economic_account_number__isnull=True)
 
 
 def _prepare_one(
-    resident: Resident,
+    resident: Account,
     account_number: int,
     date_from: date,
     date_to: date,
@@ -192,13 +192,13 @@ def _already_sent(date_from: date, date_to: date) -> QuerySet[AlumneregningSend]
     )
 
 
-def _retryable(resident: Resident, date_from: date, date_to: date) -> QuerySet[AlumneregningSend]:
+def _retryable(resident: Account, date_from: date, date_to: date) -> QuerySet[AlumneregningSend]:
     return AlumneregningSend.objects.filter(resident=resident, date_from=date_from, date_to=date_to).filter(
         Q(outcome="failed") | Q(mail__status__in=_NOT_DELIVERED)
     )
 
 
-def _record(resident: Resident, date_from: date, date_to: date, outcome: Outcome, detail: str) -> bool:
+def _record(resident: Account, date_from: date, date_to: date, outcome: Outcome, detail: str) -> bool:
     """Write the alumne's outcome for the period, unless another run has sent them their statement
     meanwhile. Either way it is one statement only one of two concurrent runs can win: the update of a
     retryable row, or the insert the unique constraint guards. Returns whether this run's outcome was
@@ -343,7 +343,7 @@ def preview_alumneregninger(date_from: date, date_to: date) -> list[PreviewRow]:
     return rows
 
 
-def render_preview_pdf(resident: Resident, date_from: date, date_to: date) -> bytes | None:
+def render_preview_pdf(resident: Account, date_from: date, date_to: date) -> bytes | None:
     """The statement PDF for one resident/period, or None if they have no account number. Raises
     AccountNameMismatch if the account is named for someone else."""
     if resident.economic_account_number is None:

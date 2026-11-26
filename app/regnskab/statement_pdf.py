@@ -11,7 +11,7 @@ from fpdf import FPDF
 from fpdf.enums import XPos, YPos
 from pypdf import PdfReader, PdfWriter
 
-from residents.models import Resident
+from residents.models import Account
 
 from . import economic
 
@@ -40,7 +40,7 @@ def prepend_followup(followup_pdf: bytes, statement_pdf: bytes) -> bytes:
 
 
 def render(
-    resident: Resident,
+    resident: Account,
     account_number: int,
     entries: list[economic.LedgerEntry],
     balance: Decimal,

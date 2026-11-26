@@ -44,10 +44,10 @@ class Command(BaseCommand):
             return super().execute(*args, **options)
 
     def handle(self, *args, **opts) -> None:  # noqa: ANN002, ANN003
-        from residents.models import Resident
+        from residents.models import Account
 
         remap = resident_id_remap()
-        resident_ids = set(Resident.objects.values_list("id", flat=True))
+        resident_ids = set(Account.objects.values_list("id", flat=True))
 
         # ---- products ----
         for p in fetch_all("SELECT * FROM intern_oelkaelder_product"):

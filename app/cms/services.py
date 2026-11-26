@@ -34,7 +34,7 @@ from django.utils import timezone
 from django.utils.dateparse import parse_date, parse_datetime
 
 from core.uploads import validate_image_upload
-from residents.models import Resident
+from residents.models import Account
 
 from .images import ImageRejected, PreparedImage, prepare_image, stored_stem
 from .models import (
@@ -69,7 +69,7 @@ Kind = ContentChange.Kind
 
 
 # ---------------------------------------------------------------------------------------- audit
-def editor_name(by: Resident | None) -> str:
+def editor_name(by: Account | None) -> str:
     if by is None:
         return SYSTEM_NAME
     return by.full_name or by.email
@@ -104,7 +104,7 @@ def record_change(
     object_id: int | None = None,
     label: str = "",
     changes: Mapping[str, Any] | None = None,
-    by: Resident | None = None,
+    by: Account | None = None,
     by_name: str | None = None,
 ) -> ContentChange:
     """Append one entry to the content audit trail. `by` None means an automatic (system) change."""
@@ -120,7 +120,7 @@ def record_change(
 
 
 # ----------------------------------------------------------------------------------- publishing
-def publish_on_commit(reason: str = "save", by: Resident | None = None) -> None:
+def publish_on_commit(reason: str = "save", by: Account | None = None) -> None:
     """Publish to gahk.dk once the current transaction commits (at once outside a transaction).
 
     After the commit, so the worker reads what was saved, and a rolled-back edit publishes nothing.
@@ -140,13 +140,13 @@ def publish_on_commit(reason: str = "save", by: Resident | None = None) -> None:
     transaction.on_commit(_enqueue)
 
 
-def request_publish(by: Resident | None) -> None:
+def request_publish(by: Account | None) -> None:
     """The overview's "Udgiv nu": publish even if gahk.dk already reports the current revision."""
     record_change(action=Action.PUBLISH, kind=Kind.SITE, label="Udgiv gahk.dk nu", by=by)
     publish_on_commit("manual", by)
 
 
-def request_gahk_web_update(by: Resident | None) -> None:
+def request_gahk_web_update(by: Account | None) -> None:
     """The overview's "Opdatér gahk.dk nu" (administrators): ask the webhost to update its code now."""
     record_change(action=Action.UPDATE, kind=Kind.SITE, label="Opdatér gahk.dk's kode nu", by=by)
 
@@ -246,7 +246,7 @@ def clean_page_data(page: Page, data: Mapping[str, Any]) -> dict[str, Any]:
     return cleaned
 
 
-def snapshot_page(page: Page, author: Resident | None, note: str = "") -> PageVersion:
+def snapshot_page(page: Page, author: Account | None, note: str = "") -> PageVersion:
     """Store the page's current content as a restorable version.
 
     `author` is None where it is genuinely unknown — a baseline snapshot taken of content that was
@@ -275,7 +275,7 @@ def _trim_history(page: Page) -> None:
         PageVersion.objects.filter(pk__in=stale_pks).delete()
 
 
-def record_slug_change(page: Page, old_slug: str | None, author: Resident | None) -> None:
+def record_slug_change(page: Page, old_slug: str | None, author: Account | None) -> None:
     """Point `old_slug` at `page` so its former address keeps working. Idempotent.
 
     Safe to call when nothing changed, when the page never had an address, or when it has just lost
@@ -293,7 +293,7 @@ def record_slug_change(page: Page, old_slug: str | None, author: Resident | None
     PageRedirect.objects.update_or_create(old_path=old_slug, defaults={"page": page, "created_by": author})
 
 
-def save_page(page: Page | None, data: Mapping[str, Any], by: Resident | None) -> Page:
+def save_page(page: Page | None, data: Mapping[str, Any], by: Account | None) -> Page:
     """Create (`page` None) or update a page from `data` (any of PAGE_FIELDS; absent ones are kept).
 
     Raises ValidationError keyed by field. Renaming a page leaves a redirect from the old address.
@@ -340,7 +340,7 @@ def save_page(page: Page | None, data: Mapping[str, Any], by: Resident | None) -
     return page
 
 
-def delete_page(page: Page, by: Resident | None) -> None:
+def delete_page(page: Page, by: Account | None) -> None:
     """Delete a page. Its versions stay (PageVersion.page is SET_NULL), so it can be recreated."""
     if page.pk == FRONT_PAGE_ID:
         raise ValidationError("Forsiden kan ikke slettes.")
@@ -392,7 +392,7 @@ def _restorable_slug(page: Page, version: PageVersion, warnings: list[str]) -> s
     return wanted
 
 
-def restore_version(page: Page, version: PageVersion, by: Resident | None) -> RestoreResult:
+def restore_version(page: Page, version: PageVersion, by: Account | None) -> RestoreResult:
     """Put a previous version of `page` back, without ever deleting history to do it."""
     if version.page_id != page.pk:
         raise ValidationError("Versionen hører ikke til denne side.")
@@ -458,7 +458,7 @@ NEWS_FIELDS = ("title", "body", "published_at")
 EVENT_FIELDS = ("title", "description", "starts_on")
 
 
-def save_news(item: NewsItem | None, data: Mapping[str, Any], by: Resident | None) -> NewsItem:
+def save_news(item: NewsItem | None, data: Mapping[str, Any], by: Account | None) -> NewsItem:
     """Create or update a news item. `published_at` defaults to now for a new one."""
     creating = item is None or item.pk is None
     item = item if item is not None else NewsItem()
@@ -493,7 +493,7 @@ def save_news(item: NewsItem | None, data: Mapping[str, Any], by: Resident | Non
     return item
 
 
-def delete_news(item: NewsItem, by: Resident | None) -> None:
+def delete_news(item: NewsItem, by: Account | None) -> None:
     with transaction.atomic():
         record_change(
             action=Action.DELETE,
@@ -507,7 +507,7 @@ def delete_news(item: NewsItem, by: Resident | None) -> None:
         publish_on_commit("save", by)
 
 
-def save_event(item: Event | None, data: Mapping[str, Any], by: Resident | None) -> Event:
+def save_event(item: Event | None, data: Mapping[str, Any], by: Account | None) -> Event:
     """Create or update a "Forsidebegivenhed" (the public event list, not the residents' events)."""
     creating = item is None or item.pk is None
     item = item if item is not None else Event()
@@ -535,7 +535,7 @@ def save_event(item: Event | None, data: Mapping[str, Any], by: Resident | None)
     return item
 
 
-def delete_event(item: Event, by: Resident | None) -> None:
+def delete_event(item: Event, by: Account | None) -> None:
     with transaction.atomic():
         record_change(
             action=Action.DELETE,
@@ -554,7 +554,7 @@ def store_prepared_image(
     prepared: PreparedImage,
     name: str,
     caption: str,
-    by: Resident | None,
+    by: Account | None,
     legacy_path: str | None = None,
 ) -> CmsImage:
     """Save already-prepared bytes as a library image (no audit; the callers record their own)."""
@@ -572,7 +572,7 @@ def store_prepared_image(
     return image
 
 
-def upload_image(upload: Any, caption: str, by: Resident | None) -> CmsImage:  # noqa: ANN401 — an UploadedFile
+def upload_image(upload: Any, caption: str, by: Account | None) -> CmsImage:  # noqa: ANN401 — an UploadedFile
     """Add an uploaded file to the library: checked, downscaled to at most 2400 px, metadata gone.
 
     Raises ValidationError({"file": ...}) for anything that is not a usable image. Publishes
@@ -598,7 +598,7 @@ def upload_image(upload: Any, caption: str, by: Resident | None) -> CmsImage:  #
     return image
 
 
-def update_image(image: CmsImage, caption: str, by: Resident | None) -> CmsImage:
+def update_image(image: CmsImage, caption: str, by: Account | None) -> CmsImage:
     """Change an image's description (its default alt text). Content already using it is unchanged."""
     new_caption = _optional_text(caption, "caption", 255)
     if new_caption == image.caption:
@@ -657,7 +657,7 @@ def image_usage(image: CmsImage) -> list[str]:
     return usage_map([image])[image.pk]
 
 
-def delete_image(image: CmsImage, by: Resident | None) -> None:
+def delete_image(image: CmsImage, by: Account | None) -> None:
     """Delete an image and its file. Content still pointing at it shows no picture there.
 
     For an image from the old site, gahk.dk drops the redirect from its old address too, at the next
@@ -694,7 +694,7 @@ def menu_state() -> list[dict[str, str]]:
     return [{"label": item.label, "url": item.url} for item in MenuItem.objects.all()]
 
 
-def save_menu(items: Sequence[Mapping[str, Any]], by: Resident | None) -> list[MenuItem]:
+def save_menu(items: Sequence[Mapping[str, Any]], by: Account | None) -> list[MenuItem]:
     """Replace the whole menu with `items` ({"label", "url"}), in that order.
 
     One call covers adding, renaming, reordering and removing entries. Raises
@@ -735,7 +735,7 @@ def save_menu(items: Sequence[Mapping[str, Any]], by: Resident | None) -> list[M
     return list(MenuItem.objects.all())
 
 
-def delete_menu_item(item: MenuItem, by: Resident | None) -> None:
+def delete_menu_item(item: MenuItem, by: Account | None) -> None:
     """Remove one entry from the menu (the rest keep their order)."""
     remaining = [{"label": m.label, "url": m.url} for m in MenuItem.objects.exclude(pk=item.pk)]
     save_menu(remaining, by)
@@ -772,9 +772,7 @@ def unreachable_pages() -> list[Page]:
 
 
 # ------------------------------------------------------------------------------------ redirects
-def save_redirect(
-    redirect: PageRedirect | None, data: Mapping[str, Any], by: Resident | None
-) -> PageRedirect:
+def save_redirect(redirect: PageRedirect | None, data: Mapping[str, Any], by: Account | None) -> PageRedirect:
     """Create or update an old address that sends visitors on to a page (`data`: old_path, page).
 
     `page` may be a Page or its pk.
@@ -824,7 +822,7 @@ def save_redirect(
     return redirect
 
 
-def delete_redirect(redirect: PageRedirect, by: Resident | None) -> None:
+def delete_redirect(redirect: PageRedirect, by: Account | None) -> None:
     with transaction.atomic():
         record_change(
             action=Action.DELETE,
@@ -890,7 +888,7 @@ def render_preview(
 
 
 # -------------------------------------------------------------------------------- site settings
-def save_site_settings(data: Mapping[str, Any], by: Resident | None) -> SiteSettings:
+def save_site_settings(data: Mapping[str, Any], by: Account | None) -> SiteSettings:
     """Change the website-wide settings (today: the default background image)."""
     with transaction.atomic():
         SiteSettings.load()

@@ -128,21 +128,33 @@ erDiagram
         text error
     }
 
-    residents_Resident {
+    residents_Person {
         int id PK
-        string password
-        datetime last_login
-        bool is_superuser
-        string email
         string first_name
         string last_name
-        string phone
         date birthday
+        string phone
+    }
+
+    residents_Resident {
+        int id PK
+        int person_id FK
         date move_in_date
         date move_out_date
         string study
         int sponsor_id FK
         string fylgje_raw
+    }
+
+    residents_Account {
+        int id PK
+        string password
+        datetime last_login
+        bool is_superuser
+        string email
+        int person_id FK
+        string first_name
+        string last_name
         int economic_account_number
         string profile_picture
         string profile_thumbnail
@@ -1018,125 +1030,127 @@ erDiagram
         int mail_id FK
     }
 
-    audit_AuditEvent }o--|o residents_Resident : "actor"
+    audit_AuditEvent }o--|o residents_Account : "actor"
     audit_AuditEntity }o--|| audit_AuditEvent : "event"
     audit_AuditChange }o--|| audit_AuditEntity : "entity"
-    core_PushSubscription }o--|| residents_Resident : "user"
+    core_PushSubscription }o--|| residents_Account : "user"
+    residents_Resident ||--|| residents_Person : "person"
     residents_Resident }o--|o residents_Resident : "sponsor"
+    residents_Account ||--|o residents_Person : "person"
     residents_Residency }o--|| residents_Resident : "resident"
     residents_Residency }o--|| core_Room : "room"
     residents_Residency }o--|o core_Workgroup : "workgroup"
     residents_Residency }o--|o core_Cleaning : "cleaning"
-    residents_RoleAssignment }o--|| residents_Resident : "resident"
-    residents_AdminAccessGrant ||--|| residents_Resident : "resident"
-    residents_AdminAccessGrant }o--|o residents_Resident : "requested_by"
-    residents_AdminAccessGrant }o--|o residents_Resident : "decided_by"
-    admissions_Application }o--|o residents_Resident : "received_by"
-    admissions_Application }o--|o residents_Resident : "discarded_by"
-    cms_Page }o--|o residents_Resident : "updated_by"
-    cms_CmsImage }o--|o residents_Resident : "uploaded_by"
+    residents_RoleAssignment }o--|| residents_Account : "resident"
+    residents_AdminAccessGrant ||--|| residents_Account : "resident"
+    residents_AdminAccessGrant }o--|o residents_Account : "requested_by"
+    residents_AdminAccessGrant }o--|o residents_Account : "decided_by"
+    admissions_Application }o--|o residents_Account : "received_by"
+    admissions_Application }o--|o residents_Account : "discarded_by"
+    cms_Page }o--|o residents_Account : "updated_by"
+    cms_CmsImage }o--|o residents_Account : "uploaded_by"
     cms_PageRedirect }o--|| cms_Page : "page"
-    cms_PageRedirect }o--|o residents_Resident : "created_by"
+    cms_PageRedirect }o--|o residents_Account : "created_by"
     cms_PageVersion }o--|o cms_Page : "page"
-    cms_PageVersion }o--|o residents_Resident : "created_by"
-    cms_ContentChange }o--|o residents_Resident : "by"
-    cms_Publication }o--|o residents_Resident : "triggered_by"
-    ak_AkEntry }o--|| residents_Resident : "resident"
-    ak_AkEntry }o--|o residents_Resident : "created_by"
-    ak_AkMonthlyCharge }o--|o residents_Resident : "updated_by"
-    rooms_KvotientApplication }o--|| residents_Resident : "resident"
+    cms_PageVersion }o--|o residents_Account : "created_by"
+    cms_ContentChange }o--|o residents_Account : "by"
+    cms_Publication }o--|o residents_Account : "triggered_by"
+    ak_AkEntry }o--|| residents_Account : "resident"
+    ak_AkEntry }o--|o residents_Account : "created_by"
+    ak_AkMonthlyCharge }o--|o residents_Account : "updated_by"
+    rooms_KvotientApplication }o--|| residents_Account : "resident"
     rooms_KvotientPriority }o--|| rooms_KvotientApplication : "application"
     rooms_KvotientPriority }o--|| core_Room : "room"
     rooms_KvotientOrlov }o--|| rooms_KvotientApplication : "application"
     rooms_RoomOffer }o--|| core_Room : "room"
     rooms_RoomOffer }o--|o rooms_KvotientApplication : "awarded_application"
     rooms_RoomCondition }o--|| core_Room : "room"
-    rooms_RoomCondition }o--|o residents_Resident : "resident"
+    rooms_RoomCondition }o--|o residents_Account : "resident"
     rooms_RoomConditionScore }o--|| rooms_RoomCondition : "condition"
     rooms_RoomConditionScore }o--|| rooms_RoomCriterion : "criterion"
-    oelkaelder_Shopper }o--|| residents_Resident : "resident"
+    oelkaelder_Shopper }o--|| residents_Account : "resident"
     oelkaelder_Deposit }o--|| oelkaelder_Shopper : "shopper"
     oelkaelder_TransactionItem }o--|| oelkaelder_Transaction : "transaction"
     oelkaelder_TransactionItem }o--|| oelkaelder_Product : "product"
     oelkaelder_PurchaseShare }o--|| oelkaelder_Transaction : "transaction"
     oelkaelder_PurchaseShare }o--|| oelkaelder_Shopper : "shopper"
     oelkaelder_Adjustment }o--|| oelkaelder_Shopper : "shopper"
-    den_hurtige_QuickPost }o--|| residents_Resident : "author"
+    den_hurtige_QuickPost }o--|| residents_Account : "author"
     den_hurtige_QuickComment }o--|| den_hurtige_QuickPost : "post"
-    den_hurtige_QuickComment }o--|| residents_Resident : "author"
+    den_hurtige_QuickComment }o--|| residents_Account : "author"
     den_hurtige_QuickReaction }o--|| den_hurtige_QuickPost : "post"
-    den_hurtige_QuickReaction }o--|| residents_Resident : "author"
-    opslagstavle_Notice }o--|| residents_Resident : "author"
-    opslagstavle_Notice }o--|o residents_Resident : "pinned_by"
+    den_hurtige_QuickReaction }o--|| residents_Account : "author"
+    opslagstavle_Notice }o--|| residents_Account : "author"
+    opslagstavle_Notice }o--|o residents_Account : "pinned_by"
     opslagstavle_Notice }o--|o events_Event : "event"
     opslagstavle_NoticeComment }o--|| opslagstavle_Notice : "notice"
-    opslagstavle_NoticeComment }o--|| residents_Resident : "author"
+    opslagstavle_NoticeComment }o--|| residents_Account : "author"
     opslagstavle_NoticeReaction }o--|| opslagstavle_Notice : "notice"
-    opslagstavle_NoticeReaction }o--|| residents_Resident : "author"
+    opslagstavle_NoticeReaction }o--|| residents_Account : "author"
     opslagstavle_NoticeImage }o--|o opslagstavle_Notice : "notice"
-    opslagstavle_NoticeImage }o--|o residents_Resident : "uploaded_by"
-    events_Event }o--|| residents_Resident : "organiser"
-    events_Event }o--o{ residents_Resident : "co_organisers"
+    opslagstavle_NoticeImage }o--|o residents_Account : "uploaded_by"
+    events_Event }o--|| residents_Account : "organiser"
+    events_Event }o--o{ residents_Account : "co_organisers"
     events_EventInvite }o--|| events_Event : "event"
-    events_EventInvite }o--|| residents_Resident : "resident"
-    events_EventInvite }o--|o residents_Resident : "invited_by"
+    events_EventInvite }o--|| residents_Account : "resident"
+    events_EventInvite }o--|o residents_Account : "invited_by"
     events_Rsvp }o--|| events_Event : "event"
-    events_Rsvp }o--|| residents_Resident : "resident"
+    events_Rsvp }o--|| residents_Account : "resident"
     events_EventComment }o--|| events_Event : "event"
-    events_EventComment }o--|| residents_Resident : "author"
-    events_CalendarFeedToken ||--|| residents_Resident : "resident"
-    reparationer_RepairTask }o--|| residents_Resident : "reported_by"
+    events_EventComment }o--|| residents_Account : "author"
+    events_CalendarFeedToken ||--|| residents_Account : "resident"
+    reparationer_RepairTask }o--|| residents_Account : "reported_by"
     reparationer_RepairComment }o--|| reparationer_RepairTask : "task"
-    reparationer_RepairComment }o--|| residents_Resident : "author"
+    reparationer_RepairComment }o--|| residents_Account : "author"
     reparationer_RepairImage }o--|| reparationer_RepairTask : "task"
     reparationer_RepairImage }o--|o reparationer_RepairComment : "comment"
     photo_album_Album }o--|o photo_album_Album : "parent"
     photo_album_Album }o--o{ photo_album_Tag : "tags"
     photo_album_Media }o--|| photo_album_Album : "album"
-    photo_album_Media }o--|| residents_Resident : "requested_by"
-    photo_album_Media }o--|o residents_Resident : "approved_by"
-    photo_album_Media }o--|o residents_Resident : "deleted_by"
+    photo_album_Media }o--|| residents_Account : "requested_by"
+    photo_album_Media }o--|o residents_Account : "approved_by"
+    photo_album_Media }o--|o residents_Account : "deleted_by"
     photo_album_Media }o--o{ photo_album_Tag : "tags"
     photo_album_AlbumDownload }o--|o photo_album_Album : "album"
-    photo_album_AlbumDownload }o--|| residents_Resident : "requested_by"
-    photo_album_AlbumImport }o--|| residents_Resident : "requested_by"
+    photo_album_AlbumDownload }o--|| residents_Account : "requested_by"
+    photo_album_AlbumImport }o--|| residents_Account : "requested_by"
     photo_album_AlbumMerge }o--|| photo_album_Album : "target"
     photo_album_AlbumMerge }o--|o photo_album_Album : "source"
-    photo_album_AlbumMerge }o--|| residents_Resident : "requested_by"
+    photo_album_AlbumMerge }o--|| residents_Account : "requested_by"
     photo_album_MediaView }o--|| photo_album_Media : "media"
-    photo_album_MediaView }o--|| residents_Resident : "resident"
+    photo_album_MediaView }o--|| residents_Account : "resident"
     photo_album_FeaturedMedia }o--|| photo_album_Media : "media"
-    notifications_Notification }o--|| residents_Resident : "recipient"
-    notifications_NotificationPreference }o--|| residents_Resident : "resident"
-    notifications_NotificationSettings ||--|| residents_Resident : "resident"
-    gahkflix_Series }o--|| residents_Resident : "created_by"
-    gahkflix_Video }o--|| residents_Resident : "uploaded_by"
+    notifications_Notification }o--|| residents_Account : "recipient"
+    notifications_NotificationPreference }o--|| residents_Account : "resident"
+    notifications_NotificationSettings ||--|| residents_Account : "resident"
+    gahkflix_Series }o--|| residents_Account : "created_by"
+    gahkflix_Video }o--|| residents_Account : "uploaded_by"
     gahkflix_Video }o--|o gahkflix_Series : "series"
     gahkflix_Video ||--|o gahkflix_VideoFile : "file"
     gahkflix_Video }o--|o gahkflix_VideoFrame : "thumbnail_frame"
     gahkflix_Video }o--|o gahkflix_VideoFrame : "banner_frame"
-    gahkflix_Video }o--|o residents_Resident : "deleted_by"
+    gahkflix_Video }o--|o residents_Account : "deleted_by"
     gahkflix_Video }o--o{ gahkflix_Tag : "tags"
     gahkflix_VideoFile }o--|| gahkflix_Video : "video"
-    gahkflix_VideoFile }o--|| residents_Resident : "uploaded_by"
+    gahkflix_VideoFile }o--|| residents_Account : "uploaded_by"
     gahkflix_VideoSubtitle }o--|| gahkflix_VideoFile : "file"
     gahkflix_VideoFrame }o--|| gahkflix_Video : "video"
     gahkflix_CastMember }o--|| gahkflix_Video : "video"
-    gahkflix_CastMember }o--|o residents_Resident : "resident"
+    gahkflix_CastMember }o--|o residents_Account : "resident"
     gahkflix_Watch }o--|| gahkflix_Video : "video"
-    gahkflix_Watch }o--|| residents_Resident : "resident"
+    gahkflix_Watch }o--|| residents_Account : "resident"
     gahkflix_ViewEvent }o--|| gahkflix_Video : "video"
-    gahkflix_ViewEvent }o--|| residents_Resident : "resident"
+    gahkflix_ViewEvent }o--|| residents_Account : "resident"
     gahkflix_ChangeRequest }o--|o gahkflix_Video : "video"
     gahkflix_ChangeRequest }o--|o gahkflix_Series : "series"
-    gahkflix_ChangeRequest }o--|| residents_Resident : "requested_by"
+    gahkflix_ChangeRequest }o--|| residents_Account : "requested_by"
     gahkflix_ChangeVote }o--|| gahkflix_ChangeRequest : "request"
-    gahkflix_ChangeVote }o--|| residents_Resident : "voter"
+    gahkflix_ChangeVote }o--|| residents_Account : "voter"
     gahkflix_VideoEvent }o--|| gahkflix_Video : "video"
-    gahkflix_VideoEvent }o--|o residents_Resident : "actor"
+    gahkflix_VideoEvent }o--|o residents_Account : "actor"
     gahkflix_VideoEvent }o--|o gahkflix_ChangeRequest : "request"
-    regnskab_EconomicLedgerEntry }o--|| residents_Resident : "resident"
-    regnskab_AlumneregningSend }o--|| residents_Resident : "resident"
+    regnskab_EconomicLedgerEntry }o--|| residents_Account : "resident"
+    regnskab_AlumneregningSend }o--|| residents_Account : "resident"
     regnskab_AlumneregningSend }o--|o core_OutgoingMail : "mail"
 ```
 
@@ -1166,10 +1180,10 @@ erDiagram
         string external_id
     }
 
-    residents_Resident { }
+    residents_Account { }
 
-    admissions_Application }o--|o residents_Resident : "received_by"
-    admissions_Application }o--|o residents_Resident : "discarded_by"
+    admissions_Application }o--|o residents_Account : "received_by"
+    admissions_Application }o--|o residents_Account : "discarded_by"
 ```
 
 ## ak
@@ -1203,11 +1217,11 @@ erDiagram
         int month
     }
 
-    residents_Resident { }
+    residents_Account { }
 
-    ak_AkEntry }o--|| residents_Resident : "resident"
-    ak_AkEntry }o--|o residents_Resident : "created_by"
-    ak_AkMonthlyCharge }o--|o residents_Resident : "updated_by"
+    ak_AkEntry }o--|| residents_Account : "resident"
+    ak_AkEntry }o--|o residents_Account : "created_by"
+    ak_AkMonthlyCharge }o--|o residents_Account : "updated_by"
 ```
 
 ## audit
@@ -1246,9 +1260,9 @@ erDiagram
         bool redacted
     }
 
-    residents_Resident { }
+    residents_Account { }
 
-    audit_AuditEvent }o--|o residents_Resident : "actor"
+    audit_AuditEvent }o--|o residents_Account : "actor"
     audit_AuditEntity }o--|| audit_AuditEvent : "event"
     audit_AuditChange }o--|| audit_AuditEntity : "entity"
 ```
@@ -1375,16 +1389,16 @@ erDiagram
         text update_error
     }
 
-    residents_Resident { }
+    residents_Account { }
 
-    cms_Page }o--|o residents_Resident : "updated_by"
-    cms_CmsImage }o--|o residents_Resident : "uploaded_by"
+    cms_Page }o--|o residents_Account : "updated_by"
+    cms_CmsImage }o--|o residents_Account : "uploaded_by"
     cms_PageRedirect }o--|| cms_Page : "page"
-    cms_PageRedirect }o--|o residents_Resident : "created_by"
+    cms_PageRedirect }o--|o residents_Account : "created_by"
     cms_PageVersion }o--|o cms_Page : "page"
-    cms_PageVersion }o--|o residents_Resident : "created_by"
-    cms_ContentChange }o--|o residents_Resident : "by"
-    cms_Publication }o--|o residents_Resident : "triggered_by"
+    cms_PageVersion }o--|o residents_Account : "created_by"
+    cms_ContentChange }o--|o residents_Account : "by"
+    cms_Publication }o--|o residents_Account : "triggered_by"
 ```
 
 ## core
@@ -1480,9 +1494,9 @@ erDiagram
         text error
     }
 
-    residents_Resident { }
+    residents_Account { }
 
-    core_PushSubscription }o--|| residents_Resident : "user"
+    core_PushSubscription }o--|| residents_Account : "user"
 ```
 
 ## den_hurtige
@@ -1518,13 +1532,13 @@ erDiagram
         datetime created_at
     }
 
-    residents_Resident { }
+    residents_Account { }
 
-    den_hurtige_QuickPost }o--|| residents_Resident : "author"
+    den_hurtige_QuickPost }o--|| residents_Account : "author"
     den_hurtige_QuickComment }o--|| den_hurtige_QuickPost : "post"
-    den_hurtige_QuickComment }o--|| residents_Resident : "author"
+    den_hurtige_QuickComment }o--|| residents_Account : "author"
     den_hurtige_QuickReaction }o--|| den_hurtige_QuickPost : "post"
-    den_hurtige_QuickReaction }o--|| residents_Resident : "author"
+    den_hurtige_QuickReaction }o--|| residents_Account : "author"
 ```
 
 ## events
@@ -1586,18 +1600,18 @@ erDiagram
         datetime last_used_at
     }
 
-    residents_Resident { }
+    residents_Account { }
 
-    events_Event }o--|| residents_Resident : "organiser"
-    events_Event }o--o{ residents_Resident : "co_organisers"
+    events_Event }o--|| residents_Account : "organiser"
+    events_Event }o--o{ residents_Account : "co_organisers"
     events_EventInvite }o--|| events_Event : "event"
-    events_EventInvite }o--|| residents_Resident : "resident"
-    events_EventInvite }o--|o residents_Resident : "invited_by"
+    events_EventInvite }o--|| residents_Account : "resident"
+    events_EventInvite }o--|o residents_Account : "invited_by"
     events_Rsvp }o--|| events_Event : "event"
-    events_Rsvp }o--|| residents_Resident : "resident"
+    events_Rsvp }o--|| residents_Account : "resident"
     events_EventComment }o--|| events_Event : "event"
-    events_EventComment }o--|| residents_Resident : "author"
-    events_CalendarFeedToken ||--|| residents_Resident : "resident"
+    events_EventComment }o--|| residents_Account : "author"
+    events_CalendarFeedToken ||--|| residents_Account : "resident"
 ```
 
 ## gahkflix
@@ -1761,33 +1775,33 @@ erDiagram
         int request_id FK
     }
 
-    residents_Resident { }
+    residents_Account { }
 
-    gahkflix_Series }o--|| residents_Resident : "created_by"
-    gahkflix_Video }o--|| residents_Resident : "uploaded_by"
+    gahkflix_Series }o--|| residents_Account : "created_by"
+    gahkflix_Video }o--|| residents_Account : "uploaded_by"
     gahkflix_Video }o--|o gahkflix_Series : "series"
     gahkflix_Video ||--|o gahkflix_VideoFile : "file"
     gahkflix_Video }o--|o gahkflix_VideoFrame : "thumbnail_frame"
     gahkflix_Video }o--|o gahkflix_VideoFrame : "banner_frame"
-    gahkflix_Video }o--|o residents_Resident : "deleted_by"
+    gahkflix_Video }o--|o residents_Account : "deleted_by"
     gahkflix_Video }o--o{ gahkflix_Tag : "tags"
     gahkflix_VideoFile }o--|| gahkflix_Video : "video"
-    gahkflix_VideoFile }o--|| residents_Resident : "uploaded_by"
+    gahkflix_VideoFile }o--|| residents_Account : "uploaded_by"
     gahkflix_VideoSubtitle }o--|| gahkflix_VideoFile : "file"
     gahkflix_VideoFrame }o--|| gahkflix_Video : "video"
     gahkflix_CastMember }o--|| gahkflix_Video : "video"
-    gahkflix_CastMember }o--|o residents_Resident : "resident"
+    gahkflix_CastMember }o--|o residents_Account : "resident"
     gahkflix_Watch }o--|| gahkflix_Video : "video"
-    gahkflix_Watch }o--|| residents_Resident : "resident"
+    gahkflix_Watch }o--|| residents_Account : "resident"
     gahkflix_ViewEvent }o--|| gahkflix_Video : "video"
-    gahkflix_ViewEvent }o--|| residents_Resident : "resident"
+    gahkflix_ViewEvent }o--|| residents_Account : "resident"
     gahkflix_ChangeRequest }o--|o gahkflix_Video : "video"
     gahkflix_ChangeRequest }o--|o gahkflix_Series : "series"
-    gahkflix_ChangeRequest }o--|| residents_Resident : "requested_by"
+    gahkflix_ChangeRequest }o--|| residents_Account : "requested_by"
     gahkflix_ChangeVote }o--|| gahkflix_ChangeRequest : "request"
-    gahkflix_ChangeVote }o--|| residents_Resident : "voter"
+    gahkflix_ChangeVote }o--|| residents_Account : "voter"
     gahkflix_VideoEvent }o--|| gahkflix_Video : "video"
-    gahkflix_VideoEvent }o--|o residents_Resident : "actor"
+    gahkflix_VideoEvent }o--|o residents_Account : "actor"
     gahkflix_VideoEvent }o--|o gahkflix_ChangeRequest : "request"
 ```
 
@@ -1830,11 +1844,11 @@ erDiagram
         int vibrate_min_importance
     }
 
-    residents_Resident { }
+    residents_Account { }
 
-    notifications_Notification }o--|| residents_Resident : "recipient"
-    notifications_NotificationPreference }o--|| residents_Resident : "resident"
-    notifications_NotificationSettings ||--|| residents_Resident : "resident"
+    notifications_Notification }o--|| residents_Account : "recipient"
+    notifications_NotificationPreference }o--|| residents_Account : "resident"
+    notifications_NotificationSettings ||--|| residents_Account : "resident"
 ```
 
 ## oelkaelder
@@ -1923,9 +1937,9 @@ erDiagram
         int block_below_ore
     }
 
-    residents_Resident { }
+    residents_Account { }
 
-    oelkaelder_Shopper }o--|| residents_Resident : "resident"
+    oelkaelder_Shopper }o--|| residents_Account : "resident"
     oelkaelder_Deposit }o--|| oelkaelder_Shopper : "shopper"
     oelkaelder_TransactionItem }o--|| oelkaelder_Transaction : "transaction"
     oelkaelder_TransactionItem }o--|| oelkaelder_Product : "product"
@@ -1980,17 +1994,17 @@ erDiagram
 
     events_Event { }
 
-    residents_Resident { }
+    residents_Account { }
 
-    opslagstavle_Notice }o--|| residents_Resident : "author"
-    opslagstavle_Notice }o--|o residents_Resident : "pinned_by"
+    opslagstavle_Notice }o--|| residents_Account : "author"
+    opslagstavle_Notice }o--|o residents_Account : "pinned_by"
     opslagstavle_Notice }o--|o events_Event : "event"
     opslagstavle_NoticeComment }o--|| opslagstavle_Notice : "notice"
-    opslagstavle_NoticeComment }o--|| residents_Resident : "author"
+    opslagstavle_NoticeComment }o--|| residents_Account : "author"
     opslagstavle_NoticeReaction }o--|| opslagstavle_Notice : "notice"
-    opslagstavle_NoticeReaction }o--|| residents_Resident : "author"
+    opslagstavle_NoticeReaction }o--|| residents_Account : "author"
     opslagstavle_NoticeImage }o--|o opslagstavle_Notice : "notice"
-    opslagstavle_NoticeImage }o--|o residents_Resident : "uploaded_by"
+    opslagstavle_NoticeImage }o--|o residents_Account : "uploaded_by"
 ```
 
 ## photo_album
@@ -2132,23 +2146,23 @@ erDiagram
         int media_id FK
     }
 
-    residents_Resident { }
+    residents_Account { }
 
     photo_album_Album }o--|o photo_album_Album : "parent"
     photo_album_Album }o--o{ photo_album_Tag : "tags"
     photo_album_Media }o--|| photo_album_Album : "album"
-    photo_album_Media }o--|| residents_Resident : "requested_by"
-    photo_album_Media }o--|o residents_Resident : "approved_by"
-    photo_album_Media }o--|o residents_Resident : "deleted_by"
+    photo_album_Media }o--|| residents_Account : "requested_by"
+    photo_album_Media }o--|o residents_Account : "approved_by"
+    photo_album_Media }o--|o residents_Account : "deleted_by"
     photo_album_Media }o--o{ photo_album_Tag : "tags"
     photo_album_AlbumDownload }o--|o photo_album_Album : "album"
-    photo_album_AlbumDownload }o--|| residents_Resident : "requested_by"
-    photo_album_AlbumImport }o--|| residents_Resident : "requested_by"
+    photo_album_AlbumDownload }o--|| residents_Account : "requested_by"
+    photo_album_AlbumImport }o--|| residents_Account : "requested_by"
     photo_album_AlbumMerge }o--|| photo_album_Album : "target"
     photo_album_AlbumMerge }o--|o photo_album_Album : "source"
-    photo_album_AlbumMerge }o--|| residents_Resident : "requested_by"
+    photo_album_AlbumMerge }o--|| residents_Account : "requested_by"
     photo_album_MediaView }o--|| photo_album_Media : "media"
-    photo_album_MediaView }o--|| residents_Resident : "resident"
+    photo_album_MediaView }o--|| residents_Account : "resident"
     photo_album_FeaturedMedia }o--|| photo_album_Media : "media"
 ```
 
@@ -2190,10 +2204,10 @@ erDiagram
 
     core_OutgoingMail { }
 
-    residents_Resident { }
+    residents_Account { }
 
-    regnskab_EconomicLedgerEntry }o--|| residents_Resident : "resident"
-    regnskab_AlumneregningSend }o--|| residents_Resident : "resident"
+    regnskab_EconomicLedgerEntry }o--|| residents_Account : "resident"
+    regnskab_AlumneregningSend }o--|| residents_Account : "resident"
     regnskab_AlumneregningSend }o--|o core_OutgoingMail : "mail"
 ```
 
@@ -2231,11 +2245,11 @@ erDiagram
         datetime uploaded_at
     }
 
-    residents_Resident { }
+    residents_Account { }
 
-    reparationer_RepairTask }o--|| residents_Resident : "reported_by"
+    reparationer_RepairTask }o--|| residents_Account : "reported_by"
     reparationer_RepairComment }o--|| reparationer_RepairTask : "task"
-    reparationer_RepairComment }o--|| residents_Resident : "author"
+    reparationer_RepairComment }o--|| residents_Account : "author"
     reparationer_RepairImage }o--|| reparationer_RepairTask : "task"
     reparationer_RepairImage }o--|o reparationer_RepairComment : "comment"
 ```
@@ -2244,21 +2258,33 @@ erDiagram
 
 ```mermaid
 erDiagram
-    residents_Resident {
+    residents_Person {
         int id PK
-        string password
-        datetime last_login
-        bool is_superuser
-        string email
         string first_name
         string last_name
-        string phone
         date birthday
+        string phone
+    }
+
+    residents_Resident {
+        int id PK
+        int person_id FK
         date move_in_date
         date move_out_date
         string study
         int sponsor_id FK
         string fylgje_raw
+    }
+
+    residents_Account {
+        int id PK
+        string password
+        datetime last_login
+        bool is_superuser
+        string email
+        int person_id FK
+        string first_name
+        string last_name
         int economic_account_number
         string profile_picture
         string profile_thumbnail
@@ -2305,15 +2331,17 @@ erDiagram
 
     core_Workgroup { }
 
+    residents_Resident ||--|| residents_Person : "person"
     residents_Resident }o--|o residents_Resident : "sponsor"
+    residents_Account ||--|o residents_Person : "person"
     residents_Residency }o--|| residents_Resident : "resident"
     residents_Residency }o--|| core_Room : "room"
     residents_Residency }o--|o core_Workgroup : "workgroup"
     residents_Residency }o--|o core_Cleaning : "cleaning"
-    residents_RoleAssignment }o--|| residents_Resident : "resident"
-    residents_AdminAccessGrant ||--|| residents_Resident : "resident"
-    residents_AdminAccessGrant }o--|o residents_Resident : "requested_by"
-    residents_AdminAccessGrant }o--|o residents_Resident : "decided_by"
+    residents_RoleAssignment }o--|| residents_Account : "resident"
+    residents_AdminAccessGrant ||--|| residents_Account : "resident"
+    residents_AdminAccessGrant }o--|o residents_Account : "requested_by"
+    residents_AdminAccessGrant }o--|o residents_Account : "decided_by"
 ```
 
 ## rooms
@@ -2381,16 +2409,16 @@ erDiagram
 
     core_Room { }
 
-    residents_Resident { }
+    residents_Account { }
 
-    rooms_KvotientApplication }o--|| residents_Resident : "resident"
+    rooms_KvotientApplication }o--|| residents_Account : "resident"
     rooms_KvotientPriority }o--|| rooms_KvotientApplication : "application"
     rooms_KvotientPriority }o--|| core_Room : "room"
     rooms_KvotientOrlov }o--|| rooms_KvotientApplication : "application"
     rooms_RoomOffer }o--|| core_Room : "room"
     rooms_RoomOffer }o--|o rooms_KvotientApplication : "awarded_application"
     rooms_RoomCondition }o--|| core_Room : "room"
-    rooms_RoomCondition }o--|o residents_Resident : "resident"
+    rooms_RoomCondition }o--|o residents_Account : "resident"
     rooms_RoomConditionScore }o--|| rooms_RoomCondition : "condition"
     rooms_RoomConditionScore }o--|| rooms_RoomCriterion : "criterion"
 ```

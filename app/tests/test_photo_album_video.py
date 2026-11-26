@@ -19,13 +19,13 @@ from photo_album.services import (
     upload_media,
 )
 from photo_album.storage import get_photo_album_storage
-from residents.models import Resident
+from residents.models import Account
 
 from .media_samples import broken_audio_mpg_bytes, sized_mp4_bytes, subtitled_mkv_bytes
 
 
 def _video(
-    make_resident: Callable[..., Resident], name: str, content: bytes, *, folder: str = "2004"
+    make_resident: Callable[..., Account], name: str, content: bytes, *, folder: str = "2004"
 ) -> Media:
     album, _ = Album.objects.get_or_create(folder=folder, name="Fremkaldning")
     resident = make_resident(email=f"uploader-{Media.objects.count()}@gahk.dk")
@@ -38,7 +38,7 @@ def _streams(media: Media) -> str:
 
 
 @pytest.mark.django_db
-def test_a_small_video_keeps_its_own_size(make_resident: Callable[..., Resident]) -> None:
+def test_a_small_video_keeps_its_own_size(make_resident: Callable[..., Account]) -> None:
     """A 1600 px box with nothing to stop it ENLARGED every smaller video: a 320x240 camera clip came
     out 1600x1200, at twenty times the CPU and six times the original's size."""
     media = _video(make_resident, "small.mp4", sized_mp4_bytes(320, 240))
@@ -49,7 +49,7 @@ def test_a_small_video_keeps_its_own_size(make_resident: Callable[..., Resident]
 
 
 @pytest.mark.django_db
-def test_a_large_video_is_scaled_down_to_the_viewer_size(make_resident: Callable[..., Resident]) -> None:
+def test_a_large_video_is_scaled_down_to_the_viewer_size(make_resident: Callable[..., Account]) -> None:
     media = _video(make_resident, "large.mp4", sized_mp4_bytes(1920, 1080))
 
     assert build_derivatives(media)
@@ -59,7 +59,7 @@ def test_a_large_video_is_scaled_down_to_the_viewer_size(make_resident: Callable
 
 @pytest.mark.django_db
 def test_the_viewer_copy_is_stored_from_disk_not_read_into_memory(
-    make_resident: Callable[..., Resident], monkeypatch: pytest.MonkeyPatch
+    make_resident: Callable[..., Account], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """On 2026-11-15 a 4 GB film encoded for three hours, and then its MP4 was read into memory
     whole to be stored: the worker died at 1.4 GB, and took the server's memory with it."""
@@ -86,7 +86,7 @@ def test_the_viewer_copy_is_stored_from_disk_not_read_into_memory(
 
 @pytest.mark.django_db
 def test_a_video_with_a_broken_audio_track_is_converted_with_its_good_one(
-    make_resident: Callable[..., Resident],
+    make_resident: Callable[..., Account],
 ) -> None:
     """An old camera's MPEG carried an empty AC3 track ("0 channels") beside its real sound. Mapping
     every audio stream took the broken one in, and the whole conversion failed on it."""
@@ -100,7 +100,7 @@ def test_a_video_with_a_broken_audio_track_is_converted_with_its_good_one(
 
 
 @pytest.mark.django_db
-def test_text_subtitles_are_kept_in_the_viewer_copy(make_resident: Callable[..., Resident]) -> None:
+def test_text_subtitles_are_kept_in_the_viewer_copy(make_resident: Callable[..., Account]) -> None:
     media = _video(make_resident, "film.mkv", subtitled_mkv_bytes())
 
     assert build_derivatives(media)
@@ -114,7 +114,7 @@ def test_text_subtitles_are_kept_in_the_viewer_copy(make_resident: Callable[...,
 
 
 def _enlarged(
-    make_resident: Callable[..., Resident], name: str, original: bytes, copy: bytes, folder: str
+    make_resident: Callable[..., Account], name: str, original: bytes, copy: bytes, folder: str
 ) -> Media:
     """A video as the old conversion left it: READY, with `copy` as its viewer copy."""
     media = _video(make_resident, name, original, folder=folder)
@@ -127,7 +127,7 @@ def _enlarged(
 
 @pytest.mark.django_db
 def test_enlarged_copies_are_re_encoded_at_the_videos_own_size(
-    make_resident: Callable[..., Resident],
+    make_resident: Callable[..., Account],
 ) -> None:
     small = _enlarged(
         make_resident, "small.mpg", sized_mp4_bytes(320, 240), sized_mp4_bytes(1600, 1200), "2004"
@@ -166,7 +166,7 @@ def test_enlarged_copies_are_re_encoded_at_the_videos_own_size(
 
 @pytest.mark.django_db
 def test_a_failed_re_encode_leaves_the_old_copy_in_place(
-    make_resident: Callable[..., Resident], monkeypatch: pytest.MonkeyPatch
+    make_resident: Callable[..., Account], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     import subprocess
 
@@ -193,7 +193,7 @@ def test_a_failed_re_encode_leaves_the_old_copy_in_place(
 
 @pytest.mark.django_db
 def test_failed_media_can_be_given_fresh_attempts(
-    make_resident: Callable[..., Resident], monkeypatch: pytest.MonkeyPatch
+    make_resident: Callable[..., Account], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     from photo_album import tasks
 

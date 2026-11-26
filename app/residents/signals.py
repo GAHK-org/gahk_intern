@@ -1,4 +1,4 @@
-"""Keep `Resident.is_staff` and the Django-admin grant in sync with role assignments.
+"""Keep `Account.is_staff` and the Django-admin grant in sync with role assignments.
 
 `is_staff` gates entry to /django-admin/. It should be True exactly when a resident holds at least one
 RoleAssignment (any period), so assigning/removing a role — including directly in the DB or the site
@@ -14,13 +14,13 @@ from django.db import transaction
 from django.db.models.signals import post_delete, post_save
 from django.dispatch import receiver
 
-from .models import AdminAccessGrant, Resident, Role, RoleAssignment
+from .models import Account, AdminAccessGrant, Role, RoleAssignment
 
 
 def _sync_is_staff(resident_id: int) -> None:
     has_any = RoleAssignment.objects.filter(resident_id=resident_id).exists()
     (
-        Resident.objects.filter(id=resident_id)
+        Account.objects.filter(id=resident_id)
         .exclude(is_superuser=True)
         .exclude(is_staff=has_any)
         .update(is_staff=has_any)

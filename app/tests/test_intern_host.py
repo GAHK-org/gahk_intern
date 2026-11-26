@@ -20,7 +20,7 @@ from django.utils import timezone
 
 from notifications.models import Notification
 from oelkaelder.models import Warning
-from residents.models import Resident
+from residents.models import Account
 
 pytestmark = pytest.mark.django_db
 
@@ -45,7 +45,7 @@ def test_an_old_prefix_is_not_found(old: str) -> None:
 
 
 def test_an_old_prefix_is_not_found_for_a_resident_or_a_post(
-    make_resident: Callable[..., Resident],
+    make_resident: Callable[..., Account],
 ) -> None:
     c = Client()
     c.force_login(make_resident(email="beboer@gahk.dk"))
@@ -54,7 +54,7 @@ def test_an_old_prefix_is_not_found_for_a_resident_or_a_post(
 
 
 def test_the_front_page_button_leaves_for_the_public_site(
-    make_resident: Callable[..., Resident], settings: object
+    make_resident: Callable[..., Account], settings: object
 ) -> None:
     """The dashboard is at "/" here; "Til GAHK-forsiden" means gahk.dk, the public site's own host."""
     settings.PUBLIC_SITE_URL = "https://gahk.dk"  # type: ignore[attr-defined]
@@ -67,7 +67,7 @@ def test_the_front_page_button_leaves_for_the_public_site(
 # --- cookies -------------------------------------------------------------------------------------
 
 
-def test_logging_in_sets_the_renamed_host_only_cookies(make_resident: Callable[..., Resident]) -> None:
+def test_logging_in_sets_the_renamed_host_only_cookies(make_resident: Callable[..., Account]) -> None:
     make_resident(email="beboer@gahk.dk", password="hemmelig")
     c = Client()
     c.get(reverse("login"))
@@ -81,7 +81,7 @@ def test_logging_in_sets_the_renamed_host_only_cookies(make_resident: Callable[.
     assert "sessionid" not in response.cookies and "csrftoken" not in response.cookies
 
 
-def test_an_old_session_cookie_does_not_log_anyone_in(make_resident: Callable[..., Resident]) -> None:
+def test_an_old_session_cookie_does_not_log_anyone_in(make_resident: Callable[..., Account]) -> None:
     """The old cookie's value is a real session key on this database. Under the new name nothing
     reads it, so it is the login page, not the dashboard."""
     logged_in = Client()
@@ -113,7 +113,7 @@ def _migration(app: str, name: str) -> object:
     return importlib.import_module(f"{app}.migrations.{name}")
 
 
-def test_stored_notification_targets_lose_the_intern_prefix(make_resident: Callable[..., Resident]) -> None:
+def test_stored_notification_targets_lose_the_intern_prefix(make_resident: Callable[..., Account]) -> None:
     resident = make_resident(email="beboer@gahk.dk")
     urls = ["/intern/den-hurtige/?traad=4", "/intern/", "/notifikationer/", "https://example.org/intern/x"]
     for url in urls:

@@ -27,11 +27,11 @@ from cms.models import (
     SiteSettings,
 )
 from cms.paths import validate_page_path
-from residents.models import Resident
+from residents.models import Account
 
 
 @pytest.fixture
-def editor(make_resident: Callable[..., Resident]) -> Resident:
+def editor(make_resident: Callable[..., Account]) -> Account:
     return make_resident(email="redaktor@gahk.dk", first_name="Rita", last_name="Redaktør")
 
 
@@ -81,7 +81,7 @@ def test_addresses_gahk_dk_uses_itself_are_refused(path: str) -> None:
 # ----------------------------------------------------------------------------------------- pages
 @pytest.mark.django_db
 def test_creating_a_page_cleans_versions_audits_and_publishes(
-    editor: Resident,
+    editor: Account,
     published: list[dict[str, Any]],
     django_capture_on_commit_callbacks: Callable[..., Any],
 ) -> None:
@@ -116,13 +116,13 @@ def test_creating_a_page_cleans_versions_audits_and_publishes(
 
 
 @pytest.mark.django_db
-def test_nothing_is_published_before_the_commit(editor: Resident, published: list[dict[str, Any]]) -> None:
+def test_nothing_is_published_before_the_commit(editor: Account, published: list[dict[str, Any]]) -> None:
     services.save_page(None, {"header": "Kladde"}, editor)
     assert published == []  # pytest's transaction never commits, so on_commit never ran
 
 
 @pytest.mark.django_db
-def test_editing_snapshots_the_old_content_first_and_records_before_and_after(editor: Resident) -> None:
+def test_editing_snapshots_the_old_content_first_and_records_before_and_after(editor: Account) -> None:
     page = Page.objects.create(slug="kontakt", header="Kontakt", body="<p>gammel</p>")  # e.g. the ETL
 
     services.save_page(page, {"body": "<p>ny</p>"}, editor)
@@ -137,7 +137,7 @@ def test_editing_snapshots_the_old_content_first_and_records_before_and_after(ed
 
 
 @pytest.mark.django_db
-def test_saving_without_a_change_writes_nothing(editor: Resident) -> None:
+def test_saving_without_a_change_writes_nothing(editor: Account) -> None:
     page = services.save_page(None, {"header": "Legater", "slug": "legater"}, editor)
     before = (PageVersion.objects.count(), ContentChange.objects.count())
 
@@ -147,7 +147,7 @@ def test_saving_without_a_change_writes_nothing(editor: Resident) -> None:
 
 
 @pytest.mark.django_db
-def test_renaming_a_page_keeps_the_old_address_as_a_redirect(editor: Resident) -> None:
+def test_renaming_a_page_keeps_the_old_address_as_a_redirect(editor: Account) -> None:
     page = services.save_page(None, {"header": "Køkken", "slug": "faciliteter/kokken"}, editor)
 
     services.save_page(page, {"slug": "faciliteter/koekken"}, editor)
@@ -156,7 +156,7 @@ def test_renaming_a_page_keeps_the_old_address_as_a_redirect(editor: Resident) -
 
 
 @pytest.mark.django_db
-def test_a_taken_or_reserved_address_is_a_field_error(editor: Resident) -> None:
+def test_a_taken_or_reserved_address_is_a_field_error(editor: Account) -> None:
     services.save_page(None, {"header": "A", "slug": "vision"}, editor)
     with pytest.raises(ValidationError) as taken:
         services.save_page(None, {"header": "B", "slug": "vision"}, editor)
@@ -170,7 +170,7 @@ def test_a_taken_or_reserved_address_is_a_field_error(editor: Resident) -> None:
 
 
 @pytest.mark.django_db
-def test_a_background_must_come_from_the_library(editor: Resident) -> None:
+def test_a_background_must_come_from_the_library(editor: Account) -> None:
     page = Page.objects.create(slug="x", header="X", background_image="/public/image/old.jpg")
     services.save_page(
         page, {"background_image": "/public/image/old.jpg", "header": "Y"}, editor
@@ -181,7 +181,7 @@ def test_a_background_must_come_from_the_library(editor: Resident) -> None:
 
 
 @pytest.mark.django_db
-def test_restore_puts_content_back_and_explains_a_lost_address(editor: Resident) -> None:
+def test_restore_puts_content_back_and_explains_a_lost_address(editor: Account) -> None:
     page = services.save_page(None, {"header": "Før", "slug": "gammel", "body": "<p>1</p>"}, editor)
     first = page.versions.get()
     page = services.save_page(page, {"header": "Efter", "slug": "ny", "body": "<p>2</p>"}, editor)
@@ -197,7 +197,7 @@ def test_restore_puts_content_back_and_explains_a_lost_address(editor: Resident)
 
 
 @pytest.mark.django_db
-def test_restore_sanitizes_again(editor: Resident) -> None:
+def test_restore_sanitizes_again(editor: Account) -> None:
     page = services.save_page(None, {"header": "P"}, editor)
     bad = PageVersion.objects.create(page=page, header="P", body="<p>ok</p><script>x()</script>")
 
@@ -208,7 +208,7 @@ def test_restore_sanitizes_again(editor: Resident) -> None:
 
 
 @pytest.mark.django_db
-def test_deleting_a_page_keeps_its_history_and_the_front_page_cannot_go(editor: Resident) -> None:
+def test_deleting_a_page_keeps_its_history_and_the_front_page_cannot_go(editor: Account) -> None:
     front = Page.put_front_page(slug="velkommen", header="Velkommen")
     page = services.save_page(None, {"header": "Væk", "slug": "vaek", "body": "<p>tekst</p>"}, editor)
 
@@ -224,7 +224,7 @@ def test_deleting_a_page_keeps_its_history_and_the_front_page_cannot_go(editor: 
 
 # ------------------------------------------------------------------------------- news and events
 @pytest.mark.django_db
-def test_news_and_events_are_cleaned_and_audited(editor: Resident) -> None:
+def test_news_and_events_are_cleaned_and_audited(editor: Account) -> None:
     news = services.save_news(None, {"title": "Fest\n", "body": "<p>Kom</p><img src=x onerror=y()>"}, editor)
     event = services.save_event(
         None, {"title": "Havedag", "description": "<p>Ja</p>", "starts_on": "2026-12-01"}, editor
@@ -249,7 +249,7 @@ def test_news_and_events_are_cleaned_and_audited(editor: Resident) -> None:
 
 # ---------------------------------------------------------------------------------------- images
 @pytest.mark.django_db
-def test_an_upload_is_downscaled_stripped_and_hashed(editor: Resident) -> None:
+def test_an_upload_is_downscaled_stripped_and_hashed(editor: Account) -> None:
     exif = Image.Exif()
     exif[0x8825] = {2: (55, 41, 0)}  # a GPS position
     buffer = BytesIO()
@@ -270,7 +270,7 @@ def test_an_upload_is_downscaled_stripped_and_hashed(editor: Resident) -> None:
 
 
 @pytest.mark.django_db
-def test_a_transparent_png_stays_a_png(editor: Resident) -> None:
+def test_a_transparent_png_stays_a_png(editor: Account) -> None:
     upload = SimpleUploadedFile("logo.png", _png(10, 10, mode="RGBA"), content_type="image/png")
     image = services.upload_image(upload, "", editor)
     with image.file.open("rb") as handle:
@@ -279,7 +279,7 @@ def test_a_transparent_png_stays_a_png(editor: Resident) -> None:
 
 
 @pytest.mark.django_db
-def test_an_svg_or_a_non_image_is_a_file_error(editor: Resident) -> None:
+def test_an_svg_or_a_non_image_is_a_file_error(editor: Account) -> None:
     for name, data, content_type in (
         ("x.svg", b"<svg/>", "image/svg+xml"),
         ("x.png", b"not an image", "image/png"),
@@ -291,7 +291,7 @@ def test_an_svg_or_a_non_image_is_a_file_error(editor: Resident) -> None:
 
 
 @pytest.mark.django_db
-def test_image_usage_and_delete(editor: Resident) -> None:
+def test_image_usage_and_delete(editor: Account) -> None:
     image = services.upload_image(
         SimpleUploadedFile("a.png", _png(5, 5), content_type="image/png"), "A", editor
     )
@@ -310,7 +310,7 @@ def test_image_usage_and_delete(editor: Resident) -> None:
 
 
 @pytest.mark.django_db
-def test_an_image_is_in_use_however_its_letters_are_spelled_in_the_html(editor: Resident) -> None:
+def test_an_image_is_in_use_however_its_letters_are_spelled_in_the_html(editor: Account) -> None:
     """A body may name the image with its letters as they are (typed in the HTML view) or with other
     percent-encoding than Storage.url() writes; gahk.dk gets the picture either way, so it is in use."""
     from cms.snapshot import build_snapshot
@@ -334,7 +334,7 @@ def test_an_image_is_in_use_however_its_letters_are_spelled_in_the_html(editor: 
 
 # ------------------------------------------------------------------------------------------ menu
 @pytest.mark.django_db
-def test_the_menu_is_replaced_as_a_whole_and_audited(editor: Resident) -> None:
+def test_the_menu_is_replaced_as_a_whole_and_audited(editor: Account) -> None:
     MenuItem.objects.all().delete()
     services.save_menu(
         [{"label": "Hjem", "url": "/"}, {"label": "Facebook", "url": "https://facebook.com/gahk"}], editor
@@ -355,7 +355,7 @@ def test_the_menu_is_replaced_as_a_whole_and_audited(editor: Resident) -> None:
 
 
 @pytest.mark.django_db
-def test_bad_menu_entries_are_reported_by_position(editor: Resident) -> None:
+def test_bad_menu_entries_are_reported_by_position(editor: Account) -> None:
     with pytest.raises(ValidationError) as exc:
         services.save_menu(
             [
@@ -384,7 +384,7 @@ def test_reachability_follows_the_menu() -> None:
 
 # ------------------------------------------------------------------------- redirects and settings
 @pytest.mark.django_db
-def test_redirects_are_validated_and_audited(editor: Resident) -> None:
+def test_redirects_are_validated_and_audited(editor: Account) -> None:
     page = Page.objects.create(slug="kontakt", header="Kontakt")
     Page.objects.create(slug="adresseloes", header="Ingen")  # a live address
 
@@ -405,7 +405,7 @@ def test_redirects_are_validated_and_audited(editor: Resident) -> None:
 
 
 @pytest.mark.django_db
-def test_site_settings_take_a_library_image(editor: Resident) -> None:
+def test_site_settings_take_a_library_image(editor: Account) -> None:
     image = services.upload_image(
         SimpleUploadedFile("b.png", _png(5, 5), content_type="image/png"), "", editor
     )
@@ -419,7 +419,7 @@ def test_site_settings_take_a_library_image(editor: Resident) -> None:
 
 @pytest.mark.django_db
 def test_manual_publish_and_update_are_audited(
-    editor: Resident,
+    editor: Account,
     published: list[dict[str, Any]],
     monkeypatch: pytest.MonkeyPatch,
     django_capture_on_commit_callbacks: Callable[..., Any],

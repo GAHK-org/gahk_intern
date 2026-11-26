@@ -28,7 +28,7 @@ from django.urls import reverse
 
 from audit import trail
 
-from .models import Resident
+from .models import Account
 
 logger = logging.getLogger(__name__)
 
@@ -39,8 +39,8 @@ def log_failed_login(
 ) -> None:
     email = str(credentials.get("username") or "")
     try:
-        user = Resident._default_manager.get_by_natural_key(email)
-    except (Resident.DoesNotExist, Resident.MultipleObjectsReturned):
+        user = Account._default_manager.get_by_natural_key(email)
+    except (Account.DoesNotExist, Account.MultipleObjectsReturned):
         # Only the domain and a keyed hash of what was typed: people type their password here.
         typed = trail.typed_address(email)
         logger.warning("Login failed: no account for address %s", typed["email_hash"])
@@ -52,7 +52,7 @@ def log_failed_login(
     _audit_failed_login(user, {"reason": reason})
 
 
-def _audit_failed_login(account: Resident | None, details: dict[str, str]) -> None:
+def _audit_failed_login(account: Account | None, details: dict[str, str]) -> None:
     attempt = trail.current()
     if attempt is not None and attempt.action == LOGIN_ATTEMPT:
         attempt.action = "auth.login.failed"
@@ -67,7 +67,7 @@ LOGIN_ATTEMPT = "auth.login.attempt"
 
 @receiver(user_logged_in)
 def audit_login(
-    sender: object, request: HttpRequest | None = None, user: Resident | None = None, **_: object
+    sender: object, request: HttpRequest | None = None, user: Account | None = None, **_: object
 ) -> None:
     attempt = trail.current()
     if attempt is not None and attempt.action == LOGIN_ATTEMPT:
@@ -80,7 +80,7 @@ def audit_login(
 
 @receiver(user_logged_out)
 def audit_logout(
-    sender: object, request: HttpRequest | None = None, user: Resident | None = None, **_: object
+    sender: object, request: HttpRequest | None = None, user: Account | None = None, **_: object
 ) -> None:
     if user is not None:
         trail.record("auth.logout", actor=user, subject=user)

@@ -16,7 +16,7 @@ from django.utils import timezone
 
 from admissions.models import Application
 from config import settings as config_settings
-from residents.models import Resident, Role, active_period
+from residents.models import Account, Role, active_period
 from residents.permissions import CMS_EDITOR_ROLES, has_active_role
 
 
@@ -56,7 +56,7 @@ def test_legacy_sha256_upgrades_on_login(make_resident: Callable) -> None:
     make_resident(email="a@gahk.dk", password="hemmelig", legacy=True)
     c = Client()
     assert c.login(email="a@gahk.dk", password="hemmelig") is True
-    r = Resident.objects.get(email="a@gahk.dk")
+    r = Account.objects.get(email="a@gahk.dk")
     assert identify_hasher(r.password).algorithm != "gahk_sha256"  # upgraded away from the legacy hash
 
 
@@ -92,7 +92,7 @@ def test_reset_reaches_a_resident_who_never_set_a_password() -> None:
     reset token and expires after 2h. Django's stock PasswordResetForm skips such accounts, so the
     "glemt kodeord" fallback the welcome mail points at sent nothing at all — and the view redirects
     to "done" regardless, so the lockout was silent. ResidentPasswordResetForm must reach them."""
-    r = Resident(email="ny@gahk.dk", first_name="Ny", last_name="Beboer")
+    r = Account(email="ny@gahk.dk", first_name="Ny", last_name="Beboer")
     r.set_unusable_password()  # exactly what the alumneliste's add_new does
     r.save()
     mail.outbox = []
@@ -106,7 +106,7 @@ def test_reset_reaches_a_resident_who_never_set_a_password() -> None:
 def test_reset_still_ignores_deactivated_residents() -> None:
     """Widening the form to unusable passwords must not also let a moved-out resident back in:
     is_active stays the gate."""
-    r = Resident(email="ude@gahk.dk", first_name="Ude", last_name="Flyttet", is_active=False)
+    r = Account(email="ude@gahk.dk", first_name="Ude", last_name="Flyttet", is_active=False)
     r.set_unusable_password()
     r.save()
     mail.outbox = []
@@ -419,8 +419,8 @@ def test_pr_embedsgruppe_grants_cms_access(make_resident: Callable) -> None:
     r = make_resident(email="prmember@gahk.dk")
     y, m = active_period()
     room = Room.objects.create(legacy_index=140, number=140, floor="stuen", side="mod gaden")
-    Residency.objects.create(resident=r, room=room, workgroup=pr_group, year=y, month=m)
-    _sync_month_roles(r.id, pr_group, y, m, is_admin=False)  # what the next-month editor runs
+    Residency.objects.create(resident=r.house, room=room, workgroup=pr_group, year=y, month=m)
+    _sync_month_roles(r.house.pk, pr_group, y, m, admins=set())  # what the next-month editor runs
 
     assert r.has_role("pr", (y, m))
     assert has_active_role(r, *CMS_EDITOR_ROLES)
@@ -458,7 +458,7 @@ def test_administrator_has_full_admin_permissions_while_in_role(make_resident: C
     y, m = active_period()
     admin = make_resident(email="netvaerk@gahk.dk", roles=[Role.ADMINISTRATOR])
     AdminAccessGrant.objects.filter(resident=admin).update(status=AdminAccessGrant.Status.APPROVED)
-    admin = Resident.objects.get(pk=admin.pk)
+    admin = Account.objects.get(pk=admin.pk)
     assert admin.is_superuser is False  # the flag is never set
     assert admin.has_perm("residents.delete_resident") is True
     assert admin.has_module_perms("oelkaelder") is True
@@ -468,13 +468,13 @@ def test_administrator_has_full_admin_permissions_while_in_role(make_resident: C
     assert other.has_module_perms("oelkaelder") is False
 
     RoleAssignment.objects.filter(resident=admin, role=Role.ADMINISTRATOR).delete()
-    admin = Resident.objects.get(pk=admin.pk)  # fresh instance: real_roles memoises per instance
+    admin = Account.objects.get(pk=admin.pk)  # fresh instance: real_roles memoises per instance
     assert admin.has_perm("residents.delete_resident") is False
 
     # Held last month only -> expired, even though is_staff (any period) is still True.
     prev = (y - 1, 12) if m == 1 else (y, m - 1)
     RoleAssignment.objects.create(resident=admin, role=Role.ADMINISTRATOR, year=prev[0], month=prev[1])
-    admin = Resident.objects.get(pk=admin.pk)
+    admin = Account.objects.get(pk=admin.pk)
     assert admin.is_staff is True
     assert admin.has_perm("residents.delete_resident") is False
 
@@ -953,8 +953,8 @@ def test_room_clash_warning_is_indstilling_only(make_resident: Callable) -> None
     room = Room.objects.create(legacy_index=98, number=98, floor="stuen", side="mod gaden")
     a = make_resident(email="clash-a@gahk.dk")
     b = make_resident(email="clash-b@gahk.dk")
-    Residency.objects.create(resident=a, room=room, year=y, month=m)
-    Residency.objects.create(resident=b, room=room, year=y, month=m)  # same room, same month
+    Residency.objects.create(resident=a.house, room=room, year=y, month=m)
+    Residency.objects.create(resident=b.house, room=room, year=y, month=m)  # same room, same month
 
     plain = Client()
     plain.force_login(a)
@@ -995,13 +995,13 @@ def test_alumneliste_default_sort_is_alphabetical_and_sortable(make_resident: Ca
     r_hi = Room.objects.create(legacy_index=201, number=201, floor="2. sal", side="mod gaden")
     r_lo = Room.objects.create(legacy_index=1, number=1, floor="stuen", side="mod gaden")
     Residency.objects.create(
-        resident=make_resident(email="aaron@gahk.dk", first_name="Aaron", last_name="A"),
+        resident=(make_resident(email="aaron@gahk.dk", first_name="Aaron", last_name="A")).house,
         room=r_hi,
         year=y,
         month=m,
     )
     Residency.objects.create(
-        resident=make_resident(email="zoe@gahk.dk", first_name="Zoe", last_name="Z"),
+        resident=(make_resident(email="zoe@gahk.dk", first_name="Zoe", last_name="Z")).house,
         room=r_lo,
         year=y,
         month=m,
@@ -1034,7 +1034,7 @@ def test_directory_rows_fragment_has_sortable_headers(make_resident: Callable) -
     y, m = active_period()
     room = Room.objects.create(legacy_index=1, number=1, floor="stuen", side="mod gaden")
     Residency.objects.create(
-        resident=make_resident(email="frag@gahk.dk", first_name="Frag", last_name="Menter"),
+        resident=(make_resident(email="frag@gahk.dk", first_name="Frag", last_name="Menter")).house,
         room=room,
         year=y,
         month=m,

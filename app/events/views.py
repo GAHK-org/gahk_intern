@@ -27,7 +27,7 @@ from core.clock import current_date, current_datetime
 from core.danish import MONTHS, WEEKDAYS_SHORT
 from core.uploads import attached_image
 from residents import birthdays as birthdays_mod
-from residents.models import Resident
+from residents.models import Account
 from residents.permissions import current_resident
 
 from . import access, icalendar, live, maerkedage, services
@@ -37,7 +37,7 @@ from .models import Answer, CalendarFeedToken, Event, EventComment, Rsvp
 PAGE_SIZE = 20
 
 
-def _my_state(event: Event, resident: Resident) -> str | None:
+def _my_state(event: Event, resident: Account) -> str | None:
     """ "kommer" / "venteliste" / "nej" / None, from rows already prefetched.
 
     Seating is positional, so a card cannot read a column to know where you stand — it has to know

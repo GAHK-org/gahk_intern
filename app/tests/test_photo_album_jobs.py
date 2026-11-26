@@ -42,12 +42,12 @@ from photo_album.tasks import (
     fail_stalled_imports,
     process_album_import,
 )
-from residents.models import Resident
+from residents.models import Account
 
 from .media_samples import jpeg_bytes
 
 
-def _import(resident: Resident, content: bytes = b"not read", **fields: object) -> AlbumImport:
+def _import(resident: Account, content: bytes = b"not read", **fields: object) -> AlbumImport:
     album_import = AlbumImport.objects.create(
         requested_by=resident, folder="2026", archive_name="fest.zip", **fields
     )
@@ -64,7 +64,7 @@ def _zip_with_one_photo() -> bytes:
 
 @pytest.mark.django_db
 def test_an_import_whose_worker_never_returned_is_failed_and_its_zip_deleted_a_day_later(
-    make_resident: Callable[..., Resident],
+    make_resident: Callable[..., Account],
 ) -> None:
     """The Dropbox script asks for the status until ready or failed, so a row left BUILDING by a
     worker the OOM killer took kept it waiting on "still building" for good."""
@@ -105,7 +105,7 @@ def test_an_import_whose_worker_never_returned_is_failed_and_its_zip_deleted_a_d
 
 @pytest.mark.django_db
 def test_a_download_failed_while_still_queued_is_built_when_its_message_arrives(
-    make_resident: Callable[..., Resident],
+    make_resident: Callable[..., Account],
 ) -> None:
     """With one media slot, a ZIP can honestly wait longer than JOB_QUEUED_TOO_LONG. The sweep
     failed it, and the message that finally arrived found no QUEUED row: no ZIP, ever."""
@@ -124,7 +124,7 @@ def test_a_download_failed_while_still_queued_is_built_when_its_message_arrives(
 
 @pytest.mark.django_db
 def test_an_import_failed_while_still_queued_is_imported_when_its_message_arrives(
-    make_resident: Callable[..., Resident],
+    make_resident: Callable[..., Account],
 ) -> None:
     album_import = _import(make_resident(), _zip_with_one_photo(), task_id="waited")
     AlbumImport.objects.filter(pk=album_import.pk).update(
@@ -141,7 +141,7 @@ def test_an_import_failed_while_still_queued_is_imported_when_its_message_arrive
 
 
 @pytest.mark.django_db
-def test_a_job_that_died_while_building_is_not_revived(make_resident: Callable[..., Resident]) -> None:
+def test_a_job_that_died_while_building_is_not_revived(make_resident: Callable[..., Account]) -> None:
     """Only a job that never started is revived. One that recorded progress was running when its
     worker died, and running it again would most likely just repeat whatever killed it."""
     download = AlbumDownload.objects.create(
@@ -161,7 +161,7 @@ def test_a_job_that_died_while_building_is_not_revived(make_resident: Callable[.
 
 @pytest.mark.django_db
 def test_a_redelivered_import_whose_first_run_died_is_failed_not_run_again(
-    make_resident: Callable[..., Resident],
+    make_resident: Callable[..., Account],
 ) -> None:
     """With acks_late and reject_on_worker_lost, Celery hands the message out again after the
     worker is killed. It used to find the row BUILDING, return False — a "successful" job on the
@@ -184,7 +184,7 @@ def test_a_redelivered_import_whose_first_run_died_is_failed_not_run_again(
 
 @pytest.mark.django_db
 def test_a_redelivered_download_whose_first_run_died_is_failed(
-    make_resident: Callable[..., Resident],
+    make_resident: Callable[..., Account],
 ) -> None:
     download = AlbumDownload.objects.create(
         requested_by=make_resident(), media_ids=[], state=AlbumDownloadState.BUILDING, task_id="first-run"
@@ -198,7 +198,7 @@ def test_a_redelivered_download_whose_first_run_died_is_failed(
 
 
 @pytest.mark.django_db
-def test_starting_a_job_records_its_task_and_progress_clock(make_resident: Callable[..., Resident]) -> None:
+def test_starting_a_job_records_its_task_and_progress_clock(make_resident: Callable[..., Account]) -> None:
     """The task id is what lets a redelivery recognise its own dead first run; progressed_at is
     what the reaper measures from, so it starts when the work does."""
     download = AlbumDownload.objects.create(requested_by=make_resident(), media_ids=[])
@@ -213,7 +213,7 @@ def test_starting_a_job_records_its_task_and_progress_clock(make_resident: Calla
 
 @pytest.mark.django_db(transaction=True)
 def test_progress_made_inside_a_transaction_is_visible_outside_it(
-    make_resident: Callable[..., Resident], monkeypatch: pytest.MonkeyPatch
+    make_resident: Callable[..., Account], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """An import stores everything in one transaction. Progress written inside it would only become
     visible on commit — so an import dying half-way would look as if it had never progressed."""
@@ -237,7 +237,7 @@ def test_progress_made_inside_a_transaction_is_visible_outside_it(
 
 
 @pytest.mark.django_db
-def test_progress_is_written_at_most_every_interval(make_resident: Callable[..., Resident]) -> None:
+def test_progress_is_written_at_most_every_interval(make_resident: Callable[..., Account]) -> None:
     album_import = _import(make_resident(), state=AlbumImportState.BUILDING)
     report = JobProgress(AlbumImport.objects.filter(pk=album_import.pk))
 
@@ -250,7 +250,7 @@ def test_progress_is_written_at_most_every_interval(make_resident: Callable[...,
 
 @pytest.mark.django_db
 def test_import_status_reports_progress_while_building(
-    client: Client, make_resident: Callable[..., Resident]
+    client: Client, make_resident: Callable[..., Account]
 ) -> None:
     resident = make_resident()
     album_import = _import(
@@ -289,7 +289,7 @@ def test_heavy_jobs_are_routed_to_the_media_queue() -> None:
 
 @pytest.mark.django_db
 def test_a_photo_is_queued_for_the_quick_worker_and_a_video_for_the_media_worker(
-    make_resident: Callable[..., Resident],
+    make_resident: Callable[..., Account],
     monkeypatch: pytest.MonkeyPatch,
     django_capture_on_commit_callbacks: Callable[..., Any],
 ) -> None:
@@ -320,7 +320,7 @@ def test_a_photo_is_queued_for_the_quick_worker_and_a_video_for_the_media_worker
 # --- Media derivatives -----------------------------------------------------------------------------
 
 
-def _broken_video(make_resident: Callable[..., Resident], **fields: object) -> Media:
+def _broken_video(make_resident: Callable[..., Account], **fields: object) -> Media:
     from photo_album.models import Album
     from photo_album.services import upload_media
 
@@ -336,7 +336,7 @@ def _broken_video(make_resident: Callable[..., Resident], **fields: object) -> M
 
 @pytest.mark.django_db
 def test_a_video_that_cannot_be_converted_is_a_failed_job_naming_the_file(
-    make_resident: Callable[..., Resident],
+    make_resident: Callable[..., Account],
 ) -> None:
     """It used to return False — a successful job — so a video sat on "Mediet behandles" with nothing
     on the jobs page to say why."""
@@ -352,7 +352,7 @@ def test_a_video_that_cannot_be_converted_is_a_failed_job_naming_the_file(
 
 @pytest.mark.django_db
 def test_an_attempt_counts_even_when_the_worker_dies_during_it(
-    make_resident: Callable[..., Resident], monkeypatch: pytest.MonkeyPatch
+    make_resident: Callable[..., Account], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """A worker killed mid-encode saves nothing afterwards, so a video that killed its worker every
     time was never counted, never given up on, and stayed "Mediet behandles" forever."""
@@ -373,7 +373,7 @@ def test_an_attempt_counts_even_when_the_worker_dies_during_it(
 
 @pytest.mark.django_db
 def test_a_video_out_of_attempts_is_marked_failed_without_another_try(
-    make_resident: Callable[..., Resident], monkeypatch: pytest.MonkeyPatch
+    make_resident: Callable[..., Account], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     from photo_album import services
 
@@ -389,7 +389,7 @@ def test_a_video_out_of_attempts_is_marked_failed_without_another_try(
 
 @pytest.mark.django_db
 def test_a_redelivered_conversion_whose_first_run_died_fails_and_releases_the_row(
-    make_resident: Callable[..., Resident],
+    make_resident: Callable[..., Account],
 ) -> None:
     """With acks_late and reject_on_worker_lost, the message comes back after its worker is killed,
     finds the row still claimed and used to return False: a "successful" job that hid the kill."""
@@ -424,7 +424,7 @@ def _free_disk(monkeypatch: pytest.MonkeyPatch, free: int) -> None:
 
 @pytest.mark.django_db
 def test_a_video_the_disk_has_no_room_for_waits_without_using_an_attempt(
-    make_resident: Callable[..., Resident], monkeypatch: pytest.MonkeyPatch
+    make_resident: Callable[..., Account], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """In November 2026 encodes ran the disk full, crashed, and were counted towards giving up:
     nothing wrong with the files, and three nights of it would have marked them FAILED."""
@@ -445,7 +445,7 @@ def test_a_video_the_disk_has_no_room_for_waits_without_using_an_attempt(
 
 @pytest.mark.django_db
 def test_a_video_with_room_enough_is_encoded(
-    make_resident: Callable[..., Resident], monkeypatch: pytest.MonkeyPatch
+    make_resident: Callable[..., Account], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     from photo_album import services
 
@@ -458,7 +458,7 @@ def test_a_video_with_room_enough_is_encoded(
 
 @pytest.mark.django_db
 def test_a_photo_is_built_however_full_the_disk(
-    make_resident: Callable[..., Resident], monkeypatch: pytest.MonkeyPatch
+    make_resident: Callable[..., Account], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """A photo is decoded in memory; the check is for encodes alone."""
     from photo_album.models import Album
@@ -496,7 +496,7 @@ def test_a_conversion_claim_lasts_as_long_as_a_conversion_may_run() -> None:
 
 @pytest.mark.django_db
 def test_the_size_of_an_original_is_recorded_on_upload_and_backfilled(
-    make_resident: Callable[..., Resident],
+    make_resident: Callable[..., Account],
 ) -> None:
     from photo_album.services import backfill_sizes
 
@@ -512,7 +512,7 @@ def test_the_size_of_an_original_is_recorded_on_upload_and_backfilled(
 
 @pytest.mark.django_db
 def test_a_conversion_the_watchdog_stops_fails_saying_why_and_is_released(
-    make_resident: Callable[..., Resident], monkeypatch: pytest.MonkeyPatch
+    make_resident: Callable[..., Account], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     from celery.exceptions import SoftTimeLimitExceeded
 

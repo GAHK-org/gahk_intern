@@ -11,7 +11,7 @@ from notifications import categories
 from notifications.categories import Importance
 from notifications.models import Notification
 from notifications.services import everyone, notify
-from residents.models import Resident
+from residents.models import Account
 
 from . import access
 from .models import ChangeRequest, Video
@@ -37,13 +37,13 @@ def published(video: Video) -> None:
     )
 
 
-def credited(video: Video, residents: Iterable[int], by: Resident) -> None:
+def credited(video: Video, residents: Iterable[int], by: Account) -> None:
     """Residents newly added to a video's cast. Only once it is out: a draft is private, and an upcoming
     premiere's cast is told at its premiere."""
     ids = [pk for pk in residents if pk != by.pk]
     if not ids or not video.is_released:
         return
-    recipients = access.audience(Resident.objects.filter(pk__in=ids))
+    recipients = access.audience(Account.objects.filter(pk__in=ids))
     notify(
         recipients,
         category=categories.GAHKFLIX_CAST,

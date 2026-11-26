@@ -18,7 +18,7 @@ from photo_album import direct_upload
 from photo_album.models import Album, AlbumImport, DateSource, Media, MediaStatus
 from photo_album.services import upload_media
 from photo_album.storage import PhotoAlbumS3Storage
-from residents.models import Resident, Role
+from residents.models import Account, Role
 
 from .media_samples import image_upload, jpeg_bytes
 
@@ -174,7 +174,7 @@ def _commit(client: Client, album: Album, ticket: str) -> HttpResponse:
 
 @pytest.mark.django_db
 def test_the_signer_signs_uppys_requests_for_the_ticket_and_nothing_else(
-    client: Client, bucket: Stubber, make_resident: Callable[..., Resident]
+    client: Client, bucket: Stubber, make_resident: Callable[..., Account]
 ) -> None:
     resident = make_resident()
     album = Album.objects.create(folder="2004", name="Fest")
@@ -205,7 +205,7 @@ def test_the_signer_signs_uppys_requests_for_the_ticket_and_nothing_else(
 
 @pytest.mark.django_db
 def test_a_large_photo_sent_to_the_bucket_is_checked_and_stored_where_it_landed(
-    client: Client, bucket: Stubber, make_resident: Callable[..., Resident]
+    client: Client, bucket: Stubber, make_resident: Callable[..., Account]
 ) -> None:
     resident = make_resident()
     album = Album.objects.create(folder="2004", name="Fest")
@@ -226,7 +226,7 @@ def test_a_large_photo_sent_to_the_bucket_is_checked_and_stored_where_it_landed(
 
 @pytest.mark.django_db
 def test_a_photo_sent_to_the_bucket_is_dated_from_its_album_as_one_sent_with_the_form(
-    client: Client, bucket: Stubber, make_resident: Callable[..., Resident]
+    client: Client, bucket: Stubber, make_resident: Callable[..., Account]
 ) -> None:
     resident = make_resident()
     album = Album.objects.create(folder="2004", name="Fest")
@@ -256,7 +256,7 @@ def test_a_photo_sent_to_the_bucket_is_dated_from_its_album_as_one_sent_with_the
 
 @pytest.mark.django_db
 def test_a_file_sent_to_the_bucket_is_refused_as_loudly_as_one_sent_with_the_form(
-    client: Client, bucket: Stubber, make_resident: Callable[..., Resident]
+    client: Client, bucket: Stubber, make_resident: Callable[..., Account]
 ) -> None:
     resident = make_resident()
     album = Album.objects.create(folder="2004", name="Fest")
@@ -291,7 +291,7 @@ def test_a_file_sent_to_the_bucket_is_refused_as_loudly_as_one_sent_with_the_for
 
 @pytest.mark.django_db
 def test_a_duplicate_sent_to_the_bucket_is_skipped_and_removed(
-    client: Client, bucket: Stubber, make_resident: Callable[..., Resident]
+    client: Client, bucket: Stubber, make_resident: Callable[..., Account]
 ) -> None:
     resident = make_resident()
     album = Album.objects.create(folder="2004", name="Fest")
@@ -311,7 +311,7 @@ def test_a_duplicate_sent_to_the_bucket_is_skipped_and_removed(
 
 @pytest.mark.django_db
 def test_without_a_bucket_the_browser_sends_with_the_form(
-    client: Client, make_resident: Callable[..., Resident]
+    client: Client, make_resident: Callable[..., Account]
 ) -> None:
     resident = make_resident(roles=(Role.FOTO,))
     album = Album.objects.create(folder="2004", name="Fest")
@@ -325,7 +325,7 @@ def test_without_a_bucket_the_browser_sends_with_the_form(
 
 @pytest.mark.django_db
 def test_the_import_page_imports_a_zip_sent_to_the_bucket(
-    client: Client, bucket: Stubber, make_resident: Callable[..., Resident]
+    client: Client, bucket: Stubber, make_resident: Callable[..., Account]
 ) -> None:
     resident = make_resident(roles=(Role.FOTO,))
     client.force_login(resident)
@@ -359,7 +359,7 @@ def test_the_import_page_imports_a_zip_sent_to_the_bucket(
 
 @pytest.mark.django_db
 def test_only_who_may_upload_or_import_may_begin(
-    client: Client, make_resident: Callable[..., Resident]
+    client: Client, make_resident: Callable[..., Account]
 ) -> None:
     resident = make_resident()
     album = Album.objects.create(folder="2004", name="Fest", manually_locked_at=timezone.now())
@@ -439,7 +439,7 @@ def test_an_archive_whose_import_cannot_be_created_is_not_left_in_the_bucket(
 
 @pytest.mark.django_db
 def test_uploaded_archives_no_import_refers_to_are_deleted_after_two_days(
-    bucket: Stubber, make_resident: Callable[..., Resident]
+    bucket: Stubber, make_resident: Callable[..., Account]
 ) -> None:
     from photo_album.tasks import purge_orphaned_import_archives
 

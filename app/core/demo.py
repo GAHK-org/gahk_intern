@@ -52,7 +52,7 @@ from django.conf import settings
 from django.db.models import Max
 from django.utils import timezone
 
-from residents.models import Resident
+from residents.models import Account
 
 from . import mail as outbox
 from .models import OutgoingMail
@@ -69,7 +69,7 @@ LAST_BATCH_AGO = timedelta(minutes=2)
 BATCH_GAP = settings.MAIL_RATE_WINDOW + timedelta(seconds=5)
 
 
-def seed(residents: list[Resident], now: datetime, rng: random.Random) -> int:
+def seed(residents: list[Account], now: datetime, rng: random.Random) -> int:
     """Returns how many mails it seeded."""
     may_wait = settings.MAIL_DELIVERY_BACKEND in _DELIVER_NOWHERE
     _bulk_overview(now, may_wait)
@@ -114,7 +114,7 @@ def _bulk_overview(now: datetime, may_wait: bool) -> None:
             outcomes.get(mail.pk, _sent)(mail, first_batch_at + number * BATCH_GAP + timedelta(seconds=i))
 
 
-def _resets(residents: list[Resident], now: datetime, may_wait: bool) -> None:
+def _resets(residents: list[Account], now: datetime, may_wait: bool) -> None:
     emails = {r.email for r in residents}
 
     if "beboer@gahk.dk" in emails:

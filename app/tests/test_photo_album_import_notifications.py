@@ -15,7 +15,7 @@ from notifications.models import Notification
 from photo_album import notify
 from photo_album.models import JOB_QUEUED_TOO_LONG, JOB_STALLED_AFTER, AlbumImport, AlbumImportState
 from photo_album.tasks import fail_stalled_imports, process_album_import
-from residents.models import Resident
+from residents.models import Account
 
 from .media_samples import jpeg_bytes
 
@@ -28,7 +28,7 @@ def _zip(*members: tuple[str, bytes]) -> bytes:
     return payload.getvalue()
 
 
-def _import(resident: Resident, content: bytes, **fields: object) -> AlbumImport:
+def _import(resident: Account, content: bytes, **fields: object) -> AlbumImport:
     album_import = AlbumImport.objects.create(
         requested_by=resident, folder="2026", archive_name="Sommerfest.zip", **fields
     )
@@ -36,13 +36,13 @@ def _import(resident: Resident, content: bytes, **fields: object) -> AlbumImport
     return album_import
 
 
-def _notification(resident: Resident) -> Notification:
+def _notification(resident: Account) -> Notification:
     return Notification.objects.get(recipient=resident)
 
 
 @pytest.mark.django_db
 def test_a_refused_import_tells_its_resident_why_and_where_to_see_the_rest(
-    make_resident: Callable[..., Resident],
+    make_resident: Callable[..., Account],
 ) -> None:
     resident = make_resident()
     album_import = _import(resident, _zip(("notes.txt", b"not a photo"), ("other.doc", b"nor this")))
@@ -59,7 +59,7 @@ def test_a_refused_import_tells_its_resident_why_and_where_to_see_the_rest(
 
 @pytest.mark.django_db
 def test_an_import_that_crashes_tells_its_resident(
-    make_resident: Callable[..., Resident], monkeypatch: pytest.MonkeyPatch
+    make_resident: Callable[..., Account], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     def crash(**_: object) -> None:
         raise RuntimeError("disk full")
@@ -75,7 +75,7 @@ def test_an_import_that_crashes_tells_its_resident(
 
 
 @pytest.mark.django_db
-def test_an_import_whose_worker_died_tells_its_resident(make_resident: Callable[..., Resident]) -> None:
+def test_an_import_whose_worker_died_tells_its_resident(make_resident: Callable[..., Account]) -> None:
     resident = make_resident()
     album_import = _import(resident, b"zip", state=AlbumImportState.BUILDING, task_id="first-run")
 
@@ -86,7 +86,7 @@ def test_an_import_whose_worker_died_tells_its_resident(make_resident: Callable[
 
 @pytest.mark.django_db
 def test_the_sweep_tells_a_stopped_import_from_one_that_never_started(
-    make_resident: Callable[..., Resident],
+    make_resident: Callable[..., Account],
 ) -> None:
     """One that never started can still be revived if its message turns up — its notice says so."""
     stopped_by, waiting_for = make_resident(email="a@gahk.dk"), make_resident(email="b@gahk.dk")
@@ -110,7 +110,7 @@ def test_the_sweep_tells_a_stopped_import_from_one_that_never_started(
 @pytest.mark.django_db
 @override_settings(PHOTO_ALBUM_SYSTEM_IMPORT_EMAIL="system@gahk.dk")
 def test_nobody_is_told_about_the_import_scripts_own_imports_nor_about_one_that_worked(
-    make_resident: Callable[..., Resident],
+    make_resident: Callable[..., Account],
 ) -> None:
     system = make_resident(email="system@gahk.dk")
     resident = make_resident(email="r@gahk.dk")
@@ -125,7 +125,7 @@ def test_nobody_is_told_about_the_import_scripts_own_imports_nor_about_one_that_
 
 @pytest.mark.django_db
 def test_a_notification_that_cannot_be_sent_does_not_change_the_imports_outcome(
-    make_resident: Callable[..., Resident], monkeypatch: pytest.MonkeyPatch
+    make_resident: Callable[..., Account], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     def broken(*_: object) -> None:
         raise RuntimeError("push service down")

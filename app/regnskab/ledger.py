@@ -3,13 +3,13 @@ from __future__ import annotations
 from collections.abc import Iterable
 from decimal import Decimal
 
-from residents.models import Resident
+from residents.models import Account
 
 from . import economic
 from .models import EconomicLedgerEntry
 
 
-def _row(resident: Resident, entry: economic.LedgerEntry) -> EconomicLedgerEntry:
+def _row(resident: Account, entry: economic.LedgerEntry) -> EconomicLedgerEntry:
     return EconomicLedgerEntry(
         resident=resident,
         entry_number=entry.entry_number,
@@ -23,7 +23,7 @@ def _row(resident: Resident, entry: economic.LedgerEntry) -> EconomicLedgerEntry
     )
 
 
-def sync_entries(resident: Resident, entries: Iterable[economic.LedgerEntry]) -> int:
+def sync_entries(resident: Account, entries: Iterable[economic.LedgerEntry]) -> int:
     """Mirrors the given e-conomic entries for `resident`. Posted entries are insert-only (e-conomic
     never changes a posted entry once it exists). Drafts are different: e-conomic's own draft can be
     edited or deleted, and gets a brand new entryNumber once formally posted — so a stale draft row

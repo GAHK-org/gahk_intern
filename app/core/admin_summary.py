@@ -18,7 +18,7 @@ from django.urls import reverse
 from django.utils import timezone
 from django.utils.formats import date_format, number_format
 
-from residents.models import AdminAccessGrant, Resident, Role, RoleAssignment, active_period
+from residents.models import Account, AdminAccessGrant, Role, RoleAssignment, active_period
 
 UNKNOWN_TASK = "(ukendt)"
 
@@ -97,14 +97,14 @@ def _access(start: datetime.date, end: datetime.date, month: str) -> list[str]:
         .select_related("resident")
         .order_by("resident__first_name", "resident__last_name", "resident__pk")
     )
-    by_role: dict[str, list[Resident]] = {}
+    by_role: dict[str, list[Account]] = {}
     for assignment in holders:
         by_role.setdefault(assignment.role, []).append(assignment.resident)
     grants = {
         grant.resident_id: grant.get_status_display().lower()
         for grant in AdminAccessGrant.objects.filter(resident__in=by_role.get(Role.ADMINISTRATOR, []))
     }
-    superusers = Resident.objects.filter(is_active=True, is_superuser=True)
+    superusers = Account.objects.filter(is_active=True, is_superuser=True)
 
     lines = [f"ADGANG (roller for {period})"]
     lines += _people("Superbrugere", [str(resident) for resident in superusers])

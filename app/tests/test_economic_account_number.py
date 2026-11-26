@@ -11,7 +11,7 @@ from django.urls import reverse
 
 from core.models import Room
 from regnskab import alumneregning, economic
-from residents.models import Residency, Resident
+from residents.models import Account, Residency
 
 AUGUST = (date(2026, 8, 1), date(2026, 8, 31))
 
@@ -35,7 +35,7 @@ def _regnskab_client(make_resident: Callable) -> Client:
     return c
 
 
-def _anna(make_resident: Callable, number: int | None = None) -> Resident:
+def _anna(make_resident: Callable, number: int | None = None) -> Account:
     return make_resident(
         email="anna@gahk.dk", first_name="Anna", last_name="Jensen", economic_account_number=number
     )
@@ -54,7 +54,7 @@ def _anna(make_resident: Callable, number: int | None = None) -> Resident:
     ],
 )
 def test_account_name_matches(first: str, last: str, account_name: str, matches: bool) -> None:
-    resident = Resident(first_name=first, last_name=last)
+    resident = Account(first_name=first, last_name=last)
     assert alumneregning.account_name_matches(resident, account_name) is matches
 
 
@@ -150,10 +150,10 @@ def test_the_page_requires_the_regnskab_role(make_resident: Callable, method: st
     assert anna.economic_account_number is None
 
 
-def _anna_in_august(make_resident: Callable, number: int) -> Resident:
+def _anna_in_august(make_resident: Callable, number: int) -> Account:
     anna = _anna(make_resident, number)
     room = Room.objects.create(legacy_index=1, number=1, floor="stuen", side="mod gaden")
-    Residency.objects.create(resident=anna, room=room, year=2026, month=8)
+    Residency.objects.create(resident=anna.house, room=room, year=2026, month=8)
     return anna
 
 

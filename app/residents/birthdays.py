@@ -11,7 +11,7 @@ That is also why this lives in `residents` rather than in `events`. It answers a
 PEOPLE, and the month grid is only its first caller; a dashboard strip of "fødselsdage i denne uge"
 would use the same function without going anywhere near begivenheder.
 
-WHOSE BIRTHDAYS: WHOEVER IS ON THE ACTIVE ALUMNELISTE, and nobody else. Not every Resident row —
+WHOSE BIRTHDAYS: WHOEVER IS ON THE ACTIVE ALUMNELISTE, and nobody else. Not every Account row —
 that table holds every alumne the ETL has ever imported, so an unfiltered query would put several
 hundred names a year on a calendar belonging to the sixty people who live here now.
 
@@ -30,7 +30,7 @@ makes, to exactly that audience.
 import datetime
 from dataclasses import dataclass
 
-from .models import Resident, active_period
+from .models import Account, active_period
 
 # Above this, the birth year is a legacy placeholder rather than a fact. "Fylder 126" on the
 # kollegium's calendar is worse than saying nothing about the age at all.
@@ -45,7 +45,7 @@ class Birthday:
     forty years and one leap-day rule away. See `celebrated_on`.
     """
 
-    resident: Resident
+    resident: Account
     day: datetime.date
     turning: int | None  # age reached that day, or None when the birth year is not usable
 
@@ -79,7 +79,7 @@ def _turning(born: datetime.date, day: datetime.date) -> int | None:
     return age if 0 < age < MAX_BELIEVABLE_AGE else None
 
 
-def residents_with_birthdays() -> list[Resident]:
+def residents_with_birthdays() -> list[Account]:
     """The people this module considers: the active alumneliste, in name order.
 
     The period comes from `active_period` — the newest published list that has already started —
@@ -91,7 +91,11 @@ def residents_with_birthdays() -> list[Resident]:
     """
     year, month = active_period()
     return list(
-        Resident.objects.filter(residencies__year=year, residencies__month=month, birthday__isnull=False)
+        Account.objects.filter(
+            person__resident__residencies__year=year,
+            person__resident__residencies__month=month,
+            person__birthday__isnull=False,
+        )
         .distinct()
         .order_by("first_name", "last_name", "pk")
     )

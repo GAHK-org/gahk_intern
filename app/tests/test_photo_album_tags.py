@@ -12,12 +12,12 @@ from django.utils import timezone
 from photo_album.models import Album, Media, MediaStatus, Tag, validate_tag_name
 from photo_album.services import search_tags, tag_named
 from photo_album.views import PAGE_SIZE
-from residents.models import Resident, Role
+from residents.models import Account, Role
 
 START = datetime(2024, 1, 1, 12, 0, tzinfo=UTC)
 
 
-def _media(album: Album, resident: Resident, *, at: datetime = START, **fields: object) -> Media:
+def _media(album: Album, resident: Account, *, at: datetime = START, **fields: object) -> Media:
     defaults: dict[str, object] = {
         "title": "photo",
         "original": "a",
@@ -60,7 +60,7 @@ def test_a_tag_is_one_tag_ignoring_case_and_keeps_its_first_spelling() -> None:
 
 
 @pytest.mark.django_db
-def test_fotogruppen_tags_and_untags_an_album(client: Client, make_resident: Callable[..., Resident]) -> None:
+def test_fotogruppen_tags_and_untags_an_album(client: Client, make_resident: Callable[..., Account]) -> None:
     client.force_login(make_resident(roles=(Role.FOTO,)))
     album = Album.objects.create(folder="2024", name="Fest")
     url = reverse("photo_album:album_tags", args=[album.pk])
@@ -76,9 +76,7 @@ def test_fotogruppen_tags_and_untags_an_album(client: Client, make_resident: Cal
 
 
 @pytest.mark.django_db
-def test_ordinary_residents_cannot_change_tags(
-    client: Client, make_resident: Callable[..., Resident]
-) -> None:
+def test_ordinary_residents_cannot_change_tags(client: Client, make_resident: Callable[..., Account]) -> None:
     resident = make_resident()
     client.force_login(resident)
     album = Album.objects.create(folder="2024", name="Fest")
@@ -90,7 +88,7 @@ def test_ordinary_residents_cannot_change_tags(
 
 
 @pytest.mark.django_db
-def test_tagging_ignores_locks(client: Client, make_resident: Callable[..., Resident]) -> None:
+def test_tagging_ignores_locks(client: Client, make_resident: Callable[..., Account]) -> None:
     photographer = make_resident(roles=(Role.FOTO,))
     client.force_login(photographer)
     album = Album.objects.create(folder="2024", name="Fest", manually_locked_at=timezone.now())
@@ -116,7 +114,7 @@ def test_tagging_ignores_locks(client: Client, make_resident: Callable[..., Resi
 
 @pytest.mark.django_db
 def test_an_invalid_tag_is_refused_with_a_reason(
-    client: Client, make_resident: Callable[..., Resident]
+    client: Client, make_resident: Callable[..., Account]
 ) -> None:
     client.force_login(make_resident(roles=(Role.FOTO,)))
     album = Album.objects.create(folder="2024", name="Fest")
@@ -130,7 +128,7 @@ def test_an_invalid_tag_is_refused_with_a_reason(
 
 @pytest.mark.django_db
 def test_tag_search_offers_tags_in_use_prefix_matches_first(
-    client: Client, make_resident: Callable[..., Resident]
+    client: Client, make_resident: Callable[..., Account]
 ) -> None:
     resident = make_resident()
     album = Album.objects.create(folder="2024", name="Fest")
@@ -151,7 +149,7 @@ def test_tag_search_offers_tags_in_use_prefix_matches_first(
 
 @pytest.mark.django_db
 def test_the_viewer_shows_own_and_inherited_tags(
-    client: Client, make_resident: Callable[..., Resident]
+    client: Client, make_resident: Callable[..., Account]
 ) -> None:
     resident = make_resident()
     root = Album.objects.create(folder="2024", name="Fest")
@@ -176,7 +174,7 @@ def test_the_viewer_shows_own_and_inherited_tags(
 
 @pytest.mark.django_db
 def test_a_sub_album_page_shows_the_tags_it_inherits(
-    client: Client, make_resident: Callable[..., Resident]
+    client: Client, make_resident: Callable[..., Account]
 ) -> None:
     root = Album.objects.create(folder="2024", name="Fest")
     sub = Album.objects.create(name="Lørdag", parent=root)
@@ -194,7 +192,7 @@ def test_a_sub_album_page_shows_the_tags_it_inherits(
 
 @pytest.mark.django_db
 def test_the_timeline_filters_on_a_tag_from_the_item_or_any_album_above_it(
-    client: Client, make_resident: Callable[..., Resident]
+    client: Client, make_resident: Callable[..., Account]
 ) -> None:
     resident = make_resident()
     root = Album.objects.create(folder="2024", name="Fest")
@@ -218,7 +216,7 @@ def test_the_timeline_filters_on_a_tag_from_the_item_or_any_album_above_it(
 
 @pytest.mark.django_db
 def test_the_tag_filter_keeps_others_pending_items_hidden(
-    client: Client, make_resident: Callable[..., Resident]
+    client: Client, make_resident: Callable[..., Account]
 ) -> None:
     resident = make_resident()
     other = make_resident(email="other@gahk.dk")
@@ -233,7 +231,7 @@ def test_the_tag_filter_keeps_others_pending_items_hidden(
 
 @pytest.mark.django_db
 def test_the_tag_filter_survives_paging_and_year_jumps(
-    client: Client, make_resident: Callable[..., Resident]
+    client: Client, make_resident: Callable[..., Account]
 ) -> None:
     resident = make_resident()
     album = Album.objects.create(folder="2024", name="Fest")
@@ -255,7 +253,7 @@ def test_the_tag_filter_survives_paging_and_year_jumps(
 
 @pytest.mark.django_db
 def test_the_demo_seed_tags_albums_at_every_level_and_single_media(
-    make_resident: Callable[..., Resident], monkeypatch: pytest.MonkeyPatch
+    make_resident: Callable[..., Account], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     from photo_album import demo
     from photo_album.services import tagged_media

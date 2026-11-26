@@ -16,7 +16,7 @@ if TYPE_CHECKING:
 
     from django.db.models import QuerySet
 
-    from residents.models import Resident
+    from residents.models import Account
 
 # Groups: 1 the name as written, 2 "g" for an embedsgruppe or "" for a resident, 3 the pk.
 MENTION_RE = re.compile(r"@\[([^\[\]\n]{1,100})\]\((g?)(\d{1,10})\)")
@@ -47,23 +47,23 @@ def profile_url(pk: int) -> str:
     return reverse("resident_profile", args=[pk])
 
 
-def mentionable(**residency: object) -> QuerySet[Resident]:
+def mentionable(**residency: object) -> QuerySet[Account]:
     """Who can be mentioned: residents on the active period's alumneliste. Extra `residency` lookups
     (e.g. workgroup_id) apply to that same month's row."""
-    from residents.models import Resident, active_period
+    from residents.models import Account, active_period
 
     year, month = active_period()
     # One filter() call: chained filters on a multi-valued relation may each match a different row.
-    return Resident.objects.filter(
+    return Account.objects.filter(
         is_active=True,
         is_kitchen=False,
-        residencies__year=year,
-        residencies__month=month,
-        **{f"residencies__{key}": value for key, value in residency.items()},
+        person__resident__residencies__year=year,
+        person__resident__residencies__month=month,
+        **{f"person__resident__residencies__{key}": value for key, value in residency.items()},
     ).distinct()
 
 
-def group_members(group_id: int) -> QuerySet[Resident]:
+def group_members(group_id: int) -> QuerySet[Account]:
     """Mentionable residents in embedsgruppe `group_id` this period."""
     return mentionable(workgroup_id=group_id)
 
@@ -79,10 +79,10 @@ def _reached(text: str | None) -> set[int]:
 def notify_mentions(
     text: str | None,
     *,
-    actor: Resident,
+    actor: Account,
     where: str,
     url: str,
-    audience: QuerySet[Resident],
+    audience: QuerySet[Account],
     old_text: str | None = None,
     expires_at: datetime | None = None,
 ) -> set[int]:

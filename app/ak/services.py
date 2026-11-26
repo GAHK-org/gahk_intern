@@ -15,7 +15,7 @@ import logging
 
 from django.db import transaction
 
-from residents.models import Residency, Resident, prev_period
+from residents.models import Account, prev_period
 
 from .models import AkAutoApply, AkEntry, AkMonthlyCharge
 
@@ -28,7 +28,7 @@ def _tag(year: int, month: int) -> str:
 
 
 @transaction.atomic
-def apply_monthly_charge(year: int, month: int, *, officer: Resident | None = None) -> tuple[int, int]:
+def apply_monthly_charge(year: int, month: int, *, officer: Account | None = None) -> tuple[int, int]:
     """Reconcile the MONTHLY ledger for (year, month) against the calendar-month schedule and current
     membership. The amount comes from the `AkMonthlyCharge` row for that *calendar* month (same every
     year).
@@ -43,7 +43,12 @@ def apply_monthly_charge(year: int, month: int, *, officer: Resident | None = No
         removed = existing.delete()[0]
         return (0, removed)
 
-    member_ids = set(Residency.objects.filter(year=year, month=month).values_list("resident_id", flat=True))
+    # The accounts of the residents on the list: AK is charged to an account.
+    member_ids = set(
+        Account.objects.filter(
+            person__resident__residencies__year=year, person__resident__residencies__month=month
+        ).values_list("pk", flat=True)
+    )
 
     # Drop charges for anyone no longer on that month's list (e.g. removed from the alumneliste).
     removed = existing.exclude(resident_id__in=member_ids).delete()[0]

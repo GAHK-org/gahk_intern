@@ -32,7 +32,7 @@ from cms.gahk_web import (
     signed_headers,
 )
 from cms.models import CmsImage, GahkWebSync, Page, Publication
-from residents.models import Resident
+from residents.models import Account
 from stats.models import DailyVisitCount, PageViewDay
 
 KEY = "test-sync-key"
@@ -334,7 +334,7 @@ def test_an_unexpected_error_still_closes_the_publication(
 def test_a_content_save_publishes_after_the_commit(
     gahk_web: FakeGahkWeb,
     front_page: Page,
-    make_resident: Callable[..., Resident],
+    make_resident: Callable[..., Account],
     django_capture_on_commit_callbacks: Callable[..., Any],
 ) -> None:
     from cms.services import save_page

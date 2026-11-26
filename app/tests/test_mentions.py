@@ -23,7 +23,7 @@ from notifications.models import Notification
 from opslagstavle import access as opslagstavle_access
 from opslagstavle.models import Category, Notice
 from reparationer.models import RepairTask
-from residents.models import Residency, Resident, active_period
+from residents.models import Account, Residency, active_period
 
 
 @pytest.fixture(autouse=True)
@@ -34,16 +34,18 @@ def _open_and_quiet(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 @pytest.fixture
-def live_here(make_resident: Callable[..., Resident]) -> Callable[..., Resident]:
+def live_here(make_resident: Callable[..., Account]) -> Callable[..., Account]:
     """A resident on the active alumneliste, optionally in an embedsgruppe."""
     rooms = iter(range(500, 600))
 
-    def _make(email: str, first_name: str = "Test", workgroup: Workgroup | None = None) -> Resident:
+    def _make(email: str, first_name: str = "Test", workgroup: Workgroup | None = None) -> Account:
         resident = make_resident(email=email, first_name=first_name)
         n = next(rooms)
         room = Room.objects.create(legacy_index=n, number=n, floor="stuen", side="mod gaden")
         year, month = active_period()
-        Residency.objects.create(resident=resident, room=room, year=year, month=month, workgroup=workgroup)
+        Residency.objects.create(
+            resident=resident.house, room=room, year=year, month=month, workgroup=workgroup
+        )
         return resident
 
     return _make
@@ -55,7 +57,7 @@ def told() -> list[int]:
     )
 
 
-def token(resident: Resident) -> str:
+def token(resident: Account) -> str:
     return f"@[{resident.full_name}]({resident.pk})"
 
 
@@ -92,7 +94,7 @@ def test_markdown_renders_mentions_and_keeps_other_classes_out() -> None:
 
 
 def test_lookup_offers_current_residents_and_groups_only(
-    client: Client, make_resident: Callable[..., Resident], live_here: Callable[..., Resident]
+    client: Client, make_resident: Callable[..., Account], live_here: Callable[..., Account]
 ) -> None:
     group = Workgroup.objects.create(name="Testgruppen")
     anders = live_here("a@gahk.dk", "Anders", workgroup=group)
@@ -112,7 +114,7 @@ def test_lookup_offers_current_residents_and_groups_only(
 
 
 def test_a_comment_mention_notifies_the_named_resident_once(
-    client: Client, live_here: Callable[..., Resident]
+    client: Client, live_here: Callable[..., Account]
 ) -> None:
     author, commenter, named = (live_here(f"{n}@gahk.dk") for n in "abc")
     notice = Notice.objects.create(author=author, body="Hvem har en stige?")
@@ -129,7 +131,7 @@ def test_a_comment_mention_notifies_the_named_resident_once(
 
 
 def test_a_mentioned_post_author_gets_the_mention_instead_of_the_reply(
-    client: Client, live_here: Callable[..., Resident]
+    client: Client, live_here: Callable[..., Account]
 ) -> None:
     author, commenter = live_here("a@gahk.dk"), live_here("b@gahk.dk")
     notice = Notice.objects.create(author=author, body="Stige?")
@@ -141,7 +143,7 @@ def test_a_mentioned_post_author_gets_the_mention_instead_of_the_reply(
 
 
 def test_editing_a_notice_only_notifies_newly_mentioned(
-    client: Client, live_here: Callable[..., Resident]
+    client: Client, live_here: Callable[..., Account]
 ) -> None:
     author, first, second = (live_here(f"{n}@gahk.dk") for n in "abc")
 
@@ -158,7 +160,7 @@ def test_editing_a_notice_only_notifies_newly_mentioned(
 
 
 def test_a_group_mention_reaches_the_group_this_month(
-    client: Client, live_here: Callable[..., Resident]
+    client: Client, live_here: Callable[..., Account]
 ) -> None:
     group = Workgroup.objects.create(name="Testgruppen")
     author = live_here("a@gahk.dk", workgroup=group)
@@ -180,7 +182,7 @@ def test_a_group_mention_reaches_the_group_this_month(
 
 
 def test_a_former_resident_is_not_notified(
-    client: Client, make_resident: Callable[..., Resident], live_here: Callable[..., Resident]
+    client: Client, make_resident: Callable[..., Account], live_here: Callable[..., Account]
 ) -> None:
     author = live_here("a@gahk.dk")
     former = make_resident(email="former@gahk.dk")
@@ -191,7 +193,7 @@ def test_a_former_resident_is_not_notified(
 
 
 def test_den_hurtige_mention_replaces_the_room_notification(
-    client: Client, live_here: Callable[..., Resident], monkeypatch: pytest.MonkeyPatch
+    client: Client, live_here: Callable[..., Account], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Room notifications are push-only (no rows), so the fan-out itself is what is checked."""
     from notifications import services
@@ -218,7 +220,7 @@ def test_den_hurtige_mention_replaces_the_room_notification(
     assert named.pk not in room
 
 
-def test_den_hurtige_reply_mention(client: Client, live_here: Callable[..., Resident]) -> None:
+def test_den_hurtige_reply_mention(client: Client, live_here: Callable[..., Account]) -> None:
     author, replier, named = (live_here(f"{n}@gahk.dk") for n in "abc")
     post = QuickPost.objects.create(author=author, content="Boremaskine?")
 
@@ -227,7 +229,7 @@ def test_den_hurtige_reply_mention(client: Client, live_here: Callable[..., Resi
     assert told() == [named.pk]
 
 
-def test_reparationer_mentions_in_task_and_note(client: Client, live_here: Callable[..., Resident]) -> None:
+def test_reparationer_mentions_in_task_and_note(client: Client, live_here: Callable[..., Account]) -> None:
     reporter, named, noted = (live_here(f"{n}@gahk.dk") for n in "abc")
 
     client.force_login(reporter)
@@ -240,7 +242,7 @@ def test_reparationer_mentions_in_task_and_note(client: Client, live_here: Calla
 
 
 def test_a_private_event_only_notifies_mentioned_invitees_and_hosts(
-    client: Client, live_here: Callable[..., Resident]
+    client: Client, live_here: Callable[..., Account]
 ) -> None:
     host, guest, outsider = (live_here(f"{n}@gahk.dk") for n in "abc")
     event = Event.objects.create(
@@ -260,7 +262,7 @@ def test_a_private_event_only_notifies_mentioned_invitees_and_hosts(
 
 
 def test_a_mention_in_a_new_notice_replaces_the_new_post_notification(
-    client: Client, live_here: Callable[..., Resident]
+    client: Client, live_here: Callable[..., Account]
 ) -> None:
     author, named, other = (live_here(f"{n}@gahk.dk") for n in "abc")
 
@@ -272,7 +274,7 @@ def test_a_mention_in_a_new_notice_replaces_the_new_post_notification(
 
 
 def test_an_event_description_mention_notifies_on_create_and_on_edit(
-    client: Client, live_here: Callable[..., Resident]
+    client: Client, live_here: Callable[..., Account]
 ) -> None:
     host, first, second, other = (live_here(f"{n}@gahk.dk") for n in "abcd")
     when = timezone.localtime(timezone.now() + datetime.timedelta(days=2)).strftime("%Y-%m-%dT%H:%M")
@@ -297,7 +299,7 @@ def test_an_event_description_mention_notifies_on_create_and_on_edit(
 
 
 def test_a_private_event_description_only_notifies_invitees(
-    client: Client, live_here: Callable[..., Resident]
+    client: Client, live_here: Callable[..., Account]
 ) -> None:
     host, outsider = live_here("host@gahk.dk"), live_here("out@gahk.dk")
     guests = [live_here(f"g{n}@gahk.dk") for n in range(MIN_INVITEES)]
@@ -319,9 +321,7 @@ def test_a_private_event_description_only_notifies_invitees(
     assert told() == [guests[0].pk]
 
 
-def test_a_group_mention_skips_last_months_members(
-    client: Client, live_here: Callable[..., Resident]
-) -> None:
+def test_a_group_mention_skips_last_months_members(client: Client, live_here: Callable[..., Account]) -> None:
     """Group and month must hold for the same residency: someone who was in the group last month
     and is in another group now is not a member."""
     group = Workgroup.objects.create(name="Testgruppen")
@@ -331,8 +331,10 @@ def test_a_group_mention_skips_last_months_members(
     moved = live_here("c@gahk.dk", workgroup=other_group)
     year, month = active_period()
     last_year, last_month = (year, month - 1) if month > 1 else (year - 1, 12)
-    room = Residency.objects.get(resident=moved).room
-    Residency.objects.create(resident=moved, room=room, year=last_year, month=last_month, workgroup=group)
+    room = Residency.objects.get(resident=moved.house).room
+    Residency.objects.create(
+        resident=moved.house, room=room, year=last_year, month=last_month, workgroup=group
+    )
 
     client.force_login(author)
     client.post("/opslagstavle/opret", {"category": Category.NYT, "body": f"@[Testgruppen](g{group.pk})"})

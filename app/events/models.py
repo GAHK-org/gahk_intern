@@ -437,7 +437,7 @@ class EventComment(models.Model):
 class CalendarFeedToken(models.Model):
     """One resident's secret for their subscribable .ics feed.
 
-    Its own model rather than a column on Resident, deliberately. Resident is the auth principal —
+    Its own model rather than a column on Account, deliberately. Account is the auth principal —
     loaded by every request, touched by every app, dumped by the alumneliste export. A secret living
     there is one that a stray .values(), a serializer or an admin changelist can leak from code that
     has no idea it is handling a credential. Here, the only code that can render it is code that

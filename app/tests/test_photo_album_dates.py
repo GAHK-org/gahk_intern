@@ -37,7 +37,7 @@ from photo_album.services import (
     settle_dates,
     upload_media,
 )
-from residents.models import Resident, Role
+from residents.models import Account, Role
 
 from .media_samples import jpeg_bytes, video_upload
 
@@ -46,7 +46,7 @@ def local(*parts: int) -> datetime:
     return timezone.make_aware(datetime(*parts))
 
 
-def _item(album: Album, resident: Resident, filename: str, **fields: object) -> Media:
+def _item(album: Album, resident: Account, filename: str, **fields: object) -> Media:
     defaults: dict[str, object] = {
         "title": filename,
         "filename": filename,
@@ -175,7 +175,7 @@ def test_which_dates_are_believed(moment: datetime, folder: str, file_time: bool
 
 @pytest.mark.django_db
 def test_an_undated_item_is_placed_between_its_neighbours_in_file_name_order(
-    make_resident: Callable[..., Resident],
+    make_resident: Callable[..., Account],
 ) -> None:
     resident = make_resident()
     album = Album.objects.create(folder="2004", name="Fest")
@@ -197,7 +197,7 @@ def test_an_undated_item_is_placed_between_its_neighbours_in_file_name_order(
 
 @pytest.mark.django_db
 def test_an_album_without_dates_borrows_its_parents_then_its_years(
-    make_resident: Callable[..., Resident],
+    make_resident: Callable[..., Account],
 ) -> None:
     resident = make_resident()
     root = Album.objects.create(folder="2004", name="Fremkaldt")
@@ -221,7 +221,7 @@ def test_an_album_without_dates_borrows_its_parents_then_its_years(
 @pytest.mark.django_db
 @pytest.mark.parametrize("folder", [NO_YEAR_FOLDER, str(timezone.localdate().year)])
 def test_the_upload_time_stands_where_it_could_be_true(
-    folder: str, make_resident: Callable[..., Resident]
+    folder: str, make_resident: Callable[..., Account]
 ) -> None:
     """Without a year there is none to go by, and in this year's album an upload from this year is a
     better guess than New Year's Day."""
@@ -236,7 +236,7 @@ def test_the_upload_time_stands_where_it_could_be_true(
 
 
 @pytest.mark.django_db
-def test_a_file_time_outside_the_folders_year_is_not_believed(make_resident: Callable[..., Resident]) -> None:
+def test_a_file_time_outside_the_folders_year_is_not_believed(make_resident: Callable[..., Account]) -> None:
     resident = make_resident()
     album = Album.objects.create(folder="2004", name="Fest")
     dropbox = _item(album, resident, "IMG_1.JPG", file_modified_at=local(2022, 3, 1))
@@ -252,7 +252,7 @@ def test_a_file_time_outside_the_folders_year_is_not_believed(make_resident: Cal
 
 @pytest.mark.django_db
 def test_a_capture_date_outside_the_year_stays_its_own_but_is_not_spread(
-    make_resident: Callable[..., Resident],
+    make_resident: Callable[..., Account],
 ) -> None:
     resident = make_resident()
     album = Album.objects.create(folder="2004", name="St. Bededagsaften")
@@ -269,7 +269,7 @@ def test_a_capture_date_outside_the_year_stays_its_own_but_is_not_spread(
 
 @pytest.mark.django_db
 def test_saving_keeps_an_approximation_until_the_item_has_a_date_of_its_own(
-    make_resident: Callable[..., Resident],
+    make_resident: Callable[..., Account],
 ) -> None:
     resident = make_resident()
     album = Album.objects.create(folder="2004", name="Fest")
@@ -290,7 +290,7 @@ def test_saving_keeps_an_approximation_until_the_item_has_a_date_of_its_own(
 
 @pytest.mark.django_db
 def test_a_save_without_a_date_does_not_load_the_album(
-    make_resident: Callable[..., Resident], django_assert_num_queries: Callable[..., Any]
+    make_resident: Callable[..., Account], django_assert_num_queries: Callable[..., Any]
 ) -> None:
     """Approving or binning a selection saves every item: an album query each would add up."""
     resident = make_resident()
@@ -316,7 +316,7 @@ def _zip(members: dict[str, bytes], *, entry_time: tuple[int, ...] = (2022, 3, 1
 
 @pytest.mark.django_db
 def test_an_import_lists_as_skipped_only_the_sidecars_it_did_not_keep(
-    make_resident: Callable[..., Resident],
+    make_resident: Callable[..., Account],
 ) -> None:
     """What the import script saves in its work directory is what the server reports skipped: a
     sidecar stored with its file is on the server, one for nothing imported is not."""
@@ -359,7 +359,7 @@ def test_an_import_lists_as_skipped_only_the_sidecars_it_did_not_keep(
 
 @pytest.mark.django_db
 def test_an_import_takes_a_files_date_from_its_appledouble_sidecar(
-    make_resident: Callable[..., Resident],
+    make_resident: Callable[..., Account],
 ) -> None:
     """The Dropbox archive: every entry stamped 2022, the old server's sidecars beside the files."""
     resident = make_resident()
@@ -395,7 +395,7 @@ def _stored(field: object) -> bytes | None:
 
 
 @pytest.mark.django_db
-def test_deleting_an_item_deletes_its_sidecar(make_resident: Callable[..., Resident]) -> None:
+def test_deleting_an_item_deletes_its_sidecar(make_resident: Callable[..., Account]) -> None:
     resident = make_resident()
     album = Album.objects.create(folder="2004", name="Fest")
     media = upload_media(album=album, uploaded_file=_upload("IMG_1.JPG", jpeg_bytes()), resident=resident)
@@ -408,7 +408,7 @@ def test_deleting_an_item_deletes_its_sidecar(make_resident: Callable[..., Resid
 
 
 @pytest.mark.django_db
-def test_an_upload_settles_its_album(client: Client, make_resident: Callable[..., Resident]) -> None:
+def test_an_upload_settles_its_album(client: Client, make_resident: Callable[..., Account]) -> None:
     administrator = make_resident(roles=(Role.ADMINISTRATOR,))
     album = Album.objects.create(folder="2004", name="Fest")
     client.force_login(administrator)
@@ -429,7 +429,7 @@ def test_an_upload_settles_its_album(client: Client, make_resident: Callable[...
 
 @pytest.mark.django_db
 def test_a_videos_date_from_its_transcode_settles_its_album(
-    make_resident: Callable[..., Resident], monkeypatch: pytest.MonkeyPatch
+    make_resident: Callable[..., Account], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     resident = make_resident()
     album = Album.objects.create(folder="2004", name="Fest")
@@ -458,7 +458,7 @@ def test_a_videos_date_from_its_transcode_settles_its_album(
 
 @pytest.mark.django_db
 def test_the_nightly_job_reads_old_originals_again_and_settles_every_album(
-    make_resident: Callable[..., Resident],
+    make_resident: Callable[..., Account],
 ) -> None:
     resident = make_resident()
     album = Album.objects.create(folder="2004", name="Fest")
@@ -494,7 +494,7 @@ def test_the_nightly_job_reads_old_originals_again_and_settles_every_album(
 
 @pytest.mark.django_db
 def test_the_viewer_and_the_grid_say_a_date_is_approximate(
-    client: Client, make_resident: Callable[..., Resident]
+    client: Client, make_resident: Callable[..., Account]
 ) -> None:
     """Only a capture date is exact. A file time is when the file was last written, which for the
     archive is as often when it was copied as when it was taken."""
@@ -542,7 +542,7 @@ def _sidecars(members: dict[str, bytes]) -> SimpleUploadedFile:
 @pytest.mark.django_db
 @override_settings(PHOTO_ALBUM_IMPORT_TOKEN="secret")
 def test_sidecars_sent_later_date_what_was_imported_without_them(
-    client: Client, make_resident: Callable[..., Resident]
+    client: Client, make_resident: Callable[..., Account]
 ) -> None:
     """Most of the Dropbox archive was imported before the server read sidecars; the import script
     sends the ones it saved, paths relative to the root album, and they date what is there."""

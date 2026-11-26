@@ -13,10 +13,10 @@ from collections.abc import Callable
 import pytest
 from django.test import Client
 
-from residents.models import Resident, Role
+from residents.models import Account, Role
 
 
-def _client(user: Resident) -> Client:
+def _client(user: Account) -> Client:
     c = Client()
     c.force_login(user=user)
     return c

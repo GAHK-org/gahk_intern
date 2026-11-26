@@ -254,7 +254,7 @@ def client_ip(request: HttpRequest) -> str | None:
         return None
 
 
-def _request_actor(ctx: Context | None) -> Any:  # noqa: ANN401 - a Resident, or None
+def _request_actor(ctx: Context | None) -> Any:  # noqa: ANN401 - a Account, or None
     if ctx is None or ctx.request is None:
         return None
     user = getattr(ctx.request, "user", None)
@@ -415,7 +415,7 @@ def event(
     action: str,
     *,
     subject: models.Model | None = None,
-    actor: Any = _UNSET,  # noqa: ANN401 - a Resident or None (the system); default: the request's
+    actor: Any = _UNSET,  # noqa: ANN401 - a Account or None (the system); default: the request's
     details: dict[str, Any] | None = None,
     involve: Iterable[tuple[models.Model | None, str]] = (),
     only_if_changed: bool = False,

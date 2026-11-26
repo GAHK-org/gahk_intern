@@ -40,14 +40,14 @@ from photo_album.services import (
 )
 from photo_album.storage import get_photo_album_storage
 from photo_album.tasks import process_album_import
-from residents.models import Resident, Role
+from residents.models import Account, Role
 
 from .media_samples import image_upload, jpeg_bytes, mp4_bytes, png_bytes, video_upload
 
 
 @pytest.mark.django_db
 def test_only_photo_group_or_administrator_can_create_album(
-    client: Client, make_resident: Callable[..., Resident]
+    client: Client, make_resident: Callable[..., Account]
 ) -> None:
     resident = make_resident()
     client.force_login(resident)
@@ -65,7 +65,7 @@ def test_only_photo_group_or_administrator_can_create_album(
 
 @pytest.mark.django_db
 def test_album_create_and_zip_import_offer_existing_or_new_folders(
-    client: Client, make_resident: Callable[..., Resident]
+    client: Client, make_resident: Callable[..., Account]
 ) -> None:
     administrator = make_resident(roles=(Role.ADMINISTRATOR,))
     Album.objects.create(folder="2025", name="Eksisterende")
@@ -94,7 +94,7 @@ def _zip_upload(*members: tuple[str, bytes], name: str = "foo.zip") -> SimpleUpl
 
 
 def _import(
-    client: Client, make_resident: Callable[..., Resident], *members: tuple[str, bytes], name: str = "foo.zip"
+    client: Client, make_resident: Callable[..., Account], *members: tuple[str, bytes], name: str = "foo.zip"
 ) -> AlbumImport:
     """Post a ZIP as an administrator and run the worker task on it, as Celery would."""
     client.force_login(
@@ -120,7 +120,7 @@ def _tree() -> list[tuple[str, str | None]]:
 
 @pytest.mark.django_db
 def test_only_photo_group_or_administrator_can_import_zip_albums(
-    client: Client, make_resident: Callable[..., Resident]
+    client: Client, make_resident: Callable[..., Account]
 ) -> None:
     resident = make_resident()
     client.force_login(resident)
@@ -161,7 +161,7 @@ def test_token_import_uses_system_resident() -> None:
 
 @pytest.mark.django_db
 def test_zip_import_builds_an_album_tree_named_after_the_zip_and_its_folders(
-    client: Client, make_resident: Callable[..., Resident]
+    client: Client, make_resident: Callable[..., Account]
 ) -> None:
     album_import = _import(
         client,
@@ -186,7 +186,7 @@ def test_zip_import_builds_an_album_tree_named_after_the_zip_and_its_folders(
 
 @pytest.mark.django_db
 def test_zip_import_names_the_root_after_the_first_folder_that_holds_files(
-    client: Client, make_resident: Callable[..., Resident]
+    client: Client, make_resident: Callable[..., Account]
 ) -> None:
     """A ZIP of a folder wraps it once more, and a ZIP of Downloads/… more than once."""
     _import(
@@ -201,7 +201,7 @@ def test_zip_import_names_the_root_after_the_first_folder_that_holds_files(
 
 @pytest.mark.django_db
 def test_zip_import_stops_descending_at_a_folder_with_several_sub_folders(
-    client: Client, make_resident: Callable[..., Resident]
+    client: Client, make_resident: Callable[..., Account]
 ) -> None:
     _import(
         client,
@@ -215,7 +215,7 @@ def test_zip_import_stops_descending_at_a_folder_with_several_sub_folders(
 
 @pytest.mark.django_db
 def test_zip_import_returns_status_and_result_urls_for_the_progress_uploader(
-    client: Client, make_resident: Callable[..., Resident]
+    client: Client, make_resident: Callable[..., Account]
 ) -> None:
     administrator = make_resident(roles=(Role.ADMINISTRATOR,))
     client.force_login(administrator)
@@ -234,7 +234,7 @@ def test_zip_import_returns_status_and_result_urls_for_the_progress_uploader(
 
 @pytest.mark.django_db
 def test_zip_import_ignores_and_logs_small_macos_metadata(
-    client: Client, make_resident: Callable[..., Resident]
+    client: Client, make_resident: Callable[..., Account]
 ) -> None:
     album_import = _import(
         client,
@@ -257,7 +257,7 @@ def test_zip_import_ignores_and_logs_small_macos_metadata(
 
 @pytest.mark.django_db
 def test_zip_import_refuses_macos_metadata_over_16_kb(
-    client: Client, make_resident: Callable[..., Resident]
+    client: Client, make_resident: Callable[..., Account]
 ) -> None:
     """Above 16 KB it is not a resource fork any more — perhaps a real photo that lost its name."""
     album_import = _import(
@@ -275,7 +275,7 @@ def test_zip_import_refuses_macos_metadata_over_16_kb(
 
 @pytest.mark.django_db
 def test_zip_import_skips_macos_metadata_of_exactly_16_kb_and_a_ds_store_of_any_size(
-    client: Client, make_resident: Callable[..., Resident]
+    client: Client, make_resident: Callable[..., Account]
 ) -> None:
     """A big album's .DS_Store is easily past the limit, and nothing real is called that."""
     album_import = _import(
@@ -296,7 +296,7 @@ def test_zip_import_skips_macos_metadata_of_exactly_16_kb_and_a_ds_store_of_any_
 
 @pytest.mark.django_db
 def test_zip_import_is_refused_whole_with_every_reason_listed(
-    client: Client, make_resident: Callable[..., Resident]
+    client: Client, make_resident: Callable[..., Account]
 ) -> None:
     album_import = _import(
         client,
@@ -322,7 +322,7 @@ def test_zip_import_is_refused_whole_with_every_reason_listed(
 
 
 @pytest.mark.django_db
-def test_zip_import_allows_five_levels(client: Client, make_resident: Callable[..., Resident]) -> None:
+def test_zip_import_allows_five_levels(client: Client, make_resident: Callable[..., Account]) -> None:
     album_import = _import(
         client, make_resident, ("top.jpg", jpeg_bytes()), ("a/b/c/d/deepest.jpg", jpeg_bytes())
     )
@@ -333,7 +333,7 @@ def test_zip_import_allows_five_levels(client: Client, make_resident: Callable[.
 
 @pytest.mark.django_db
 def test_zip_import_refuses_a_root_album_name_already_in_the_folder(
-    client: Client, make_resident: Callable[..., Resident]
+    client: Client, make_resident: Callable[..., Account]
 ) -> None:
     Album.objects.create(folder="2026", name="FOO")
 
@@ -445,7 +445,7 @@ def test_system_import_adds_to_a_locked_album_the_import_script_made() -> None:
 @pytest.mark.django_db
 @override_settings(PHOTO_ALBUM_IMPORT_TOKEN="migration-token")
 def test_system_import_refuses_to_add_to_a_locked_album_someone_else_made(
-    make_resident: Callable[..., Resident],
+    make_resident: Callable[..., Account],
 ) -> None:
     """The import never lifts anyone else's lock; Fotogruppen unlocks the album on purpose first."""
     resident = make_resident()
@@ -477,7 +477,7 @@ def test_system_import_refuses_to_add_to_a_locked_album_someone_else_made(
 
 @pytest.mark.django_db
 def test_an_album_locked_while_its_import_runs_takes_none_of_it(
-    make_resident: Callable[..., Resident],
+    make_resident: Callable[..., Account],
 ) -> None:
     """Found open when the archive was read, locked before its files are stored: the import is
     refused all the same, files for the album itself and for its sub-albums alike."""
@@ -513,7 +513,7 @@ def test_an_album_locked_while_its_import_runs_takes_none_of_it(
 
 @pytest.mark.django_db
 def test_zip_import_skips_exact_duplicates_but_keeps_same_named_different_files(
-    client: Client, make_resident: Callable[..., Resident]
+    client: Client, make_resident: Callable[..., Account]
 ) -> None:
     """Two phones both write IMG_0001.JPG; only a byte-for-byte copy of the same file is dropped."""
     same = jpeg_bytes()
@@ -553,7 +553,7 @@ def test_zip_member_names_are_decoded_whichever_encoding_the_tool_used() -> None
 
 @pytest.mark.django_db
 def test_zip_import_that_fails_while_storing_leaves_nothing_behind(
-    client: Client, make_resident: Callable[..., Resident], monkeypatch: pytest.MonkeyPatch
+    client: Client, make_resident: Callable[..., Account], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     from photo_album import services
     from photo_album.storage import get_photo_album_storage
@@ -584,7 +584,7 @@ def test_zip_import_that_fails_while_storing_leaves_nothing_behind(
 
 @pytest.mark.django_db
 def test_normal_upload_is_pending_and_only_visible_to_requester(
-    client: Client, make_resident: Callable[..., Resident]
+    client: Client, make_resident: Callable[..., Account]
 ) -> None:
     requester = make_resident()
     album = Album.objects.create(folder="2026", name="Fest")
@@ -607,7 +607,7 @@ def test_normal_upload_is_pending_and_only_visible_to_requester(
 
 @pytest.mark.django_db
 def test_requester_can_immediately_delete_their_own_pending_media(
-    client: Client, make_resident: Callable[..., Resident]
+    client: Client, make_resident: Callable[..., Account]
 ) -> None:
     requester = make_resident()
     album = Album.objects.create(folder="2026", name="Fest")
@@ -630,7 +630,7 @@ def test_requester_can_immediately_delete_their_own_pending_media(
 
 @pytest.mark.django_db
 def test_other_resident_cannot_delete_pending_media(
-    client: Client, make_resident: Callable[..., Resident]
+    client: Client, make_resident: Callable[..., Account]
 ) -> None:
     requester = make_resident()
     other = make_resident(email="other@gahk.dk")
@@ -653,7 +653,7 @@ def test_other_resident_cannot_delete_pending_media(
 
 
 @pytest.mark.django_db
-def test_upload_accepts_multiple_media_files(client: Client, make_resident: Callable[..., Resident]) -> None:
+def test_upload_accepts_multiple_media_files(client: Client, make_resident: Callable[..., Account]) -> None:
     administrator = make_resident(roles=(Role.ADMINISTRATOR,))
     album = Album.objects.create(folder="2026", name="Fest")
     client.force_login(administrator)
@@ -672,7 +672,7 @@ def test_upload_accepts_multiple_media_files(client: Client, make_resident: Call
 
 @pytest.mark.django_db
 def test_album_upload_page_has_a_selected_files_summary(
-    client: Client, make_resident: Callable[..., Resident]
+    client: Client, make_resident: Callable[..., Account]
 ) -> None:
     administrator = make_resident(roles=(Role.ADMINISTRATOR,))
     album = Album.objects.create(folder="2026", name="Fest")
@@ -690,7 +690,7 @@ def test_album_upload_page_has_a_selected_files_summary(
 
 @pytest.mark.django_db
 def test_upload_returns_json_for_the_queued_browser_uploader(
-    client: Client, make_resident: Callable[..., Resident]
+    client: Client, make_resident: Callable[..., Account]
 ) -> None:
     administrator = make_resident(roles=(Role.ADMINISTRATOR,))
     album = Album.objects.create(folder="2026", name="Fest")
@@ -708,7 +708,7 @@ def test_upload_returns_json_for_the_queued_browser_uploader(
 
 @pytest.mark.django_db
 def test_folder_index_filters_albums_and_lists_the_years_newest_first_then_the_one_without(
-    client: Client, make_resident: Callable[..., Resident]
+    client: Client, make_resident: Callable[..., Account]
 ) -> None:
     resident = make_resident()
     no_year = Album.objects.create(folder=NO_YEAR_FOLDER, name="Portrætter")
@@ -726,7 +726,7 @@ def test_folder_index_filters_albums_and_lists_the_years_newest_first_then_the_o
 
 
 @pytest.mark.django_db
-def test_image_upload_generates_compressed_derivatives(make_resident: Callable[..., Resident]) -> None:
+def test_image_upload_generates_compressed_derivatives(make_resident: Callable[..., Account]) -> None:
     from PIL import Image
 
     resident = make_resident()
@@ -761,7 +761,7 @@ def _animated_gif(size: tuple[int, int], loop: int | None = 0) -> bytes:
 @pytest.mark.django_db
 @pytest.mark.parametrize(("size", "loop"), [((200, 100), 0), ((2400, 1200), 0), ((2400, 1200), None)])
 def test_an_animated_gif_stays_animated_in_high_definition(
-    make_resident: Callable[..., Resident], size: tuple[int, int], loop: int | None
+    make_resident: Callable[..., Account], size: tuple[int, int], loop: int | None
 ) -> None:
     from PIL import Image
 
@@ -795,7 +795,7 @@ def test_an_animated_gif_stays_animated_in_high_definition(
 
 
 @pytest.mark.django_db
-def test_a_still_gif_gets_jpeg_derivatives(make_resident: Callable[..., Resident]) -> None:
+def test_a_still_gif_gets_jpeg_derivatives(make_resident: Callable[..., Account]) -> None:
     from PIL import Image
 
     source = BytesIO()
@@ -811,7 +811,7 @@ def test_a_still_gif_gets_jpeg_derivatives(make_resident: Callable[..., Resident
 
 
 @pytest.mark.django_db
-def test_heic_upload_generates_jpeg_derivatives(make_resident: Callable[..., Resident]) -> None:
+def test_heic_upload_generates_jpeg_derivatives(make_resident: Callable[..., Account]) -> None:
     from PIL import Image
     from pillow_heif import from_pillow
 
@@ -836,7 +836,7 @@ def test_heic_upload_generates_jpeg_derivatives(make_resident: Callable[..., Res
 
 @pytest.mark.django_db
 def test_original_download_returns_original_bytes_and_album_specific_keys(
-    client: Client, make_resident: Callable[..., Resident]
+    client: Client, make_resident: Callable[..., Account]
 ) -> None:
     from PIL import Image
 
@@ -878,7 +878,7 @@ def test_original_download_returns_original_bytes_and_album_specific_keys(
 
 @pytest.mark.django_db
 def test_album_download_is_built_by_the_worker_and_then_downloaded(
-    client: Client, make_resident: Callable[..., Resident]
+    client: Client, make_resident: Callable[..., Account]
 ) -> None:
     from photo_album.models import AlbumDownload, AlbumDownloadState
     from photo_album.tasks import build_album_download
@@ -920,7 +920,7 @@ def test_album_download_is_built_by_the_worker_and_then_downloaded(
 
 @pytest.mark.django_db
 def test_album_download_excludes_another_residents_pending_upload(
-    client: Client, make_resident: Callable[..., Resident]
+    client: Client, make_resident: Callable[..., Account]
 ) -> None:
     from photo_album.models import AlbumDownload
     from photo_album.tasks import build_album_download
@@ -953,7 +953,7 @@ def test_album_download_excludes_another_residents_pending_upload(
 
 @pytest.mark.django_db
 def test_album_download_archive_is_private_to_its_requester(
-    client: Client, make_resident: Callable[..., Resident]
+    client: Client, make_resident: Callable[..., Account]
 ) -> None:
     from photo_album.models import AlbumDownload
 
@@ -972,7 +972,7 @@ def test_album_download_archive_is_private_to_its_requester(
 
 
 @pytest.mark.django_db
-def test_expired_album_downloads_remove_their_archives(make_resident: Callable[..., Resident]) -> None:
+def test_expired_album_downloads_remove_their_archives(make_resident: Callable[..., Account]) -> None:
     from photo_album.models import AlbumDownload
     from photo_album.storage import get_photo_album_storage
     from photo_album.tasks import purge_expired_downloads
@@ -994,9 +994,7 @@ def test_expired_album_downloads_remove_their_archives(make_resident: Callable[.
 
 
 @pytest.mark.django_db
-def test_ready_album_download_shows_its_expiry(
-    client: Client, make_resident: Callable[..., Resident]
-) -> None:
+def test_ready_album_download_shows_its_expiry(client: Client, make_resident: Callable[..., Account]) -> None:
     from photo_album.models import ALBUM_DOWNLOAD_RETENTION, AlbumDownload
 
     resident = make_resident()
@@ -1022,7 +1020,7 @@ def test_ready_album_download_shows_its_expiry(
 
 @pytest.mark.django_db
 def test_serve_media_redirects_anonymous_requests_to_login(
-    client: Client, make_resident: Callable[..., Resident]
+    client: Client, make_resident: Callable[..., Account]
 ) -> None:
     album = Album.objects.create(folder="2026", name="Fest")
     media = upload_media(
@@ -1040,7 +1038,7 @@ def test_serve_media_redirects_anonymous_requests_to_login(
 
 
 @pytest.mark.django_db
-def test_serve_media_streams_a_visible_item(client: Client, make_resident: Callable[..., Resident]) -> None:
+def test_serve_media_streams_a_visible_item(client: Client, make_resident: Callable[..., Account]) -> None:
     requester = make_resident()
     album = Album.objects.create(folder="2026", name="Fest")
     media = upload_media(
@@ -1060,7 +1058,7 @@ def test_serve_media_streams_a_visible_item(client: Client, make_resident: Calla
 
 @pytest.mark.django_db
 def test_serve_media_refuses_a_pending_upload_to_a_stranger(
-    client: Client, make_resident: Callable[..., Resident]
+    client: Client, make_resident: Callable[..., Account]
 ) -> None:
     """The rule a bare presigned URL can't enforce: only the uploader (or Fotogruppen) may see a
     PENDING item — see photo_album.access.visible_media. serve_media re-checks it per request."""
@@ -1081,7 +1079,7 @@ def test_serve_media_refuses_a_pending_upload_to_a_stranger(
 
 @pytest.mark.django_db
 def test_serve_media_404s_a_key_with_no_matching_row(
-    client: Client, make_resident: Callable[..., Resident]
+    client: Client, make_resident: Callable[..., Account]
 ) -> None:
     client.force_login(make_resident())
 
@@ -1092,7 +1090,7 @@ def test_serve_media_404s_a_key_with_no_matching_row(
 
 @pytest.mark.django_db
 def test_image_metadata_and_upload_attribution_are_available_to_the_viewer(
-    client: Client, make_resident: Callable[..., Resident]
+    client: Client, make_resident: Callable[..., Account]
 ) -> None:
     from PIL import Image
 
@@ -1154,7 +1152,7 @@ def test_capture_time_reads_nested_exif_ifd(monkeypatch: pytest.MonkeyPatch) -> 
 
 @pytest.mark.django_db
 def test_album_media_orders_capture_time_then_upload_time(
-    client: Client, make_resident: Callable[..., Resident]
+    client: Client, make_resident: Callable[..., Account]
 ) -> None:
     resident = make_resident()
     album = Album.objects.create(folder="2026", name="Fest")
@@ -1192,7 +1190,7 @@ def test_album_media_orders_capture_time_then_upload_time(
 
 @pytest.mark.django_db
 def test_photo_manager_upload_is_approved_immediately(
-    client: Client, make_resident: Callable[..., Resident]
+    client: Client, make_resident: Callable[..., Account]
 ) -> None:
     administrator = make_resident(roles=(Role.ADMINISTRATOR,))
     album = Album.objects.create(folder="2026", name="Fest")
@@ -1206,7 +1204,7 @@ def test_photo_manager_upload_is_approved_immediately(
 
 @pytest.mark.django_db
 def test_old_album_and_old_media_cannot_be_changed(
-    client: Client, make_resident: Callable[..., Resident]
+    client: Client, make_resident: Callable[..., Account]
 ) -> None:
     admin = make_resident(roles=(Role.ADMINISTRATOR,))
     album = Album.objects.create(folder="2025", name="Fest")
@@ -1244,7 +1242,7 @@ def test_album_lock_can_only_be_removed_within_six_calendar_months() -> None:
 
 @pytest.mark.django_db
 def test_photo_manager_can_manually_lock_and_unlock_album(
-    client: Client, make_resident: Callable[..., Resident]
+    client: Client, make_resident: Callable[..., Account]
 ) -> None:
     administrator = make_resident(roles=(Role.ADMINISTRATOR,))
     album = Album.objects.create(folder="2026", name="Fest")
@@ -1262,7 +1260,7 @@ def test_photo_manager_can_manually_lock_and_unlock_album(
 
 @pytest.mark.django_db
 def test_expired_album_lock_explains_why_it_cannot_be_unlocked(
-    client: Client, make_resident: Callable[..., Resident]
+    client: Client, make_resident: Callable[..., Account]
 ) -> None:
     administrator = make_resident(roles=(Role.ADMINISTRATOR,))
     album = Album.objects.create(
@@ -1280,7 +1278,7 @@ def test_expired_album_lock_explains_why_it_cannot_be_unlocked(
 
 @pytest.mark.django_db
 def test_recent_automatic_album_lock_can_be_unlocked(
-    client: Client, make_resident: Callable[..., Resident]
+    client: Client, make_resident: Callable[..., Account]
 ) -> None:
     administrator = make_resident(roles=(Role.ADMINISTRATOR,))
     album = Album.objects.create(folder="2026", name="Fest")
@@ -1306,7 +1304,7 @@ def test_recent_automatic_album_lock_can_be_unlocked(
 
 
 @pytest.mark.django_db
-def test_delete_uses_bin_then_purges_after_30_days(make_resident: Callable[..., Resident]) -> None:
+def test_delete_uses_bin_then_purges_after_30_days(make_resident: Callable[..., Account]) -> None:
     resident = make_resident()
     album = Album.objects.create(folder="2026", name="Fest")
     media = Media.objects.create(
@@ -1322,7 +1320,7 @@ def test_delete_uses_bin_then_purges_after_30_days(make_resident: Callable[..., 
 
 @pytest.mark.django_db
 def test_recent_media_can_be_permanently_deleted_from_bin(
-    client: Client, make_resident: Callable[..., Resident]
+    client: Client, make_resident: Callable[..., Account]
 ) -> None:
     administrator = make_resident(roles=(Role.ADMINISTRATOR,))
     album = Album.objects.create(folder="2026", name="Fest")
@@ -1345,7 +1343,7 @@ def test_recent_media_can_be_permanently_deleted_from_bin(
 
 @pytest.mark.django_db
 def test_old_media_cannot_be_permanently_deleted_from_bin(
-    client: Client, make_resident: Callable[..., Resident]
+    client: Client, make_resident: Callable[..., Account]
 ) -> None:
     administrator = make_resident(roles=(Role.ADMINISTRATOR,))
     album = Album.objects.create(folder="2026", name="Fest")
@@ -1370,7 +1368,7 @@ def test_old_media_cannot_be_permanently_deleted_from_bin(
 
 @pytest.mark.django_db
 def test_bin_displays_media_in_the_gallery_viewer(
-    client: Client, make_resident: Callable[..., Resident]
+    client: Client, make_resident: Callable[..., Account]
 ) -> None:
     administrator = make_resident(roles=(Role.ADMINISTRATOR,))
     album = Album.objects.create(folder="2026", name="Fest")
@@ -1401,7 +1399,7 @@ def test_bin_displays_media_in_the_gallery_viewer(
 
 @pytest.mark.django_db
 def test_restore_returns_media_to_its_original_album(
-    client: Client, make_resident: Callable[..., Resident]
+    client: Client, make_resident: Callable[..., Account]
 ) -> None:
     administrator = make_resident(roles=(Role.ADMINISTRATOR,))
     album = Album.objects.create(folder="2026", name="Original album")
@@ -1427,7 +1425,7 @@ def test_restore_returns_media_to_its_original_album(
 
 @pytest.mark.django_db
 def test_album_with_media_can_be_renamed_but_not_deleted(
-    make_resident: Callable[..., Resident],
+    make_resident: Callable[..., Account],
 ) -> None:
     """Album names are folder names in downloads, so renaming is allowed; only the lock stops it."""
     from photo_album.services import rename_album
@@ -1461,7 +1459,7 @@ def _video(name: str = "clip.mp4") -> SimpleUploadedFile:
 
 @pytest.mark.django_db
 def test_album_upload_form_opts_out_of_client_side_downscaling(
-    client: Client, make_resident: Callable[..., Resident]
+    client: Client, make_resident: Callable[..., Account]
 ) -> None:
     """The album keeps originals at full resolution, so it opts OUT of the shared downscaler.
 
@@ -1479,7 +1477,7 @@ def test_album_upload_form_opts_out_of_client_side_downscaling(
 
 @pytest.mark.django_db
 def test_upload_refuses_an_svg_even_with_an_image_content_type(
-    client: Client, make_resident: Callable[..., Resident]
+    client: Client, make_resident: Callable[..., Account]
 ) -> None:
     """An SVG stored unchanged becomes all three variants, served straight off our own storage."""
     administrator = make_resident(roles=(Role.ADMINISTRATOR,))
@@ -1502,7 +1500,7 @@ def test_upload_refuses_an_svg_even_with_an_image_content_type(
 
 @pytest.mark.django_db
 def test_upload_refuses_a_file_over_the_size_cap(
-    client: Client, make_resident: Callable[..., Resident], settings: pytest.FixtureRequest
+    client: Client, make_resident: Callable[..., Account], settings: pytest.FixtureRequest
 ) -> None:
     administrator = make_resident(roles=(Role.ADMINISTRATOR,))
     album = Album.objects.create(folder="2026", name="Fest")
@@ -1521,7 +1519,7 @@ def test_upload_refuses_a_file_over_the_size_cap(
 
 @pytest.mark.django_db
 def test_upload_with_no_files_reports_the_problem_instead_of_looking_successful(
-    client: Client, make_resident: Callable[..., Resident]
+    client: Client, make_resident: Callable[..., Account]
 ) -> None:
     administrator = make_resident(roles=(Role.ADMINISTRATOR,))
     album = Album.objects.create(folder="2026", name="Fest")
@@ -1535,7 +1533,7 @@ def test_upload_with_no_files_reports_the_problem_instead_of_looking_successful(
 
 @pytest.mark.django_db
 def test_video_upload_stores_the_original_and_defers_its_derivatives(
-    client: Client, make_resident: Callable[..., Resident]
+    client: Client, make_resident: Callable[..., Account]
 ) -> None:
     """Transcoding in the request outran the 60 s request timeout and lost the upload."""
     administrator = make_resident(roles=(Role.ADMINISTRATOR,))
@@ -1557,7 +1555,7 @@ def test_video_upload_stores_the_original_and_defers_its_derivatives(
 
 @pytest.mark.django_db
 def test_an_image_upload_defers_its_derivatives(
-    make_resident: Callable[..., Resident],
+    make_resident: Callable[..., Account],
 ) -> None:
     resident = make_resident()
     album = Album.objects.create(folder="2026", name="Fest")
@@ -1570,7 +1568,7 @@ def test_an_image_upload_defers_its_derivatives(
 
 @pytest.mark.django_db
 def test_a_video_whose_transcode_keeps_failing_is_given_up_on(
-    make_resident: Callable[..., Resident],
+    make_resident: Callable[..., Account],
 ) -> None:
     """Otherwise one corrupt upload burns every scheduled run forever."""
     resident = make_resident()
@@ -1587,7 +1585,7 @@ def test_a_video_whose_transcode_keeps_failing_is_given_up_on(
 
 @pytest.mark.django_db
 def test_deleting_an_album_whose_media_are_all_binned_explains_itself(
-    client: Client, make_resident: Callable[..., Resident]
+    client: Client, make_resident: Callable[..., Account]
 ) -> None:
     """The Slet album button reappears once the last item is binned; it used to 500."""
     administrator = make_resident(roles=(Role.ADMINISTRATOR,))
@@ -1612,7 +1610,7 @@ def test_deleting_an_album_whose_media_are_all_binned_explains_itself(
 
 @pytest.mark.django_db
 def test_restoring_a_rejected_item_makes_it_reviewable_again(
-    client: Client, make_resident: Callable[..., Resident]
+    client: Client, make_resident: Callable[..., Account]
 ) -> None:
     """Restore used to clear deleted_at but leave status=rejected.
 
@@ -1641,7 +1639,7 @@ def test_restoring_a_rejected_item_makes_it_reviewable_again(
 
 @pytest.mark.django_db
 def test_old_media_stays_in_the_bin_even_when_it_was_only_just_binned(
-    client: Client, make_resident: Callable[..., Resident]
+    client: Client, make_resident: Callable[..., Account]
 ) -> None:
     """The hour runs from the UPLOAD, so binning something old does not reopen the purge window.
 
@@ -1672,7 +1670,7 @@ def test_old_media_stays_in_the_bin_even_when_it_was_only_just_binned(
 
 @pytest.mark.django_db
 def test_the_bin_renders_metadata_the_viewer_can_parse(
-    client: Client, make_resident: Callable[..., Resident]
+    client: Client, make_resident: Callable[..., Account]
 ) -> None:
     """It used to emit the Python dict repr, so JSON.parse threw and metadata never appeared."""
     administrator = make_resident(roles=(Role.ADMINISTRATOR,))
@@ -1698,7 +1696,7 @@ def test_the_bin_renders_metadata_the_viewer_can_parse(
 
 @pytest.mark.django_db
 def test_album_detail_query_count_does_not_grow_with_the_number_of_photos(
-    client: Client, make_resident: Callable[..., Resident], django_assert_num_queries: Callable[..., object]
+    client: Client, make_resident: Callable[..., Account], django_assert_num_queries: Callable[..., object]
 ) -> None:
     """can_delete asked is_locked() and Fotogruppen-membership once PER ITEM: ~1000 queries at 300."""
     administrator = make_resident(roles=(Role.ADMINISTRATOR,))
@@ -1755,7 +1753,7 @@ def test_exif_text_ends_at_its_first_nul() -> None:
 
 @pytest.mark.django_db
 def test_a_real_video_gets_its_derivatives_from_the_scheduled_command(
-    make_resident: Callable[..., Resident], tmp_path: Path
+    make_resident: Callable[..., Account], tmp_path: Path
 ) -> None:
     """The whole deferred path, on real bytes: upload stores the original, the command transcodes.
 
@@ -1805,7 +1803,7 @@ def test_a_real_video_gets_its_derivatives_from_the_scheduled_command(
 
 @pytest.mark.django_db
 def test_fotogruppen_role_grants_management_without_being_an_administrator(
-    client: Client, make_resident: Callable[..., Resident]
+    client: Client, make_resident: Callable[..., Account]
 ) -> None:
     """Role.FOTO is an ordinary embedsgruppe role, granted like repper or vicevaert.
 
@@ -1858,7 +1856,7 @@ def test_fotogruppen_workgroup_exists_so_indstilling_can_assign_it(db: None) -> 
 
 @pytest.mark.django_db
 def test_media_detail_refuses_pending_media_belonging_to_someone_else(
-    client: Client, make_resident: Callable[..., Resident]
+    client: Client, make_resident: Callable[..., Account]
 ) -> None:
     """The lazy endpoint is a new surface, and it has to keep the rule the grid already kept.
 
@@ -1890,7 +1888,7 @@ def test_media_detail_refuses_pending_media_belonging_to_someone_else(
 
 @pytest.mark.django_db
 def test_media_detail_offers_a_delete_url_only_to_someone_who_may_delete(
-    client: Client, make_resident: Callable[..., Resident]
+    client: Client, make_resident: Callable[..., Account]
 ) -> None:
     photographer = make_resident(email="foto@gahk.dk", roles=(Role.FOTO,))
     album = Album.objects.create(folder="2026", name="Fest")
@@ -1915,7 +1913,7 @@ def test_media_detail_offers_a_delete_url_only_to_someone_who_may_delete(
 
 @pytest.mark.django_db
 def test_withdrawing_your_own_pending_upload_is_a_hard_delete_not_a_trip_to_the_bin(
-    client: Client, make_resident: Callable[..., Resident]
+    client: Client, make_resident: Callable[..., Account]
 ) -> None:
     """The two routes out of an album are different actions, and views.delete picks by can_withdraw."""
     uploader = make_resident(email="beboer@gahk.dk")
@@ -1933,7 +1931,7 @@ def test_withdrawing_your_own_pending_upload_is_a_hard_delete_not_a_trip_to_the_
 
 @pytest.mark.django_db
 def test_a_curator_binning_someone_elses_media_keeps_it_recoverable(
-    client: Client, make_resident: Callable[..., Resident]
+    client: Client, make_resident: Callable[..., Account]
 ) -> None:
     photographer = make_resident(email="foto@gahk.dk", roles=(Role.FOTO,))
     uploader = make_resident(email="beboer@gahk.dk")
@@ -1957,7 +1955,7 @@ def test_a_curator_binning_someone_elses_media_keeps_it_recoverable(
 
 @pytest.mark.django_db
 def test_a_locked_album_stops_deletion_for_everyone_including_administrators(
-    make_resident: Callable[..., Resident], rf: object
+    make_resident: Callable[..., Account], rf: object
 ) -> None:
     """The lock is a property of the album, not of the reader — no role gets past it."""
     from django.test import RequestFactory
@@ -1986,7 +1984,7 @@ def test_a_locked_album_stops_deletion_for_everyone_including_administrators(
 
 @pytest.mark.django_db
 def test_a_video_stored_without_a_content_type_is_still_treated_as_a_video(
-    make_resident: Callable[..., Resident],
+    make_resident: Callable[..., Account],
 ) -> None:
     """Several browsers send NO content type for .mov, and `check_media_upload` accepts that when
     the extension vouches for the file — so the row is stored with content_type "".
@@ -2017,7 +2015,7 @@ def test_a_video_stored_without_a_content_type_is_still_treated_as_a_video(
 
 @pytest.mark.django_db
 def test_a_claimed_media_row_is_not_rebuilt_by_a_duplicate_dispatch(
-    make_resident: Callable[..., Resident],
+    make_resident: Callable[..., Account],
 ) -> None:
     """A recovery dispatch must not duplicate a build that already holds the media claim."""
     from photo_album.tasks import build_media_derivatives
@@ -2039,7 +2037,7 @@ def test_a_claimed_media_row_is_not_rebuilt_by_a_duplicate_dispatch(
 
 @pytest.mark.django_db
 def test_an_expired_claim_lets_another_worker_pick_the_row_up(
-    make_resident: Callable[..., Resident],
+    make_resident: Callable[..., Account],
 ) -> None:
     """The claim is a timestamp precisely so a worker that DIES holding one strands nothing."""
     from photo_album.models import DERIVATIVE_CLAIM_TTL
@@ -2060,7 +2058,7 @@ def test_an_expired_claim_lets_another_worker_pick_the_row_up(
 
 @pytest.mark.django_db
 def test_process_pending_media_skips_held_rows_and_reports_what_it_dispatched(
-    make_resident: Callable[..., Resident], monkeypatch: pytest.MonkeyPatch
+    make_resident: Callable[..., Account], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """The old return value re-queried AFTER dispatching, so it reported whatever was still pending
     at that instant — racing the worker it had just started."""
@@ -2083,7 +2081,7 @@ def test_process_pending_media_skips_held_rows_and_reports_what_it_dispatched(
 
 @pytest.mark.django_db
 def test_a_download_whose_worker_never_returned_is_closed_out(
-    make_resident: Callable[..., Resident],
+    make_resident: Callable[..., Account],
 ) -> None:
     """A worker killed outright runs no handler, so the row kept BUILDING and completed_at NULL —
     which `purge_expired_downloads` filters on, and which detail.html answers with a five-second
@@ -2140,7 +2138,7 @@ def test_a_download_whose_worker_never_returned_is_closed_out(
 
 @pytest.mark.django_db
 def test_a_second_download_click_does_not_queue_a_second_archive(
-    client: Client, make_resident: Callable[..., Resident]
+    client: Client, make_resident: Callable[..., Account]
 ) -> None:
     """The button stays on the page while the build runs, and a whole-album ZIP is slow enough to
     invite a second click — which used to queue a second complete archive and leave a second object
@@ -2189,7 +2187,7 @@ def test_albums_loaded_with_deferred_fields_still_track_moves_and_folder_changes
 
 @pytest.mark.django_db
 def test_form_upload_refuses_a_file_that_is_not_what_its_name_says(
-    client: Client, make_resident: Callable[..., Resident]
+    client: Client, make_resident: Callable[..., Account]
 ) -> None:
     """A .jpg that does not decode used to be stored and then copied over as its own thumbnail."""
     administrator = make_resident(roles=(Role.ADMINISTRATOR,))
@@ -2208,7 +2206,7 @@ def test_form_upload_refuses_a_file_that_is_not_what_its_name_says(
 
 @pytest.mark.django_db
 def test_form_upload_refuses_a_video_ffmpeg_cannot_check_in_time(
-    client: Client, make_resident: Callable[..., Resident], monkeypatch: pytest.MonkeyPatch
+    client: Client, make_resident: Callable[..., Account], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """The check's timeout used to escape as a 500."""
     from photo_album import uploads
@@ -2252,7 +2250,7 @@ def test_a_png_is_checked_by_its_checksums_without_being_decoded(monkeypatch: py
 
 @pytest.mark.django_db
 def test_store_upload_keeps_same_named_files_and_skips_exact_copies(
-    make_resident: Callable[..., Resident],
+    make_resident: Callable[..., Account],
 ) -> None:
     from photo_album.services import store_upload
 
@@ -2277,7 +2275,7 @@ def test_store_upload_keeps_same_named_files_and_skips_exact_copies(
 
 
 @pytest.mark.django_db
-def test_store_upload_refuses_a_locked_album(make_resident: Callable[..., Resident]) -> None:
+def test_store_upload_refuses_a_locked_album(make_resident: Callable[..., Account]) -> None:
     from photo_album.services import store_upload
 
     album = Album.objects.create(folder="2026", name="Fest", manually_locked_at=timezone.now())
@@ -2288,7 +2286,7 @@ def test_store_upload_refuses_a_locked_album(make_resident: Callable[..., Reside
 
 
 @pytest.mark.django_db
-def test_video_capture_time_comes_from_the_container_metadata(make_resident: Callable[..., Resident]) -> None:
+def test_video_capture_time_comes_from_the_container_metadata(make_resident: Callable[..., Account]) -> None:
     media = upload_media(
         album=Album.objects.create(folder="2026", name="Fest"),
         uploaded_file=video_upload(),
@@ -2305,7 +2303,7 @@ def test_video_capture_time_comes_from_the_container_metadata(make_resident: Cal
 
 @pytest.mark.django_db
 def test_views_count_unique_viewers_and_repeat_views_outside_ten_minutes(
-    make_resident: Callable[..., Resident],
+    make_resident: Callable[..., Account],
 ) -> None:
     from photo_album.models import MediaView
     from photo_album.services import record_view
@@ -2333,7 +2331,7 @@ def test_views_count_unique_viewers_and_repeat_views_outside_ten_minutes(
 
 @pytest.mark.django_db
 def test_archive_mirrors_the_album_tree_and_numbers_clashing_names(
-    make_resident: Callable[..., Resident],
+    make_resident: Callable[..., Account],
 ) -> None:
     from photo_album.models import AlbumDownload
     from photo_album.tasks import RENAMED_NOTICE_NAME, archive_entries, build_album_download
@@ -2372,7 +2370,7 @@ def test_archive_mirrors_the_album_tree_and_numbers_clashing_names(
 
 
 @pytest.mark.django_db
-def test_backfill_hashes_fills_in_rows_stored_before_hashing(make_resident: Callable[..., Resident]) -> None:
+def test_backfill_hashes_fills_in_rows_stored_before_hashing(make_resident: Callable[..., Account]) -> None:
     import hashlib
 
     content = jpeg_bytes()
@@ -2391,7 +2389,7 @@ def test_backfill_hashes_fills_in_rows_stored_before_hashing(make_resident: Call
 
 @pytest.mark.django_db
 def test_hash_backfill_retries_unreadable_originals_after_everything_else(
-    make_resident: Callable[..., Resident],
+    make_resident: Callable[..., Account],
 ) -> None:
     """An original that is gone used to be first in line again every night."""
     from photo_album.services import backfill_hashes
@@ -2419,7 +2417,7 @@ def test_hash_backfill_retries_unreadable_originals_after_everything_else(
 
 @pytest.mark.django_db
 def test_nightly_hash_backfill_stops_at_its_budget(
-    make_resident: Callable[..., Resident], monkeypatch: pytest.MonkeyPatch
+    make_resident: Callable[..., Account], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     import hashlib
     from datetime import timedelta

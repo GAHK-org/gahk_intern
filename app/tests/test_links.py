@@ -21,7 +21,7 @@ from django.utils.safestring import SafeString
 
 from core.links import MAX_LINK_TEXT, linkify, shorten
 from core.markdown import render_markdown
-from residents.models import Resident
+from residents.models import Account
 
 # A real-shaped link: long, tracking parameters, the kind people actually paste.
 LONG = "https://www.dr.dk/nyheder/politik/en-noget-laengere-overskrift-om-noget?utm_source=x"
@@ -243,7 +243,7 @@ def _url(slug: str) -> str:
 
 @pytest.mark.django_db
 def test_a_pasted_link_is_clickable_and_short_on_every_surface(
-    client: Client, make_resident: Callable[..., Resident], _open_gates: None
+    client: Client, make_resident: Callable[..., Account], _open_gates: None
 ) -> None:
     """The requirement, asserted where a reader meets it. Everything above could pass while a
     template still printed `{{ body }}` raw — which is the state three of these six were in.

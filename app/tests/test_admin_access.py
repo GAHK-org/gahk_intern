@@ -8,17 +8,17 @@ from django.test import Client
 from django.urls import reverse
 
 from residents.admin_access import can_decide, decide
-from residents.models import AdminAccessGrant, Resident, Role, RoleAssignment, active_period
+from residents.models import Account, AdminAccessGrant, Role, RoleAssignment, active_period
 
 
-def _grant(resident: Resident) -> AdminAccessGrant:
+def _grant(resident: Account) -> AdminAccessGrant:
     return AdminAccessGrant.objects.get(resident=resident)
 
 
-def _approved_admin(make_resident: Callable, email: str) -> Resident:
+def _approved_admin(make_resident: Callable, email: str) -> Account:
     r = make_resident(email=email, roles=[Role.ADMINISTRATOR])
     AdminAccessGrant.objects.filter(resident=r).update(status=AdminAccessGrant.Status.APPROVED)
-    return Resident.objects.get(pk=r.pk)
+    return Account.objects.get(pk=r.pk)
 
 
 @pytest.mark.django_db
@@ -29,7 +29,7 @@ def test_new_administrator_has_no_admin_access_until_approved(make_resident: Cal
 
     approver = _approved_admin(make_resident, "gammel@gahk.dk")
     decide(_grant(newcomer), approver, approve=True)
-    assert Resident.objects.get(pk=newcomer.pk).has_perm("residents.delete_resident") is True
+    assert Account.objects.get(pk=newcomer.pk).has_perm("residents.delete_resident") is True
 
 
 @pytest.mark.django_db
@@ -94,7 +94,7 @@ def test_leaving_netvaerk_entirely_requires_a_fresh_approval(make_resident: Call
     y, m = active_period()
     RoleAssignment.objects.create(resident=admin, role=Role.ADMINISTRATOR, year=y, month=m)
     assert _grant(admin).status == AdminAccessGrant.Status.PENDING
-    assert Resident.objects.get(pk=admin.pk).has_perm("residents.delete_resident") is False
+    assert Account.objects.get(pk=admin.pk).has_perm("residents.delete_resident") is False
 
 
 @pytest.mark.django_db

@@ -30,7 +30,7 @@ from notifications import categories, services
 from . import access, channels
 
 if TYPE_CHECKING:
-    from residents.models import Resident
+    from residents.models import Account
 
     from .models import QuickComment, QuickPost
 
@@ -49,7 +49,7 @@ def _thread_url(post: "QuickPost") -> str:
     return f"{_channel(post.channel).url}?traad={post.pk}"
 
 
-def _audience(slug: str) -> "QuerySet[Resident]":
+def _audience(slug: str) -> "QuerySet[Account]":
     """Everyone who can open this room: the feature's rollout gate, then the room's own roles. The
     resident's own toggle for the room is the notifications app's business, not this one's."""
     channel = _channel(slug)
@@ -122,7 +122,7 @@ def notify_new_comment(comment: "QuickComment") -> None:
         )
 
 
-def notify_reaction(post: "QuickPost", reactor: "Resident", emoji: str) -> None:
+def notify_reaction(post: "QuickPost", reactor: "Account", emoji: str) -> None:
     """Somebody reacted to `post`. Grouped per post, so ten reactions are one notification that
     says "10 personer reagerede" rather than ten buzzes. Called on a NEW reaction only (see
     core.reactions.apply_toggle)."""

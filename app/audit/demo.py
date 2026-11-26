@@ -43,10 +43,14 @@ from django.test import RequestFactory
 from django.urls import reverse
 from django.utils import timezone
 
-from residents.models import AdminAccessGrant, Residency, Resident, Role, RoleAssignment
+from residents.models import Account, AdminAccessGrant, Person, Residency, Resident, Role, RoleAssignment
 
 from . import trail
 from .models import AuditEvent
+
+# What the demo's edits set on a person and on a resident rather than an account.
+PERSON_FACTS = frozenset({"phone", "birthday"})
+RESIDENT_FACTS = frozenset({"move_in_date", "move_out_date", "study", "sponsor", "fylgje_raw"})
 
 # How far back the history goes.
 WEEKS = 5
@@ -75,13 +79,13 @@ class Moment:
 
     at: datetime
     play: Callable[[], None]
-    actor: Resident | None = None
+    actor: Account | None = None
     ip: str | None = HOUSE
     path: str = "/"
     source: str = "web"
 
 
-History = Callable[[list[Resident], datetime, random.Random], list[Moment]]
+History = Callable[[list[Account], datetime, random.Random], list[Moment]]
 
 
 def ago(now: datetime, days: int, hour: int, minute: int = 0, second: int = 0) -> datetime:
@@ -100,7 +104,7 @@ def this_month(now: datetime, days: int, hour: int, minute: int = 0) -> datetime
     return min(max(ago(now, days, hour, minute), first), now - timedelta(minutes=1))
 
 
-def seed(residents: list[Resident], now: datetime, rng: random.Random, *more: History) -> int:
+def seed(residents: list[Account], now: datetime, rng: random.Random, *more: History) -> int:
     """Write the history; returns how many events it made. Nothing when the trail already has events
     (seed_demo without --fresh): a trail is never written twice."""
     if AuditEvent.objects.exists():
@@ -134,25 +138,27 @@ def _scene(moment: Moment, rng: random.Random) -> Iterator[None]:
 
 @dataclass
 class _Cast:
-    by_email: dict[str, Resident]
-    indstilling: Resident
-    others: list[Resident]  # neither a documented login, nor the leaver or the newcomer
-    leaver: Resident | None
-    newcomer: Resident | None
+    by_email: dict[str, Account]
+    indstilling: Account
+    others: list[Account]  # neither a documented login, nor the leaver or the newcomer
+    leaver: Account | None
+    newcomer: Account | None
     year: int
     month: int
 
-    def __getitem__(self, email: str) -> Resident:
+    def __getitem__(self, email: str) -> Account:
         return self.by_email[email]
 
 
-def _cast(residents: list[Resident], now: datetime) -> _Cast | None:
-    by_email = {r.email: r for r in Resident.objects.filter(email__in=LOGINS)}
+def _cast(residents: list[Account], now: datetime) -> _Cast | None:
+    by_email = {r.email: r for r in Account.objects.filter(email__in=LOGINS)}
     if len(by_email) < len(LOGINS):
         return None
     today = timezone.localtime(now).date()
-    leaver = Resident.objects.filter(move_out_date__isnull=False).order_by("pk").first()
-    newcomer = Resident.objects.filter(move_in_date=today.replace(day=1)).order_by("pk").first()
+    leaver = Account.objects.filter(person__resident__move_out_date__isnull=False).order_by("pk").first()
+    newcomer = (
+        Account.objects.filter(person__resident__move_in_date=today.replace(day=1)).order_by("pk").first()
+    )
     skip = {*LOGINS, getattr(leaver, "email", ""), getattr(newcomer, "email", "")}
     others = sorted((r for r in residents if r.email not in skip), key=lambda r: r.pk)
     if len(others) < 3:
@@ -174,7 +180,7 @@ def _cast(residents: list[Resident], now: datetime) -> _Cast | None:
     )
 
 
-def _history(residents: list[Resident], now: datetime, rng: random.Random) -> list[Moment]:
+def _history(residents: list[Account], now: datetime, rng: random.Random) -> list[Moment]:
     cast = _cast(residents, now)
     if cast is None:
         return []
@@ -197,15 +203,15 @@ def _history(residents: list[Resident], now: datetime, rng: random.Random) -> li
     ]
 
 
-def _login(person: Resident) -> Callable[[], None]:
+def _login(person: Account) -> Callable[[], None]:
     return lambda: trail.record("auth.login", actor=person, subject=person)
 
 
-def _logout(person: Resident) -> Callable[[], None]:
+def _logout(person: Account) -> Callable[[], None]:
     return lambda: trail.record("auth.logout", actor=person, subject=person)
 
 
-def _logins(cast: _Cast, regulars: list[Resident], now: datetime, rng: random.Random) -> list[Moment]:
+def _logins(cast: _Cast, regulars: list[Account], now: datetime, rng: random.Random) -> list[Moment]:
     """Everyday logins, mostly from the house, sometimes a phone; a few log out again. The kind of
     line the page is mostly made of, so the rarer ones below stand out among them."""
     moments = []
@@ -229,7 +235,7 @@ def _logins(cast: _Cast, regulars: list[Resident], now: datetime, rng: random.Ra
     return moments
 
 
-def _failed(account: Resident | None, details: dict[str, str]) -> Callable[[], None]:
+def _failed(account: Account | None, details: dict[str, str]) -> Callable[[], None]:
     return lambda: trail.record("auth.login.failed", actor=None, subject=account, details=details)
 
 
@@ -270,7 +276,7 @@ def _failed_logins(cast: _Cast, now: datetime) -> list[Moment]:
     return moments
 
 
-def _new_password(person: Resident, action: str, actor: Resident) -> Callable[[], None]:
+def _new_password(person: Account, action: str, actor: Account) -> Callable[[], None]:
     """The demo password set again: a new hash, so the trail records that it changed (never what it
     holds), and the documented login keeps working."""
     from core.management.commands.seed_demo import DEMO_PASSWORD
@@ -283,7 +289,7 @@ def _new_password(person: Resident, action: str, actor: Resident) -> Callable[[]
     return play
 
 
-def _reset_asked(email: str, account: Resident | None) -> Callable[[], None]:
+def _reset_asked(email: str, account: Account | None) -> Callable[[], None]:
     details: dict[str, object] = {"accounts": 1} if account else {"accounts": 0, **trail.typed_address(email)}
     return lambda: trail.record(
         "auth.password_reset.requested", actor=None, details=details, involve=[(account, "subject")]
@@ -315,11 +321,11 @@ def _passwords(cast: _Cast, now: datetime) -> list[Moment]:
     ]
 
 
-def _denied(person: Resident, path: str, roles: list[str]) -> Callable[[], None]:
+def _denied(person: Account, path: str, roles: list[str]) -> Callable[[], None]:
     return lambda: trail.record("auth.access.denied", actor=person, details={"path": path, "roles": roles})
 
 
-def _refused(cast: _Cast, curious: Resident, now: datetime) -> list[Moment]:
+def _refused(cast: _Cast, curious: Account, now: datetime) -> list[Moment]:
     beboer = cast["beboer@gahk.dk"]
     roles, audit = reverse("siteadmin:roles"), reverse("siteadmin:audit")
     return [
@@ -331,7 +337,7 @@ def _refused(cast: _Cast, curious: Resident, now: datetime) -> list[Moment]:
 
 
 def _role_event(
-    action: str, by: Resident, resident: Resident, role: str, period: tuple[int, int], at: datetime
+    action: str, by: Account, resident: Account, role: str, period: tuple[int, int], at: datetime
 ) -> Callable[[], None]:
     """What the roles page does (residents.views_admin.roles), with an administrator's grant opened
     when the history says."""
@@ -354,7 +360,7 @@ def _role_event(
     return play
 
 
-def _decide(resident: Resident, by: Resident, approve: bool, at: datetime) -> Callable[[], None]:
+def _decide(resident: Account, by: Account, approve: bool, at: datetime) -> Callable[[], None]:
     """residents.admin_access.decide, with the decision dated when the history says it was made."""
 
     def play() -> None:
@@ -369,11 +375,11 @@ def _decide(resident: Resident, by: Resident, approve: bool, at: datetime) -> Ca
     return play
 
 
-def _roles(cast: _Cast, spare: list[Resident], now: datetime) -> list[Moment]:
+def _roles(cast: _Cast, spare: list[Account], now: datetime) -> list[Moment]:
     formand, admin = cast["formand@gahk.dk"], cast["admin@gahk.dk"]
     period = (cast.year, cast.month)
 
-    def by_formand(action: str, resident: Resident, role: str, at: datetime) -> Moment:
+    def by_formand(action: str, resident: Account, role: str, at: datetime) -> Moment:
         play = _role_event(action, formand, resident, role, period, at)
         return Moment(at, play, formand, HOUSE, reverse("siteadmin:roles"))
 
@@ -432,27 +438,40 @@ def _roles(cast: _Cast, spare: list[Resident], now: datetime) -> list[Moment]:
 
 
 def _save_resident(
-    action: str, by: Resident, resident: Resident, fields: Mapping[str, object]
+    action: str, by: Account, resident: Account, fields: Mapping[str, object]
 ) -> Callable[[], None]:
     def play() -> None:
-        fresh = Resident.objects.get(pk=resident.pk)
-        for name, value in fields.items():
-            setattr(fresh, name, value)
+        fresh = Account.objects.select_related("person__resident").get(pk=resident.pk)
+        person = fresh.person
+        house = person.house if person is not None else None
         with trail.event(action, actor=by, subject=fresh, only_if_changed=True):
+            # A fact about the human is the person's, one about their time here the resident's.
+            for name, value in fields.items():
+                if name in PERSON_FACTS and person is not None:
+                    setattr(person, name, value)
+                elif name in RESIDENT_FACTS and house is not None:
+                    setattr(house, name, value)
+                else:
+                    setattr(fresh, name, value)
             fresh.save()
+            if person is not None:
+                person.save()
+            if house is not None:
+                house.save()
 
     return play
 
 
-def _resident_edits(cast: _Cast, spare: list[Resident], now: datetime) -> list[Moment]:
+def _resident_edits(cast: _Cast, spare: list[Account], now: datetime) -> list[Moment]:
     beboer, regnskab, indstilling = cast["beboer@gahk.dk"], cast["regnskab@gahk.dk"], cast.indstilling
     moments = []
 
     # Indstilling corrects a phone number and a study: the seeded ones, after made-up earlier ones.
     corrected = spare[8]
     seeded = {"phone": corrected.phone, "study": corrected.study}
-    Resident.objects.filter(pk=corrected.pk).update(
-        phone="+45 20 11 22 33", study="Fysik, KU" if corrected.study != "Fysik, KU" else "Jura, KU"
+    Person.objects.filter(account=corrected).update(phone="+45 20 11 22 33")
+    Resident.objects.filter(person__account=corrected).update(
+        study="Fysik, KU" if corrected.study != "Fysik, KU" else "Jura, KU"
     )
     moments.append(
         Moment(
@@ -460,7 +479,7 @@ def _resident_edits(cast: _Cast, spare: list[Resident], now: datetime) -> list[M
             _save_resident("residents.resident.updated", indstilling, corrected, seeded),
             indstilling,
             HOUSE,
-            reverse("edit_resident", args=[corrected.pk]),
+            reverse("edit_resident", args=[corrected.house.pk if corrected.house else 0]),
         )
     )
 
@@ -488,10 +507,10 @@ def _resident_edits(cast: _Cast, spare: list[Resident], now: datetime) -> list[M
     if numbered is None:
         return moments
     number = numbered.economic_account_number
-    Resident.objects.filter(pk=numbered.pk).update(economic_account_number=None)
+    Account.objects.filter(pk=numbered.pk).update(economic_account_number=None)
 
     def account_number() -> None:
-        fresh = Resident.objects.get(pk=numbered.pk)
+        fresh = Account.objects.get(pk=numbered.pk)
         with trail.event(
             "regnskab.account_number.updated",
             actor=regnskab,
@@ -513,7 +532,7 @@ def _resident_edits(cast: _Cast, spare: list[Resident], now: datetime) -> list[M
     return moments
 
 
-def _month_list(cast: _Cast, spare: list[Resident], now: datetime) -> list[Moment]:
+def _month_list(cast: _Cast, spare: list[Account], now: datetime) -> list[Moment]:
     """This month's list as indstilling made it, in the days before the month began."""
     indstilling = cast.indstilling
     period = f"{cast.year}-{cast.month:02d}"
@@ -523,7 +542,7 @@ def _month_list(cast: _Cast, spare: list[Resident], now: datetime) -> list[Momen
     moments = []
 
     # Saved: one resident's cleaning moved, from a made-up one to the seeded one.
-    residency = Residency.objects.filter(resident=spare[10], year=cast.year, month=cast.month).first()
+    residency = Residency.objects.filter(resident=spare[10].house, year=cast.year, month=cast.month).first()
     if residency is not None and residency.cleaning is not None:
         cleaning = residency.cleaning
         other = Residency.objects.exclude(cleaning=cleaning).exclude(cleaning=None).first()
@@ -540,11 +559,17 @@ def _month_list(cast: _Cast, spare: list[Resident], now: datetime) -> list[Momen
 
     # Added in the leaver's place ("Erstatter"): the newcomer's seeded row, which was the leaver's.
     leaver, newcomer = cast.leaver, cast.newcomer
-    place = Residency.objects.filter(resident=newcomer, year=cast.year, month=cast.month).first()
-    if leaver is not None and newcomer is not None and place is not None:
+    leaving = leaver.house if leaver is not None else None
+    coming = newcomer.house if newcomer is not None else None
+    place = (
+        Residency.objects.filter(resident=coming, year=cast.year, month=cast.month).first()
+        if coming
+        else None
+    )
+    if leaver is not None and newcomer is not None and leaving and coming and place is not None:
         values = {"room": place.room, "workgroup": place.workgroup, "cleaning": place.cleaning}
         place.delete()
-        Residency.objects.create(resident=leaver, year=cast.year, month=cast.month, **values)
+        Residency.objects.create(resident=leaving, year=cast.year, month=cast.month, **values)
 
         def added() -> None:
             with trail.event(
@@ -554,14 +579,14 @@ def _month_list(cast: _Cast, spare: list[Resident], now: datetime) -> list[Momen
                 details={"period": period},
                 involve=[(leaver, "replaced")],
             ):
-                Residency.objects.filter(resident=leaver, year=cast.year, month=cast.month).delete()
-                Residency.objects.create(resident=newcomer, year=cast.year, month=cast.month, **values)
+                Residency.objects.filter(resident=leaving, year=cast.year, month=cast.month).delete()
+                Residency.objects.create(resident=coming, year=cast.year, month=cast.month, **values)
 
         moments.append(Moment(ago(now, days_before + 9, 19, 50), added, indstilling, HOUSE, page))
     return moments
 
 
-def _room_round(cast: _Cast, movers: list[Resident], now: datetime) -> list[Moment]:
+def _room_round(cast: _Cast, movers: list[Account], now: datetime) -> list[Moment]:
     """The room round that ended before this month: what it said it did, as rooms.views_soegvaerelse
     records it. Only the summary: the rooms the movers have now are the seeded ones, and redoing the
     moves for real would shuffle the whole month's list."""
@@ -569,8 +594,10 @@ def _room_round(cast: _Cast, movers: list[Resident], now: datetime) -> list[Mome
     previous = (month_start - timedelta(days=1)).date()
     moves = []
     for mover in movers:
-        now_in = Residency.objects.filter(resident=mover, year=cast.year, month=cast.month).first()
-        before = Residency.objects.filter(resident=mover, year=previous.year, month=previous.month).first()
+        now_in = Residency.objects.filter(resident=mover.house, year=cast.year, month=cast.month).first()
+        before = Residency.objects.filter(
+            resident=mover.house, year=previous.year, month=previous.month
+        ).first()
         if now_in is not None:
             moves.append(
                 {
@@ -620,7 +647,7 @@ def _preview(cast: _Cast, now: datetime) -> list[Moment]:
     ]
 
 
-def _unclaimed(cast: _Cast, spare: list[Resident], now: datetime) -> list[Moment]:
+def _unclaimed(cast: _Cast, spare: list[Account], now: datetime) -> list[Moment]:
     """Writes no screen named: the Django admin (recorded as the person logged in there) and a shell
     (System, nobody). Both show as "Uden handling"."""
     admin = cast["admin@gahk.dk"]
@@ -629,22 +656,22 @@ def _unclaimed(cast: _Cast, spare: list[Resident], now: datetime) -> list[Moment
     in_admin = spare[11]
     birthday = in_admin.birthday
     if birthday is not None:
-        Resident.objects.filter(pk=in_admin.pk).update(birthday=_year_earlier(birthday))
+        Person.objects.filter(account=in_admin).update(birthday=_year_earlier(birthday))
 
     def admin_edit() -> None:
-        fresh = Resident.objects.get(pk=in_admin.pk)
+        fresh = Person.objects.get(account=in_admin)
         fresh.birthday = birthday
         fresh.save()
 
     # An address with capitals, tidied from a shell.
     in_shell = spare[12]
     email = in_shell.email
-    Resident.objects.filter(pk=in_shell.pk).update(
+    Account.objects.filter(pk=in_shell.pk).update(
         email=email[:1].upper() + email[1:].replace("@gahk.dk", "@GAHK.dk")
     )
 
     def shell_fix() -> None:
-        fresh = Resident.objects.get(pk=in_shell.pk)
+        fresh = Account.objects.get(pk=in_shell.pk)
         fresh.email = email
         fresh.save(update_fields=["email"])
 

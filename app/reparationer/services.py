@@ -25,7 +25,7 @@ from django.urls import reverse
 
 from core.mentions import notify_mentions
 from notifications import categories, services
-from residents.models import Resident, Role, RoleAssignment, active_period
+from residents.models import Account, Role, RoleAssignment, active_period
 
 if TYPE_CHECKING:
     from .models import RepairComment, RepairTask
@@ -35,7 +35,7 @@ def task_url(task: "RepairTask") -> str:
     return reverse("reparationer:detail", args=[task.pk])
 
 
-def _residents_with_role(role: str) -> QuerySet[Resident]:
+def _residents_with_role(role: str) -> QuerySet[Account]:
     """Residents currently holding `role` for the active period. administrator counts too — it
     implies every role (residents.permissions.real_roles), and a superuser may hold the role with no
     RoleAssignment row at all."""
@@ -43,7 +43,7 @@ def _residents_with_role(role: str) -> QuerySet[Resident]:
     resident_ids = RoleAssignment.objects.filter(
         year=year, month=month, role__in=[role, Role.ADMINISTRATOR]
     ).values_list("resident_id", flat=True)
-    return Resident.objects.filter(is_active=True).filter(Q(pk__in=resident_ids) | Q(is_superuser=True))
+    return Account.objects.filter(is_active=True).filter(Q(pk__in=resident_ids) | Q(is_superuser=True))
 
 
 def notify_new_task(task: "RepairTask") -> None:

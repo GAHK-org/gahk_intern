@@ -11,7 +11,7 @@ from django.urls import reverse
 from django.utils import timezone
 
 from core.clock import current_date
-from residents.models import Resident
+from residents.models import Account
 
 from . import access, maerkedage
 
@@ -31,7 +31,7 @@ class AgendaItem:
     cancelled: bool = False
 
 
-def agenda(resident: Resident) -> list[AgendaItem]:
+def agenda(resident: Account) -> list[AgendaItem]:
     today = current_date()
     items: list[AgendaItem] = []
     events = access.visible_to(resident).upcoming()[:AGENDA_EVENTS]

@@ -7,7 +7,7 @@ from io import BytesIO
 from django.core.files.base import ContentFile
 from django.utils.text import slugify
 
-from residents.models import Resident
+from residents.models import Account
 
 from .models import NO_YEAR_FOLDER, Album, Media
 from .services import add_tag, upload_media
@@ -110,7 +110,7 @@ def _album(folder: str, path: str) -> Album:
     return parent
 
 
-def seed(residents: list[Resident], _now: datetime, _rng: random.Random) -> int:
+def seed(residents: list[Account], _now: datetime, _rng: random.Random) -> int:
     if not residents:
         return 0
     made = 0

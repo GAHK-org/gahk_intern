@@ -15,7 +15,7 @@ from django.test import Client
 from django.test.utils import override_settings
 from django.urls import reverse
 
-from residents.models import Resident, Role
+from residents.models import Account, Role
 
 pytestmark = pytest.mark.django_db
 
@@ -41,7 +41,7 @@ def test_the_app_id_is_not_its_start_page() -> None:
     assert manifest["start_url"] == FEED_URL
 
 
-def test_ios_gets_the_name_from_the_page(client: Client, make_resident: Callable[..., Resident]) -> None:
+def test_ios_gets_the_name_from_the_page(client: Client, make_resident: Callable[..., Account]) -> None:
     """iOS names the home-screen icon after this meta tag, not after the manifest."""
     client.force_login(make_resident())
     html = client.get(FEED_URL).content.decode()
@@ -83,7 +83,7 @@ def test_the_install_page_links_the_manifest() -> None:
     assert '<meta name="apple-mobile-web-app-title" content="GAHK Intern">' in html
 
 
-def test_the_install_page_for_a_resident(client: Client, make_resident: Callable[..., Resident]) -> None:
+def test_the_install_page_for_a_resident(client: Client, make_resident: Callable[..., Account]) -> None:
     client.force_login(make_resident())
     response = client.get(INSTALL_URL)
     assert response.status_code == 200
@@ -94,7 +94,7 @@ def test_the_install_page_for_a_resident(client: Client, make_resident: Callable
     assert "/notifikationer/indstillinger" in html
 
 
-def test_the_kitchen_account_may_read_the_install_page(make_resident: Callable[..., Resident]) -> None:
+def test_the_kitchen_account_may_read_the_install_page(make_resident: Callable[..., Account]) -> None:
     """The page is public; the kitchen gate guards residents' data, and the kitchen tablet may carry the
     old app itself."""
     from core.middleware import kitchen_may_open
@@ -111,7 +111,7 @@ BANNER = "data-install-banner"
 
 
 def test_the_banner_is_on_a_residents_pages_hidden_until_the_script_shows_it(
-    client: Client, make_resident: Callable[..., Resident]
+    client: Client, make_resident: Callable[..., Account]
 ) -> None:
     """Hidden in the markup, so nothing flashes on a computer: install.ts shows it on a phone."""
     client.force_login(make_resident())
@@ -124,14 +124,12 @@ def test_the_banner_is_on_a_residents_pages_hidden_until_the_script_shows_it(
     assert 'aria-label="Luk"' in banner
 
 
-def test_the_banner_is_not_on_the_install_page(
-    client: Client, make_resident: Callable[..., Resident]
-) -> None:
+def test_the_banner_is_not_on_the_install_page(client: Client, make_resident: Callable[..., Account]) -> None:
     client.force_login(make_resident())
     assert BANNER not in client.get(INSTALL_URL).content.decode()
 
 
-def test_the_banner_is_not_for_the_kitchen_account(make_resident: Callable[..., Resident]) -> None:
+def test_the_banner_is_not_for_the_kitchen_account(make_resident: Callable[..., Account]) -> None:
     client = Client()
     client.force_login(make_resident(email="koekken@gahk.dk", is_kitchen=True))
     assert BANNER not in client.get("/reparationer/").content.decode()
@@ -139,7 +137,7 @@ def test_the_banner_is_not_for_the_kitchen_account(make_resident: Callable[..., 
 
 @pytest.mark.parametrize("page", ["home", "series_list", "timeline", "play"])
 def test_the_banner_is_not_on_gahkflix(
-    page: str, settings: object, tmp_path: Path, make_resident: Callable[..., Resident]
+    page: str, settings: object, tmp_path: Path, make_resident: Callable[..., Account]
 ) -> None:
     """GAHKFlix draws its own page (gahkflix/base.html), without the intranet's chrome or the banner."""
     from tests.test_gahkflix import make_video
@@ -155,7 +153,7 @@ def test_the_banner_is_not_on_gahkflix(
 
 
 @override_settings(OELKAELDER_KIOSK_IPS=["127.0.0.1"])
-def test_the_banner_is_not_on_kiosk_pages(client: Client, make_resident: Callable[..., Resident]) -> None:
+def test_the_banner_is_not_on_kiosk_pages(client: Client, make_resident: Callable[..., Account]) -> None:
     """The ølkælder till (the shop, on kiosk_base.html) runs its own page without the frontend bundle."""
     client.force_login(make_resident())
     response = client.get("/oelkaelder/")

@@ -29,7 +29,7 @@ from datetime import datetime, timedelta
 
 from django.utils import timezone
 
-from residents.models import Resident
+from residents.models import Account
 
 from .models import RETENTION_AFTER_END, Answer, Event, EventComment, EventInvite, Rsvp, Visibility
 
@@ -70,7 +70,7 @@ def _round_hour(moment: datetime) -> datetime:
     return moment.replace(minute=0, second=0, microsecond=0)
 
 
-def seed(residents: list[Resident], now: datetime, rng: random.Random) -> int:
+def seed(residents: list[Account], now: datetime, rng: random.Random) -> int:
     """Create the demo events. Returns the number of events made."""
     if len(residents) < 6:
         return 0
@@ -181,7 +181,7 @@ def seed(residents: list[Resident], now: datetime, rng: random.Random) -> int:
     return len(events)
 
 
-def _seed_the_thread(event: Event, residents: list[Resident]) -> None:
+def _seed_the_thread(event: Event, residents: list[Account]) -> None:
     """A few comments on the fællesspisning, so the thread renders on a fresh checkout.
 
     On the FIRST event specifically -- the plain open one the list view is mostly made of -- rather
@@ -219,7 +219,7 @@ def _link_the_announcement(event: Event) -> None:
         Notice.objects.filter(pk=announcement.pk).update(event=event)
 
 
-def _answer(event: Event, resident: Resident, answer: str, when: datetime) -> None:
+def _answer(event: Event, resident: Account, answer: str, when: datetime) -> None:
     """One tilmelding, with `answered_at` set explicitly.
 
     Explicitly because it is the venteliste ordering key and has no auto_now (see Rsvp) — leaving it

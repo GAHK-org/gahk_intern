@@ -36,7 +36,7 @@ class Application(models.Model):
     motivation = models.TextField(blank=True)
     submitted_at = models.DateTimeField()
     received_by = models.ForeignKey(
-        "residents.Resident",
+        "residents.Account",
         null=True,
         blank=True,
         on_delete=models.SET_NULL,
@@ -47,7 +47,7 @@ class Application(models.Model):
     # applications drop out of the list/search by default but are kept (retention purge still applies)
     # and can be revealed with a toggle, or un-discarded. Nullable, so a plain migration.
     discarded_by = models.ForeignKey(
-        "residents.Resident",
+        "residents.Account",
         null=True,
         blank=True,
         on_delete=models.SET_NULL,

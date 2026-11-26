@@ -15,7 +15,7 @@ from pypdf import PdfReader
 from core.models import Room
 from regnskab import alumneregning, economic
 from regnskab.models import AlumneregningSend, AlumneregningSettings, EconomicLedgerEntry
-from residents.models import Residency, Resident
+from residents.models import Account, Residency
 
 AUGUST = (date(2026, 8, 1), date(2026, 8, 31))
 
@@ -53,9 +53,9 @@ def _one_page_pdf(text: str) -> bytes:
     return bytes(pdf.output())
 
 
-def _give_residency(resident: Resident, year: int, month: int, room_index: int) -> None:
+def _give_residency(resident: Account, year: int, month: int, room_index: int) -> None:
     room = Room.objects.create(legacy_index=room_index, number=room_index, floor="stuen", side="mod gaden")
-    Residency.objects.create(resident=resident, room=room, year=year, month=month)
+    Residency.objects.create(resident=resident.house, room=room, year=year, month=month)
 
 
 def _mock_entries(
@@ -603,7 +603,7 @@ def test_the_statement_renders_characters_outside_latin_1() -> None:
 
     entry = economic.LedgerEntry(**{**_entry(1, "2026-08-01", 10.0).__dict__, "text": "Husleje aug – sep €"})
     pdf = statement_pdf.render(
-        Resident(first_name="Łukasz", last_name="Kæmpe"), 4201, [entry], Decimal(10), *AUGUST
+        Account(first_name="Łukasz", last_name="Kæmpe"), 4201, [entry], Decimal(10), *AUGUST
     )
 
     text = PdfReader(io.BytesIO(pdf)).pages[0].extract_text()
@@ -628,7 +628,7 @@ def test_an_unexpected_error_for_one_alumne_does_not_stop_the_send(
     _mock_entries(monkeypatch)
     real_render = statement_pdf.render
 
-    def render(resident: Resident, *args: object) -> bytes:
+    def render(resident: Account, *args: object) -> bytes:
         if resident.first_name == "Broken":
             raise RuntimeError("unforeseen")
         return real_render(resident, *args)  # type: ignore[arg-type]

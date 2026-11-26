@@ -10,7 +10,7 @@ class Migration(migrations.Migration):
 
     operations = [
         migrations.AddField(
-            model_name="resident",
+            model_name="account",
             name="profile_thumbnail",
             field=models.FileField(blank=True, editable=False, upload_to="profile_pictures/thumbnails/"),
         ),

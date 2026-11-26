@@ -28,7 +28,7 @@ def _room() -> Room:
 
 
 def _place(resident: object, year: int, month: int) -> Residency:
-    return Residency.objects.create(resident=resident, room=_room(), year=year, month=month)
+    return Residency.objects.create(resident=resident.house, room=_room(), year=year, month=month)
 
 
 def _monthly(resident: object, year: int, month: int) -> AkEntry | None:
@@ -234,7 +234,7 @@ def test_a_resident_removed_during_the_month_is_not_charged(make_resident: Calla
     _place(stays, y, m)
     left = make_resident(email="left@gahk.dk")
     _place(left, y, m)
-    Residency.objects.filter(resident=left, year=y, month=m).delete()  # removed before the month ended
+    Residency.objects.filter(resident=left.house, year=y, month=m).delete()  # removed before the month ended
 
     ensure_previous_month_charged()
     assert _monthly(stays, y, m).delta == -2

@@ -15,7 +15,7 @@ from django.urls import reverse
 from django.utils.functional import SimpleLazyObject
 
 from cms.middleware import EDITOR_HINT_COOKIE, EditorHintCookie
-from residents.models import Resident, RoleAssignment
+from residents.models import Account, RoleAssignment
 from residents.permissions import PREVIEW_SESSION_KEY
 
 PASSWORD = "hemmelig"
@@ -28,16 +28,16 @@ def _production_cookie(settings: Any) -> None:  # noqa: ANN401
 
 
 @pytest.fixture
-def editor(make_resident: Callable[..., Resident]) -> Resident:
+def editor(make_resident: Callable[..., Account]) -> Account:
     return make_resident(email="pr@gahk.dk", password=PASSWORD, roles=("pr",))
 
 
 @pytest.fixture
-def resident(make_resident: Callable[..., Resident]) -> Resident:
+def resident(make_resident: Callable[..., Account]) -> Account:
     return make_resident(email="beboer@gahk.dk", password=PASSWORD)
 
 
-def _signed_in(who: Resident, hint: str | None = None) -> Client:
+def _signed_in(who: Account, hint: str | None = None) -> Client:
     client = Client()
     client.force_login(who)
     if hint is not None:
@@ -66,7 +66,7 @@ def _assert_deleted(morsel: Morsel[str] | None) -> None:
 
 
 @pytest.mark.django_db
-def test_an_editor_gets_it_at_login(editor: Resident) -> None:
+def test_an_editor_gets_it_at_login(editor: Account) -> None:
     response = Client().post(reverse("login"), {"username": editor.email, "password": PASSWORD})
 
     assert response.status_code == 302
@@ -74,7 +74,7 @@ def test_an_editor_gets_it_at_login(editor: Resident) -> None:
 
 
 @pytest.mark.django_db
-def test_a_resident_without_an_editor_role_does_not(resident: Resident) -> None:
+def test_a_resident_without_an_editor_role_does_not(resident: Account) -> None:
     response = Client().post(reverse("login"), {"username": resident.email, "password": PASSWORD})
 
     assert response.status_code == 302 and _hint(response) is None
@@ -82,7 +82,7 @@ def test_a_resident_without_an_editor_role_does_not(resident: Resident) -> None:
 
 
 @pytest.mark.django_db
-def test_any_page_sets_it_when_the_browser_lacks_it_and_is_quiet_when_it_has_it(editor: Resident) -> None:
+def test_any_page_sets_it_when_the_browser_lacks_it_and_is_quiet_when_it_has_it(editor: Account) -> None:
     _assert_set(_hint(_signed_in(editor).get("/")))  # not only Hjemmeside's own screens
 
     response = _signed_in(editor, hint="1").get(reverse("cms:overview"))
@@ -92,13 +92,13 @@ def test_any_page_sets_it_when_the_browser_lacks_it_and_is_quiet_when_it_has_it(
 
 
 @pytest.mark.django_db
-def test_a_superuser_qualifies(make_resident: Callable[..., Resident]) -> None:
+def test_a_superuser_qualifies(make_resident: Callable[..., Account]) -> None:
     superuser = make_resident(email="su@gahk.dk", is_superuser=True, is_staff=True)
     _assert_set(_hint(_signed_in(superuser).get("/")))
 
 
 @pytest.mark.django_db
-def test_it_follows_real_roles_not_a_role_preview(make_resident: Callable[..., Resident]) -> None:
+def test_it_follows_real_roles_not_a_role_preview(make_resident: Callable[..., Account]) -> None:
     admin = make_resident(email="admin@gahk.dk", roles=("administrator",))
     client = _signed_in(admin, hint="1")
     session = client.session
@@ -117,7 +117,7 @@ def test_it_follows_real_roles_not_a_role_preview(make_resident: Callable[..., R
 
 
 @pytest.mark.django_db
-def test_it_is_deleted_on_the_first_response_after_the_role_is_gone(editor: Resident) -> None:
+def test_it_is_deleted_on_the_first_response_after_the_role_is_gone(editor: Account) -> None:
     client = _signed_in(editor, hint="1")
     RoleAssignment.objects.filter(resident=editor).delete()
 
@@ -128,7 +128,7 @@ def test_it_is_deleted_on_the_first_response_after_the_role_is_gone(editor: Resi
 
 
 @pytest.mark.django_db
-def test_it_is_deleted_at_logout(editor: Resident) -> None:
+def test_it_is_deleted_at_logout(editor: Account) -> None:
     response = _signed_in(editor, hint="1").post(reverse("logout"))
 
     assert response.status_code == 302
@@ -143,7 +143,7 @@ def test_a_browser_without_a_session_loses_a_leftover_one() -> None:
 
 
 @pytest.mark.django_db
-def test_static_files_and_media_never_carry_it(editor: Resident) -> None:
+def test_static_files_and_media_never_carry_it(editor: Account) -> None:
     client = _signed_in(editor)
     for path in ("/static/nothing-here.css", "/media/cms/2026/11/nothing-here.jpg"):
         assert _hint(client.get(path)) is None
@@ -172,7 +172,7 @@ def test_an_anonymous_request_leaves_the_session_and_the_user_alone() -> None:
 
 
 @pytest.mark.django_db
-def test_in_development_it_is_host_only_and_not_secure(editor: Resident, settings: Any) -> None:  # noqa: ANN401
+def test_in_development_it_is_host_only_and_not_secure(editor: Account, settings: Any) -> None:  # noqa: ANN401
     settings.DEBUG = True
     settings.EDITOR_HINT_COOKIE_DOMAIN = None
 
@@ -184,7 +184,7 @@ def test_in_development_it_is_host_only_and_not_secure(editor: Resident, setting
 
 @pytest.mark.django_db
 @pytest.mark.parametrize("path", ["/hjemmeside/", "/hjemmeside/sider/1/"])
-def test_the_edit_links_gahk_dk_uses_exist(editor: Resident, path: str) -> None:
+def test_the_edit_links_gahk_dk_uses_exist(editor: Account, path: str) -> None:
     from cms.models import Page
 
     Page.put_front_page(slug="velkommen", header="Velkommen")

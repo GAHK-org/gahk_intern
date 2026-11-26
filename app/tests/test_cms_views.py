@@ -27,10 +27,10 @@ from cms.models import (
     SiteSettings,
 )
 from cms.views import with_base
-from residents.models import Resident
+from residents.models import Account
 
 
-def client_for(resident: Resident | None) -> Client:
+def client_for(resident: Account | None) -> Client:
     client = Client()
     if resident is not None:
         client.force_login(resident)
@@ -38,17 +38,17 @@ def client_for(resident: Resident | None) -> Client:
 
 
 @pytest.fixture
-def editor(make_resident: Callable[..., Resident]) -> Resident:
+def editor(make_resident: Callable[..., Account]) -> Account:
     return make_resident(email="pr@gahk.dk", first_name="Rita", last_name="Redaktør", roles=("pr",))
 
 
 @pytest.fixture
-def admin(make_resident: Callable[..., Resident]) -> Resident:
+def admin(make_resident: Callable[..., Account]) -> Account:
     return make_resident(email="admin@gahk.dk", first_name="Ada", last_name="Admin", roles=("administrator",))
 
 
 @pytest.fixture
-def resident(make_resident: Callable[..., Resident]) -> Resident:
+def resident(make_resident: Callable[..., Account]) -> Account:
     return make_resident(email="beboer@gahk.dk")
 
 
@@ -73,7 +73,7 @@ def _png(name: str = "billede.png") -> SimpleUploadedFile:
     return SimpleUploadedFile(name, buffer.getvalue(), content_type="image/png")
 
 
-def _image(editor: Resident, caption: str = "Gangen") -> CmsImage:
+def _image(editor: Account, caption: str = "Gangen") -> CmsImage:
     return services.upload_image(_png(), caption, editor)
 
 
@@ -112,7 +112,7 @@ POST_URLS = [
 
 
 @pytest.fixture
-def objects(editor: Resident, front: Page) -> dict[str, int]:
+def objects(editor: Account, front: Page) -> dict[str, int]:
     page = services.save_page(None, {"header": "Vision", "slug": "vision"}, editor)
     services.save_page(page, {"slug": "vores-vision"}, editor)
     return {
@@ -142,7 +142,7 @@ def test_anonymous_visitors_are_sent_to_the_login(
 @pytest.mark.django_db
 @pytest.mark.parametrize(("name", "args"), GET_URLS + POST_URLS)
 def test_a_resident_without_an_editor_role_is_refused(
-    name: str, args: list[str], objects: dict[str, int], resident: Resident
+    name: str, args: list[str], objects: dict[str, int], resident: Account
 ) -> None:
     url = _url(name, args, objects)
     client = client_for(resident)
@@ -154,15 +154,15 @@ def test_a_resident_without_an_editor_role_is_refused(
 @pytest.mark.django_db
 @pytest.mark.parametrize(("name", "args"), GET_URLS)
 def test_the_pr_group_opens_every_screen(
-    name: str, args: list[str], objects: dict[str, int], editor: Resident
+    name: str, args: list[str], objects: dict[str, int], editor: Account
 ) -> None:
     response = client_for(editor).get(_url(name, args, objects))
     assert response.status_code == 200
 
 
 @pytest.mark.django_db
-def test_the_sidebar_links_editors_to_the_cms(editor: Resident, resident: Resident) -> None:
-    def nav_urls(who: Resident) -> list[str]:
+def test_the_sidebar_links_editors_to_the_cms(editor: Account, resident: Account) -> None:
+    def nav_urls(who: Account) -> list[str]:
         nav = client_for(who).get("/").context["nav_intern"]
         return [url for _section, items in nav for url, _label, _icon in items]
 
@@ -173,7 +173,7 @@ def test_the_sidebar_links_editors_to_the_cms(editor: Resident, resident: Reside
 
 @pytest.mark.django_db
 def test_only_an_administrator_may_delete_a_page(
-    editor: Resident, admin: Resident, objects: dict[str, int], published: list[dict[str, Any]]
+    editor: Account, admin: Account, objects: dict[str, int], published: list[dict[str, Any]]
 ) -> None:
     url = reverse("cms:page_delete", args=[objects["page"]])
     assert client_for(editor).get(url).status_code == 403
@@ -195,7 +195,7 @@ def test_only_an_administrator_may_delete_a_page(
 
 
 @pytest.mark.django_db
-def test_the_front_page_cannot_be_deleted(admin: Resident, front: Page) -> None:
+def test_the_front_page_cannot_be_deleted(admin: Account, front: Page) -> None:
     response = client_for(admin).post(reverse("cms:page_delete", args=[front.pk]))
     assert response.status_code == 302
     assert Page.objects.filter(pk=front.pk).exists()
@@ -204,7 +204,7 @@ def test_the_front_page_cannot_be_deleted(admin: Resident, front: Page) -> None:
 # ------------------------------------------------------------------------------------------ pages
 @pytest.mark.django_db
 def test_creating_a_page_goes_through_the_services(
-    editor: Resident,
+    editor: Account,
     front: Page,
     published: list[dict[str, Any]],
     django_capture_on_commit_callbacks: Callable[..., Any],
@@ -232,7 +232,7 @@ def test_creating_a_page_goes_through_the_services(
 
 
 @pytest.mark.django_db
-def test_renaming_a_page_leaves_a_redirect_and_says_so(editor: Resident, objects: dict[str, int]) -> None:
+def test_renaming_a_page_leaves_a_redirect_and_says_so(editor: Account, objects: dict[str, int]) -> None:
     page = Page.objects.get(pk=objects["page"])
     response = client_for(editor).post(
         reverse("cms:page_edit", args=[page.pk]),
@@ -264,7 +264,7 @@ def test_renaming_a_page_leaves_a_redirect_and_says_so(editor: Resident, objects
     ],
 )
 def test_bad_addresses_are_refused_on_the_address_field(
-    editor: Resident, objects: dict[str, int], parent: str, segment: str, message: str
+    editor: Account, objects: dict[str, int], parent: str, segment: str, message: str
 ) -> None:
     Page.objects.create(slug="optagelse", header="Optagelse")
     Page.objects.create(slug="faciliteter", header="Faciliteter")
@@ -280,7 +280,7 @@ def test_bad_addresses_are_refused_on_the_address_field(
 
 @pytest.mark.django_db
 def test_a_save_over_a_newer_edit_is_stopped_once(
-    editor: Resident, admin: Resident, objects: dict[str, int]
+    editor: Account, admin: Account, objects: dict[str, int]
 ) -> None:
     page = Page.objects.get(pk=objects["page"])
     opened_at = page.updated_at.isoformat()
@@ -306,7 +306,7 @@ def test_a_save_over_a_newer_edit_is_stopped_once(
 
 
 @pytest.mark.django_db
-def test_the_front_page_has_no_address_fields(editor: Resident, front: Page) -> None:
+def test_the_front_page_has_no_address_fields(editor: Account, front: Page) -> None:
     response = client_for(editor).post(
         reverse("cms:page_edit", args=[front.pk]), {"header": "Velkommen!", "body": "<p>Hej</p>"}
     )
@@ -316,7 +316,7 @@ def test_the_front_page_has_no_address_fields(editor: Resident, front: Page) -> 
 
 
 @pytest.mark.django_db
-def test_the_page_list_groups_by_section_and_shows_menu_hints(editor: Resident, front: Page) -> None:
+def test_the_page_list_groups_by_section_and_shows_menu_hints(editor: Account, front: Page) -> None:
     MenuItem.objects.all().delete()
     MenuItem.objects.create(label="Faciliteter", url="/faciliteter", order=1)
     Page.objects.create(slug="faciliteter", header="Faciliteter")
@@ -341,7 +341,7 @@ def test_the_page_list_groups_by_section_and_shows_menu_hints(editor: Resident, 
 
 @pytest.mark.django_db
 def test_history_shows_a_diff_and_restores_through_the_services(
-    editor: Resident, objects: dict[str, int]
+    editor: Account, objects: dict[str, int]
 ) -> None:
     page = Page.objects.get(pk=objects["page"])
     services.save_page(page, {"body": "<p>Første afsnit</p><p>Andet</p>"}, editor)
@@ -360,7 +360,7 @@ def test_history_shows_a_diff_and_restores_through_the_services(
 
 
 @pytest.mark.django_db
-def test_a_version_of_another_page_cannot_be_restored(editor: Resident, objects: dict[str, int]) -> None:
+def test_a_version_of_another_page_cannot_be_restored(editor: Account, objects: dict[str, int]) -> None:
     other = services.save_page(None, {"header": "Anden"}, editor)
     response = client_for(editor).post(reverse("cms:page_restore", args=[other.pk, objects["version"]]))
     assert response.status_code == 404
@@ -369,7 +369,7 @@ def test_a_version_of_another_page_cannot_be_restored(editor: Resident, objects:
 # ---------------------------------------------------------------------------------------- preview
 @pytest.mark.django_db
 def test_preview_shows_gahk_dk_s_rendering_with_a_base_and_no_scripts(
-    editor: Resident,
+    editor: Account,
     objects: dict[str, int],
     monkeypatch: pytest.MonkeyPatch,
     settings: Any,  # noqa: ANN401
@@ -408,7 +408,7 @@ def test_preview_shows_gahk_dk_s_rendering_with_a_base_and_no_scripts(
 
 @pytest.mark.django_db
 def test_preview_falls_back_to_the_text_when_gahk_dk_is_unreachable(
-    editor: Resident,
+    editor: Account,
     monkeypatch: pytest.MonkeyPatch,
     settings: Any,  # noqa: ANN401
 ) -> None:
@@ -432,7 +432,7 @@ def test_preview_falls_back_to_the_text_when_gahk_dk_is_unreachable(
 
 
 @pytest.mark.django_db
-def test_preview_without_a_key_says_intern_is_not_connected(editor: Resident) -> None:
+def test_preview_without_a_key_says_intern_is_not_connected(editor: Account) -> None:
     response = client_for(editor).post(
         reverse("cms:preview"), {"preview_kind": "event", "title": "Fest", "description": "<p>Kom</p>"}
     )
@@ -448,7 +448,7 @@ def test_with_base_keeps_a_base_that_is_there() -> None:
 
 # ------------------------------------------------------------------------------ news and events
 @pytest.mark.django_db
-def test_news_are_created_edited_and_deleted_through_the_services(editor: Resident) -> None:
+def test_news_are_created_edited_and_deleted_through_the_services(editor: Account) -> None:
     client = client_for(editor)
     client.post(
         reverse("cms:news_create"),
@@ -467,7 +467,7 @@ def test_news_are_created_edited_and_deleted_through_the_services(editor: Reside
 
 @pytest.mark.django_db
 def test_saving_a_news_item_untouched_keeps_its_time_and_writes_nothing(
-    editor: Resident,
+    editor: Account,
     published: list[dict[str, Any]],
     django_capture_on_commit_callbacks: Callable[..., Any],
 ) -> None:
@@ -491,7 +491,7 @@ def test_saving_a_news_item_untouched_keeps_its_time_and_writes_nothing(
 
 
 @pytest.mark.django_db
-def test_events_need_a_date_and_are_deleted_through_the_services(editor: Resident) -> None:
+def test_events_need_a_date_and_are_deleted_through_the_services(editor: Account) -> None:
     client = client_for(editor)
     response = client.post(reverse("cms:event_create"), {"title": "Fest", "starts_on": ""})
     assert response.status_code == 200 and "starts_on" in response.context["form"].errors
@@ -506,7 +506,7 @@ def test_events_need_a_date_and_are_deleted_through_the_services(editor: Residen
 
 # ----------------------------------------------------------------------------------------- images
 @pytest.mark.django_db
-def test_images_are_uploaded_into_the_library(editor: Resident) -> None:
+def test_images_are_uploaded_into_the_library(editor: Account) -> None:
     response = client_for(editor).post(
         reverse("cms:image_list"),
         {"file": [_png("a.png"), _png("b.png")], "caption": "Haven"},
@@ -517,7 +517,7 @@ def test_images_are_uploaded_into_the_library(editor: Resident) -> None:
 
 
 @pytest.mark.django_db
-def test_an_svg_upload_is_refused(editor: Resident) -> None:
+def test_an_svg_upload_is_refused(editor: Account) -> None:
     svg = SimpleUploadedFile(
         "x.svg", b"<svg xmlns='http://www.w3.org/2000/svg'/>", content_type="image/svg+xml"
     )
@@ -531,7 +531,7 @@ def test_an_svg_upload_is_refused(editor: Resident) -> None:
 
 
 @pytest.mark.django_db
-def test_the_editor_s_picker_lists_and_uploads_as_json(editor: Resident) -> None:
+def test_the_editor_s_picker_lists_and_uploads_as_json(editor: Account) -> None:
     client = client_for(editor)
     response = client.post(reverse("cms:image_upload_json"), {"file": _png(), "caption": "Gården"})
     assert response.status_code == 201
@@ -543,7 +543,7 @@ def test_the_editor_s_picker_lists_and_uploads_as_json(editor: Resident) -> None
 
 
 @pytest.mark.django_db
-def test_an_image_in_use_cannot_be_deleted(editor: Resident, objects: dict[str, int]) -> None:
+def test_an_image_in_use_cannot_be_deleted(editor: Account, objects: dict[str, int]) -> None:
     image = CmsImage.objects.get(pk=objects["image"])
     page = Page.objects.get(pk=objects["page"])
     services.save_page(page, {"body": f'<p><img src="{image.url}" alt=""></p>'}, editor)
@@ -562,7 +562,7 @@ def test_an_image_in_use_cannot_be_deleted(editor: Resident, objects: dict[str, 
 
 
 @pytest.mark.django_db
-def test_an_image_caption_is_edited_through_the_services(editor: Resident, objects: dict[str, int]) -> None:
+def test_an_image_caption_is_edited_through_the_services(editor: Account, objects: dict[str, int]) -> None:
     client_for(editor).post(reverse("cms:image_detail", args=[objects["image"]]), {"caption": "Gården"})
     assert CmsImage.objects.get(pk=objects["image"]).caption == "Gården"
     assert ContentChange.objects.filter(kind="image", action="update").exists()
@@ -578,7 +578,7 @@ def _menu_post(rows: list[tuple[str, str]], action: str) -> dict[str, str]:
 
 
 @pytest.mark.django_db
-def test_the_menu_is_reordered_extended_and_trimmed(editor: Resident) -> None:
+def test_the_menu_is_reordered_extended_and_trimmed(editor: Account) -> None:
     MenuItem.objects.all().delete()
     rows = [("Hjem", "/"), ("Vision", "/vision"), ("Kontakt", "/kontakt")]
     client = client_for(editor)
@@ -595,7 +595,7 @@ def test_the_menu_is_reordered_extended_and_trimmed(editor: Resident) -> None:
 
 
 @pytest.mark.django_db
-def test_a_bad_menu_link_is_shown_and_nothing_is_saved(editor: Resident) -> None:
+def test_a_bad_menu_link_is_shown_and_nothing_is_saved(editor: Account) -> None:
     before = list(MenuItem.objects.values_list("label", "url"))
     response = client_for(editor).post(
         reverse("cms:menu"), _menu_post([("Ond", "javascript:alert(1)")], "save")
@@ -605,7 +605,7 @@ def test_a_bad_menu_link_is_shown_and_nothing_is_saved(editor: Resident) -> None
 
 
 @pytest.mark.django_db
-def test_the_default_background_is_picked_from_the_library(editor: Resident, objects: dict[str, int]) -> None:
+def test_the_default_background_is_picked_from_the_library(editor: Account, objects: dict[str, int]) -> None:
     image = CmsImage.objects.get(pk=objects["image"])
     client_for(editor).post(reverse("cms:site_settings"), {"default_background": image.url})
     assert SiteSettings.load().default_background == image.url
@@ -615,7 +615,7 @@ def test_the_default_background_is_picked_from_the_library(editor: Resident, obj
 # -------------------------------------------------------------------------------------- redirects
 @pytest.mark.django_db
 def test_redirects_are_created_and_deleted_through_the_services(
-    editor: Resident, objects: dict[str, int]
+    editor: Account, objects: dict[str, int]
 ) -> None:
     client = client_for(editor)
     client.post(reverse("cms:redirect_list"), {"old_path": "/Folder/", "page": objects["page"]})
@@ -632,7 +632,7 @@ def test_redirects_are_created_and_deleted_through_the_services(
 # ------------------------------------------------------------------------------------ overview
 @pytest.mark.django_db
 def test_publish_now_queues_a_manual_publish(
-    editor: Resident,
+    editor: Account,
     settings: Any,  # noqa: ANN401
     published: list[dict[str, Any]],
     django_capture_on_commit_callbacks: Callable[..., Any],
@@ -653,8 +653,8 @@ def test_publish_now_queues_a_manual_publish(
 
 @pytest.mark.django_db
 def test_only_an_administrator_may_ask_gahk_dk_to_update(
-    editor: Resident,
-    admin: Resident,
+    editor: Account,
+    admin: Account,
     settings: Any,  # noqa: ANN401
     monkeypatch: pytest.MonkeyPatch,
     django_capture_on_commit_callbacks: Callable[..., Any],
@@ -683,7 +683,7 @@ def test_only_an_administrator_may_ask_gahk_dk_to_update(
 
 
 @pytest.mark.django_db
-def test_the_overview_says_when_gahk_dk_is_not_connected(editor: Resident) -> None:
+def test_the_overview_says_when_gahk_dk_is_not_connected(editor: Account) -> None:
     response = client_for(editor).get(reverse("cms:overview"))
     assert "Ikke forbundet" in response.content.decode()
     assert client_for(editor).post(reverse("cms:publish_now")).status_code == 302
@@ -691,7 +691,7 @@ def test_the_overview_says_when_gahk_dk_is_not_connected(editor: Resident) -> No
 
 
 @pytest.mark.django_db
-def test_the_overview_shows_a_failed_publication(editor: Resident, settings: Any) -> None:  # noqa: ANN401
+def test_the_overview_shows_a_failed_publication(editor: Account, settings: Any) -> None:  # noqa: ANN401
     settings.GAHK_WEB_KEY = "k"
     Publication.objects.create(reason="save", status="failed", error="gahk.dk answered 400: bad snapshot")
     html = client_for(editor).get(reverse("cms:overview")).content.decode()
@@ -700,7 +700,7 @@ def test_the_overview_shows_a_failed_publication(editor: Resident, settings: Any
 
 @pytest.mark.django_db
 def test_the_overview_is_up_to_date_only_until_the_next_save(
-    editor: Resident,
+    editor: Account,
     front: Page,
     settings: Any,  # noqa: ANN401
     published: list[dict[str, Any]],
@@ -728,7 +728,7 @@ def test_the_overview_is_up_to_date_only_until_the_next_save(
 # ----------------------------------------------------------------------------------- change log
 @pytest.mark.django_db
 def test_the_change_log_filters_and_diffs_bodies(
-    editor: Resident, admin: Resident, objects: dict[str, int]
+    editor: Account, admin: Account, objects: dict[str, int]
 ) -> None:
     page = Page.objects.get(pk=objects["page"])
     services.save_page(page, {"body": "<p>Et</p><p>To</p>"}, admin)
@@ -759,7 +759,7 @@ def test_the_change_log_filters_and_diffs_bodies(
 
 
 @pytest.mark.django_db
-def test_the_change_log_pages_with_page_and_keeps_its_filters(editor: Resident) -> None:
+def test_the_change_log_pages_with_page_and_keeps_its_filters(editor: Account) -> None:
     for number in range(51):
         services.record_change(action="update", kind="page", label=f"P{number}", by_name=services.SYSTEM_NAME)
     client = client_for(editor)
@@ -773,7 +773,7 @@ def test_the_change_log_pages_with_page_and_keeps_its_filters(editor: Resident) 
 
 
 @pytest.mark.django_db
-def test_saving_a_page_unchanged_says_so_and_writes_nothing(editor: Resident, front: Page) -> None:
+def test_saving_a_page_unchanged_says_so_and_writes_nothing(editor: Account, front: Page) -> None:
     client_for(editor).post(reverse("cms:page_edit", args=[front.pk]), {"header": "Velkommen!", "body": ""})
     before = ContentChange.objects.count()
     front.refresh_from_db()

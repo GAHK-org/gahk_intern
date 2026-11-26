@@ -9,7 +9,7 @@ from django.utils import timezone
 
 from photo_album.models import Album, AlbumDownload, Media
 from photo_album.storage import get_photo_album_storage
-from residents.models import Resident
+from residents.models import Account
 
 OLD = datetime(2025, 5, 1, 12, tzinfo=UTC)
 
@@ -37,7 +37,7 @@ def confirm(monkeypatch: pytest.MonkeyPatch) -> list[str]:
     return prompts
 
 
-def _media(album: Album, resident: Resident, name: str = "photo.jpg", *, binned: bool = False) -> Media:
+def _media(album: Album, resident: Account, name: str = "photo.jpg", *, binned: bool = False) -> Media:
     media = Media(album=album, title=name, filename=name, requested_by=resident)
     media.original.save(name, ContentFile(b"original"), save=False)
     media.high_definition.save(name, ContentFile(b"hd"), save=False)
@@ -48,7 +48,7 @@ def _media(album: Album, resident: Resident, name: str = "photo.jpg", *, binned:
     return media
 
 
-def _download(resident: Resident, media: list[Media], album: Album | None = None) -> AlbumDownload:
+def _download(resident: Account, media: list[Media], album: Album | None = None) -> AlbumDownload:
     storage = get_photo_album_storage()
     download = AlbumDownload.objects.create(
         album=album, requested_by=resident, media_ids=[item.pk for item in media], name="zip"
@@ -70,7 +70,7 @@ def _stored(media: Media) -> list[bool]:
 
 @pytest.mark.django_db
 def test_deleting_a_sub_album_removes_its_tree_files_and_downloads_ignoring_locks(
-    make_resident: Callable[..., Resident], confirm: list[str], settings: object, tmp_path: Path
+    make_resident: Callable[..., Account], confirm: list[str], settings: object, tmp_path: Path
 ) -> None:
     resident = make_resident()
     root = Album.objects.create(folder="2019", name="Sommerfest")
@@ -107,7 +107,7 @@ def test_deleting_a_sub_album_removes_its_tree_files_and_downloads_ignoring_lock
 
 @pytest.mark.django_db
 def test_deleting_a_folder_removes_every_album_in_it_and_nothing_else(
-    make_resident: Callable[..., Resident], confirm: list[str]
+    make_resident: Callable[..., Account], confirm: list[str]
 ) -> None:
     resident = make_resident()
     for name in ("Fest", "Tur"):
@@ -125,7 +125,7 @@ def test_deleting_a_folder_removes_every_album_in_it_and_nothing_else(
 
 @pytest.mark.django_db
 def test_a_wrong_code_deletes_nothing(
-    make_resident: Callable[..., Resident], monkeypatch: pytest.MonkeyPatch
+    make_resident: Callable[..., Account], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     media = _media(Album.objects.create(folder="2019", name="Fest"), make_resident())
     _backdate()
@@ -140,7 +140,7 @@ def test_a_wrong_code_deletes_nothing(
 
 @pytest.mark.django_db
 def test_the_code_is_random_eight_characters(
-    make_resident: Callable[..., Resident], confirm: list[str]
+    make_resident: Callable[..., Account], confirm: list[str]
 ) -> None:
     for folder in ("2018", "2019"):
         Album.objects.create(folder=folder, name="Fest")
@@ -157,7 +157,7 @@ def test_the_code_is_random_eight_characters(
 @pytest.mark.django_db
 @pytest.mark.parametrize("what", ["album", "media", "binned media"])
 def test_refuses_anything_from_the_protected_date_on(
-    make_resident: Callable[..., Resident], confirm: list[str], what: str
+    make_resident: Callable[..., Account], confirm: list[str], what: str
 ) -> None:
     root = Album.objects.create(folder="2026", name="Fest")
     child = Album.objects.create(folder="2026", name="Dag", parent=root)
@@ -178,7 +178,7 @@ def test_refuses_anything_from_the_protected_date_on(
 
 @pytest.mark.django_db
 def test_the_protected_date_can_be_moved_but_not_into_the_future(
-    make_resident: Callable[..., Resident], confirm: list[str], settings: object
+    make_resident: Callable[..., Account], confirm: list[str], settings: object
 ) -> None:
     album = Album.objects.create(folder="2019", name="Fest")
     _media(album, make_resident())
@@ -205,7 +205,7 @@ def test_the_protected_date_can_be_moved_but_not_into_the_future(
 
 @pytest.mark.django_db
 def test_an_upload_while_the_prompt_waits_stops_the_delete(
-    make_resident: Callable[..., Resident], monkeypatch: pytest.MonkeyPatch
+    make_resident: Callable[..., Account], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     resident = make_resident()
     album = Album.objects.create(folder="2019", name="Fest")

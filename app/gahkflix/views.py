@@ -34,7 +34,7 @@ from django.views.decorators.http import require_GET, require_POST
 
 from core.downloads import content_disposition
 from core.media import REDIRECT_CACHE_CONTROL
-from residents.models import Resident
+from residents.models import Account
 from residents.permissions import current_resident
 
 from . import access, cache, dating, encoding, services
@@ -291,7 +291,7 @@ def _people_matching(query: str) -> list[dict[str, Any]]:
     """Credited people whose name matches: residents first, then external names."""
     credits = CastMember.objects.filter(video__in=Video.objects.released())
     people: list[dict[str, Any]] = []
-    residents = Resident.objects.filter(pk__in=credits.exclude(resident=None).values("resident_id"))
+    residents = Account.objects.filter(pk__in=credits.exclude(resident=None).values("resident_id"))
     for word in query.split()[:4]:
         residents = residents.filter(Q(first_name__icontains=word) | Q(last_name__icontains=word))
     for resident in residents.order_by("first_name", "last_name")[:12]:
@@ -319,7 +319,7 @@ def tag(request: HttpRequest, name: str) -> HttpResponse:
 
 @access.access_required
 def cast(request: HttpRequest, pk: int) -> HttpResponse:
-    person = get_object_or_404(Resident, pk=pk)
+    person = get_object_or_404(Account, pk=pk)
     credits = services.credits_of(person).order_by(*services.sort_date_ordering())
     return _render(
         request,
@@ -498,7 +498,7 @@ def _up_next(following: Video | None) -> dict[str, Any] | None:
     }
 
 
-def _player_config(video: Video, start_at: float, resident: Resident) -> dict[str, Any]:
+def _player_config(video: Video, start_at: float, resident: Account) -> dict[str, Any]:
     """Everything the player needs for one film: the play page renders it, the overlay fetches it."""
     assert video.file is not None  # noqa: S101  # nosec B101 — play() checks
     play_url = reverse("gahkflix:play", args=[video.pk])
@@ -1435,7 +1435,7 @@ def describe(change: ChangeRequest) -> list[dict[str, Any]]:
 @require_GET
 def residents_lookup(request: HttpRequest) -> JsonResponse:
     query = request.GET.get("q", "").strip()
-    residents = Resident.objects.filter(is_active=True).exclude(first_name="System")
+    residents = Account.objects.filter(is_active=True).exclude(first_name="System")
     for word in query.split()[:4]:
         residents = residents.filter(Q(first_name__icontains=word) | Q(last_name__icontains=word))
     found = residents.order_by("first_name", "last_name")[:10] if query else []

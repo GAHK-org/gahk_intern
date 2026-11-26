@@ -37,24 +37,24 @@ from reparationer.models import (
     RepairImage,
     RepairTask,
 )
-from residents.models import WORKGROUP_ROLE, Resident, Role, RoleAssignment, active_period
+from residents.models import WORKGROUP_ROLE, Account, Role, RoleAssignment, active_period
 
 BOARD = "/reparationer/"
 pytestmark = pytest.mark.django_db
 
 
 @pytest.fixture
-def beboer(make_resident: Callable[..., Resident]) -> Resident:
+def beboer(make_resident: Callable[..., Account]) -> Account:
     return make_resident(email="beboer@gahk.dk", first_name="Bo", last_name="Beboer")
 
 
 @pytest.fixture
-def vicevaert(make_resident: Callable[..., Resident]) -> Resident:
+def vicevaert(make_resident: Callable[..., Account]) -> Account:
     return make_resident(email="vice@gahk.dk", first_name="Vig", roles=(Role.VICEVAERT,))
 
 
 @pytest.fixture
-def repper(make_resident: Callable[..., Resident]) -> Resident:
+def repper(make_resident: Callable[..., Account]) -> Account:
     return make_resident(email="repper@gahk.dk", first_name="Rep", roles=(Role.REPPER,))
 
 
@@ -76,7 +76,7 @@ def pushes(monkeypatch: pytest.MonkeyPatch, settings: object) -> list[tuple[list
     return recorded
 
 
-def subscribe(user: Resident, endpoint: str) -> PushSubscription:
+def subscribe(user: Account, endpoint: str) -> PushSubscription:
     """One device, for everything — there is no per-feature opt-in any more."""
     return PushSubscription.objects.create(user=user, endpoint=endpoint, auth="a" * 22, p256dh="p" * 87)
 
@@ -86,7 +86,7 @@ def told(category: str = categories.REPAIRS) -> list[int]:
     return sorted(Notification.objects.filter(category=category).values_list("recipient_id", flat=True))
 
 
-def make_task(reporter: Resident, **kwargs: object) -> RepairTask:
+def make_task(reporter: Account, **kwargs: object) -> RepairTask:
     return RepairTask.objects.create(
         reported_by=reporter,
         title=kwargs.pop("title", "Utæt vandhane"),  # type: ignore[arg-type]
@@ -94,7 +94,7 @@ def make_task(reporter: Resident, **kwargs: object) -> RepairTask:
     )
 
 
-def login(client: Client, user: Resident) -> Client:
+def login(client: Client, user: Account) -> Client:
     client.force_login(user)
     return client
 
@@ -118,7 +118,7 @@ def age(task: RepairTask, days: int) -> None:
 # --------------------------------------------------------------------------------- reporting
 
 
-def test_any_resident_can_report_a_repair(client: Client, beboer: Resident) -> None:
+def test_any_resident_can_report_a_repair(client: Client, beboer: Account) -> None:
     login(client, beboer)
     response = client.post(
         f"{BOARD}opret", {"title": "Utæt vandhane", "location": "Hallen", "description": "Drypper."}
@@ -132,7 +132,7 @@ def test_any_resident_can_report_a_repair(client: Client, beboer: Resident) -> N
 
 
 def test_reporting_notifies_the_vicevaerter_but_not_the_reporter(
-    client: Client, beboer: Resident, vicevaert: Resident, repper: Resident, pushes: list
+    client: Client, beboer: Account, vicevaert: Account, repper: Account, pushes: list
 ) -> None:
     subscribe(beboer, "https://push.example/beboer")
     subscribe(vicevaert, "https://push.example/vice")
@@ -152,7 +152,7 @@ def test_reporting_notifies_the_vicevaerter_but_not_the_reporter(
 
 
 def test_a_vicevaert_without_a_device_still_sees_a_new_repair_in_app(
-    client: Client, beboer: Resident, vicevaert: Resident, pushes: list
+    client: Client, beboer: Account, vicevaert: Account, pushes: list
 ) -> None:
     """The audience is the role, not who pressed a subscribe button: the crew's bell shows the
     ticket whether or not anyone's phone is set up for push."""
@@ -166,7 +166,7 @@ def test_a_vicevaert_without_a_device_still_sees_a_new_repair_in_app(
 
 
 def test_administrators_and_superusers_hear_about_every_repair(
-    client: Client, beboer: Resident, vicevaert: Resident, make_resident: Callable[..., Resident]
+    client: Client, beboer: Account, vicevaert: Account, make_resident: Callable[..., Account]
 ) -> None:
     """administrator implies every role (residents.permissions.real_roles), and a superuser may hold
     it with no RoleAssignment at all — so both are part of either crew's audience."""
@@ -180,7 +180,7 @@ def test_administrators_and_superusers_hear_about_every_repair(
 
 
 def test_only_the_current_role_holders_are_told(
-    client: Client, beboer: Resident, vicevaert: Resident, make_resident: Callable[..., Resident]
+    client: Client, beboer: Account, vicevaert: Account, make_resident: Callable[..., Account]
 ) -> None:
     """Someone who was a Vicevært last year and rotated off must not keep getting paged."""
     former = make_resident(email="former@gahk.dk")
@@ -194,7 +194,7 @@ def test_only_the_current_role_holders_are_told(
 
 
 def test_a_vicevaert_reporting_a_repair_is_not_told_about_it(
-    client: Client, vicevaert: Resident, make_resident: Callable[..., Resident]
+    client: Client, vicevaert: Account, make_resident: Callable[..., Account]
 ) -> None:
     colleague = make_resident(email="vice2@gahk.dk", roles=(Role.VICEVAERT,))
     login(client, vicevaert)
@@ -204,7 +204,7 @@ def test_a_vicevaert_reporting_a_repair_is_not_told_about_it(
     assert told() == [colleague.id]
 
 
-def test_the_board_lists_open_tickets_and_the_login_gate_holds(client: Client, beboer: Resident) -> None:
+def test_the_board_lists_open_tickets_and_the_login_gate_holds(client: Client, beboer: Account) -> None:
     make_task(beboer, title="Utæt vandhane")
     assert client.get(BOARD).status_code == 302  # anonymous -> login
     login(client, beboer)
@@ -214,7 +214,7 @@ def test_the_board_lists_open_tickets_and_the_login_gate_holds(client: Client, b
 # ------------------------------------------------------------------------------ moving a ticket
 
 
-def test_a_plain_resident_cannot_move_a_ticket(client: Client, beboer: Resident) -> None:
+def test_a_plain_resident_cannot_move_a_ticket(client: Client, beboer: Account) -> None:
     task = make_task(beboer)
     login(client, beboer)
     assert client.post(f"{BOARD}{task.pk}/status", {"status": "i_gang"}).status_code == 403
@@ -223,7 +223,7 @@ def test_a_plain_resident_cannot_move_a_ticket(client: Client, beboer: Resident)
 
 
 def test_a_vicevaert_moves_a_ticket_through_the_triage_columns(
-    client: Client, beboer: Resident, vicevaert: Resident
+    client: Client, beboer: Account, vicevaert: Account
 ) -> None:
     task = make_task(beboer)
     login(client, vicevaert)
@@ -234,7 +234,7 @@ def test_a_vicevaert_moves_a_ticket_through_the_triage_columns(
 
 @pytest.mark.parametrize("status", ["ak_projekt", "faerdig"])
 def test_a_vicevaert_cannot_move_a_ticket_into_a_manager_only_column(
-    client: Client, beboer: Resident, vicevaert: Resident, status: str
+    client: Client, beboer: Account, vicevaert: Account, status: str
 ) -> None:
     """Committing AK hours, and closing a ticket, are Reppergruppen's calls — see
     views.MANAGER_ONLY_STATUSES. The ticket does not move."""
@@ -247,7 +247,7 @@ def test_a_vicevaert_cannot_move_a_ticket_into_a_manager_only_column(
 
 @pytest.mark.parametrize("status", ["ak_projekt", "faerdig"])
 def test_a_manager_may_use_every_column(
-    client: Client, beboer: Resident, repper: Resident, status: str
+    client: Client, beboer: Account, repper: Account, status: str
 ) -> None:
     task = make_task(beboer, status=RepairTask.Status.I_GANG)
     login(client, repper)
@@ -256,9 +256,7 @@ def test_a_manager_may_use_every_column(
     assert task.status == status
 
 
-def test_an_unknown_status_leaves_the_ticket_alone(
-    client: Client, beboer: Resident, repper: Resident
-) -> None:
+def test_an_unknown_status_leaves_the_ticket_alone(client: Client, beboer: Account, repper: Account) -> None:
     task = make_task(beboer)
     login(client, repper)
     client.post(f"{BOARD}{task.pk}/status", {"status": "noget-andet"})
@@ -279,7 +277,7 @@ def drag(client: Client, task: RepairTask, status: str) -> dict:
 
 
 def test_a_drag_moves_the_ticket_and_answers_in_json(
-    client: Client, beboer: Resident, repper: Resident
+    client: Client, beboer: Account, repper: Account
 ) -> None:
     task = make_task(beboer)
     login(client, repper)
@@ -291,7 +289,7 @@ def test_a_drag_moves_the_ticket_and_answers_in_json(
 
 
 def test_a_refused_drag_says_why_and_reports_the_unchanged_status(
-    client: Client, beboer: Resident, vicevaert: Resident
+    client: Client, beboer: Account, vicevaert: Account
 ) -> None:
     """The card is put back on the strength of this answer, so the refusal has to carry both a
     reason to show and the status the ticket really has."""
@@ -306,7 +304,7 @@ def test_a_refused_drag_says_why_and_reports_the_unchanged_status(
 
 
 def test_the_board_only_arms_dragging_for_someone_who_may_move(
-    client: Client, beboer: Resident, vicevaert: Resident
+    client: Client, beboer: Account, vicevaert: Account
 ) -> None:
     make_task(beboer)
     login(client, beboer)
@@ -321,7 +319,7 @@ def test_the_board_only_arms_dragging_for_someone_who_may_move(
 
 
 def test_a_vicevaert_hands_a_ticket_to_reppergruppen(
-    client: Client, beboer: Resident, vicevaert: Resident, repper: Resident, pushes: list
+    client: Client, beboer: Account, vicevaert: Account, repper: Account, pushes: list
 ) -> None:
     subscribe(repper, "https://push.example/repper")
     task = make_task(beboer)
@@ -337,7 +335,7 @@ def test_a_vicevaert_hands_a_ticket_to_reppergruppen(
 
 
 def test_a_ticket_can_be_handed_back_to_the_vicevaerter(
-    client: Client, beboer: Resident, vicevaert: Resident, repper: Resident, pushes: list
+    client: Client, beboer: Account, vicevaert: Account, repper: Account, pushes: list
 ) -> None:
     """The reverse of the handoff above: a ticket that turns out not to need Reppergruppen goes
     back where it came from, and the crew inheriting it is the one that gets told."""
@@ -356,7 +354,7 @@ def test_a_ticket_can_be_handed_back_to_the_vicevaerter(
 
 
 def test_handing_a_ticket_where_it_already_is_changes_and_notifies_nothing(
-    client: Client, beboer: Resident, vicevaert: Resident, repper: Resident, pushes: list
+    client: Client, beboer: Account, vicevaert: Account, repper: Account, pushes: list
 ) -> None:
     subscribe(repper, "https://push.example/repper")
     task = make_task(beboer, responsible=RepairTask.Responsible.REPPER)
@@ -371,7 +369,7 @@ def test_handing_a_ticket_where_it_already_is_changes_and_notifies_nothing(
 
 
 def test_an_unknown_responsible_leaves_the_ticket_alone(
-    client: Client, beboer: Resident, vicevaert: Resident
+    client: Client, beboer: Account, vicevaert: Account
 ) -> None:
     task = make_task(beboer)
     login(client, vicevaert)
@@ -380,7 +378,7 @@ def test_an_unknown_responsible_leaves_the_ticket_alone(
     assert task.responsible == RepairTask.Responsible.VICEVAERT
 
 
-def test_a_plain_resident_cannot_hand_a_ticket_over(client: Client, beboer: Resident) -> None:
+def test_a_plain_resident_cannot_hand_a_ticket_over(client: Client, beboer: Account) -> None:
     task = make_task(beboer)
     login(client, beboer)
     assert client.post(f"{BOARD}{task.pk}/ansvarlig", {"responsible": "repper"}).status_code == 403
@@ -389,7 +387,7 @@ def test_a_plain_resident_cannot_hand_a_ticket_over(client: Client, beboer: Resi
 
 
 def test_the_detail_page_offers_the_handoff_in_whichever_direction_is_left(
-    client: Client, beboer: Resident, vicevaert: Resident
+    client: Client, beboer: Account, vicevaert: Account
 ) -> None:
     task = make_task(beboer)
     login(client, vicevaert)
@@ -404,7 +402,7 @@ def test_the_detail_page_offers_the_handoff_in_whichever_direction_is_left(
 
 
 def test_any_resident_may_comment_and_delete_their_own_note(
-    client: Client, beboer: Resident, vicevaert: Resident
+    client: Client, beboer: Account, vicevaert: Account
 ) -> None:
     task = make_task(vicevaert)
     login(client, beboer)
@@ -417,7 +415,7 @@ def test_any_resident_may_comment_and_delete_their_own_note(
 
 
 def test_a_resident_cannot_delete_someone_elses_note(
-    client: Client, beboer: Resident, vicevaert: Resident
+    client: Client, beboer: Account, vicevaert: Account
 ) -> None:
     task = make_task(vicevaert)
     comment = RepairComment.objects.create(task=task, author=vicevaert, body="Kigger på det.")
@@ -430,7 +428,7 @@ def test_a_resident_cannot_delete_someone_elses_note(
 
 
 def test_only_a_manager_may_delete_a_ticket(
-    client: Client, beboer: Resident, vicevaert: Resident, repper: Resident
+    client: Client, beboer: Account, vicevaert: Account, repper: Account
 ) -> None:
     task = make_task(beboer)
     login(client, vicevaert)
@@ -442,7 +440,7 @@ def test_only_a_manager_may_delete_a_ticket(
     assert not RepairTask.objects.filter(pk=task.pk).exists()
 
 
-def test_the_nightly_sweep_archives_only_long_finished_tickets(client: Client, beboer: Resident) -> None:
+def test_the_nightly_sweep_archives_only_long_finished_tickets(client: Client, beboer: Account) -> None:
     old = make_task(beboer, title="Gammel", status=RepairTask.Status.FAERDIG)
     fresh = make_task(beboer, title="Frisk", status=RepairTask.Status.FAERDIG)
     open_one = make_task(beboer, title="Åben", status=RepairTask.Status.I_GANG)
@@ -456,7 +454,7 @@ def test_the_nightly_sweep_archives_only_long_finished_tickets(client: Client, b
     assert RepairTask.objects.get(pk=open_one.pk).archived_at is None  # still open, however old
 
 
-def test_an_archived_ticket_leaves_the_board_but_stays_searchable(client: Client, beboer: Resident) -> None:
+def test_an_archived_ticket_leaves_the_board_but_stays_searchable(client: Client, beboer: Account) -> None:
     task = make_task(beboer, title="Utæt vandhane", status=RepairTask.Status.FAERDIG)
     task.archived_at = timezone.now()
     task.save(update_fields=["archived_at"])
@@ -467,7 +465,7 @@ def test_an_archived_ticket_leaves_the_board_but_stays_searchable(client: Client
     assert "Utæt vandhane" in client.get(f"{BOARD}{task.pk}").content.decode()  # still readable
 
 
-def test_search_matches_the_fields_a_card_shows(client: Client, beboer: Resident) -> None:
+def test_search_matches_the_fields_a_card_shows(client: Client, beboer: Account) -> None:
     make_task(beboer, title="Utæt vandhane", location="Hallen")
     make_task(beboer, title="Knirkende dør", location="Batik")
     login(client, beboer)
@@ -490,7 +488,7 @@ def test_the_two_crews_get_their_role_from_their_embedsgruppe() -> None:
 # --------------------------------------------------------------------------------- photos
 
 
-def test_a_report_can_carry_several_photos(client: Client, beboer: Resident, media_tmp: Path) -> None:
+def test_a_report_can_carry_several_photos(client: Client, beboer: Account, media_tmp: Path) -> None:
     login(client, beboer)
     client.post(f"{BOARD}opret", {"title": "Knækket vindue", "images": [png("a.png"), png("b.png")]})
     task = RepairTask.objects.get()
@@ -500,7 +498,7 @@ def test_a_report_can_carry_several_photos(client: Client, beboer: Resident, med
 
 
 def test_a_refused_photo_is_dropped_but_the_report_is_kept(
-    client: Client, beboer: Resident, media_tmp: Path
+    client: Client, beboer: Account, media_tmp: Path
 ) -> None:
     login(client, beboer)
     evil = SimpleUploadedFile("evil.svg", b"<svg/>", content_type="image/svg+xml")
@@ -510,9 +508,7 @@ def test_a_refused_photo_is_dropped_but_the_report_is_kept(
     assert "evil.svg" in response.content.decode()  # and the resident is told which one
 
 
-def test_a_note_may_be_photos_alone_but_not_nothing(
-    client: Client, beboer: Resident, media_tmp: Path
-) -> None:
+def test_a_note_may_be_photos_alone_but_not_nothing(client: Client, beboer: Account, media_tmp: Path) -> None:
     task = make_task(beboer)
     login(client, beboer)
 
@@ -527,7 +523,7 @@ def test_a_note_may_be_photos_alone_but_not_nothing(
 
 
 def test_deleting_a_note_takes_its_photos_with_it(
-    client: Client, beboer: Resident, media_tmp: Path, django_capture_on_commit_callbacks: Callable
+    client: Client, beboer: Account, media_tmp: Path, django_capture_on_commit_callbacks: Callable
 ) -> None:
     task = make_task(beboer)
     login(client, beboer)
@@ -545,7 +541,7 @@ def test_deleting_a_note_takes_its_photos_with_it(
 # --------------------------------------------------------------------------------- column age
 
 
-def test_a_card_turns_yellow_then_red_the_longer_it_sits(client: Client, beboer: Resident) -> None:
+def test_a_card_turns_yellow_then_red_the_longer_it_sits(client: Client, beboer: Account) -> None:
     fresh = make_task(beboer, title="Frisk")
     stale = make_task(beboer, title="Gammel")
     overdue = make_task(beboer, title="Glemt")
@@ -562,14 +558,14 @@ def test_a_card_turns_yellow_then_red_the_longer_it_sits(client: Client, beboer:
     assert page.count('data-age="overdue"') == 1
 
 
-def test_a_finished_ticket_is_always_green(beboer: Resident) -> None:
+def test_a_finished_ticket_is_always_green(beboer: Account) -> None:
     task = make_task(beboer, status=RepairTask.Status.FAERDIG)
     assert RepairTask.objects.get(pk=task.pk).column_age == "done"
     age(task, OVERDUE_AFTER_DAYS + 10)
     assert RepairTask.objects.get(pk=task.pk).column_age == "done"
 
 
-def test_awaiting_approval_runs_on_a_shorter_clock(beboer: Resident) -> None:
+def test_awaiting_approval_runs_on_a_shorter_clock(beboer: Account) -> None:
     """Godkend af Repper is a check, not a repair: red after two weeks, not two months."""
     task = make_task(beboer, status=RepairTask.Status.GODKENDT)
     age(task, 6)
@@ -581,7 +577,7 @@ def test_awaiting_approval_runs_on_a_shorter_clock(beboer: Resident) -> None:
 
 
 def test_moving_a_card_resets_its_colour_but_a_handoff_does_not(
-    client: Client, beboer: Resident, vicevaert: Resident
+    client: Client, beboer: Account, vicevaert: Account
 ) -> None:
     task = make_task(beboer)
     age(task, OVERDUE_AFTER_DAYS)
@@ -598,7 +594,7 @@ def test_moving_a_card_resets_its_colour_but_a_handoff_does_not(
     assert RepairTask.objects.get(pk=task.pk).column_age == ""
 
 
-def test_column_age_follows_the_dev_clock(client: Client, beboer: Resident, vicevaert: Resident) -> None:
+def test_column_age_follows_the_dev_clock(client: Client, beboer: Account, vicevaert: Account) -> None:
     """Fast-forwarding the dev clock (core.clock) ages the cards — and a move made "in the future"
     is stamped there, so it starts fresh rather than already looking a month old."""
     from django.test import override_settings

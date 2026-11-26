@@ -22,7 +22,7 @@ from django.utils import timezone
 from core.media import CACHED_COPY_CACHE_CONTROL
 from den_hurtige.models import QuickComment, QuickPost
 from opslagstavle.models import Notice, NoticeComment, NoticeImage
-from residents.models import Resident
+from residents.models import Account
 
 from .media_samples import jpeg_bytes
 
@@ -51,7 +51,7 @@ def _served_from_cache(client: Client, url: str) -> bool:
     return response.headers.get("Cache-Control") == CACHED_COPY_CACHE_CONTROL
 
 
-def _post(author: Resident, *, expires_in: timedelta = timedelta(hours=1)) -> QuickPost:
+def _post(author: Account, *, expires_in: timedelta = timedelta(hours=1)) -> QuickPost:
     post = QuickPost.objects.create(author=author, content="Kaffe", expires_at=timezone.now() + expires_in)
     post.image.save("kaffe.jpg", ContentFile(jpeg_bytes()), save=True)
     return post
@@ -59,7 +59,7 @@ def _post(author: Resident, *, expires_in: timedelta = timedelta(hours=1)) -> Qu
 
 @pytest.mark.django_db
 def test_a_live_messages_photo_is_served_from_the_local_copy(
-    client: Client, make_resident: Callable[..., Resident], cache_dir: Path
+    client: Client, make_resident: Callable[..., Account], cache_dir: Path
 ) -> None:
     resident = make_resident()
     client.force_login(resident)
@@ -77,7 +77,7 @@ def test_a_live_messages_photo_is_served_from_the_local_copy(
 
 @pytest.mark.django_db
 def test_an_archived_messages_photo_goes_to_storage_and_is_not_copied(
-    client: Client, make_resident: Callable[..., Resident], cache_dir: Path
+    client: Client, make_resident: Callable[..., Account], cache_dir: Path
 ) -> None:
     resident = make_resident()
     client.force_login(resident)
@@ -89,7 +89,7 @@ def test_an_archived_messages_photo_goes_to_storage_and_is_not_copied(
 
 @pytest.mark.django_db
 def test_a_replys_photo_lives_as_long_as_its_message(
-    client: Client, make_resident: Callable[..., Resident], cache_dir: Path
+    client: Client, make_resident: Callable[..., Account], cache_dir: Path
 ) -> None:
     resident = make_resident()
     client.force_login(resident)
@@ -105,7 +105,7 @@ def test_a_replys_photo_lives_as_long_as_its_message(
 
 @pytest.mark.django_db
 def test_login_is_still_required(
-    client: Client, make_resident: Callable[..., Resident], cache_dir: Path
+    client: Client, make_resident: Callable[..., Account], cache_dir: Path
 ) -> None:
     post = _post(make_resident())
 
@@ -117,7 +117,7 @@ def test_login_is_still_required(
 
 @pytest.mark.django_db(transaction=True)
 def test_a_deleted_photo_is_dropped_from_the_local_copy(
-    client: Client, make_resident: Callable[..., Resident], cache_dir: Path
+    client: Client, make_resident: Callable[..., Account], cache_dir: Path
 ) -> None:
     resident = make_resident()
     client.force_login(resident)
@@ -132,7 +132,7 @@ def test_a_deleted_photo_is_dropped_from_the_local_copy(
 
 @pytest.mark.django_db
 def test_caching_is_off_without_a_directory(
-    client: Client, make_resident: Callable[..., Resident], media: Path
+    client: Client, make_resident: Callable[..., Account], media: Path
 ) -> None:
     resident = make_resident()
     client.force_login(resident)
@@ -144,7 +144,7 @@ def test_caching_is_off_without_a_directory(
 # --- opslagstavlen: no archive, so an age cutoff --------------------------------------------------
 
 
-def _notice_image(author: Resident, *, age: timedelta, pinned: bool = False) -> NoticeImage:
+def _notice_image(author: Account, *, age: timedelta, pinned: bool = False) -> NoticeImage:
     notice = Notice.objects.create(author=author, body="Opslag", pinned_at=timezone.now() if pinned else None)
     Notice.objects.filter(pk=notice.pk).update(created_at=timezone.now() - age)  # auto_now_add
     image = NoticeImage(notice=notice, uploaded_by=author)
@@ -154,7 +154,7 @@ def _notice_image(author: Resident, *, age: timedelta, pinned: bool = False) -> 
 
 @pytest.mark.django_db
 def test_a_recent_opslags_photo_is_cached_and_an_old_ones_is_not(
-    client: Client, make_resident: Callable[..., Resident], cache_dir: Path, settings: object
+    client: Client, make_resident: Callable[..., Account], cache_dir: Path, settings: object
 ) -> None:
     settings.NOTICE_IMAGE_CACHE_DAYS = 30  # type: ignore[attr-defined]
     resident = make_resident()
@@ -166,7 +166,7 @@ def test_a_recent_opslags_photo_is_cached_and_an_old_ones_is_not(
 
 @pytest.mark.django_db
 def test_a_pinned_opslag_is_read_like_a_new_one(
-    client: Client, make_resident: Callable[..., Resident], cache_dir: Path
+    client: Client, make_resident: Callable[..., Account], cache_dir: Path
 ) -> None:
     resident = make_resident()
     client.force_login(resident)
@@ -176,7 +176,7 @@ def test_a_pinned_opslag_is_read_like_a_new_one(
 
 @pytest.mark.django_db
 def test_a_photo_in_a_post_being_written_is_cached(
-    client: Client, make_resident: Callable[..., Resident], cache_dir: Path
+    client: Client, make_resident: Callable[..., Account], cache_dir: Path
 ) -> None:
     """Uploaded before the post is saved, so it has no notice yet; the editor's preview loads it."""
     resident = make_resident()
@@ -189,7 +189,7 @@ def test_a_photo_in_a_post_being_written_is_cached(
 
 @pytest.mark.django_db
 def test_a_comments_photo_goes_by_the_comments_own_age(
-    client: Client, make_resident: Callable[..., Resident], cache_dir: Path
+    client: Client, make_resident: Callable[..., Account], cache_dir: Path
 ) -> None:
     """A new comment on an old opslag is new to read; the longer prefix's rule wins over opslag/'s."""
     resident = make_resident()
@@ -209,7 +209,7 @@ def test_a_comments_photo_goes_by_the_comments_own_age(
 # --- avatars: every profile thumbnail, with no lookup -----------------------------------------------
 
 
-def _with_avatar(resident: Resident, capture: Callable) -> Resident:
+def _with_avatar(resident: Account, capture: Callable) -> Account:
     """A picture and its thumbnail, made by the worker as after an upload (Celery runs eagerly)."""
     cache.clear()  # the once-an-hour key names the resident and the picture, and both repeat
     with capture(execute=True):
@@ -222,7 +222,7 @@ def _with_avatar(resident: Resident, capture: Callable) -> Resident:
 @pytest.mark.django_db
 def test_an_avatar_is_served_from_the_local_copy_and_the_original_is_not(
     client: Client,
-    make_resident: Callable[..., Resident],
+    make_resident: Callable[..., Account],
     cache_dir: Path,
     django_capture_on_commit_callbacks: Callable,
 ) -> None:
@@ -238,7 +238,7 @@ def test_an_avatar_is_served_from_the_local_copy_and_the_original_is_not(
 @pytest.mark.django_db
 def test_a_replaced_avatar_is_dropped_from_the_local_copy(
     client: Client,
-    make_resident: Callable[..., Resident],
+    make_resident: Callable[..., Account],
     cache_dir: Path,
     django_capture_on_commit_callbacks: Callable,
 ) -> None:

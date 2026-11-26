@@ -73,6 +73,8 @@ from photo_album.models import Album, Media
 from regnskab.models import AlumneregningSend, EconomicLedgerEntry
 from residents.models import (
     WORKGROUP_ROLE,
+    Account,
+    Person,
     Residency,
     Resident,
     Role,
@@ -167,19 +169,21 @@ WIPE_ORDER: list[type[models.Model]] = [
     Notification,
     NotificationPreference,
     NotificationSettings,
-    # Before Resident: uploaders, series creators and requesters are all PROTECTed.
+    # Before Account: uploaders, series creators and requesters are all PROTECTed.
     GahkflixRequest,
     GahkflixVideo,
     GahkflixSeries,
     GahkflixTag,
-    # Also before Resident: both PROTECT their resident — audit records (the local immutable mirror
+    # Also before Account: both PROTECT their resident — audit records (the local immutable mirror
     # of e-conomic postings, and what was actually billed) should never silently vanish because a
-    # Resident row was deleted.
+    # Account row was deleted.
     EconomicLedgerEntry,
     AlumneregningSend,
     # The demo outbox (core.demo). After AlumneregningSend, whose mail it would otherwise only null.
     OutgoingMail,
+    Account,
     Resident,
+    Person,
     Room,
     Workgroup,
     Cleaning,
@@ -227,7 +231,7 @@ class Command(BaseCommand):
 
         self._report(residents)
 
-    def _seed_data(self, opts: dict) -> list[Resident]:
+    def _seed_data(self, opts: dict) -> list[Account]:
         if opts["fresh"]:
             self._wipe()
         rooms = self._seed_rooms()
@@ -308,7 +312,7 @@ class Command(BaseCommand):
         return workgroups, cleanings
 
     # ----------------------------------------------------------- residents
-    def _seed_residents(self, count: int) -> list[Resident]:
+    def _seed_residents(self, count: int) -> list[Account]:
         residents = []
         seen_emails = set()
 
@@ -344,22 +348,25 @@ class Command(BaseCommand):
         without_number = residents[-3:-1] if len(residents) > len(fixtures) + 2 else []
         for i, r in enumerate(residents):
             r.economic_account_number = None if r in without_number else 4201 + i
-        Resident.objects.bulk_update(residents, ["economic_account_number"])
+        Account.objects.bulk_update(residents, ["economic_account_number"])
 
         # Lineage: give most residents a sponsor (fylgje) picked from someone created earlier.
         for i, r in enumerate(residents):
             if i > 4 and self.rng.random() < 0.8:
-                r.sponsor = residents[self.rng.randint(0, i - 1)]
-                r.save(update_fields=["sponsor"])
+                Resident.objects.filter(person__account=r).update(
+                    sponsor=Resident.objects.get(person__account=residents[self.rng.randint(0, i - 1)])
+                )
         return residents
 
-    def _make_resident(self, email: str, first: str, last: str, **extra) -> Resident:  # noqa: ANN003
-        r = Resident(
-            email=email,
+    def _make_resident(self, email: str, first: str, last: str, **extra) -> Account:  # noqa: ANN003
+        person = Person.objects.create(
             first_name=first,
             last_name=last,
             phone=self.fake.phone_number(),
             birthday=self.fake.date_between(start_date="-30y", end_date="-19y"),
+        )
+        Resident.objects.create(
+            person=person,
             move_in_date=self.fake.date_between(start_date="-6y", end_date="-3m"),
             study=self.rng.choice(
                 [
@@ -373,8 +380,8 @@ class Command(BaseCommand):
                     "Matematik, DTU",
                 ]
             ),
-            **extra,
         )
+        r = Account(email=email, first_name=first, last_name=last, person=person, **extra)
         r.set_password(DEMO_PASSWORD)
         r.save()
         return r
@@ -393,11 +400,11 @@ class Command(BaseCommand):
 
     def _seed_residencies(
         self,
-        residents: list[Resident],
+        residents: list[Account],
         rooms: list[Room],
         workgroups: list[Workgroup],
         cleanings: list[Cleaning],
-    ) -> list[Resident]:
+    ) -> list[Account]:
         """Fill the three recent months, leaving one leaver plus the newcomer who replaces them."""
         fixed_groups = {
             "ak@gahk.dk": "AK-gruppen",
@@ -432,7 +439,7 @@ class Command(BaseCommand):
                 wg_counts[wg.name] += 1
 
                 Residency.objects.update_or_create(
-                    resident=resident,
+                    resident=resident.house,
                     year=y,
                     month=m,
                     defaults={
@@ -444,20 +451,22 @@ class Command(BaseCommand):
 
         if residents:
             leaver = residents[-1]
-            Residency.objects.filter(resident=leaver, year=self.year, month=self.month).delete()
-            leaver.move_out_date = date(self.year, self.month, 1)  # moved out on the 1st of this month
-            leaver.save(update_fields=["move_out_date"])
+            Residency.objects.filter(resident=leaver.house, year=self.year, month=self.month).delete()
+            # Moved out on the 1st of this month.
+            Resident.objects.filter(person__account=leaver).update(
+                move_out_date=date(self.year, self.month, 1)
+            )
             self._seed_successor(residents, rooms, workgroups, cleanings, len(residents))
         return residents
 
     def _seed_successor(
         self,
-        residents: list[Resident],
+        residents: list[Account],
         rooms: list[Room],
         workgroups: list[Workgroup],
         cleanings: list[Cleaning],
         account_number: int,
-    ) -> Resident:
+    ) -> Account:
         """Add a new resident this month and put them in the free room and the short embedsgruppe.
 
         The leaver's old room is not reused: every month gets its own random room assignment, so the
@@ -465,7 +474,7 @@ class Command(BaseCommand):
         being seeded — one resident per room, and every fixed-size embedsgruppe exactly full — which is
         what the indstilling "Erstatter" flow does when a resident leaves and another arrives.
         """
-        taken_emails = set(Resident.objects.values_list("email", flat=True))
+        taken_emails = set(Account.objects.values_list("email", flat=True))
         first, last = self.fake.first_name(), self.fake.last_name()
         base = f"{_ascii_slug(first)}.{_ascii_slug(last)}"
         email = f"{base}@gahk.dk"
@@ -474,14 +483,22 @@ class Command(BaseCommand):
             n += 1
             email = f"{base}{n}@gahk.dk"
 
-        newcomer = Resident(
-            email=email,
+        person = Person.objects.create(
             first_name=first,
             last_name=last,
             phone=self.fake.phone_number(),
             birthday=self.fake.date_between(start_date="-30y", end_date="-19y"),
+        )
+        house = Resident.objects.create(
+            person=person,
             move_in_date=date(self.year, self.month, 1),  # arrived the day the leaver left
             study=self.rng.choice([r.study for r in residents if r.study] or [""]),
+        )
+        newcomer = Account(
+            email=email,
+            first_name=first,
+            last_name=last,
+            person=person,
             economic_account_number=4201 + account_number,
         )
         newcomer.set_password(DEMO_PASSWORD)
@@ -496,7 +513,7 @@ class Command(BaseCommand):
         short = [w for w in workgroups if w.size > 0 and counts.get(w.id, 0) < w.size]
         workgroup = self.rng.choice(short) if short else self.rng.choice(workgroups)
         Residency.objects.update_or_create(
-            resident=newcomer,
+            resident=house,
             year=self.year,
             month=self.month,
             defaults={
@@ -508,7 +525,7 @@ class Command(BaseCommand):
         return newcomer
 
     # --------------------------------------------------------------- roles
-    def _seed_roles(self, residents: list[Resident]) -> None:
+    def _seed_roles(self, residents: list[Account]) -> None:
         by_email = {r.email: r for r in residents}
         # Documented accounts get specific roles.
         fixed = {
@@ -539,9 +556,9 @@ class Command(BaseCommand):
                 RoleAssignment.objects.get_or_create(resident=r, role=role, year=self.year, month=self.month)
                 assigned.add(r.pk)
 
-        Resident.objects.filter(pk__in=assigned).update(is_staff=True)
+        Account.objects.filter(pk__in=assigned).update(is_staff=True)
 
-    def _seed_profile_pictures(self, residents: list[Resident]) -> None:
+    def _seed_profile_pictures(self, residents: list[Account]) -> None:
         for index, resident in enumerate(residents[:8]):
             if resident.profile_picture:
                 continue
@@ -563,7 +580,7 @@ class Command(BaseCommand):
         return output.getvalue()
 
     # ------------------------------------------------------------------ AK
-    def _seed_ak(self, residents: list[Resident]) -> None:
+    def _seed_ak(self, residents: list[Account]) -> None:
         entries = []
         for r in residents:
             entries.append(
@@ -599,7 +616,7 @@ class Command(BaseCommand):
             apply_monthly_charge(y, m)
 
     # ----------------------------------------------------------- ølkælder
-    def _seed_oelkaelder(self, residents: list[Resident]) -> None:
+    def _seed_oelkaelder(self, residents: list[Account]) -> None:
         products = [
             Product.objects.create(name=n, price_ore=p, active=True, highlighted=h)
             for n, p, h in [
@@ -641,7 +658,7 @@ class Command(BaseCommand):
                 )
 
     # ------------------------------------------------------------ admissions
-    def _seed_admissions(self, residents: list[Resident]) -> None:
+    def _seed_admissions(self, residents: list[Account]) -> None:
         officers = [r for r in residents if r.is_staff]
         apps = []
         for _ in range(25):
@@ -721,7 +738,7 @@ class Command(BaseCommand):
         )
 
     # ------------------------------------------------------ room conditions
-    def _seed_room_conditions(self, rooms: list[Room], residents: list[Resident]) -> None:
+    def _seed_room_conditions(self, rooms: list[Room], residents: list[Account]) -> None:
         # Four real criteria from intern_room_criteria, chosen to cover all three scale shapes
         # (5 -> 1..5, 3 -> 0..2, 2 -> 0..1) with their real Danish legends, so the score explainer and
         # the range validation are both visible in dev. The previous invented set used options=4 —
@@ -753,7 +770,7 @@ class Command(BaseCommand):
                     )
 
     # -------------------------------------------------------------- kvotient
-    def _seed_kvotient(self, residents: list[Resident], rooms: list[Room]) -> None:
+    def _seed_kvotient(self, residents: list[Account], rooms: list[Room]) -> None:
         month_no = 12 * self.year + self.month
         for room in self.rng.sample(rooms, k=min(6, len(rooms))):
             RoomOffer.objects.get_or_create(room=room, month=month_no)
@@ -786,7 +803,7 @@ class Command(BaseCommand):
                 )
 
     # ---------------------------------------------------------------- report
-    def _report(self, residents: list[Resident]) -> None:
+    def _report(self, residents: list[Account]) -> None:
         self.stdout.write(
             self.style.SUCCESS(
                 f"\nSeeded demo data: {len(residents)} residents, "

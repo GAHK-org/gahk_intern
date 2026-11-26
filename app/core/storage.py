@@ -8,7 +8,7 @@ A media URL is not only a way to *reach* a file here — in several places it ha
 the database as data. `cms.Page.background_image` is a *CharField holding the URL string itself*,
 not a FileField name, and the Hjemmeside editor writes `<img src="/media/...">` straight into page
 bodies.
-Resident-authored Markdown in `opslagstavle.Notice.body` embeds the same way.
+Account-authored Markdown in `opslagstavle.Notice.body` embeds the same way.
 
 Weight those correctly. **The CMS half is live** — it is the public site's content, populated by the
 legacy ETL, and cms.snapshot finds its images by that prefix to publish them to gahk.dk. Opslagstavlen is still gated to Inspektionen and

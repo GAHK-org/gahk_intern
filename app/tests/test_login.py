@@ -8,7 +8,7 @@ from django.test import Client
 from django.urls import reverse
 
 from audit import trail
-from residents.models import Resident
+from residents.models import Account
 
 LOGIN = "/admin/login"
 
@@ -43,7 +43,7 @@ def test_a_login_for_an_unknown_address_logs_only_its_hash(
 
 @pytest.mark.django_db
 def test_a_wrong_password_logs_the_account_not_the_address(
-    make_resident: Callable[..., Resident], caplog: pytest.LogCaptureFixture
+    make_resident: Callable[..., Account], caplog: pytest.LogCaptureFixture
 ) -> None:
     resident = make_resident(email="known@gahk.dk", password="rigtig")
     with caplog.at_level(logging.WARNING, logger="residents.auth"):
@@ -57,10 +57,10 @@ def test_a_wrong_password_logs_the_account_not_the_address(
 
 @pytest.mark.django_db
 def test_an_inactive_account_is_logged_as_such(
-    make_resident: Callable[..., Resident], caplog: pytest.LogCaptureFixture
+    make_resident: Callable[..., Account], caplog: pytest.LogCaptureFixture
 ) -> None:
     resident = make_resident(email="gone@gahk.dk", password="rigtig")
-    Resident.objects.filter(pk=resident.pk).update(is_active=False)
+    Account.objects.filter(pk=resident.pk).update(is_active=False)
     with caplog.at_level(logging.WARNING, logger="residents.auth"):
         Client().post(LOGIN, {"username": "gone@gahk.dk", "password": "rigtig"})
 
@@ -81,7 +81,7 @@ def test_a_stale_login_form_goes_back_to_a_fresh_one(caplog: pytest.LogCaptureFi
 
 @pytest.mark.django_db
 def test_another_stale_form_explains_itself_instead_of_a_bare_403(
-    make_resident: Callable[..., Resident],
+    make_resident: Callable[..., Account],
 ) -> None:
     c = Client(enforce_csrf_checks=True)
     c.force_login(make_resident(email="stale@gahk.dk"))

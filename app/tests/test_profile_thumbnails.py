@@ -1,6 +1,6 @@
 """Profile thumbnails (#177): every avatar draws a small square copy, never the original upload.
 
-The worker makes the thumbnail (residents.tasks.make_profile_thumbnail). Resident.save() asks for one
+The worker makes the thumbnail (residents.tasks.make_profile_thumbnail). Account.save() asks for one
 whenever the picture changes, however it was changed (the edit form, FieldFile.save in seed_demo, the
 admin), and avatar_url asks for one whenever it draws an avatar without, which is what makes the
 thumbnails of pictures that predate it. Only the profile page links to the original, through the
@@ -23,7 +23,7 @@ from django.test import Client
 from django.urls import reverse
 from PIL import Image
 
-from residents.models import PROFILE_THUMBNAIL_SIZE, Resident
+from residents.models import PROFILE_THUMBNAIL_SIZE, Account
 from residents.tasks import make_profile_thumbnail
 
 from .media_samples import heic_bytes, jpeg_bytes
@@ -119,10 +119,10 @@ def test_saving_anything_else_leaves_the_thumbnail_alone(
     resident = make_resident()
     with django_capture_on_commit_callbacks(execute=True):
         resident.profile_picture.save("mig.jpg", ContentFile(jpeg_bytes()), save=True)
-    thumbnail = Resident.objects.get(pk=resident.pk).profile_thumbnail.name
+    thumbnail = Account.objects.get(pk=resident.pk).profile_thumbnail.name
     assert thumbnail
 
-    fetched = Resident.objects.get(pk=resident.pk)
+    fetched = Account.objects.get(pk=resident.pk)
     fetched.bio = "Hej"
     with django_capture_on_commit_callbacks() as queued:
         fetched.save()
@@ -157,7 +157,7 @@ def test_an_older_picture_gets_its_thumbnail_once_an_avatar_is_drawn(
     output = BytesIO()
     Image.new("RGB", (400, 300), "blue").save(output, format="PNG")
     (media / "profile_pictures" / "gammel.png").write_bytes(output.getvalue())
-    Resident.objects.filter(pk=resident.pk).update(profile_picture="profile_pictures/gammel.png")
+    Account.objects.filter(pk=resident.pk).update(profile_picture="profile_pictures/gammel.png")
     client = Client()
     client.force_login(resident)
 
@@ -174,7 +174,7 @@ def test_drawing_avatars_queues_the_job_once(
 ) -> None:
     """An alumneliste page draws dozens of avatars, and renders again on every visit."""
     resident = make_resident()
-    Resident.objects.filter(pk=resident.pk).update(profile_picture="profile_pictures/gammel.png")
+    Account.objects.filter(pk=resident.pk).update(profile_picture="profile_pictures/gammel.png")
     resident.refresh_from_db()
 
     with (
@@ -192,7 +192,7 @@ def test_a_queue_that_is_down_does_not_break_the_page(
     make_resident: Callable, media: Path, django_capture_on_commit_callbacks: Callable
 ) -> None:
     resident = make_resident()
-    Resident.objects.filter(pk=resident.pk).update(profile_picture="profile_pictures/gammel.png")
+    Account.objects.filter(pk=resident.pk).update(profile_picture="profile_pictures/gammel.png")
     resident.refresh_from_db()
 
     with (
@@ -208,7 +208,7 @@ def test_a_job_for_a_picture_since_replaced_does_nothing(make_resident: Callable
     resident = make_resident()
     resident.profile_picture.save("first.jpg", ContentFile(jpeg_bytes()), save=False)
     first = resident.profile_picture.name
-    Resident.objects.filter(pk=resident.pk).update(profile_picture="profile_pictures/second.jpg")
+    Account.objects.filter(pk=resident.pk).update(profile_picture="profile_pictures/second.jpg")
 
     assert make_profile_thumbnail(resident.pk, first) is False
     resident.refresh_from_db()
