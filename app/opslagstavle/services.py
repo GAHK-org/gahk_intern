@@ -21,17 +21,19 @@ from typing import TYPE_CHECKING
 
 from django.urls import reverse
 
+from access import audiences
 from core import push
 from core.markdown import plain_text
 from core.mentions import notify_mentions, to_plain
 from notifications import categories, services
+from residents.models import Account
 
 from . import access
 
 if TYPE_CHECKING:
     from collections.abc import Collection
 
-    from residents.models import Account
+    from django.db.models import QuerySet
 
     from .models import Notice, NoticeComment
 
@@ -41,11 +43,13 @@ def notice_url(notice: "Notice") -> str:
 
 
 def _author_can_open(notice: "Notice") -> bool:
-    """Whether the post's author can still open the board (rollout gate, or moved out). The kitchen
-    staff are not in everyone(), but can always open their own posts."""
-    if services.kitchen().filter(pk=notice.author_id).exists():
-        return True
-    return access.allowed_residents(services.everyone()).filter(pk=notice.author_id).exists()
+    """Whether the post's author can still open the board (rollout gate, or moved out)."""
+    return access.allowed_residents(Account.objects.filter(pk=notice.author_id)).exists()
+
+
+def _readers(notice: "Notice") -> "QuerySet[Account]":
+    """Who can read the post: its audience (access.audiences), among those the board is open to."""
+    return access.allowed_residents(audiences.members(notice.audience))
 
 
 def notify_mentions_in_notice(notice: "Notice", old_body: str | None = None) -> set[int]:
@@ -56,7 +60,7 @@ def notify_mentions_in_notice(notice: "Notice", old_body: str | None = None) -> 
         actor=notice.author,
         where="i et opslag",
         url=notice_url(notice),
-        audience=access.allowed_residents(services.everyone()),
+        audience=_readers(notice),
         old_text=old_body,
     )
 
@@ -72,7 +76,7 @@ def notify_new_notice(notice: "Notice", skip: "Collection[int]" = ()) -> None:
     # Narrowed to people who can open the board: while the rollout gate is on, notifying a resident
     # who would get a 403 on tapping is worse than not notifying them.
     services.notify(
-        access.allowed_residents(services.everyone()).exclude(pk__in=skip),
+        _readers(notice).exclude(pk__in=skip),
         category=categories.POSTS_NEW,
         title=notice.author.full_name,
         body=push.preview(plain_text(notice.body)),
@@ -89,7 +93,7 @@ def notify_new_comment(comment: "NoticeComment") -> None:
         actor=comment.author,
         where="i en kommentar",
         url=notice_url(notice),
-        audience=access.allowed_residents(services.everyone()),
+        audience=_readers(notice),
     )
     if notice.author_id in mentioned:
         return  # already told, more specifically

@@ -34,6 +34,8 @@
                 {% if event.cancelled_at %}<span class="chip chip-neg">Aflyst</span>{% endif %}
                 {% if event.visibility == "kun_inviterede" %}
                   <span class="chip chip-quiet">Kun inviterede</span>
+                {% elif event.audience_label %}
+                  <span class="chip chip-quiet">{{ event.audience_label }}</span>
                 {% endif %}
               </div>
               <div class="event-meta">

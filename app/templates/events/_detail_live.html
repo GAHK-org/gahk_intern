@@ -29,6 +29,8 @@
             <svg class="ni" aria-hidden="true"><use href="#i-lock"></use></svg>
             Kun inviterede
           </span>
+        {% elif event.audience_label %}
+          <span class="chip chip-quiet">{{ event.audience_label }}</span>
         {% endif %}
       </h1>
     </div>

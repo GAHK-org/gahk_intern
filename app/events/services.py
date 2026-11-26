@@ -33,6 +33,7 @@ from django.db import transaction
 from django.db.models import QuerySet
 from django.urls import reverse
 
+from access import audiences
 from core import push
 from core.clock import current_datetime
 from core.markdown import plain_text
@@ -256,10 +257,11 @@ def _audience(event: Event) -> QuerySet[Account]:
     An invite-only event notifies ITS INVITEES AND NOBODY ELSE. Announcing a private event to the
     house is the leak, not a nicety — the invite list is literally the audience.
     """
-    residents = access.allowed_residents(notifications.everyone())
     if event.visibility == Visibility.KUN_INVITEREDE:
-        residents = residents.filter(pk__in=event.invites.values("resident_id"))
-    return residents
+        return access.allowed_residents(notifications.everyone()).filter(
+            pk__in=event.invites.values("resident_id")
+        )
+    return access.allowed_residents(audiences.members(event.audience))
 
 
 def _url(event: Event) -> str:

@@ -8,6 +8,7 @@ from django.contrib.sessions.backends.db import SessionStore
 from django.http import HttpRequest
 from django.test import Client
 
+from access.audiences import HOUSE_AND_KITCHEN
 from core import live
 from core.models import PushSubscription
 from den_hurtige import services as den_hurtige_services
@@ -129,7 +130,21 @@ def test_kitchen_and_residents_share_the_kitchen_channel(kitchen: Account, beboe
     assert QuickPost.objects.filter(channel="koekken").count() == 2
 
 
-def test_opslagstavlen_shows_only_its_own_posts(kitchen: Account, beboer: Account) -> None:
+def test_opslagstavlen_shows_its_own_posts_and_those_for_the_kitchen(
+    kitchen: Account, beboer: Account, make_resident: Callable[..., Account]
+) -> None:
+    colleague = make_resident(email="kollega@kok.dk", is_kitchen=True)
+    for_them = Notice.objects.create(author=beboer, body="Tak for maden!", audience=sorted(HOUSE_AND_KITCHEN))
+    from_colleague = Notice.objects.create(
+        author=colleague, body="Fri i morgen", audience=sorted(HOUSE_AND_KITCHEN)
+    )
+    board = _client(kitchen).get("/opslagstavle/").content.decode()
+    assert "Tak for maden" in board and "Fri i morgen" in board
+    assert _client(kitchen).get(f"/opslagstavle/{for_them.pk}").status_code == 200
+    assert _client(kitchen).get(f"/opslagstavle/{from_colleague.pk}").status_code == 200
+
+
+def test_opslagstavlen_hides_what_is_not_for_the_kitchen(kitchen: Account, beboer: Account) -> None:
     mine = Notice.objects.create(author=kitchen, body="Ny ovn i køkkenet.")
     theirs = Notice.objects.create(author=beboer, body="Privat: kun for beboere.")
     c = _client(kitchen)
@@ -157,7 +172,7 @@ def test_sockets_only_for_its_features(kitchen: Account) -> None:
     assert live.may_subscribe(request, "den-hurtige.koekken")
     assert live.may_subscribe(request, "reparationer")
     assert not live.may_subscribe(request, "den-hurtige.generelt")
-    assert not live.may_subscribe(request, "opslagstavle")
+    assert live.may_subscribe(request, "opslagstavle")  # what it then fetches is filtered by audience
     assert not live.may_subscribe(request, "begivenheder")
 
 
@@ -191,15 +206,19 @@ def test_a_non_admin_cannot_preview_as_the_kitchen(beboer: Account) -> None:
 
 
 def test_its_settings_list_only_what_it_can_be_sent(kitchen: Account) -> None:
+    """Its own channel, posts addressed to the kitchen and comments on its own, broadcasts; nothing
+    of a channel or feature it cannot open."""
     html = _client(kitchen).get("/notifikationer/indstillinger").content.decode()
     assert "Køkkenet" in html and "Kommentarer på dine opslag" in html and "Generelle beskeder" in html
-    assert "TV-Rezz" not in html and "Nye opslag" not in html and "Nye begivenheder" not in html
+    assert "Nye opslag" in html
+    assert "TV-Rezz" not in html and "Nye begivenheder" not in html and "Nævnt" not in html
 
 
 def test_saving_its_settings_leaves_hidden_categories_alone(kitchen: Account) -> None:
     _client(kitchen).post("/notifikationer/indstillinger", {})
     saved = set(NotificationPreference.objects.filter(resident=kitchen).values_list("category", flat=True))
-    assert saved == categories.KITCHEN_CATEGORIES  # everything unticked, but only what it was shown
+    assert categories.chat_room_key("koekken") in saved and categories.POSTS_NEW in saved
+    assert categories.chat_room_key("generelt") not in saved and categories.EVENTS_NEW not in saved
 
 
 def test_a_broadcast_reaches_it(make_resident: Callable[..., Account], kitchen: Account) -> None:

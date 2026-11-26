@@ -21,7 +21,7 @@ keep getting paged.
 
 from typing import TYPE_CHECKING
 
-from django.db.models import Q, QuerySet
+from django.db.models import QuerySet
 from django.urls import reverse
 
 from access.api import holding
@@ -39,9 +39,8 @@ def task_url(task: "RepairTask") -> str:
 
 def _residents_with_role(role: str) -> QuerySet[Account]:
     """The members of one crew now, the people a new repair is addressed to (a group, not a
-    permission). administrator counts too, and so does a superuser."""
-    held = holding({role, Role.ADMINISTRATOR}).values("pk")
-    return Account.objects.filter(is_active=True).filter(Q(pk__in=held) | Q(is_superuser=True))
+    permission). administrator counts too, and so does a superuser (who holds it)."""
+    return holding({role, Role.ADMINISTRATOR})
 
 
 def notify_new_task(task: "RepairTask") -> None:

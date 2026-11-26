@@ -25,14 +25,19 @@ share nothing else.
 
 | Action | Who |
 | --- | --- |
-| Read, post, comment, react | every logged-in resident |
+| Read, comment, react | everyone in the post's audience whose roles open the board, and its author |
+| Post | everyone whose roles open the board, to an audience they are in |
 | Edit a post | **the author only** |
 | Delete a post | the author, or `administrator` / `inspektion` |
 | Delete a comment | the comment's author, or `administrator` / `inspektion` |
 | Pin / unpin (max 5) | `administrator` / `inspektion` |
 
-All checks read *effective* roles (`residents.permissions.request_has_role`), so an administrator
-using the preview tool to view the site as a beboer correctly loses the moderation controls.
+A post is for the whole house unless its author picks another audience ("Kun dem, der bor her nu",
+"Hele huset og køkkenet"; see access.md). The kitchen staff post to the house and the kitchen, and
+read only posts whose audience has the kitchen. A post not for the whole house says so with a chip.
+
+All checks ask permissions of the request (`access.api.can`), so an administrator using the preview
+tool to view the site as a beboer correctly loses the moderation controls.
 
 Moderators can delete but **not** edit someone else's post: the post keeps its author's name, so
 silently rewriting words that may already have replies referring to them is worse than removing it —

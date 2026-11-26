@@ -41,6 +41,7 @@ from django.db import models
 from django.db.models.signals import post_delete
 from django.dispatch import receiver
 
+from access import audiences
 from core.clock import current_datetime
 from core.files import delete_attached_files
 
@@ -203,6 +204,9 @@ class Event(models.Model):
     # An explicit toggle, never derived from "does it have invites". An open event may also carry
     # invites as a nudge, and deriving would mean removing the last invitee silently opened a
     # private party to the whole house.
+    # Who an open event is open to (access.audiences): the whole house unless the organiser said
+    # otherwise. An invite-only event is its invitees', whatever this says.
+    audience = audiences.field()
     visibility = models.CharField(
         max_length=16,
         choices=Visibility.choices,
@@ -257,6 +261,11 @@ class Event(models.Model):
 
     def __str__(self) -> str:
         return f"{self.title} ({self.starts_at:%d.%m.%Y})"
+
+    @property
+    def audience_label(self) -> str:
+        """Who an open event is for, when that is not the whole house (access.audiences)."""
+        return audiences.narrower_label(self.audience)
 
     @property
     def effective_end(self) -> datetime.datetime:

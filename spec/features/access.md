@@ -70,11 +70,11 @@ An account with none of these has no access at all; the front page says so.
   mentions.
 - **Over a year out**: Stamtræ.
 - **Køkkenet**: use of Den Hurtige, Opslagstavlen, Reparationer and notifications. Inside them the
-  kitchen sees only the Køkkenet channel and its own opslag.
+  kitchen sees only what is addressed to it: the Køkkenet channel, and posts for the house and the
+  kitchen (its own always are).
 - **Køkkengruppen**: adds and ends the kitchen staff's accounts on the Adgang page.
-- **Indstillingen** also: the Adgang page, where it sees and ends roles given by hand (not
-  administrator).
-- **Indstillingen**: manages Optagelse, Alumneliste, Søg værelse and Hjemmeside.
+- **Indstillingen**: manages Optagelse, Alumneliste, Søg værelse and Hjemmeside, and the Adgang
+  page, where it sees and ends roles given by hand (not administrator).
 - **Inspektionen**: manages Den Hurtige, Opslagstavlen, Reparationer and Hjemmeside.
 - **AK**: manages AK and Værelsestjek.
 - **Ølkælderen**: manages Ølkælder. **Regnskab**: manages Regnskab. **PR**: manages Hjemmeside.
@@ -83,6 +83,29 @@ An account with none of these has no access at all; the front page says so.
 - **Administrator**: administers everything.
 
 Someone with several roles gets the highest grade any of them gives. No role takes anything away.
+
+## Audiences
+
+A Den Hurtige channel, an opslag and an open event each say who they are for: a set of roles.
+Someone sees one when any of their roles is in it, and the feature is open to them as well. The
+audience narrows who; the roles still decide what.
+
+| Audience | Roles |
+|---|---|
+| Hele huset | every stage (living here, moving in, moved out) |
+| Kun dem, der bor her nu | Flytter ind, Beboer |
+| Kun tidligere beboere | the moved-out stages |
+| Hele huset og køkkenet | every stage and Køkkenet |
+
+- Every channel is for the whole house except Køkkenet, which is for the house and the kitchen. A
+  channel for former residents or for one embedsgruppe is a channel with that audience.
+- A post or an open event is for the whole house unless its author picks another audience they are
+  in themselves. One that is not for the whole house shows its audience. The author always sees
+  their own.
+- Invite-only events are their invitees', as before.
+- New posts, events and channel messages notify the audience only, and the notification settings
+  list only the channels and features the account can be sent.
+- Administrators are in every audience: they moderate what they could not otherwise see.
 
 ## Behaviour
 
@@ -111,6 +134,13 @@ Someone with several roles gets the highest grade any of them gives. No role tak
   writes each group's permissions.
 
 ## Decisions
+
+- **Channels stay in code, with their audience beside them.** Notification settings are made from
+  the channel list, so a channel is still added by a deploy; who reads it is a line of data.
+- **Audiences are role sets, not lists of people.** They follow the alumneliste by themselves: a
+  post for those living here stops reaching someone the month they move out.
+- **An audience is stored as its groups' names, not a link to each group.** No join table per post,
+  and the database fills the default; the names are the stable role codes.
 
 - **Permissions, not roles, in the code.** A view asks "may this request manage Ølkælder?", never
   "is this person in Ølkælderen?". Who may is a row in the table, so changing it is one edit.
