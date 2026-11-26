@@ -1418,7 +1418,10 @@ def test_a_video_out_less_than_a_day_can_be_made_a_draft_again(
     admin2: Resident,
     member: Resident,
     django_capture_on_commit_callbacks: Callable[..., Any],
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    from notifications import live
+
     video = make_video(admin, title="Revyen", published=False, days_old=120)  # uploaded long ago
     services.apply_changes(video, {"cast": [{"resident": member.pk, "name": "", "role": ""}]}, admin)
     client = client_for(admin)
@@ -1427,12 +1430,15 @@ def test_a_video_out_less_than_a_day_can_be_made_a_draft_again(
     edit = client.get(reverse("gahkflix:edit", args=[video.pk])).content.decode()
     assert "Gør til kladde igen" in edit and "Træk udgivelsen tilbage" in edit
 
+    changed: list[int] = []
+    monkeypatch.setattr(live, "inbox_changed", changed.extend)
     with django_capture_on_commit_callbacks(execute=True):
         assert client.post(reverse("gahkflix:unpublish", args=[video.pk])).status_code == 302
     video.refresh_from_db()
     assert video.is_draft and video.announced_at is None
     # What everybody was told is taken back, and it is a draft for 90 days from now, not from its upload.
     assert not notified(admin2, categories.GAHKFLIX_NEW) and not notified(member, categories.GAHKFLIX_CAST)
+    assert {admin2.pk, member.pk} <= set(changed)  # their open bells drop it at once
     assert video.draft_deleted_on == timezone.localdate() + timedelta(days=90)
     assert video not in services.expired_drafts() and video not in services.drafts_to_remind()
     assert video.events.filter(kind=VideoEvent.Kind.UNPUBLISHED, actor=admin).exists()

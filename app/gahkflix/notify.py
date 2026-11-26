@@ -9,8 +9,7 @@ from django.utils.formats import date_format
 
 from notifications import categories
 from notifications.categories import Importance
-from notifications.models import Notification
-from notifications.services import everyone, notify
+from notifications.services import everyone, notify, withdraw
 from residents.models import Resident
 
 from . import access
@@ -56,10 +55,7 @@ def credited(video: Video, residents: Iterable[int], by: Resident) -> None:
 def withdraw_announcement(video: Video) -> int:
     """It is not out after all — a draft again, or a premiere later: the notifications that said it was,
     and that told its cast, are taken back. A push already shown on a phone cannot be."""
-    deleted, _ = Notification.objects.filter(
-        url=_video_url(video), category__in=(categories.GAHKFLIX_NEW, categories.GAHKFLIX_CAST)
-    ).delete()
-    return deleted
+    return withdraw(url=_video_url(video), category_in=(categories.GAHKFLIX_NEW, categories.GAHKFLIX_CAST))
 
 
 def premieres_unpublished(drafts: list[Video], *, now: datetime) -> None:

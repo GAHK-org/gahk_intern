@@ -18,7 +18,9 @@ Now there is one `notifications` app that owns all of it:
 Some notifications are both in-app and push; some are **push only** (see Categories).
 
 Features decide **who** is told and **with what wording**; they call
-`notifications.services.notify(...)` or `notify_grouped(...)` and never deal with delivery.
+`notifications.services.notify(...)` or `notify_grouped(...)` and never deal with delivery. What is
+no longer true is taken back with `withdraw(url=…, category_in=…)`, which also refreshes the open
+bells it was in; a push already shown cannot be taken back. Features never delete rows themselves.
 `core.push` is the transport only (VAPID/pywebpush, device bookkeeping, daily delivery counters).
 
 ## Categories
