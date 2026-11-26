@@ -272,7 +272,12 @@ def _event_line(row: AuditEvent, names: "_RelatedNames") -> EventLine:
         ip=row.ip,
         unclaimed=row.unclaimed,
         details=[
-            (DETAIL_LABELS.get(str(key), str(key)), _plain(value))
+            (
+                DETAIL_LABELS.get(str(key), str(key)),
+                "vises ikke her"
+                if trail.is_private_detail(str(key)) and not names.show_private
+                else _plain(value),
+            )
             for key, value in (row.details or {}).items()
         ],
         subject=subject,
