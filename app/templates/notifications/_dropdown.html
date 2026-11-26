@@ -1,18 +1,19 @@
 {% comment %}
   The bell's panel, fetched by htmx into #notif-panel the first time the bell opens
-  (notifications/_bell.html). The ten most recent active in-app notifications, most important first.
+  (notifications/_bell.html), and again after each of its items' buttons. The first ten still to deal
+  with (Notification.objects.in_dropdown): unread ones, plus Kritisk ones until they are marked done.
+  Both the heading and "Se alle" lead to the notifications page; "Se alle" sticks to the bottom of the
+  scrolling panel, so the way there is always in view.
 {% endcomment %}
 <div class="notif-panel-head">
-  <strong>Notifikationer</strong>
+  <a href="{% url 'notifications:index' %}" class="notif-panel-title">Notifikationer</a>
   <a href="{% url 'notifications:preferences' %}" class="muted">Indstillinger</a>
 </div>
 <div class="notif-list">
   {% for row in rows %}
-    {% include "notifications/_item.html" %}
+    {% include "notifications/_item.html" with in_dropdown=True %}
   {% empty %}
-    <p class="muted notif-empty">Ingen notifikationer.</p>
+    <p class="muted notif-empty">Ingen nye notifikationer.</p>
   {% endfor %}
 </div>
-<div class="notif-panel-foot">
-  <a href="{% url 'notifications:index' %}">Se alle</a>
-</div>
+<a href="{% url 'notifications:index' %}" class="notif-panel-foot">Se alle</a>

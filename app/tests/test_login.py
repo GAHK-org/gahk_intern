@@ -86,7 +86,7 @@ def test_another_stale_form_explains_itself_instead_of_a_bare_403(
     c = Client(enforce_csrf_checks=True)
     c.force_login(make_resident(email="stale@gahk.dk"))
 
-    response = c.post(reverse("notifications:mark_all_seen"))
+    response = c.post(reverse("notifications:preferences"))
 
     assert response.status_code == 403
     assert "Siden var udløbet" in response.content.decode()

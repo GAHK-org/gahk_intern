@@ -1,0 +1,9 @@
+{% comment %}
+  One of a notification's buttons (notifications/_item.html), posting to `action`. See _item.html
+  for where `next` leads and what htmx swaps.
+{% endcomment %}
+<form method="post" action="{{ action }}" hx-post="{{ action }}"
+      {% if in_dropdown %}hx-target="#notif-panel"{% else %}hx-target="#notif-content" hx-select="#notif-content" hx-swap="outerHTML"{% endif %}>
+  {% csrf_token %}<input type="hidden" name="next" value="{% if in_dropdown %}{% url 'notifications:dropdown' %}{% else %}{{ request.get_full_path }}{% endif %}">
+  <button type="submit" class="notif-action" title="{{ label }}" aria-label="{{ label }}"><svg aria-hidden="true"><use href="#i-{{ icon }}"></use></svg></button>
+</form>

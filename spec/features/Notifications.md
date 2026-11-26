@@ -11,7 +11,7 @@ that was swiped away was gone.
 Now there is one `notifications` app that owns all of it:
 
 - **In-app notifications** — a row per recipient, listed in a dropdown in the top bar and on a
-  notifications page, with seen/unseen state.
+  notifications page, with seen/unseen and done state.
 - **Push notifications** — one subscription per device, used for every category.
 - **Personal settings** — per category: in-app, push and vibration.
 
@@ -83,6 +83,7 @@ it. "Someone reacted to your message" is the typical Lav.
 
 - In the dropdown and on the page, the unseen come first, then the most important. Høj and Kritisk
   get a coloured left border and a level label, Kritisk also a tinted background.
+- A read Kritisk notification stays in the dropdown until it is marked done.
 - **Kritisk overrides every preference** — in-app (where the category has an in-app row), push and
   vibration — so a resident gets it even with the category turned off. The push uses `requireInteraction`, so it stays on screen until
   dismissed.
@@ -137,24 +138,34 @@ they would get a 403 on opening. Acting on your own content never notifies you.
 ### The dropdown
 
 A button with an unseen-count badge in the top bar opens a dropdown (loaded with htmx on click) with
-the **10** first active in-app notifications — unseen first, then most important, then most
-recent — and a link to the page.
+the **10** first active in-app notifications still to deal with — unseen first, then most important,
+then most recent. Its heading and a "Se alle" link both lead to the page; "Se alle" stays at the
+bottom of the panel while the list scrolls.
+
+- A read notification leaves the dropdown, unless it is Kritisk.
+- A done notification leaves the dropdown, Kritisk too.
 
 ### The notifications page — `/notifikationer/`
 
-Lists all active in-app notifications, in two views:
+Lists all active in-app notifications, in two tabs:
+
+- **Aktuelle** (default) — everything not marked done, read or not;
+- **Færdige** (`?tab=done`) — what was marked done, most recently done first.
+
+Either tab has two views:
 
 - `?visning=kronologisk` (default) — one list;
 - `?visning=kategori` — one section per group, in the group order above. A row whose category has
   since been retired is listed under Generelt rather than erroring.
 
-Both are ordered **unseen first, then importance, then most recently updated**. `updated_at`, not
+Aktuelle is ordered **unseen first, then importance, then most recently updated**. `updated_at`, not
 `created_at`: a grouped notification that gains another like is news again, so it moves back up and
 becomes unseen.
 
-### Seen / unseen
+### Seen / unseen, done
 
-A notification is marked seen when it is clicked — in the app or as a push.
+A notification is marked seen (read) when it is clicked — in the app or as a push — or with its
+read button.
 
 - Unseen items have a dot and a highlighted background.
 - Clicking an item goes through `/notifikationer/<pk>/`, which marks it seen and redirects
@@ -167,7 +178,14 @@ A notification is marked seen when it is clicked — in the app or as a push.
   installed while the intranet lived at gahk.dk/intern/ still hold subscriptions.
 - Rows stored before that move pointed at `/intern/…`; a migration dropped the prefix, which
   intern.gahk.dk does not serve (an `/intern/…` path there is a 404).
-- "Markér alle som set" on the page marks everything seen.
+- Each notification, in the dropdown and on the page, has its own small buttons: **Markér som
+  læst** (only while unseen) and **Markér som færdig**. On the Færdige tab it has **Flyt tilbage
+  til aktuelle** instead. There is no "mark all".
+- Done implies seen: marking an unread notification done marks it read too. Moving it back
+  leaves it read, so only a Kritisk one returns to the dropdown.
+- A grouped notification that gains another actor is news again: unseen, and out of Færdige.
+- The buttons work in place (htmx): the dropdown or the page's list is re-read, and the reader
+  keeps their place.
 - Redirect targets must be paths on this site (`services.is_site_path`, Django's
   `url_has_allowed_host_and_scheme`), so a stored or broadcast link can never become an open
   redirect.
@@ -253,16 +271,16 @@ Administrators only.
 
 ## Routes
 
-`/notifikationer/` (page), `seneste` (dropdown), `set` (mark all seen, POST),
-`indstillinger` (settings), `enhed` (device subscription, POST), `<pk>/` (open an item),
-`aabn/<uuid>/` (open a push). Namespaced `notifications:`. Admin: `siteadmin:notifications` and
+`/notifikationer/` (page), `seneste` (dropdown), `indstillinger` (settings), `enhed` (device
+subscription, POST), `<pk>/` (open an item), `<pk>/seen`, `<pk>/done` and `<pk>/not-done` (an
+item's buttons, POST), `aabn/<uuid>/` (open a push). Namespaced `notifications:`. Admin: `siteadmin:notifications` and
 `siteadmin:notification_device_cancel`. The sidebar has a **Notifikationer** entry.
 
 ## Data model
 
 - `Notification` — recipient, category, importance, title, body, url, `batch` (uuid shared by one
   fan-out), `group_key`, `actors` (JSON, for grouped titles), `in_app`, `pushed`, `created_at`,
-  `updated_at`, `expires_at`, `seen_at`. A row is written for a recipient who gets it in-app or by
+  `updated_at`, `expires_at`, `seen_at`, `done_at`. A row is written for a recipient who gets it in-app or by
   push; one who would get neither gets no row.
 - `NotificationPreference` — resident × category: `in_app`, `push`, `vibrate`. Exists only when
   different from all-on.
@@ -295,3 +313,6 @@ is silent — sent from a single background thread, however many recipients ther
 - **Reactions notify on create only.** Changing your emoji, or removing it, is not news to anyone.
 - **Silent instead of "no vibration".** The web platform has no vibration-only switch.
 - **System and Generelt are always in-app.** See Categories.
+- **Read leaves the dropdown, done leaves it for good.** The dropdown is for what is still to deal
+  with. Kritisk stays after reading, so it cannot slip away by a misclick; done is the explicit
+  "dealt with" that removes even that, and it keeps the notification findable on its own tab.

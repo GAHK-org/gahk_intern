@@ -17,6 +17,7 @@ class NotificationAdmin(admin.ModelAdmin):
         "pushed",
         "created_at",
         "seen_at",
+        "done_at",
     )
     list_filter = ("category", "importance", "in_app", "pushed")
     search_fields = ("title", "recipient__first_name", "recipient__last_name", "recipient__email")

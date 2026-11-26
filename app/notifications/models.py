@@ -38,6 +38,19 @@ class NotificationQuerySet(models.QuerySet["Notification"]):
     def unseen(self) -> "NotificationQuerySet":
         return self.filter(seen_at__isnull=True)
 
+    def not_done(self) -> "NotificationQuerySet":
+        return self.filter(done_at__isnull=True)
+
+    def done(self) -> "NotificationQuerySet":
+        return self.filter(done_at__isnull=False)
+
+    def in_dropdown(self) -> "NotificationQuerySet":
+        """What the bell's panel lists: the visible rows not yet dealt with. Read ones drop out, except
+        Kritisk, which stays until it is marked done; done ones drop out whatever their level."""
+        return (
+            self.visible().not_done().filter(Q(seen_at__isnull=True) | Q(importance__gte=Importance.KRITISK))
+        )
+
     def ranked(self) -> "NotificationQuerySet":
         """Unseen first, then most important, then newest. `updated_at`, not `created_at`: a grouped
         notification that just gained a fourth like is news again."""
@@ -76,6 +89,9 @@ class Notification(models.Model):
     updated_at = models.DateTimeField(default=current_datetime)
     expires_at = models.DateTimeField()
     seen_at = models.DateTimeField(null=True, blank=True)
+    # Dealt with: gone from the dropdown (Kritisk too) and moved to the page's "Færdige" tab. Done
+    # implies seen — services.mark_done stamps both.
+    done_at = models.DateTimeField(null=True, blank=True)
 
     objects = NotificationQuerySet.as_manager()
 
@@ -105,6 +121,10 @@ class Notification(models.Model):
     @property
     def is_seen(self) -> bool:
         return self.seen_at is not None
+
+    @property
+    def is_done(self) -> bool:
+        return self.done_at is not None
 
     @property
     def importance_level(self) -> Importance:

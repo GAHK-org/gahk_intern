@@ -2395,8 +2395,13 @@
   .notif-panel-head { display:flex; align-items:center; justify-content:space-between; gap:8px;
     padding:10px 14px; border-bottom:1px solid var(--border); font-weight:700; font-size:14px; }
   .notif-panel-head a { font-size:13px; font-weight:600; color:var(--muted); }
-  .notif-panel-foot { display:block; text-align:center; padding:10px; font-size:13px; font-weight:600;
-    border-top:1px solid var(--border); text-decoration:none; }
+  .notif-panel-head a.notif-panel-title { font-size:14px; font-weight:700; color:var(--ink); text-decoration:none; }
+  .notif-panel-head a.notif-panel-title:hover { text-decoration:underline; }
+  /* Sticky at the bottom of the scrolling panel, so the way to the page is always in view. Opaque, or
+     the rows scrolling under it would show through. */
+  .notif-panel-foot { position:sticky; bottom:0; z-index:1; display:block; text-align:center; padding:10px;
+    font-size:13px; font-weight:600; background:var(--surface); border-top:1px solid var(--border); text-decoration:none; }
+  .notif-panel-foot:hover { background:var(--surface-2); }
   .notif-empty { padding:14px; font-size:14px; }
 
   /* The avatar's account menu, beside the bell and styled like its panel. */
@@ -2413,11 +2418,22 @@
   .user-menu-panel a:hover, .user-menu-panel button:hover { background:var(--surface-2); }
   .user-menu-panel form { margin:0; border-top:1px solid var(--border); margin-top:6px; padding-top:6px; }
 
-  .notif-item { display:flex; align-items:flex-start; gap:10px; padding:11px 14px; text-decoration:none;
-    color:var(--ink); border-bottom:1px solid var(--border); border-left:3px solid transparent; }
+  /* A row is the link (icon, text, unseen dot) and, beside it, its own small buttons
+     (notifications/_item.html) — two siblings, since a button cannot sit inside a link. */
+  .notif-item { display:flex; align-items:flex-start; gap:4px; padding:0 8px 0 0; color:var(--ink);
+    border-bottom:1px solid var(--border); border-left:3px solid transparent; }
   .notif-item:last-child { border-bottom:none; }
   .notif-item:hover { background:var(--surface-2); color:var(--ink); }
-  .notif-item > svg { width:18px; height:18px; flex:none; margin-top:2px; color:var(--muted); stroke:currentColor; fill:none; }
+  .notif-link { display:flex; flex:1; min-width:0; align-items:flex-start; gap:10px; padding:11px 6px 11px 14px;
+    text-decoration:none; color:inherit; }
+  .notif-link:hover { color:inherit; }
+  .notif-link > svg { width:18px; height:18px; flex:none; margin-top:2px; color:var(--muted); stroke:currentColor; fill:none; }
+  .notif-actions { display:flex; flex:none; gap:2px; padding-top:7px; }
+  .notif-actions form { margin:0; }
+  .notif-action { display:grid; place-items:center; width:28px; height:28px; padding:0; border:0; border-radius:8px;
+    background:transparent; color:var(--muted); cursor:pointer; }
+  .notif-action:hover, .notif-action:focus-visible { background:var(--surface); color:var(--ink); }
+  .notif-action svg { width:16px; height:16px; stroke:currentColor; fill:none; stroke-width:2; stroke-linecap:round; stroke-linejoin:round; }
   .notif-text { flex:1; min-width:0; font-size:14px; }
   .notif-title { display:block; font-weight:500; }
   .notif-body { display:block; color:var(--muted); font-size:13px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
@@ -2433,6 +2449,11 @@
     color:var(--brass-ink); margin-right:6px; }
   .notif-imp-4 .notif-level { color:var(--neg); }
 
+  .notif-tabs { display:flex; gap:4px; margin:0 0 14px; border-bottom:1px solid var(--border); }
+  .notif-tab { padding:8px 14px; margin-bottom:-1px; border-bottom:2px solid transparent; font-weight:600;
+    font-size:14px; color:var(--muted); text-decoration:none; }
+  .notif-tab:hover { color:var(--ink); }
+  .notif-tab[aria-current="page"] { color:var(--green-700); border-bottom-color:var(--green); }
   .notif-views { display:flex; gap:8px; margin:0 0 14px; }
   .notif-views .chip { text-decoration:none; }
   .notif-section { margin-bottom:16px; }
