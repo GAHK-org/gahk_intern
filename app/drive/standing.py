@@ -11,9 +11,9 @@ from dataclasses import dataclass
 from datetime import date
 
 from django.core.exceptions import PermissionDenied, ValidationError
-from django.db import transaction
 from django.utils import timezone
 
+from audit import trail
 from core.models import Workgroup
 from residents.models import Resident
 
@@ -44,8 +44,34 @@ def defined(space_root: Folder) -> list[StandingFolder]:
     return list(rows.prefetch_related("writer_groups").order_by("stopped_at", "name"))
 
 
-@transaction.atomic
 def define(
+    viewer: Viewer,
+    space_root: Folder,
+    *,
+    name: str,
+    item_label: str,
+    limited: bool,
+    writer_groups: list[int],
+    actor: Resident,
+) -> StandingFolder:
+    with trail.event("drive.standing.defined", actor=actor, involve=[(space_root, "space")]) as event:
+        item = _define(
+            viewer,
+            space_root,
+            name=name,
+            item_label=item_label,
+            limited=limited,
+            writer_groups=writer_groups,
+            actor=actor,
+        )
+        event.involve(item, "subject")
+    # Folders for a next period or year that already exists, made two weeks ahead: the system's
+    # doing, its own event.
+    ensure_structure(viewer.today)
+    return item
+
+
+def _define(
     viewer: Viewer,
     space_root: Folder,
     *,
@@ -81,18 +107,16 @@ def define(
     )
     if item.limited:
         item.writer_groups.set(Workgroup.objects.filter(pk__in=writer_groups))
-    # Folders for a next period or year that already exists, made two weeks ahead.
-    ensure_structure(viewer.today)
     return item
 
 
-@transaction.atomic
 def stop(viewer: Viewer, item: StandingFolder, space_root: Folder, actor: Resident) -> None:
     """No more copies from now on; those made stay where they are."""
     if not can_define(viewer, space_root) or item.workgroup_id != space_root.workgroup_id:
         raise PermissionDenied
-    item.stopped_at = timezone.now()
-    item.save(update_fields=["stopped_at"])
+    with trail.event("drive.standing.stopped", subject=item, actor=actor):
+        item.stopped_at = timezone.now()
+        item.save(update_fields=["stopped_at"])
 
 
 def copies(item: StandingFolder) -> list[Folder]:
