@@ -10,9 +10,9 @@ from django.urls import reverse
 from django.utils import timezone
 
 from core.models import Workgroup
-from drive import services, sharing
+from drive import history, services, sharing
 from drive.access import Level, Viewer
-from drive.models import Event, File, FileVersion, Folder, Share
+from drive.models import File, FileVersion, Folder, Share
 from drive.structure import ensure_structure
 from notifications.models import Notification
 from residents.models import Resident, Role
@@ -152,9 +152,9 @@ def test_stopping_a_share_takes_the_access_away(people: dict[str, Resident], gro
     row = _share(people["owner"], file=file, resident_id=people["friend"].pk)
     sharing.stop(_viewer(people["owner"]), row, people["owner"])
     assert _viewer(people["friend"]).file_level(file) == Level.NONE
-    lines = list(file.events.values_list("action", flat=True))
-    assert Event.Action.SHARED in lines
-    assert Event.Action.UNSHARED in lines
+    lines = [line.action for line in history.for_file(file)]
+    assert history.Action.SHARED in lines
+    assert history.Action.UNSHARED in lines
 
 
 # --- With a group ----------------------------------------------------------------------------------

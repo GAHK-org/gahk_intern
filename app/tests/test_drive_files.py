@@ -9,10 +9,11 @@ from django.test import Client
 from django.urls import reverse
 from django.utils import timezone
 
+from audit import presentation
 from audit.models import AuditChange, AuditEvent
 from core.models import Workgroup
-from drive import operations, services
-from drive.models import Event, File, FileVersion, Folder, Space
+from drive import history, operations, services
+from drive.models import File, FileVersion, Folder, Space
 from notifications.models import Notification
 from residents.models import Resident
 
@@ -80,7 +81,10 @@ def test_renaming_a_file_keeps_it_and_tells_its_creator(
     assert response.status_code == 302
     file.refresh_from_db()
     assert file.name == "Budget 2027.xlsx"
-    assert file.events.filter(action=Event.Action.RENAMED, details__old="Budget.xlsx").exists()
+    assert any(
+        line.action == history.Action.RENAMED and line.details["old"] == "Budget.xlsx"
+        for line in history.for_file(file)
+    )
     assert _notes(creator) == [f"{other.full_name} omdøbte din fil Budget.xlsx til Budget 2027.xlsx"]
 
 
@@ -136,7 +140,7 @@ def test_moving_a_file_takes_it_there_and_tells_its_creator_once(
     )
     assert response["Location"] == reverse("drive:folder", args=[target.uuid])
     assert File.objects.filter(folder=target).count() == 2
-    assert Event.objects.filter(action=Event.Action.MOVED).count() == 2
+    assert sum(line.action == history.Action.MOVED for line in history.all_lines()) == 2
     assert _notes(creator) == [f"{other.full_name} flyttede 2 af dine filer"]
 
 
@@ -230,7 +234,7 @@ def test_a_copy_is_a_new_file_of_the_copier_sharing_the_bytes(
     assert (copy.name, copy.created_by_id, copy.versions.count()) == ("Skabelon (2).docx", copier.pk, 1)
     assert copy.latest_version().key == original.latest_version().key
     assert _content(client.get(reverse("drive:download", args=[copy.uuid]))) == b"template"
-    assert list(copy.events.values_list("action", flat=True)) == [Event.Action.COPIED]
+    assert [line.action for line in history.for_file(copy)] == [history.Action.COPIED]
 
 
 def test_copying_a_folder_copies_what_is_in_it(members: tuple[Resident, Resident], group: Workgroup) -> None:
@@ -378,7 +382,7 @@ def test_the_bin_is_emptied_after_30_days_and_shared_bytes_stay(
         ("a.txt", "deleted"),
         ("b.txt", "deleted"),
     }
-    assert Event.objects.filter(action=Event.Action.DELETED, file=None, name="a.txt").exists()
+    assert any(line.action == history.Action.DELETED and line.name == "a.txt" for line in history.all_lines())
 
 
 # --- Versions --------------------------------------------------------------------------------------
@@ -445,3 +449,13 @@ def test_a_folder_shows_its_history(members: tuple[Resident, Resident], group: W
     page = client.get(reverse("drive:folder_history", args=[winter.uuid])).content.decode()
     assert "Oprettede a.txt" in page
     assert "Omdøbte a.txt til b.txt" in page
+    assert members[0].full_name in page  # who, from the audit event
+
+    # The lines are the trail's: the rename is one audit event, whose details hold the line. The
+    # audit page shows those details only as present, and names the file by its tag.
+    renamed = AuditEvent.objects.get(action="drive.file.renamed")
+    assert [line["name"] for line in renamed.details["drive"]] == ["b.txt"]
+    shown, _ = presentation.page(presentation.Filters(area="drive"))
+    line = next(line for line in shown if line.action == "drive.file.renamed")
+    assert dict(line.details)["drive"] == "vises ikke her"
+    assert line.subject is not None and line.subject.name.startswith("Fil ")

@@ -357,8 +357,8 @@ def _check_drive_files(seeded: _DriveSeed) -> None:
 
     from django.utils import timezone
 
-    from drive import services
-    from drive.models import BIN_DAYS, Event, File
+    from drive import history, services
+    from drive.models import BIN_DAYS, File
     from notifications.models import Notification
 
     regnskab = seeded.by_email["regnskab@gahk.dk"]
@@ -380,7 +380,7 @@ def _check_drive_files(seeded: _DriveSeed) -> None:
         pass
     assert File.objects.get(name="Kontoplan.xlsx").versions.filter(restored_from=1).exists()
     # History: every kind of line, and ak@ told that somebody renamed their file.
-    lines = set(Event.objects.values_list("action", flat=True))
+    lines = {line.action for line in history.all_lines()}
     assert lines >= {
         "created",
         "version",
@@ -397,10 +397,10 @@ def _check_drive_files(seeded: _DriveSeed) -> None:
 
 def _check_drive_locks(seeded: _DriveSeed) -> None:
     """Locks and the requests page: pending, approved and rejected unlocks and purges."""
-    from django.db.models import Q
     from django.utils import timezone
 
-    from drive.models import ApprovalRequest, Event, File, Folder
+    from drive import history
+    from drive.models import ApprovalRequest, File, Folder
 
     requests = ApprovalRequest.objects.all()
     for kind in ApprovalRequest.Kind.values:
@@ -414,7 +414,7 @@ def _check_drive_locks(seeded: _DriveSeed) -> None:
     assert File.objects.filter(locked_at__isnull=False, locked_by__isnull=False).exists()
     assert Folder.objects.filter(kind=Folder.Kind.FOLDER, locked_at__isnull=False).exists()
     assert File.objects.filter(unlocked_until__gt=timezone.now()).exists()
-    lines = set(Event.objects.values_list("action", flat=True))
+    lines = {line.action for line in history.all_lines()}
     assert lines >= {
         "locked",
         "unlock_requested",
@@ -424,14 +424,15 @@ def _check_drive_locks(seeded: _DriveSeed) -> None:
         "purged",
     }
     # The space's activity page has lines with their place.
-    assert not Event.objects.filter(Q(space="") | Q(space__isnull=True)).exists()
+    assert all(line.space for line in history.all_lines())
 
 
 def _check_drive_shared(seeded: _DriveSeed) -> None:
     """Delte mapper: one per moderator login, a member's view and an outsider's, one near its expiry,
     one archived, and every kind of member change in the activity."""
+    from drive import history
     from drive.access import Level
-    from drive.models import ApprovalRequest, Event, Folder, SharedFolder
+    from drive.models import ApprovalRequest, Folder, SharedFolder
 
     tops = {f.name: f for f in Folder.objects.filter(kind=Folder.Kind.SHARED)}
     theme, trip, harvest = tops["Temafest"], tops["Studietur"], tops["Høstfest"]
@@ -447,17 +448,17 @@ def _check_drive_shared(seeded: _DriveSeed) -> None:
     # Warned about its expiry, and a purge waiting for beboer@ as moderator.
     assert SharedFolder.objects.filter(warned_for__isnull=False, archived_at__isnull=True).exists()
     assert ApprovalRequest.objects.filter(shared=theme.shared, state=ApprovalRequest.State.PENDING).exists()
-    lines = set(Event.objects.filter(shared=theme.shared).values_list("action", flat=True))
+    lines = {line.action for line in history.all_lines() if line.shared == theme.shared_id}
     assert lines >= {"member_added", "member_removed", "member_left", "role_changed", "expiry_changed"}
-    assert Event.objects.filter(action="archived").exists()
+    assert any(line.action == "archived" for line in history.all_lines())
 
 
 def _check_drive_sharing(seeded: _DriveSeed) -> None:
     """`Delt med mig` for the logins, `Delt med <gruppe>` for beboer@'s group, and both kinds of
     edit share used."""
-    from drive import sharing
+    from drive import history, sharing
     from drive.access import Level
-    from drive.models import Event, File, Share
+    from drive.models import File, Share
 
     for email in ("ak@gahk.dk", "oel@gahk.dk", "regnskab@gahk.dk"):
         assert sharing.shared_with_me(seeded.viewer(email)), email
@@ -474,7 +475,7 @@ def _check_drive_sharing(seeded: _DriveSeed) -> None:
     assert File.objects.filter(
         name="Kvittering Ølkælderen.jpg", created_by=seeded.by_email["oel@gahk.dk"]
     ).exists()
-    assert Event.objects.filter(action="unshared").exists()
+    assert any(line.action == "unshared" for line in history.all_lines())
 
 
 def _check_drive_standing(seeded: _DriveSeed) -> None:

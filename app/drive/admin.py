@@ -2,7 +2,6 @@ from django.contrib import admin
 
 from .models import (
     ApprovalRequest,
-    Event,
     File,
     FileVersion,
     Folder,
@@ -32,14 +31,6 @@ class FileAdmin(admin.ModelAdmin):
     search_fields = ("name",)
     raw_id_fields = ("folder", "created_by", "changed_by", "deleted_by")
     inlines = [FileVersionInline]
-
-
-@admin.register(Event)
-class EventAdmin(admin.ModelAdmin):
-    list_display = ("at", "action", "name", "actor")
-    list_filter = ("action",)
-    search_fields = ("name",)
-    raw_id_fields = ("actor", "file", "folder")
 
 
 @admin.register(ApprovalRequest)

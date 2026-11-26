@@ -1049,21 +1049,6 @@ erDiagram
         datetime at
     }
 
-    drive_Event {
-        int id PK
-        datetime at
-        int actor_id FK
-        string action
-        int file_id FK
-        int folder_id FK
-        string name
-        json details
-        string space
-        int workgroup_id FK
-        date period_start
-        int shared_id FK
-    }
-
     drive_ApprovalRequest {
         int id PK
         string uuid
@@ -1320,11 +1305,6 @@ erDiagram
     drive_FileVersion }o--o{ residents_Resident : "editors"
     drive_LastDownload }o--|| drive_File : "file"
     drive_LastDownload }o--|| residents_Resident : "resident"
-    drive_Event }o--|o residents_Resident : "actor"
-    drive_Event }o--|o drive_File : "file"
-    drive_Event }o--|o drive_Folder : "folder"
-    drive_Event }o--|o core_Workgroup : "workgroup"
-    drive_Event }o--|o drive_SharedFolder : "shared"
     drive_ApprovalRequest }o--|o drive_File : "file"
     drive_ApprovalRequest }o--|o drive_Folder : "folder"
     drive_ApprovalRequest }o--|o drive_SharedFolder : "shared"
@@ -1802,21 +1782,6 @@ erDiagram
         datetime at
     }
 
-    drive_Event {
-        int id PK
-        datetime at
-        int actor_id FK
-        string action
-        int file_id FK
-        int folder_id FK
-        string name
-        json details
-        string space
-        int workgroup_id FK
-        date period_start
-        int shared_id FK
-    }
-
     drive_ApprovalRequest {
         int id PK
         string uuid
@@ -1928,11 +1893,6 @@ erDiagram
     drive_FileVersion }o--o{ residents_Resident : "editors"
     drive_LastDownload }o--|| drive_File : "file"
     drive_LastDownload }o--|| residents_Resident : "resident"
-    drive_Event }o--|o residents_Resident : "actor"
-    drive_Event }o--|o drive_File : "file"
-    drive_Event }o--|o drive_Folder : "folder"
-    drive_Event }o--|o core_Workgroup : "workgroup"
-    drive_Event }o--|o drive_SharedFolder : "shared"
     drive_ApprovalRequest }o--|o drive_File : "file"
     drive_ApprovalRequest }o--|o drive_Folder : "folder"
     drive_ApprovalRequest }o--|o drive_SharedFolder : "shared"

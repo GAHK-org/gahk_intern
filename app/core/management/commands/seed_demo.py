@@ -228,6 +228,8 @@ class Command(BaseCommand):
             # Loading demo data is nobody's action: not one audit event per row.
             with trail.unaudited():
                 residents = self._seed_data(opts)
+            # Audited, unlike the rest: Drive's history is its part of the trail (drive.history).
+            seed_drive(residents, self.now, self.rng)
             # Then, on purpose and audited, the weeks of history before today, for the audit page.
             seed_audit_trail(residents, self.now, self.rng)
 
@@ -255,7 +257,6 @@ class Command(BaseCommand):
         seed_events(residents, self.now, self.rng)
         seed_photo_album(residents, self.now, self.rng)
         seed_gahkflix(residents, self.now, self.rng)
-        seed_drive(residents, self.now, self.rng)
         # After both: these posts embed an album and a film seeded just above.
         seed_opslagstavle_embeds(residents, self.now)
         seed_den_hurtige(residents, self.now, self.rng)

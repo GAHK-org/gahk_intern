@@ -10,7 +10,6 @@ from audit import trail
 
 from .models import (
     ApprovalRequest,
-    Event,
     File,
     FileVersion,
     Folder,
@@ -212,10 +211,8 @@ trail.exempt(
     "a ZIP of what a resident may read, built for them to download and removed after a day; downloading "
     "changes nothing",
 )
-trail.exempt(
-    Event,
-    "Drive's own history lines, written beside the trail's events for the history and activity pages",
-)
+# Drive's history lines, kept in the events' details for Drive's own pages (drive/history.py).
+trail.private_details({"drive"})
 
 trail.actions(
     {
@@ -255,6 +252,7 @@ trail.actions(
         "drive.standing.defined": "Oprettede stående mappe",
         "drive.standing.stopped": "Stoppede stående mappe",
         "drive.file.edited": "Gemte en redigering",
+        "drive.demo.seeded": "Lagde demodata i Drive",
         "drive.file.edited_beside": "Gemte en redigering ved siden af (filen var låst)",
     }
 )

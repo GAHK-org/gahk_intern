@@ -54,7 +54,7 @@ from residents.models import Resident
 
 from . import history, services
 from .access import Viewer
-from .models import Event, File, FileVersion, Folder
+from .models import File, FileVersion, Folder
 
 logger = logging.getLogger(__name__)
 
@@ -386,7 +386,7 @@ def _new_file(
             file=file, number=1, key=key, size=size, content_type=content_type, created_by=actor
         )
         version.editors.set(editors)
-        history.record(Event.Action.CREATED, actor=actor, file=file, name=file.name)
+        history.record(history.Action.CREATED, actor=actor, file=file, name=file.name)
     return file
 
 
