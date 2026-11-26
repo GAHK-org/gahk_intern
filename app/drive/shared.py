@@ -14,12 +14,12 @@ moves it to `Delte mapper/<year it was created>/`, read-only and readable by eve
 from datetime import date, timedelta
 
 from django.core.exceptions import PermissionDenied, ValidationError
-from django.db import transaction
 from django.db.models import F, Value
 from django.db.models.functions import Concat, Substr
 from django.urls import reverse
 from django.utils import timezone
 
+from audit import trail
 from core.clock import current_date
 from notifications import categories
 from notifications import services as notifications
@@ -92,8 +92,24 @@ def _tell_invited(shared: SharedFolder, folder: Folder, residents: list[int], ac
     )
 
 
-@transaction.atomic
 def create(
+    viewer: Viewer,
+    *,
+    name: str,
+    members: list[int],
+    expires_on: date | None,
+    on_expiry: str,
+    actor: Resident,
+) -> Folder:
+    with trail.event("drive.shared.created", actor=actor) as event:
+        folder = _create(
+            viewer, name=name, members=members, expires_on=expires_on, on_expiry=on_expiry, actor=actor
+        )
+        event.involve(folder.shared, "subject")
+        return folder
+
+
+def _create(
     viewer: Viewer,
     *,
     name: str,
@@ -124,9 +140,8 @@ def create(
     )
     folder.save()
     SharedMember.objects.create(shared=shared, resident=actor, role=Role.MODERATOR)
-    SharedMember.objects.bulk_create(
-        SharedMember(shared=shared, resident_id=pk, role=Role.EDIT) for pk in invited
-    )
+    for pk in invited:  # one by one, so the audit trail sees each (a bulk_create sends no signals)
+        SharedMember.objects.create(shared=shared, resident_id=pk, role=Role.EDIT)
     history.record(Event.Action.CREATED, actor=actor, folder=folder, name=folder.name)
     for resident in Resident.objects.filter(pk__in=invited):
         history.record(
@@ -159,8 +174,12 @@ def _check_still_whole(
         raise ValidationError("Der skal altid være en moderator. Gør en anden til moderator først.")
 
 
-@transaction.atomic
 def add_member(viewer: Viewer, shared: SharedFolder, resident_id: int, role: str, actor: Resident) -> None:
+    with trail.event("drive.shared.member_added", subject=shared, actor=actor):
+        _add_member(viewer, shared, resident_id, role, actor)
+
+
+def _add_member(viewer: Viewer, shared: SharedFolder, resident_id: int, role: str, actor: Resident) -> None:
     folder = _moderated(viewer, shared)
     if role not in Role.values:
         raise ValidationError("Ukendt rolle.")
@@ -183,8 +202,12 @@ def add_member(viewer: Viewer, shared: SharedFolder, resident_id: int, role: str
     _tell_invited(shared, folder, [resident_id], actor)
 
 
-@transaction.atomic
 def set_role(viewer: Viewer, shared: SharedFolder, resident_id: int, role: str, actor: Resident) -> None:
+    with trail.event("drive.shared.role_changed", subject=shared, actor=actor, only_if_changed=True):
+        _set_role(viewer, shared, resident_id, role, actor)
+
+
+def _set_role(viewer: Viewer, shared: SharedFolder, resident_id: int, role: str, actor: Resident) -> None:
     folder = _moderated(viewer, shared)
     if role not in Role.values:
         raise ValidationError("Ukendt rolle.")
@@ -209,9 +232,14 @@ def set_role(viewer: Viewer, shared: SharedFolder, resident_id: int, role: str, 
     )
 
 
-@transaction.atomic
 def remove_member(viewer: Viewer, shared: SharedFolder, resident_id: int, actor: Resident) -> None:
     """A moderator removes somebody, or a member leaves (resident_id is their own)."""
+    action = "drive.shared.left" if resident_id == actor.pk else "drive.shared.member_removed"
+    with trail.event(action, subject=shared, actor=actor):
+        _remove_member(viewer, shared, resident_id, actor)
+
+
+def _remove_member(viewer: Viewer, shared: SharedFolder, resident_id: int, actor: Resident) -> None:
     leaving = resident_id == actor.pk
     if leaving:
         if shared.pk not in viewer.shared_roles:
@@ -238,8 +266,14 @@ def remove_member(viewer: Viewer, shared: SharedFolder, resident_id: int, actor:
         )
 
 
-@transaction.atomic
 def set_expiry(
+    viewer: Viewer, shared: SharedFolder, expires_on: date | None, on_expiry: str, actor: Resident
+) -> None:
+    with trail.event("drive.shared.expiry_changed", subject=shared, actor=actor, only_if_changed=True):
+        _set_expiry(viewer, shared, expires_on, on_expiry, actor)
+
+
+def _set_expiry(
     viewer: Viewer, shared: SharedFolder, expires_on: date | None, on_expiry: str, actor: Resident
 ) -> None:
     folder = _moderated(viewer, shared)
@@ -265,8 +299,12 @@ def set_expiry(
     )
 
 
-@transaction.atomic
 def rename(viewer: Viewer, shared: SharedFolder, name: str, actor: Resident) -> None:
+    with trail.event("drive.shared.renamed", subject=shared, actor=actor, only_if_changed=True):
+        _rename(viewer, shared, name, actor)
+
+
+def _rename(viewer: Viewer, shared: SharedFolder, name: str, actor: Resident) -> None:
     folder = _moderated(viewer, shared)
     name = services.check_name(folder, name)
     if name == folder.name:
@@ -277,16 +315,24 @@ def rename(viewer: Viewer, shared: SharedFolder, name: str, actor: Resident) -> 
     history.record(Event.Action.RENAMED, actor=actor, folder=folder, name=name, old=old)
 
 
-@transaction.atomic
 def delete(viewer: Viewer, shared: SharedFolder, actor: Resident) -> None:
     """Into the bin, like any folder, and only when empty. The bin then removes it for good."""
+    with trail.event("drive.shared.deleted", subject=shared, actor=actor):
+        _delete(viewer, shared, actor)
+
+
+def _delete(viewer: Viewer, shared: SharedFolder, actor: Resident) -> None:
     folder = _moderated(viewer, shared)
     if (
         File.objects.filter(folder__shared=shared, deleted_at__isnull=True).exists()
         or folder.children.filter(deleted_at__isnull=True).exists()
     ):
         raise ValidationError("En delt mappe kan kun slettes, når den er tom.")
-    Folder.objects.filter(pk=folder.pk).update(deleted_at=timezone.now(), deleted_by=actor)
+    now = timezone.now()
+    Folder.objects.filter(pk=folder.pk).update(deleted_at=now, deleted_by=actor)
+    if (event := trail.current()) is not None:  # a queryset update, unseen by the trail
+        event.change(folder, "deleted_at", None, now)
+        event.change(folder, "deleted_by", None, actor.pk)
     history.record(Event.Action.DELETED, actor=actor, folder=folder, name=folder.name)
 
 
@@ -328,6 +374,9 @@ def _archive(shared: SharedFolder) -> None:
         name = services.free_name(shelf, name, keep_suffix=False)
     old_path = top.path
     Folder.objects.filter(pk=top.pk).update(parent=shelf, name=name, name_key=name_key(name))
+    if (event := trail.current()) is not None:  # a queryset update, unseen by the trail
+        event.change(top, "parent", top.parent_id, shelf.pk)
+        event.change(top, "name", top.name, name)
     Folder.objects.filter(path__startswith=old_path).update(
         path=Concat(Value(f"{shelf.path}{top.pk}/"), Substr("path", len(old_path) + 1))
     )
@@ -344,8 +393,10 @@ def run_expiry(today: date | None = None) -> tuple[int, int, int]:
     warned = deleted = archived = 0
     live = SharedFolder.objects.filter(archived_at__isnull=True)
     for shared in live.filter(expires_on__lt=today):
-        with transaction.atomic():
-            if shared.on_expiry == SharedFolder.OnExpiry.DELETE:
+        deleting = shared.on_expiry == SharedFolder.OnExpiry.DELETE
+        action = "drive.shared.purged" if deleting else "drive.shared.archived"
+        with trail.event(action, subject=shared, actor=None):
+            if deleting:
                 _purge(shared)
                 deleted += 1
             else:
