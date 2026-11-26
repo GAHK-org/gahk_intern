@@ -2297,6 +2297,66 @@
    .album-viewer dd a, .album-viewer-menu dd a { color:#f3d58f; }
    .album-upload-notes { margin:8px 0 0; padding-left:20px; color:var(--neg); font-size:13px; }.album-upload-notes:empty { display:none; }
    .album-form-error { color:var(--neg); font-size:13px; }
+   .album-form-intro { max-width:60ch; color:var(--muted); }
+   /* Albums awaiting approval (photo_album.approvals) */
+   .album-card-pending { color:var(--brass-ink); font-weight:650; }
+   .album-pending-notice { display:grid; gap:10px; border-color:var(--warn-line); background:var(--warn-bg); }
+   .album-pending-notice p { margin:0; }
+   .album-pending-notice .album-actions { justify-content:flex-start; flex-wrap:wrap; }
+   .approval-requests { display:grid; gap:10px; margin:0; padding:0; list-style:none; }
+   .approval-request { display:flex; align-items:center; gap:14px; padding:10px 14px 10px 10px; border:1px solid var(--border); border-radius:10px;
+      color:inherit; text-decoration:none; background:var(--surface); box-shadow:var(--shadow-sm); transition:border-color .15s, box-shadow .15s; }
+   .approval-request:hover { border-color:var(--brass); box-shadow:var(--shadow); }
+   .approval-request-covers { display:grid; flex:none; grid-template-columns:repeat(2, 36px); grid-auto-rows:36px; gap:2px; overflow:hidden; border-radius:6px; }
+   .approval-request-covers img, .approval-request-covers > span { display:block; width:36px; height:36px; object-fit:cover; background:var(--sunken); }
+   .approval-request-covers .approval-request-empty { display:grid; grid-column:span 2; grid-row:span 2; place-items:center; width:74px; height:74px; }
+   .approval-request-empty svg { width:28px; height:28px; fill:none; stroke:var(--faint); }
+   .approval-request-body { display:grid; gap:4px; min-width:0; }
+   .approval-request-title { overflow-wrap:anywhere; }
+   .approval-request-meta { color:var(--muted); font-size:13px; }
+   .approval-request-error, .approval-warning { color:var(--neg); font-size:13px; }
+   .approval-clash { padding:8px 10px; border:1px solid var(--warn-line); border-radius:6px; background:var(--warn-bg); color:var(--brass-ink); font-size:13px; }
+   .approval-warning { border-color:var(--neg-line); background:var(--neg-bg); }
+   .approval-album { display:grid; gap:10px; max-width:640px; }
+   .approval-album legend { padding:0 4px; font-weight:650; }
+   .approval-album p { margin:0; }
+   .approval-album-folder { display:flex; flex-wrap:wrap; align-items:center; gap:8px; }
+   .approval-album-folder select { width:auto; min-width:12ch; }.approval-album-folder input { width:9ch; }
+   .approval-album-choice { display:flex; align-items:center; gap:8px; font-weight:650; }
+   .approval-album-option { display:grid; gap:6px; margin:0 0 4px 26px; }
+   .approval-album-option[hidden] { display:none; }
+   .approval-album-option select, .approval-album-option input { max-width:100%; }
+   .approval-tools { display:flex; flex-wrap:wrap; align-items:center; gap:6px 14px; margin:0 0 12px; }
+   .approval-tools p { margin:0 auto 0 0; color:var(--muted); }
+   .approval-group { margin:22px 0 8px; font-size:15px; }
+   .approval-grid { grid-template-columns:repeat(auto-fill, minmax(170px, 1fr)); gap:10px; }
+   .approval-item { position:relative; }
+   /* The whole picture is the tick box's label: a tap rejects it, another takes that back. */
+   .approval-pick { position:relative; display:block; overflow:hidden; aspect-ratio:1; border-radius:7px; background:var(--surface-2); cursor:pointer; }
+   .approval-pick img, .approval-placeholder { display:block; width:100%; height:100%; object-fit:cover; transition:filter .15s, opacity .15s; }
+   .approval-placeholder { display:grid; align-content:center; gap:4px; padding:10px; box-sizing:border-box; color:var(--muted); font-size:12px; }
+   .approval-pick input { position:absolute; width:1px; height:1px; opacity:0; }
+   .approval-pick:has(input:focus-visible) { outline:3px solid var(--brass); outline-offset:2px; }
+   .approval-mark { position:absolute; inset:auto 8px 8px; display:none; padding:4px 8px; border-radius:5px; color:#fff; background:var(--neg); font-size:13px; font-weight:700; text-align:center; }
+   .approval-item.is-rejected .approval-pick { outline:3px solid var(--neg); outline-offset:-3px; }
+   .approval-item.is-rejected .approval-pick img, .approval-item.is-rejected .approval-placeholder { filter:grayscale(1); opacity:.45; }
+   .approval-item.is-rejected .approval-mark { display:block; }
+   .approval-open { position:absolute; top:6px; right:6px; display:grid; place-items:center; width:32px; height:32px; padding:0; border:0; border-radius:50%;
+      color:#fff; background:rgb(0 0 0 / .58); cursor:pointer; }
+   .approval-open:hover, .approval-open:focus-visible { background:rgb(0 0 0 / .8); }
+   .approval-open svg { width:17px; height:17px; fill:none; stroke:currentColor; stroke-width:2; stroke-linecap:round; stroke-linejoin:round; }
+   .approval-name { margin:4px 0 0; overflow:hidden; color:var(--muted); font-size:12px; text-overflow:ellipsis; white-space:nowrap; }
+   .approval-bar { position:sticky; z-index:15; bottom:0; display:flex; flex-wrap:wrap; align-items:end; gap:10px 16px; margin:18px 0 0; padding:12px 14px;
+      border:1px solid var(--border); border-radius:8px 8px 0 0; background:var(--surface); box-shadow:0 -8px 20px rgb(0 0 0 / .08); }
+   .approval-note { display:grid; flex:1 1 260px; gap:4px; font-size:13px; }
+   .approval-note textarea { width:100%; box-sizing:border-box; resize:vertical; }
+   .approval-buttons { display:flex; flex-wrap:wrap; align-items:center; gap:10px 14px; }
+   .approval-summary { color:var(--muted); font-size:13px; }
+   .album-viewer-reject { position:absolute; z-index:2; left:16px; bottom:16px; padding:8px 14px; border:2px solid #fff; border-radius:20px;
+      color:#fff; background:rgb(0 0 0 / .64); font-weight:700; cursor:pointer; }
+   .album-viewer-reject.is-on { border-color:var(--neg); background:var(--neg); }
+   .album-viewer-reject[hidden] { display:none; }
+   @media (max-width:720px) { .approval-grid { grid-template-columns:repeat(auto-fill, minmax(120px, 1fr)); }.album-viewer-reject { top:10px; bottom:auto; left:10px; }.approval-request { align-items:flex-start; } }
    @media (max-width:720px) { .album-heading { align-items:start; flex-direction:column; }.album-actions { position:relative; align-self:stretch; }.album-menu { position:static; }.album-menu-panel { left:0; right:0; width:auto; max-width:none; }.album-upload-dialog { width:calc(100vw - 24px); }.album-upload > input { min-height:38px; }.album-media-grid { grid-template-columns:repeat(auto-fill, minmax(110px, 1fr)); }.album-viewer { width:100vw; height:100dvh; max-height:none; margin:0; border-radius:0; background:#111; }.album-viewer[open] { grid-template-columns:1fr; grid-template-rows:minmax(0, 1fr) auto; overflow:hidden; }.album-viewer-stage { height:auto; padding:58px 16px 16px; touch-action:pan-y; }.album-viewer-stage img { max-height:none; }.album-viewer aside { padding:12px 62px 14px 16px; overflow:visible; background:#111; }.album-viewer aside .album-eyebrow, .album-viewer aside dl, .album-viewer aside > .btn, .album-viewer aside form, .album-viewer-arrow { display:none; }.album-viewer h2 { margin:0; font-size:17px; }.album-viewer-mobile-date { display:block; margin:3px 0 0; color:#d2ddd4; font-size:13px; }.album-viewer-close { top:10px; right:10px; z-index:2; }.album-viewer-menu-button { position:absolute; z-index:2; top:10px; right:56px; display:grid; place-items:center; width:38px; height:38px; padding:0; border:0; border-radius:50%; background:rgb(0 0 0 / .64); color:#fff; font-size:25px; line-height:1; cursor:pointer; }.album-viewer-menu { position:absolute; z-index:3; top:56px; right:10px; display:block; width:min(300px, calc(100vw - 20px)); max-height:calc(100dvh - 130px); padding:16px; overflow:auto; box-sizing:border-box; border-radius:6px; color:#fffdf7; background:#26332d; box-shadow:0 12px 32px rgb(0 0 0 / .42); }.album-viewer-menu[hidden] { display:none; }.album-viewer-menu dl { margin:0 0 18px; }.album-viewer-menu dt { margin-top:10px; color:#d2ddd4; font-size:12px; }.album-viewer-menu dd { margin:2px 0 0; }.album-viewer-menu form { margin-top:12px; } }
 
   /* THE SHARED PICTURE VIEWER: opslagstavlen and Den Hurtige both open into this one.

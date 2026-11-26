@@ -400,6 +400,11 @@ CELERY_BEAT_SCHEDULE = {
         "task": "gahkflix.tasks.weekly_draft_reminders",
         "schedule": crontab(minute=5, hour=10, day_of_week=1),
     },
+    # In the day, like GAHKFlix's: Fotogruppen reads it, and nobody wants it at night.
+    "photo-album-remind-approvals": {
+        "task": "photo_album.tasks.remind_approvals",
+        "schedule": crontab(minute=20, hour=10),
+    },
     "gahkflix-warn-expiring-drafts": {
         "task": "gahkflix.tasks.warn_expiring_drafts",
         "schedule": crontab(minute=15, hour=10),

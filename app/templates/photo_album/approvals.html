@@ -1,0 +1,27 @@
+{% extends "base.html" %}
+{% block title %}Godkend | Fotoalbum{% endblock %}
+{% block content %}
+<section class="album-detail approvals">
+	<header class="album-heading">
+		<div>
+			<nav class="album-breadcrumbs" aria-label="Albumsti"><a class="album-back" href="{% url 'photo_album:index' %}">Fotoalbum</a></nav>
+			<h1>Godkend</h1>
+			<p class="album-subtitle">Uploads og nye albummer fra beboere uden for Fotogruppen, ét pr. beboer og album. Det, der ikke er godkendt efter 30 dage, slettes.</p>
+		</div>
+	</header>
+	<ul class="approval-requests">
+	{% for pending in requests %}
+		<li><a class="approval-request" href="{% url 'photo_album:approval' pending.album.pk pending.uploader_pk %}">
+			<span class="approval-request-covers" aria-hidden="true">{% for item in pending.media|slice:":4" %}{% if item.has_derivatives %}<img src="{{ item.thumbnail.url }}" alt="" loading="lazy">{% else %}<span></span>{% endif %}{% empty %}<span class="approval-request-empty"><svg><use href="#i-folder"></use></svg></span>{% endfor %}</span>
+			<span class="approval-request-body">
+				<span class="approval-request-title"><strong>{{ pending.uploader.full_name|default:"Tidligere beboer" }}</strong> <span class="muted">til</span> <strong>{{ pending.album.name }}</strong> <span class="muted">i {{ pending.album.folder }}</span>{% if pending.album.pending %} <span class="chip chip-brass">Nyt album</span>{% elif pending.new_album %} <span class="chip chip-brass">Nyt underalbum</span>{% endif %}</span>
+				<span class="approval-request-meta">{% if pending.media %}{% if pending.photos %}{{ pending.photos }} billede{{ pending.photos|pluralize:"r" }}{% endif %}{% if pending.photos and pending.videos %} og {% endif %}{% if pending.videos %}{{ pending.videos }} video{{ pending.videos|pluralize:"er" }}{% endif %}{% else %}Ingen uploads endnu{% endif %} · venter fra {{ pending.first_at|date:"j. F" }} · slettes {{ pending.expires_at|date:"j. F" }}</span>
+				{% for job in pending.failed_merges %}<span class="approval-request-error">Fletningen ind i {{ job.target.name }} mislykkedes: {{ job.error }}</span>{% endfor %}
+			</span>
+		</a></li>
+	{% empty %}
+		<li class="album-empty">Der venter ikke noget på godkendelse.</li>
+	{% endfor %}
+	</ul>
+</section>
+{% endblock %}

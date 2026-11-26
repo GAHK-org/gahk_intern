@@ -677,6 +677,8 @@ erDiagram
         datetime created_at
         datetime manually_locked_at
         datetime unlocked_at
+        int created_by_id FK
+        bool pending
     }
 
     photo_album_Media {
@@ -769,6 +771,8 @@ erDiagram
         datetime progressed_at
         datetime created_at
         datetime completed_at
+        json approve_media_ids
+        json approve_album_ids
         datetime notice_closed_at
     }
 
@@ -1094,6 +1098,7 @@ erDiagram
     reparationer_RepairImage }o--|| reparationer_RepairTask : "task"
     reparationer_RepairImage }o--|o reparationer_RepairComment : "comment"
     photo_album_Album }o--|o photo_album_Album : "parent"
+    photo_album_Album }o--|o residents_Resident : "created_by"
     photo_album_Album }o--o{ photo_album_Tag : "tags"
     photo_album_Media }o--|| photo_album_Album : "album"
     photo_album_Media }o--|| residents_Resident : "requested_by"
@@ -2018,6 +2023,8 @@ erDiagram
         datetime created_at
         datetime manually_locked_at
         datetime unlocked_at
+        int created_by_id FK
+        bool pending
     }
 
     photo_album_Media {
@@ -2110,6 +2117,8 @@ erDiagram
         datetime progressed_at
         datetime created_at
         datetime completed_at
+        json approve_media_ids
+        json approve_album_ids
         datetime notice_closed_at
     }
 
@@ -2141,6 +2150,7 @@ erDiagram
     residents_Resident { }
 
     photo_album_Album }o--|o photo_album_Album : "parent"
+    photo_album_Album }o--|o residents_Resident : "created_by"
     photo_album_Album }o--o{ photo_album_Tag : "tags"
     photo_album_Media }o--|| photo_album_Album : "album"
     photo_album_Media }o--|| residents_Resident : "requested_by"

@@ -44,7 +44,7 @@ from core.media import REDIRECT_CACHE_CONTROL
 from residents.models import Resident
 from residents.permissions import current_resident
 
-from . import access, cache, direct_upload, featured, merge, services
+from . import access, approvals, cache, direct_upload, featured, merge, notify, services
 from .forms import (
     AlbumForm,
     AlbumMergeForm,
@@ -294,7 +294,7 @@ def _tiles_response(request: HttpRequest, media_page: MediaPage, **context: obje
 @login_required
 def index(request: HttpRequest) -> HttpResponse:
     folder = normalize_name(request.GET.get("folder", ""))
-    albums = Album.objects.filter(parent__isnull=True)
+    albums = access.visible_albums(request, Album.objects.filter(parent__isnull=True))
     if folder:
         albums = albums.filter(folder=folder)
     # The years newest first, then NO_YEAR_FOLDER.
@@ -305,8 +305,10 @@ def index(request: HttpRequest) -> HttpResponse:
         "photo_album/index.html",
         {
             "albums": ordered,
-            "can_create": access.can_create_album(request),
+            "can_create": access.can_request_album(request),
+            "can_import": access.can_create_album(request),
             "can_view_all_bins": access.can_view_all_bins(request),
+            "approvals_waiting": len(approvals.pending_requests()) if access.can_approve(request) else 0,
             "folder": folder,
             # The timeline's tile leads the full index; a folder page keeps the plain link.
             "mosaic": [] if folder else featured.timeline_mosaic(),
@@ -378,6 +380,8 @@ def _tag_entries(own: Iterable[Tag], lineage: Iterable[Album]) -> list[dict[str,
 @login_required
 def detail(request: HttpRequest, pk: int) -> HttpResponse:
     album = get_object_or_404(Album, pk=pk)
+    if not access.can_view_album(request, album):
+        raise Http404
     include_sub_albums = request.GET.get("alle") == "1"
     visible = access.visible_media(request, album, subtree=include_sub_albums)
     media_page, fragment = _page(request, visible)
@@ -387,13 +391,14 @@ def detail(request: HttpRequest, pk: int) -> HttpResponse:
     if fragment:
         return _tiles_response(request, media_page, **context)
 
-    children = list(album.children.order_by("name"))
+    children = list(access.visible_albums(request, album.children.all()).order_by("name"))
     _summarise(children)
     resident = current_resident(request)
     merge_job = album.active_merge()
     can_merge = merge_job is None and access.can_merge_album(request, album)
-    if merge_job is None and access.is_administrator(request):
-        # How the administrator's own merge into this album went, for a day after.
+    if merge_job is None and access.can_manage_media(request):
+        # How the curator's own merge into this album went, for a day after: an administrator's, or
+        # Fotogruppen's approving a new album by merging it (photo_album.approvals).
         merge_job = (
             album.merges.filter(
                 requested_by=resident,
@@ -425,6 +430,7 @@ def detail(request: HttpRequest, pk: int) -> HttpResponse:
             "can_unlock": access.can_unlock_album(request, album),
             "can_rename": access.can_rename_album(request, album),
             "can_create_sub_album": access.can_create_sub_album(request, album),
+            "sub_album_needs_approval": album.pending or not access.can_create_album(request),
             "can_view_bin": access.can_view_album_bin(request),
             # Cheapest test first: tiles on the page or sub-albums already answer it without a query.
             "can_delete_album": access.can_create_album(request)
@@ -437,6 +443,16 @@ def detail(request: HttpRequest, pk: int) -> HttpResponse:
             "merge_summary": merge.describe(merge_job.result) if merge_job is not None else "",
             "merge_target": merge.label(merge_job.target) if merge_job is not None else "",
             "merge_options": merge.merge_targets(album) if can_merge else [],
+            "can_withdraw_album": access.can_withdraw_album(request, album),
+            "approval_url": reverse(
+                "photo_album:approval", args=[approvals.root_id(album), album.created_by_id or 0]
+            )
+            if album.pending and access.can_approve(request)
+            else "",
+            # Rejected, what is in it is in the bin: hidden until restored, or gone with the bin.
+            "album_rejected": album.pending
+            and not album.subtree_media().filter(deleted_at__isnull=True).exists()
+            and album.subtree_media().filter(status=MediaStatus.REJECTED).exists(),
         },
     )
 
@@ -446,15 +462,31 @@ def detail(request: HttpRequest, pk: int) -> HttpResponse:
 
 @login_required
 def create_album(request: HttpRequest) -> HttpResponse:
-    if not access.can_create_album(request):
+    """Fotogruppen's album is made at once; anyone else's awaits approval, but takes their uploads
+    meanwhile (photo_album.approvals)."""
+    if not access.can_request_album(request):
         raise PermissionDenied
+    pending = not access.can_create_album(request)
     form = AlbumForm(request.POST or None)
     if request.method == "POST" and form.is_valid():
+        resident = current_resident(request)
         try:
-            album = services.create_album(name=form.cleaned_data["name"], folder=form.cleaned_data["folder"])
+            album = services.create_album(
+                name=form.cleaned_data["name"],
+                folder=form.cleaned_data["folder"],
+                created_by=resident,
+                pending=pending,
+            )
         except ValidationError as exc:
             form.add_error(None, exc)
         else:
+            if pending:
+                notify.approval_requested(resident, album)
+                messages.info(
+                    request,
+                    "Albummet venter på Fotogruppens godkendelse. Indtil da kan kun du og Fotogruppen "
+                    "se det — upload gerne dine billeder til det allerede nu.",
+                )
             return redirect("photo_album:detail", album.pk)
     return render(
         request,
@@ -462,6 +494,7 @@ def create_album(request: HttpRequest) -> HttpResponse:
         {
             "form": form,
             "title": "Opret album",
+            "pending": pending,
             "folder_options": album_folder_options(),
             "default_folder": default_folder(),
         },
@@ -489,12 +522,26 @@ def create_sub_album(request: HttpRequest, pk: int) -> HttpResponse:
     if not form.is_valid():
         _form_error_messages(request, form)
         return redirect("photo_album:detail", parent.pk)
+    resident = current_resident(request)
+    pending = parent.pending or not access.can_create_album(request)
+    announce = pending and approvals.is_new_request(parent, resident)
     try:
-        album = services.create_album(name=form.cleaned_data["name"], parent=parent)
+        album = services.create_album(
+            name=form.cleaned_data["name"], parent=parent, created_by=resident, pending=pending
+        )
     except ValidationError as exc:
         _error_messages(request, exc)
         return redirect("photo_album:detail", parent.pk)
-    messages.success(request, f"Underalbummet {album.name} er oprettet.")
+    if announce:
+        notify.approval_requested(resident, album)
+    if pending:
+        messages.info(
+            request,
+            f"Underalbummet {album.name} venter på Fotogruppens godkendelse. Indtil da kan kun du og "
+            "Fotogruppen se det — upload gerne dine billeder til det allerede nu.",
+        )
+    else:
+        messages.success(request, f"Underalbummet {album.name} er oprettet.")
     return redirect("photo_album:detail", album.pk)
 
 
@@ -537,6 +584,19 @@ def delete_album(request: HttpRequest, pk: int) -> HttpResponse:
         return redirect("photo_album:detail", album.pk)
     if album.parent_id is not None:
         return redirect("photo_album:detail", album.parent_id)
+    return redirect("photo_album:index")
+
+
+@login_required
+@require_POST
+def withdraw_album(request: HttpRequest, pk: int) -> HttpResponse:
+    """Its maker takes back an album still awaiting approval, with everything uploaded to it."""
+    album = get_object_or_404(Album, pk=pk)
+    if not access.can_withdraw_album(request, album):
+        raise PermissionDenied
+    with transaction.atomic():
+        approvals.delete_album(album)
+    messages.success(request, f"Albummet {album.name} er trukket tilbage og slettet.")
     return redirect("photo_album:index")
 
 
@@ -1095,7 +1155,9 @@ def system_rename_album(request: HttpRequest) -> JsonResponse:
     if not form.is_valid():
         return JsonResponse({"errors": form.errors.get_json_data()}, status=400)
     folder, current = form.cleaned_data["folder"], normalize_name(form.cleaned_data["album"])
-    album = Album.objects.filter(parent__isnull=True, folder=folder, name__iexact=current).first()
+    album = Album.objects.filter(
+        parent__isnull=True, folder=folder, name__iexact=current, pending=False
+    ).first()
     if album is None:
         return JsonResponse(
             {"errors": {"album": [{"message": f'Der er intet album "{current}" i {folder}.'}]}}, status=404
@@ -1160,7 +1222,7 @@ def system_albums(request: HttpRequest) -> JsonResponse:
     if _token_import_resident(request) is None:
         raise PermissionDenied
     folder = normalize_name(request.GET.get("folder", ""))
-    roots = Album.objects.filter(parent__isnull=True, folder=folder).order_by("name")
+    roots = Album.objects.filter(parent__isnull=True, folder=folder, pending=False).order_by("name")
     return JsonResponse(
         {
             "albums": [
@@ -1248,6 +1310,8 @@ def upload(request: HttpRequest, pk: int) -> HttpResponse:
             messages.error(request, str(error))
         return redirect("photo_album:detail", album.pk)
     resident = current_resident(request)
+    approved = _approved_on_upload(request, album)
+    announce = not approved and approvals.is_new_request(album, resident)
     modified = request.POST.getlist("last_modified")
     uploaded = 0
     skipped: list[str] = []
@@ -1259,7 +1323,7 @@ def upload(request: HttpRequest, pk: int) -> HttpResponse:
                 uploaded_file=uploaded_file,
                 resident=resident,
                 title=form.cleaned_data["title"],
-                approved=access.can_manage_media(request),
+                approved=approved,
                 file_modified_at=_file_modified_at(modified[index] if index < len(modified) else None),
                 file_time_source=FileTimeSource.UPLOAD,
             )
@@ -1271,11 +1335,18 @@ def upload(request: HttpRequest, pk: int) -> HttpResponse:
         uploaded += _noted(outcome, uploaded_file.name, album, resident, skipped, warnings)
     if uploaded:
         services.settle_dates(album)
+        if announce:
+            notify.approval_requested(resident, album)
     if wants_json:
         return JsonResponse({"uploaded": uploaded, "skipped": skipped, "warnings": warnings}, status=201)
     for note in [*skipped, *warnings]:
         messages.warning(request, note)
     return redirect("photo_album:detail", album.pk)
+
+
+def _approved_on_upload(request: HttpRequest, album: Album) -> bool:
+    """Fotogruppen's uploads need no approval — except into an album that awaits it itself."""
+    return access.can_manage_media(request) and not album.pending
 
 
 def _noted(
@@ -1378,6 +1449,8 @@ def upload_commit(request: HttpRequest, pk: int) -> JsonResponse:
         direct_upload.delete(upload["key"])
         return _upload_errors("Filen blev sendt til et andet album.")
     resident = current_resident(request)
+    approved = _approved_on_upload(request, album)
+    announce = not approved and approvals.is_new_request(album, resident)
     skipped: list[str] = []
     warnings: list[str] = []
     with NamedTemporaryFile(prefix="photo-album-", suffix=Path(upload["name"]).suffix) as local:
@@ -1393,7 +1466,7 @@ def upload_commit(request: HttpRequest, pk: int) -> JsonResponse:
                 uploaded_file=received,
                 resident=resident,
                 title=form.cleaned_data["title"],
-                approved=access.can_manage_media(request),
+                approved=approved,
                 file_modified_at=_file_modified_at(form.cleaned_data["last_modified"] or None),
                 file_time_source=FileTimeSource.UPLOAD,
                 stored=(upload["key"], UUID(upload["uuid"])),
@@ -1404,6 +1477,8 @@ def upload_commit(request: HttpRequest, pk: int) -> JsonResponse:
     stored = _noted(outcome, upload["name"], album, resident, skipped, warnings)
     if stored:
         services.settle_dates(album)  # as `upload` does
+        if announce:
+            notify.approval_requested(resident, album)
     else:
         direct_upload.delete(upload["key"])
     return JsonResponse({"uploaded": int(stored), "skipped": skipped, "warnings": warnings}, status=201)

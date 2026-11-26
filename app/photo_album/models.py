@@ -335,6 +335,20 @@ class Album(models.Model):
     unlocked_at = models.DateTimeField(null=True, blank=True)
     # Applies to the whole subtree, but stored only here: the media under it are found by path.
     tags = models.ManyToManyField(Tag, blank=True, related_name="albums")
+    # Who made it on the site ("Opret album"). Empty for imported albums and those made before.
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="photo_albums_created",
+        editable=False,
+    )
+    # An album a resident outside Fotogruppen made, awaiting approval (photo_album.approvals): only
+    # its maker and Fotogruppen see it, and only its maker uploads to it and makes sub-albums in it.
+    # Its name holds no place among its siblings' until it is approved, as it is renamed, or merged
+    # into another; rejected, what is in it waits in the bin while the album stays hidden.
+    pending = models.BooleanField(default=False)
 
     class Meta:
         ordering = ["-folder", "name"]
@@ -342,17 +356,19 @@ class Album(models.Model):
         constraints = [
             # Sibling names are unique, ignoring case, exactly like folders on a Mac or a PC: two
             # albums that differ only in case would overwrite each other once extracted from a ZIP.
+            # Not an album awaiting approval: nobody else sees it, so its name must not keep anyone
+            # from theirs. It is renamed or merged as it is approved (photo_album.approvals).
             models.UniqueConstraint(
                 F("folder"),
                 Lower("name"),
-                condition=Q(parent__isnull=True),
+                condition=Q(parent__isnull=True, pending=False),
                 name="uniq_root_album_name",
                 violation_error_message="Der findes allerede et album med det navn i mappen.",
             ),
             models.UniqueConstraint(
                 F("parent"),
                 Lower("name"),
-                condition=Q(parent__isnull=False),
+                condition=Q(parent__isnull=False, pending=False),
                 name="uniq_sub_album_name",
                 violation_error_message="Der findes allerede et underalbum med det navn.",
             ),
@@ -923,6 +939,11 @@ class AlbumMerge(models.Model):
     progressed_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     completed_at = models.DateTimeField(null=True, blank=True)
+    # A merge that approves a pending album (photo_album.approvals): the items and the sub-albums of
+    # `source` to approve, as `requested_by`, in the merge's own transaction — so none shows before
+    # it is where it belongs.
+    approve_media_ids = models.JSONField(default=list, blank=True)
+    approve_album_ids = models.JSONField(default=list, blank=True)
     # When its administrator closed the notice of how it went, which otherwise stays on the kept
     # album's page for views.MERGE_NOTICE_SHOWN_FOR.
     notice_closed_at = models.DateTimeField(null=True, blank=True)

@@ -10,8 +10,8 @@
 		</div>
 		<div class="album-actions">
 			{% if has_subtree_media %}<details class="album-menu"><summary class="btn-link">Download</summary><form class="album-menu-panel" method="post" action="{% url 'photo_album:download_album' album.pk %}">{% csrf_token %}<p>Hele albummet som ZIP:</p>{% if children %}<fieldset class="album-menu-choice"><legend class="sr-only">Underalbummer</legend><label><input type="radio" name="sub_albums" value="1" checked> Med underalbummer</label><label><input type="radio" name="sub_albums" value="0"> Kun dette album</label></fieldset>{% endif %}{% for value, label in variants %}<button class="btn-link" type="submit" name="variant" value="{{ value }}">{{ label }}</button>{% endfor %}</form></details>{% endif %}
-			{% board_share_url album as share_url %}{% if share_url %}<a class="btn-link" href="{{ share_url }}">Del på opslagstavlen</a>{% endif %}
-			{% if can_create_sub_album %}<details class="album-menu"><summary class="btn-link">Nyt underalbum</summary><form class="album-menu-panel album-create-sub" method="post" action="{% url 'photo_album:create_sub_album' album.pk %}">{% csrf_token %}<label for="sub-album-name">Navn på underalbummet</label><input id="sub-album-name" type="text" name="name" maxlength="140" required><button class="btn" type="submit">Opret</button></form></details>{% endif %}
+			{% if not album.pending %}{% board_share_url album as share_url %}{% endif %}{% if share_url %}<a class="btn-link" href="{{ share_url }}">Del på opslagstavlen</a>{% endif %}
+			{% if can_create_sub_album %}<details class="album-menu"><summary class="btn-link">Nyt underalbum</summary><form class="album-menu-panel album-create-sub" method="post" action="{% url 'photo_album:create_sub_album' album.pk %}">{% csrf_token %}<label for="sub-album-name">Navn på underalbummet</label><input id="sub-album-name" type="text" name="name" maxlength="140" required>{% if sub_album_needs_approval %}<p>Fotogruppen godkender det, men du kan uploade til det med det samme.</p>{% endif %}<button class="btn" type="submit">Opret</button></form></details>{% endif %}
 			{% if page.items %}<button class="btn-link" type="button" data-album-select-toggle>Vælg</button>{% endif %}
 			{% if can_view_bin %}<a class="btn-link" href="{% url 'photo_album:album_bin' album.pk %}">Papirkurv</a>{% endif %}
 			{% if can_rename %}<details class="album-menu"><summary class="btn-link">Omdøb</summary><form class="album-menu-panel" method="post" action="{% url 'photo_album:rename_album' album.pk %}">{% csrf_token %}<label for="album-rename">Nyt navn</label><input id="album-rename" type="text" name="name" value="{{ album.name }}" maxlength="140" required><button class="btn" type="submit">Gem</button></form></details>{% endif %}
@@ -20,6 +20,14 @@
 			{% if can_delete_album %}<form method="post" action="{% url 'photo_album:delete_album' album.pk %}">{% csrf_token %}<button class="btn-link-danger" type="submit">Slet album</button></form>{% endif %}
 		</div>
 	</header>
+	{% if album.pending %}<section class="card mb-4 album-pending-notice" role="status">
+		{% if album_rejected %}<p><strong>Fotogruppen har afvist albummet.</strong> Det, der var i det, ligger i papirkurven i 30 dage, hvor Fotogruppen kan fortryde. Kun {% if can_withdraw_album %}du{% else %}{{ album.created_by.full_name|default:"den, der oprettede det," }}{% endif %} og Fotogruppen kan se det{% if can_withdraw_album %}; uploader du til det igen, beder du om godkendelse igen{% endif %}.</p>
+		{% else %}<p><strong>Albummet venter på Fotogruppens godkendelse.</strong> Indtil da kan kun {% if can_withdraw_album %}du{% else %}{{ album.created_by.full_name|default:"den, der oprettede det," }}{% endif %} og Fotogruppen se det{% if can_withdraw_album %}, og kun du kan uploade til det. Når det er godkendt, kan alle se det og det, Fotogruppen har godkendt i det{% endif %}.</p>{% endif %}
+		<div class="album-actions">
+			{% if approval_url %}<a class="btn" href="{{ approval_url }}">Godkend eller afvis</a>{% endif %}
+			{% if can_withdraw_album %}<form method="post" action="{% url 'photo_album:withdraw_album' album.pk %}" onsubmit="return confirm('Albummet og alt, du har uploadet til det, slettes. Træk det tilbage?');">{% csrf_token %}<button class="btn-link-danger" type="submit">Træk albummet tilbage</button></form>{% endif %}
+		</div>
+	</section>{% endif %}
 	{% if album_locked %}<div class="album-actions album-lock-status">
 		{% if locked_by.pk == album.pk %}<span class="album-locked">Albummet er låst</span>{% else %}<span class="album-locked">Låst, fordi <a href="{% url 'photo_album:detail' locked_by.pk %}">{{ locked_by.name }}</a> er låst</span>{% endif %}
 		{% if can_unlock %}<form method="post" action="{% url 'photo_album:unlock_album' album.pk %}">{% csrf_token %}<button class="btn-link" type="submit">Lås op</button></form>{% elif can_manage and locked_by.pk == album.pk %}<span class="album-lock-note">Albummet har været låst i mere end 6 måneder og kan ikke låses op.</span>{% endif %}

@@ -41,6 +41,7 @@ Features decide **who** is told and **with what wording**; they call
 | GAHKFlix | `gahkflix.uploads` — your upload is processed or failed; your request was decided; your unpublished drafts | Normal | yes |
 | GAHKFlix | `gahkflix.approvals` — a late edit or a deletion awaits an administrator | Høj | yes |
 | GAHKFlix | `gahkflix.drafts` — for administrators: unpublished drafts, weekly and the day before one is deleted | Normal | yes |
+| Fotoalbum | `photo_album.approvals` — for Fotogruppen: uploads and new albums awaiting approval, and a daily reminder of those still waiting | Normal | yes |
 | System | `system` — about the site itself: downtime, new features | Normal | **always** |
 | Generelt | `general` — **the catch-all**: everything without a category of its own, from a notice about your own application to an announcement to the whole kollegium | Normal | **always** |
 
@@ -71,8 +72,8 @@ System and Generelt can **not** be turned off in-app (`Category.in_app_optional 
 is where somebody who has push off still sees what the house itself says. Push and vibration for
 them can be turned off like any other category.
 
-GAHKFlix's `gahkflix.uploads`, `gahkflix.approvals` and `gahkflix.drafts` can **not** be turned off
-in-app either (`in_app_optional = False`), like System and Generelt: they are about something the
+GAHKFlix's `gahkflix.uploads`, `gahkflix.approvals` and `gahkflix.drafts`, and the photo album's
+`photo_album.approvals`, can **not** be turned off in-app either (`in_app_optional = False`), like System and Generelt: they are about something the
 resident has to act on. Their push and vibration can be turned off. `gahkflix.new` and
 `gahkflix.cast` can be turned off like any other category.
 
@@ -124,6 +125,12 @@ they would get a 403 on opening. Acting on your own content never notifies you.
   overview; the day before a draft is deleted, its uploader (Høj) and the administrators (Høj) are
   warned once. While GAHKFlix is behind its rollout gate, its group is hidden
   on the settings page for residents outside it, and none of them are notified.
+- **Fotoalbum** → `photo_album.approvals` to this month's Fotogruppen (the administrators when it has
+  nobody) when a resident's request for approval starts — a new album or sub-album, or the first upload
+  of a request — grouped into one row per member (`Anders og Bente har uploadet til fotoalbummet`); and a
+  daily reminder at 10:20 of the requests that have waited a day, Høj when the oldest goes within
+  three days. The uploader hears how their request was decided under `general`. See
+  [Photo-album.md](Photo-album.md).
 - **@mentions** (`mentions`, Høj) → a resident named with `@` in a post, comment, Den Hurtige message
   or reply, event description or comment, repair or repair note, if they are on this month's alumneliste and can open the thing.
   Naming an embedsgruppe tells everyone in it this month. A resident named directly is told that and

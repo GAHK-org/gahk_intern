@@ -18,6 +18,7 @@ import "./reparationer"; // reparationer kanban drag-and-drop (no-op elsewhere)
 import "./mention"; // @-mention picker on every [data-mentionable] field (no-op without one)
 import "./imageviewer"; // full-screen picture viewer: opslagstavlen, Den Hurtige
 import "./photo-album"; // photo album gallery viewer (no-op outside album pages)
+import "./photo-album-approval"; // the photo album's approval page (no-op elsewhere)
 import "./gahkflix"; // GAHKFlix: rows, uploader, editors and player (no-op outside body.flix)
 import "./topbar"; // hide the sticky top bar on scroll-down (phones only)
 import "./sidebar"; // the menu scrolls with the page until its end is in view (desktop only)

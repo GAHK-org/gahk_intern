@@ -1,6 +1,6 @@
 from django.urls import path
 
-from . import views
+from . import views, views_approvals
 
 app_name = "photo_album"
 
@@ -22,6 +22,10 @@ urlpatterns = [
     path("downloads", views.downloads, name="downloads"),
     path("downloads/<uuid:token>", views.download_album_archive, name="download_album_archive"),
     path("markering", views.selection, name="selection"),
+    # Fotogruppen's approval of what residents upload, and of the albums they make.
+    path("approvals", views_approvals.approvals_list, name="approvals"),
+    path("approvals/albums", views_approvals.approval_albums, name="approval_albums"),
+    path("approvals/<int:album_pk>/<int:uploader_pk>", views_approvals.approval, name="approval"),
     path("tags", views.tag_search, name="tag_search"),
     path("<int:pk>", views.detail, name="detail"),
     path("<int:pk>/download", views.download_album, name="download_album"),
@@ -29,6 +33,7 @@ urlpatterns = [
     path("<int:pk>/omdoeb", views.rename_album, name="rename_album"),
     path("<int:pk>/nyt-underalbum", views.create_sub_album, name="create_sub_album"),
     path("<int:pk>/slet", views.delete_album, name="delete_album"),
+    path("<int:pk>/withdraw", views.withdraw_album, name="withdraw_album"),
     path("<int:pk>/flet-ind", views.merge_album, name="merge_album"),
     path("fletning/<int:pk>", views.merge_status, name="merge_status"),
     path("fletning/<int:pk>/luk", views.close_merge_notice, name="close_merge_notice"),

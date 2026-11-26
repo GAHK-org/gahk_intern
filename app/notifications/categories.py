@@ -88,6 +88,7 @@ GROUPS: tuple[tuple[str, str], ...] = (
     ("events", "Begivenheder"),
     ("repairs", "Reparationer"),
     ("gahkflix", "GAHKFlix"),
+    ("photo_album", "Fotoalbum"),
     ("mentions", "Nævnt"),
     ("system", "System"),
     ("general", "Generelt"),
@@ -102,6 +103,7 @@ GROUP_ICONS: dict[str, str] = {
     "events": "calendar",
     "repairs": "wrench",
     "gahkflix": "film",
+    "photo_album": "photo",
     "mentions": "users",
 }
 
@@ -124,6 +126,7 @@ GAHKFLIX_CAST = "gahkflix.cast"
 GAHKFLIX_UPLOADS = "gahkflix.uploads"
 GAHKFLIX_APPROVALS = "gahkflix.approvals"
 GAHKFLIX_DRAFTS = "gahkflix.drafts"
+PHOTO_ALBUM_APPROVALS = "photo_album.approvals"
 MENTIONS = "mentions"
 
 # The prefix of a Den Hurtige room's category. One category per room, generated from the channel
@@ -212,6 +215,13 @@ def _build() -> tuple[Category, ...]:
             "Kladder, der ikke er udgivet",
             "gahkflix",
             "Ugentligt overblik over upublicerede kladder, og besked dagen før en slettes. Til administratorer.",
+            in_app_optional=False,
+        ),
+        Category(
+            PHOTO_ALBUM_APPROVALS,
+            "Godkendelser",
+            "photo_album",
+            "Uploads og nye albummer, der venter på godkendelse, og en daglig påmindelse om dem, der stadig venter. Til Fotogruppen.",
             in_app_optional=False,
         ),
         Category(
