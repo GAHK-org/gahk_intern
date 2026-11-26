@@ -47,6 +47,12 @@
     <form method="post" action="{% url 'next_month_list' %}">
       {% csrf_token %}<input type="hidden" name="period" value="{% if editing_current %}current{% else %}next{% endif %}">
         <input type="hidden" name="action" value="save">
+      {% comment %}
+        Each select carries its chosen value again as plain text (.findable-select-label) laid over
+        it: the browser's find (Ctrl+F) never searches inside a <select>, so without it a room
+        number, embedsgruppe or rengøring could not be found on the page. findable-select.ts keeps
+        the text in step with the select.
+      {% endcomment %}
       <div class="card overflow-x-auto">
         <table cellpadding="6" style="width:100%; border-collapse:collapse">
           <thead><tr style="text-align:left; border-bottom:1px solid var(--border-strong)">
@@ -56,27 +62,30 @@
             <tr style="border-bottom:1px solid var(--border)">
               <td>{{ r.resident.full_name }}</td>
               <td>
+                <span class="findable-select"><span class="findable-select-label" aria-hidden="true">{{ r.room.number|stringformat:"03d" }}</span>
                 <select name="room_{{ r.resident_id }}">
                   {% for room in rooms %}
                     <option value="{{ room.id }}" {% if room.id == r.room_id %}selected{% endif %}>{{ room.number|stringformat:"03d" }}</option>
                   {% endfor %}
-                </select>
+                </select></span>
               </td>
               <td>
+                <span class="findable-select"><span class="findable-select-label" aria-hidden="true">{{ r.workgroup.name|default:"— ingen —" }}</span>
                 <select name="workgroup_{{ r.resident_id }}">
                   <option value="">— ingen —</option>
                   {% for w in workgroups %}
                     <option value="{{ w.id }}" {% if w.id == r.workgroup_id %}selected{% endif %}>{{ w.name }}</option>
                   {% endfor %}
-                </select>
+                </select></span>
               </td>
               <td>
+                <span class="findable-select"><span class="findable-select-label" aria-hidden="true">{{ r.cleaning.name|default:"— ingen —" }}</span>
                 <select name="cleaning_{{ r.resident_id }}">
                   <option value="">— ingen —</option>
                   {% for c in cleanings %}
                     <option value="{{ c.id }}" {% if c.id == r.cleaning_id %}selected{% endif %}>{{ c.name }}</option>
                   {% endfor %}
-                </select>
+                </select></span>
               </td>
               <td class="text-center"><input type="checkbox" name="remove_{{ r.resident_id }}" value="1"></td>
             </tr>

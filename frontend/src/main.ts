@@ -14,6 +14,7 @@ import "./opslagstavle-live"; // opslagstavlen's board: live cards and the "nye 
 import "./opslagstavle"; // opslagstavlen Markdown toolbar + image upload (no-op elsewhere)
 import "./highlight"; // marks a board search's words in the cards (no-op without a search)
 import "./events"; // begivenheder guest-list picker (no-op elsewhere)
+import "./findable-select"; // the alumneliste editor's selects, findable with Ctrl+F (no-op elsewhere)
 import "./reparationer"; // reparationer kanban drag-and-drop (no-op elsewhere)
 import "./mention"; // @-mention picker on every [data-mentionable] field (no-op without one)
 import "./imageviewer"; // full-screen picture viewer: opslagstavlen, Den Hurtige
