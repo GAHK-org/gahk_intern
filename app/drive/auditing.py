@@ -1,4 +1,10 @@
-"""What the audit trail keeps of Drive: its folders, files and their versions."""
+"""What the audit trail keeps of Drive: its folders, files and their versions.
+
+Admins and Inspektionen see only the size and count of what is in a group's current period, and a
+Delt mappe only by its tag (spec/features/Drive.md), so the audit page names every Drive item by a
+tag and keeps names out of sight: they are private (audit.trail.Registration). Drive's own pages show
+them to whoever may read the item.
+"""
 
 from audit import trail
 
@@ -18,6 +24,8 @@ trail.register(
     "drive.folder",
     name=_folder_path,
     label="Mappe",
+    private_name=True,
+    private={"name"},
     # name_key and path follow the name and the parent; the uuid is set once, at creation.
     ignore={"name_key", "path", "uuid"},
     labels={
@@ -38,6 +46,8 @@ trail.register(
     "drive.file",
     name=lambda f: f.name,
     label="Fil",
+    private_name=True,
+    private={"name"},
     # changed_by and changed_at are who and when, which the event says; name_key follows the name.
     ignore={"name_key", "uuid", "changed_by", "changed_at"},
     labels={
@@ -56,6 +66,7 @@ trail.register(
     "drive.file_version",
     name=lambda v: f"{v.file.name}, version {v.number}",
     label="Filversion",
+    private_name=True,
     labels={
         "file": "Fil",
         "number": "Version",
