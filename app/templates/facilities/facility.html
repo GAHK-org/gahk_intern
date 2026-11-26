@@ -1,0 +1,77 @@
+{% extends "base.html" %}
+{% block title %}{{ facility.name }} - Booking - GAHK Intern{% endblock %}
+{% block content_width %}max-w-3xl{% endblock %}
+
+{% block content %}
+  <div class="page-head">
+    <div>
+      <p class="eyebrow"><a href="{% url 'facilities:index' %}">Booking</a></p>
+      <h1>{{ facility.name }}</h1>
+    </div>
+    <div class="head-actions">
+      {% if is_manager %}
+        <a class="btn btn-secondary" href="{% url 'facilities:history' facility.pk %}">Historik</a>
+        <a class="btn btn-secondary" href="{% url 'facilities:edit' facility.pk %}">Redigér</a>
+      {% endif %}
+      {% if facility.is_active %}<a class="btn" href="{% url 'facilities:book' facility.pk %}">Book</a>{% endif %}
+    </div>
+  </div>
+
+  {% if not facility.is_active %}<p class="chip chip-neutral">Kan ikke bookes lige nu</p>{% endif %}
+  {% if facility.description or facility.capacity or facility.requires_approval %}
+    <div class="card-flat card-pad facility-about">
+      {% if facility.description %}<p>{{ facility.description|linebreaksbr|urlize }}</p>{% endif %}
+      <p class="muted">
+        {% if facility.capacity %}Op til {{ facility.capacity }} personer.{% endif %}
+        {% if facility.requires_approval %}Bookinger skal godkendes af Inspektionen.{% endif %}
+      </p>
+    </div>
+  {% endif %}
+
+  <nav class="facility-week-nav" aria-label="Uger">
+    <a class="btn btn-secondary" href="?week={{ prev_week }}" aria-label="Forrige uge"><svg aria-hidden="true"><use href="#i-chevron-left"></use></svg></a>
+    <strong>Uge {{ week_number }}{% if not this_week %} &middot; {{ week_year }}{% endif %}</strong>
+    <a class="btn btn-secondary" href="?week={{ next_week }}" aria-label="Næste uge"><svg aria-hidden="true"><use href="#i-chevron-right"></use></svg></a>
+    {% if not this_week %}<a href="?">I dag</a>{% endif %}
+  </nav>
+
+  <div class="facility-week card-flat">
+    {% for day in days %}
+      <section class="facility-day{% if day.is_today %} is-today{% endif %}{% if day.is_past %} is-past{% endif %}">
+        <div class="facility-day-head">
+          <h2>{{ day.label }}</h2>
+          {% if facility.is_active and not day.is_past %}
+            <a class="btn-link" href="{% url 'facilities:book' facility.pk %}?date={{ day.date|date:'Y-m-d' }}">Book denne dag</a>
+          {% endif %}
+        </div>
+        {% comment %}
+          The day as a 24-hour bar. SVG attributes rather than inline styles, so a strict style-src
+          never blanks it; the list beneath carries the same facts for a screen reader.
+        {% endcomment %}
+        <svg class="facility-bar" viewBox="0 0 24 1" preserveAspectRatio="none" aria-hidden="true">
+          {% for h in hours %}<line x1="{{ h }}" x2="{{ h }}" y1="0" y2="1" class="facility-tick"></line>{% endfor %}
+          {% for s in day.segments %}
+            <rect x="{{ s.x|stringformat:'f' }}" y="0.12" width="{{ s.width|stringformat:'f' }}" height="0.76" rx="0.08" ry="0.08"
+                  class="facility-block{% if s.booking.status == 'pending' %} is-pending{% endif %}{% if s.booking.is_mine %} is-mine{% endif %}"></rect>
+          {% endfor %}
+        </svg>
+        <div class="facility-hours muted" aria-hidden="true"><span>00</span><span>06</span><span>12</span><span>18</span><span>24</span></div>
+        {% if day.segments %}
+          <ul class="facility-day-list">
+            {% for s in day.segments %}
+              <li>
+                <a href="{% url 'facilities:booking' s.booking.pk %}">
+                  <span class="booking-when">{{ s.starts }}&ndash;{{ s.ends }}</span>
+                  <span>{% if s.booking.is_mine %}Dig{% else %}{{ s.booking.booked_by.full_name }}{% endif %}{% if s.booking.shown_purpose %} &middot; {{ s.booking.shown_purpose }}{% endif %}</span>
+                  {% include "facilities/_status.html" with booking=s.booking %}
+                </a>
+              </li>
+            {% endfor %}
+          </ul>
+        {% else %}
+          <p class="muted facility-free">Ledig hele dagen</p>
+        {% endif %}
+      </section>
+    {% endfor %}
+  </div>
+{% endblock %}

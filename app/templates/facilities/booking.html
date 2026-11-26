@@ -1,0 +1,78 @@
+{% extends "base.html" %}
+{% block title %}Booking af {{ booking.facility }} - GAHK Intern{% endblock %}
+{% block content_width %}max-w-3xl{% endblock %}
+
+{% block content %}
+  <div class="page-head">
+    <div>
+      <p class="eyebrow"><a href="{% url 'facilities:facility' booking.facility.pk %}">{{ booking.facility }}</a></p>
+      <h1>{% if booking.shown_purpose %}{{ booking.shown_purpose }}{% else %}Booking af {{ booking.facility }}{% endif %}</h1>
+    </div>
+  </div>
+
+  <div class="card-flat card-pad">
+    <dl class="event-facts">
+      <div>
+        <dt><svg class="ni" aria-hidden="true"><use href="#i-calendar"></use></svg><span class="sr-only">Hvornår</span></dt>
+        <dd>{{ booking.starts_at|date:"l j. F, H.i" }} &ndash; {% if booking.starts_at|date:"Ymd" != booking.ends_at|date:"Ymd" %}{{ booking.ends_at|date:"l j. F, H.i" }}{% else %}{{ booking.ends_at|date:"H.i" }}{% endif %}</dd>
+      </div>
+      <div>
+        <dt><svg class="ni" aria-hidden="true"><use href="#i-key"></use></svg><span class="sr-only">Hvad</span></dt>
+        <dd><a href="{% url 'facilities:facility' booking.facility.pk %}?week={{ booking.starts_at|date:'Y-m-d' }}">{{ booking.facility }}</a></dd>
+      </div>
+      <div>
+        <dt><svg class="ni" aria-hidden="true"><use href="#i-users"></use></svg><span class="sr-only">Booket af</span></dt>
+        <dd>{{ booking.booked_by.full_name }}</dd>
+      </div>
+      {% if show_event %}
+        <div>
+          <dt><svg class="ni" aria-hidden="true"><use href="#i-board"></use></svg><span class="sr-only">Begivenhed</span></dt>
+          <dd><a href="{% url 'events:detail' booking.event_id %}">Til begivenheden</a></dd>
+        </div>
+      {% endif %}
+    </dl>
+
+    <p class="booking-status">
+      {% if booking.status == "confirmed" %}<span class="chip">Bekræftet</span>{% else %}{% include "facilities/_status.html" %}{% endif %}
+      {% if booking.decided_by and booking.status != "cancelled" %}
+        <span class="muted">{% if booking.status == "rejected" %}Afvist{% else %}Godkendt{% endif %} af {{ booking.decided_by.full_name }} {{ booking.decided_at|date:"j. M H.i" }}</span>
+      {% endif %}
+      {% if booking.status == "cancelled" %}
+        <span class="muted">{% if booking.cancelled_by %}Aflyst af {{ booking.cancelled_by.full_name }} {% else %}Aflyst {% endif %}{{ booking.cancelled_at|date:"j. M H.i" }}</span>
+      {% endif %}
+    </p>
+    {% if booking.decision_note and booking.is_mine or booking.decision_note and is_manager %}
+      <p class="muted">Begrundelse: {{ booking.decision_note }}</p>
+    {% endif %}
+    {% if booking.event_id and booking.is_mine and booking.is_holding %}
+      <p class="muted">Bookingen hører til en begivenhed. Ret eller aflys begivenheden for at ændre den.</p>
+    {% endif %}
+  </div>
+
+  {% if can_decide %}
+    <div class="card-flat card-pad booking-actions">
+      <form method="post" action="{% url 'facilities:approve' booking.pk %}">
+        {% csrf_token %}
+        <button type="submit" class="btn">Godkend</button>
+      </form>
+      <form method="post" action="{% url 'facilities:reject' booking.pk %}" class="booking-reject">
+        {% csrf_token %}
+        <label for="reject-note" class="sr-only">Begrundelse</label>
+        <input id="reject-note" name="note" maxlength="200" placeholder="Begrundelse (valgfri)">
+        <button type="submit" class="btn btn-danger">Afvis</button>
+      </form>
+    </div>
+  {% endif %}
+
+  {% comment %}A request still waiting is answered with Godkend/Afvis above, not cancelled.{% endcomment %}
+  {% if can_cancel and not can_decide %}
+    <form method="post" action="{% url 'facilities:cancel' booking.pk %}" class="card-flat card-pad booking-actions booking-cancel">
+      {% csrf_token %}
+      {% if not booking.is_mine %}
+        <label for="cancel-note" class="sr-only">Begrundelse</label>
+        <input id="cancel-note" name="note" maxlength="200" placeholder="Begrundelse til {{ booking.booked_by.first_name }} (valgfri)">
+      {% endif %}
+      <button type="submit" class="btn btn-danger">Aflys booking</button>
+    </form>
+  {% endif %}
+{% endblock %}

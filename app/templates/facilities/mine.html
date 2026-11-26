@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+{% block title %}Mine bookinger - GAHK Intern{% endblock %}
+{% block content_width %}max-w-3xl{% endblock %}
+
+{% block content %}
+  <div class="page-head">
+    <div>
+      <p class="eyebrow"><a href="{% url 'facilities:index' %}">Booking</a></p>
+      <h1>Mine bookinger</h1>
+    </div>
+  </div>
+
+  <section class="card-flat facility-section">
+    <div class="card-head"><h2>Kommende</h2></div>
+    <div class="booking-list">
+      {% for booking in upcoming %}{% include "facilities/_booking_row.html" with show_facility=True %}
+      {% empty %}<p class="muted card-pad">Du har ingen kommende bookinger.</p>{% endfor %}
+    </div>
+  </section>
+
+  {% if page_obj.object_list %}
+    <section class="card-flat facility-section">
+      <div class="card-head"><h2>Tidligere og aflyste</h2></div>
+      <div class="booking-list">
+        {% for booking in page_obj %}{% include "facilities/_booking_row.html" with show_facility=True %}{% endfor %}
+      </div>
+    </section>
+    {% include "facilities/_pager.html" %}
+  {% endif %}
+{% endblock %}

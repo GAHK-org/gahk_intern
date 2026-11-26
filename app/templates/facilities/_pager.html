@@ -1,0 +1,7 @@
+{% if page_obj.has_other_pages %}
+  <nav class="pager" aria-label="Sider">
+    {% if page_obj.has_previous %}<a class="btn btn-secondary" href="?page={{ page_obj.previous_page_number }}">Forrige</a>{% endif %}
+    <span class="muted">Side {{ page_obj.number }} af {{ page_obj.paginator.num_pages }}</span>
+    {% if page_obj.has_next %}<a class="btn btn-secondary" href="?page={{ page_obj.next_page_number }}">Næste</a>{% endif %}
+  </nav>
+{% endif %}

@@ -37,6 +37,7 @@ from core import push
 from core.clock import current_datetime
 from core.markdown import plain_text
 from core.mentions import notify_mentions, to_plain
+from facilities import api as facilities_api
 from notifications import categories
 from notifications import services as notifications
 from residents.models import Residency, Resident, active_period
@@ -202,19 +203,41 @@ def sync_invites(event: Event, residents: list[Resident], invited_by: Resident) 
 
 
 @transaction.atomic
-def cancel(event: Event) -> None:
+def cancel(event: Event, by: Resident | None = None) -> None:
     """Aflys — the alternative to deleting an event people have committed to.
 
     Keeps the row so the .ics can go on saying STATUS:CANCELLED until the purge takes it. Bumps
     SEQUENCE, because the status changing is exactly the kind of change a calendar client must not
-    ignore.
+    ignore. Frees the rooms it had booked: an event that is not happening does not hold Festsalen.
     """
     now = current_datetime()
     event.cancelled_at = now
     event.edited_at = now
     event.sequence += 1
     event.save(update_fields=["cancelled_at", "edited_at", "sequence"])
+    facilities_api.release_event_bookings(event, by=by)
     notify_cancelled(event)
+
+
+def sync_facilities(event: Event, chosen: list | None, booked_by: Resident) -> list:
+    """Book the rooms picked on the form, and keep the event's bookings in step with its time and
+    title (facilities.api). `chosen` is None when the form had no facilities to offer.
+
+    Returns the rooms somebody else took between the form's check and the save, for the view to say.
+    An invite-only event's bookings do not carry its title: managers see every booking's purpose, and
+    a private event promises they cannot see it (access.py).
+    """
+    if chosen is None:
+        return []
+    return facilities_api.sync_event_bookings(
+        event, chosen, public=event.visibility == Visibility.AABENT, booked_by=booked_by
+    )
+
+
+def location_from_facilities(event: Event, chosen: list | None) -> None:
+    """An empty "Sted" says where the rooms are, so the card and the .ics LOCATION are not blank."""
+    if chosen and not event.location:
+        event.location = ", ".join(str(f) for f in chosen)[:140]
 
 
 def significant_fields(event: Event) -> tuple:

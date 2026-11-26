@@ -66,10 +66,26 @@
         {{ event.starts_at|date:"l j. F" }}, {{ event.starts_at|date:"H.i" }}{% if event.ends_at %}&ndash;{{ event.ends_at|date:"H.i" }}{% endif %}
       </dd>
     </div>
-    {% if event.location %}
+    {% comment %}Not when "Sted" only repeats the booked rooms it was filled in from (facilities, below).{% endcomment %}
+    {% if event.location and event.location != booked_names %}
       <div>
         <dt><svg class="ni" aria-hidden="true"><use href="#i-house"></use></svg><span class="sr-only">Hvor</span></dt>
         <dd>{{ event.location }}</dd>
+      </div>
+    {% endif %}
+    {% if bookings %}
+      {% comment %}
+        The rooms booked for it (facilities). The status shows to everyone: "afventer godkendelse" is
+        worth knowing before you plan around Festsalen, and a rejection is why the room is not theirs.
+      {% endcomment %}
+      <div>
+        <dt><svg class="ni" aria-hidden="true"><use href="#i-key"></use></svg><span class="sr-only">Booket</span></dt>
+        <dd class="event-bookings">
+          {% for booking in bookings %}
+            <a href="{% url 'facilities:booking' booking.pk %}">{{ booking.facility }}</a>
+            {% include "facilities/_status.html" %}{% if not forloop.last %}<span aria-hidden="true">·</span>{% endif %}
+          {% endfor %}
+        </dd>
       </div>
     {% endif %}
     <div>

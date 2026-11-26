@@ -26,6 +26,7 @@ from django.views.decorators.http import require_GET, require_POST
 from core.clock import current_date, current_datetime
 from core.danish import MONTHS, WEEKDAYS_SHORT
 from core.uploads import attached_image
+from facilities import api as facilities_api
 from residents import birthdays as birthdays_mod
 from residents.models import Resident
 from residents.permissions import current_resident
@@ -256,6 +257,7 @@ def _detail_context(request: HttpRequest, pk: int) -> dict[str, object]:
     event = _get_event(request, pk)
     resident = current_resident(request)
     context = _rsvp_context(request, event)
+    bookings = facilities_api.event_bookings(event)
     context.update(
         {
             "can_edit": access.can_edit(event, resident),
@@ -267,6 +269,8 @@ def _detail_context(request: HttpRequest, pk: int) -> dict[str, object]:
             # stay acyclic at import time (opslagstavle.forms reaches the other way).
             "notices": _related_notices(request, event),
             "comments": _comments(request, event),
+            "bookings": bookings,
+            "booked_names": ", ".join(str(b.facility) for b in bookings if b.is_holding),
             "comment_form": EventCommentForm(),
         }
     )
@@ -404,10 +408,13 @@ def create(request: HttpRequest) -> HttpResponse:
 
     event = form.save(commit=False)
     event.organiser = resident
+    chosen = form.cleaned_data.get("facilities")
+    services.location_from_facilities(event, chosen)
     event.save()
     # After the event exists, because an invite needs something to point at. The notification then
     # reads the finished guest list, which is what decides who hears about a private event at all.
     services.sync_invites(event, list(form.cleaned_data["invitees"]), invited_by=resident)
+    _warn_unbooked(request, services.sync_facilities(event, chosen, booked_by=resident))
     mentioned = services.notify_mentions_in_description(event, resident)
     services.notify_new_event(event, skip=mentioned)
     messages.success(request, "Begivenheden er oprettet.")
@@ -438,6 +445,8 @@ def edit(request: HttpRequest, pk: int) -> HttpResponse:
 
     updated = form.save(commit=False)
     updated.edited_at = current_datetime()
+    chosen = form.cleaned_data.get("facilities")
+    services.location_from_facilities(updated, chosen)
     if services.significant_change(before, updated):
         # One predicate for both the SEQUENCE bump and the push, so a calendar client and a phone
         # can never disagree about whether something changed.
@@ -447,10 +456,20 @@ def edit(request: HttpRequest, pk: int) -> HttpResponse:
     else:
         updated.save()
     services.sync_invites(updated, list(form.cleaned_data["invitees"]), invited_by=current_resident(request))
+    _warn_unbooked(request, services.sync_facilities(updated, chosen, booked_by=current_resident(request)))
     services.notify_mentions_in_description(updated, current_resident(request), old_description)
     live.event_changed(updated.pk)
     messages.success(request, "Begivenheden er opdateret.")
     return redirect("events:detail", pk=event.pk)
+
+
+def _warn_unbooked(request: HttpRequest, missed: list) -> None:
+    """Somebody booked a room between the form's check and the save: the event is saved without it."""
+    if missed:
+        names = ", ".join(str(f) for f in missed)
+        messages.warning(
+            request, f"{names} blev booket af en anden lige før dig, så begivenheden har ikke fået lokalet."
+        )
 
 
 @require_POST
@@ -461,6 +480,7 @@ def delete(request: HttpRequest, pk: int) -> HttpResponseRedirect:
     if not access.can_delete(event, current_resident(request)):
         raise PermissionDenied
     event_pk = event.pk  # delete() clears it
+    facilities_api.release_event_bookings(event, by=current_resident(request))
     event.delete()
     live.event_changed(event_pk, "deleted")
     messages.success(request, "Begivenheden er slettet.")
@@ -473,7 +493,7 @@ def cancel(request: HttpRequest, pk: int) -> HttpResponseRedirect:
     event = _get_event(request, pk)
     if not access.can_cancel(event, current_resident(request)):
         raise PermissionDenied
-    services.cancel(event)
+    services.cancel(event, by=current_resident(request))
     live.event_changed(event.pk)
     messages.success(request, "Begivenheden er aflyst, og alle tilmeldte har fået besked.")
     return redirect("events:detail", pk=event.pk)

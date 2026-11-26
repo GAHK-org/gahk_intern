@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+{% block title %}{% if facility %}Redigér {{ facility.name }}{% else %}Ny facilitet{% endif %} - GAHK Intern{% endblock %}
+{% block content_width %}max-w-3xl{% endblock %}
+
+{% block content %}
+  <div class="page-head">
+    <div>
+      <p class="eyebrow"><a href="{% if facility %}{% url 'facilities:facility' facility.pk %}{% else %}{% url 'facilities:index' %}{% endif %}">{% if facility %}{{ facility.name }}{% else %}Booking{% endif %}</a></p>
+      <h1>{% if facility %}Redigér facilitet{% else %}Ny facilitet{% endif %}</h1>
+    </div>
+  </div>
+
+  <form method="post" class="event-form card-flat card-pad facility-form">
+    {% csrf_token %}
+    {% if form.non_field_errors %}<div class="form-errors">{{ form.non_field_errors }}</div>{% endif %}
+    {% for field in form %}
+      {% if field.field.widget.input_type == "checkbox" %}
+        <div class="event-field facility-check">
+          <label>{{ field }} {{ field.label }}</label>
+          {% if field.help_text %}<p class="muted event-help">{{ field.help_text }}</p>{% endif %}
+          {{ field.errors }}
+        </div>
+      {% else %}
+        {% include "facilities/_field.html" %}
+      {% endif %}
+    {% endfor %}
+    {% if facility %}<p class="muted event-help">{{ facility.name }} er booket {{ booking_count }} gang{{ booking_count|pluralize:"e" }} i alt. En facilitet slettes ikke, for bookingerne gemmes; slå "Kan bookes" fra i stedet.</p>{% endif %}
+    <div class="event-form-actions">
+      <button type="submit" class="btn">{% if facility %}Gem{% else %}Opret{% endif %}</button>
+      <a class="btn btn-secondary" href="{% if facility %}{% url 'facilities:facility' facility.pk %}{% else %}{% url 'facilities:index' %}{% endif %}">Annullér</a>
+    </div>
+  </form>
+{% endblock %}
