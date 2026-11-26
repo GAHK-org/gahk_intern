@@ -20,6 +20,7 @@ from .models import (
     SharedFolder,
     SharedMember,
     StandingFolder,
+    ZipDownload,
 )
 
 
@@ -203,6 +204,11 @@ trail.exempt(
 trail.exempt(
     ImagePreview,
     "a picture's smaller copies, built from its bytes by a worker and rebuilt at will; a cache",
+)
+trail.exempt(
+    ZipDownload,
+    "a ZIP of what a resident may read, built for them to download and removed after a day; downloading "
+    "changes nothing",
 )
 trail.exempt(
     Event,
