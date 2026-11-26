@@ -7,7 +7,7 @@ from django.db import migrations, models
 
 class Migration(migrations.Migration):
     dependencies = [
-        ("core", "0020_drop_arkiv_tables"),
+        ("core", "0021_workerjoblog_peak_memory"),
         migrations.swappable_dependency(settings.AUTH_USER_MODEL),
     ]
 
