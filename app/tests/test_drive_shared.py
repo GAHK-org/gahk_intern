@@ -10,6 +10,8 @@ from django.test import Client
 from django.urls import reverse
 from django.utils import timezone
 
+from audit import presentation
+from audit.models import AuditEvent
 from core.models import Workgroup
 from drive import locks, services, shared
 from drive.access import Level, Viewer
@@ -117,6 +119,17 @@ def test_only_members_see_it_and_overseers_see_only_its_tag(people: dict[str, Re
     assert "3 medlemmer" in page
     assert inspector.get(reverse("drive:folder", args=[folder.uuid])).status_code == 403
     assert inspector.get(reverse("drive:shared", args=[folder.shared.uuid])).status_code == 404
+
+    # Nor does the audit page tell administrators more: the trail keeps the name and the members, the
+    # page shows the tag, a tag for each member, and how many.
+    created = AuditEvent.objects.get(action="drive.shared.created")
+    assert created.entities.filter(kind="drive.folder", name__endswith="Temafest").exists()
+    shown, _ = presentation.page(presentation.Filters(area="drive"))
+    line = next(line for line in shown if line.action == "drive.shared.created")
+    names = [entity.name for entity in line.entities]
+    assert line.subject is not None and line.subject.name == f"Delt mappe {folder.shared.tag}"
+    assert not any("Temafest" in name for name in names)
+    assert sum(name.startswith("Medlem af delt mappe ") for name in names) == 3
 
 
 def test_two_delte_mapper_may_have_the_same_name(people: dict[str, Resident]) -> None:

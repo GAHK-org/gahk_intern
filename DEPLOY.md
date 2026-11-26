@@ -470,11 +470,11 @@ requests against the bucket with a stolen presigned URL; there is no reason to.
 
 A photo album ZIP download is built **into the bucket** (`photo-album-zips/`) and then redirected
 to. Those archives are disposable by construction, and a worker outage can leave one behind, so the
-prefix needs a rule — and **the bucket is versioned, which changes what a rule means.** On a versioned bucket `Expiration` does not delete anything: it writes a delete marker
-and the object becomes a *noncurrent version*, which lives until a `NoncurrentVersionExpiration`
-rule covering that prefix removes it. An expiry rule on its own therefore frees nothing and is worth
-exactly the storage it does not reclaim. That was the state `media/` had been in since the bucket
-was created.
+prefix needs a rule — and **the bucket is versioned, which changes what a rule means.** On a
+versioned bucket `Expiration` does not delete anything: it writes a delete marker and the object
+becomes a *noncurrent version*, which lives until a `NoncurrentVersionExpiration` rule covering that
+prefix removes it. An expiry rule on its own therefore frees nothing and is worth exactly the
+storage it does not reclaim. That was the state `media/` had been in since the bucket was created.
 
 The whole rule set is declared in `core/management/commands/sync_bucket_lifecycle.py` and applied by
 running it. **Do not hand-edit the configuration in a console.**
@@ -487,7 +487,9 @@ docker exec <web> python manage.py sync_bucket_lifecycle
 Idempotent, and it **merges**: any rule whose ID the command does not declare is carried through
 untouched, because `put_bucket_lifecycle_configuration` replaces the *entire* configuration and the
 naive call silently drops every rule it does not mention. That trap is why this is a command rather
-than a snippet somebody pastes into a shell.
+than a snippet somebody pastes into a shell. The one exception is `RETIRED`: IDs the command used to
+declare, which it removes, because otherwise a rule taken out of the file would stay on the bucket
+for ever as if somebody had added it by hand.
 
 | ID | Prefix | What it does |
 | --- | --- | --- |
@@ -495,7 +497,10 @@ than a snippet somebody pastes into a shell.
 | `expire-photo-album-zips` | `photo-album-zips/` | marks built zips at 7 days, purges the version a day later |
 | `expire-photo-album-zip-markers` | `photo-album-zips/` | clears the delete markers that leaves |
 | `expire-noncurrent-drive` | `drive/` | Drive's deleted files actually go, 30 days later |
+| `expire-drive-markers` | `drive/` | clears the delete markers that leaves |
 | `expire-noncurrent-versions` | `media/` | 30 days |
+| `retire-arkiv`, `retire-arkiv-thumb`, `retire-arkiv-preview`, `retire-arkiv-zip` | `arkiv/`, `arkiv-thumb/`, `arkiv-preview/`, `arkiv-zip/` | temporary: empties what Arkiv left, see below |
+| `retire-arkiv-markers`, `retire-arkiv-thumb-markers`, … | the same | clears the delete markers that leaves |
 | `expire-noncurrent-backups` | `data/` | makes Coolify's own deletions free the bytes, after 7 days |
 | `expire-backup-markers` | `data/` | clears those delete markers |
 
@@ -517,6 +522,23 @@ a part-uploaded archive, and this is what stops those being billed indefinitely.
 **Backups live under `data/coolify/`, not `backups/`** (§4d), and the rule they need is only the
 noncurrent half: Coolify decides which dumps to keep, and versioning is what stops its deletions
 actually freeing anything.
+
+#### Removing Arkiv
+
+Arkiv was removed with nothing migrated. The migration that removes it (`core.0020_drop_arkiv_tables`)
+drops its tables and **cannot be undone**: afterwards the folder tree and file names are gone, and the
+objects under `arkiv/` are bare sha256 keys that nothing can match to a file. So, in this order:
+
+1. Before deploying, confirm nobody still needs anything in Arkiv. It is open to every resident.
+2. Take a Postgres backup by hand in Coolify (*Backup Now* on the gahk database) and check it
+   finished. That backup is the only way back.
+3. Deploy, then run `sync_bucket_lifecycle` (above). It removes Arkiv's old rules
+   (`expire-noncurrent-arkiv*`, `expire-built-zips`, `expire-built-zip-markers`) and adds the
+   `retire-arkiv*` rules, which turn every Arkiv object into a noncurrent version within a day and
+   delete it 30 days after that. Until then, restoring the backup from step 2 still finds its files
+   (by removing the delete markers).
+4. A month and a few days later, when the four prefixes are empty, move the `retire-arkiv*` IDs to
+   `RETIRED` in the command, delete their rules, and run it again.
 
 #### `/media/` is no longer public
 

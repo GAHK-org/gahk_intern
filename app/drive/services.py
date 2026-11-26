@@ -18,6 +18,7 @@ from django.db import IntegrityError, transaction
 from django.db.models import Count, Sum
 from django.utils import timezone
 
+from audit import trail
 from photo_album.storage import get_photo_album_storage
 from residents.models import Resident
 
@@ -84,7 +85,9 @@ def create_folder(viewer: Viewer, parent: Folder, name: str, resident: Resident)
         created_by=resident,
     )
     try:
-        with transaction.atomic():
+        with trail.event(
+            "drive.folder.created", subject=folder, actor=resident, involve=[(parent, "parent")]
+        ):
             folder.save()
     except IntegrityError as exc:
         raise ValidationError(f"Der er allerede noget, der hedder „{name}“, i mappen.") from exc
@@ -202,7 +205,7 @@ def add_upload(
     if existing is not None:
         # Keep both - also when the other file appeared while this one was uploading.
         name = free_name(folder, name)
-    file = File.objects.create(
+    file = File(
         folder=folder,
         name=name,
         size=size,
@@ -211,11 +214,13 @@ def add_upload(
         changed_by=resident,
         changed_at=now,
     )
-    version = FileVersion.objects.create(
-        file=file, number=1, key=key, size=size, content_type=content_type, created_by=resident
-    )
-    preview.ensure(version, file.name)
-    history.record(Event.Action.CREATED, actor=resident, file=file, name=file.name)
+    with trail.event("drive.file.uploaded", subject=file, actor=resident, involve=[(folder, "folder")]):
+        file.save()
+        version = FileVersion.objects.create(
+            file=file, number=1, key=key, size=size, content_type=content_type, created_by=resident
+        )
+        preview.ensure(version, file.name)
+        history.record(Event.Action.CREATED, actor=resident, file=file, name=file.name)
     return Added(file, replaced=False)
 
 
@@ -244,14 +249,15 @@ def _new_version(
     file: File, *, key: str, size: int, content_type: str, resident: Resident | None
 ) -> FileVersion:
     number = (file.versions.order_by("-number").values_list("number", flat=True).first() or 0) + 1
-    version = FileVersion.objects.create(
-        file=file, number=number, key=key, size=size, content_type=content_type, created_by=resident
-    )
-    file.size, file.content_type = size, content_type
-    file.changed_by, file.changed_at = resident, timezone.now()
-    file.save()
-    preview.ensure(version, file.name)
-    history.record(Event.Action.VERSION, actor=resident, file=file, name=file.name, number=number)
+    with trail.event("drive.file.version_uploaded", subject=file, actor=resident):
+        version = FileVersion.objects.create(
+            file=file, number=number, key=key, size=size, content_type=content_type, created_by=resident
+        )
+        file.size, file.content_type = size, content_type
+        file.changed_by, file.changed_at = resident, timezone.now()
+        file.save()
+        preview.ensure(version, file.name)
+        history.record(Event.Action.VERSION, actor=resident, file=file, name=file.name, number=number)
     return version
 
 

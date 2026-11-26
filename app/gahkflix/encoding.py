@@ -534,6 +534,23 @@ def sixteen_nine(image: Image.Image, max_width: int) -> Image.Image:
     return _blur_fill(image, max_width)
 
 
+# How blurred each PremiereBlur level is, as a share of the picture's width: the same look on a card
+# whatever the picture's size.
+PREMIERE_BLUR = {"light": 0.012, "medium": 0.03, "heavy": 0.07}
+
+
+def premiere_jpeg(data: bytes, level: str) -> bytes:
+    """An upcoming premiere's thumbnail, blurred as its uploader chose (`level`, a PremiereBlur).
+
+    Blurred here rather than in the browser: a CSS blur would send the sharp picture along."""
+    share = PREMIERE_BLUR.get(level)
+    if not share:
+        return data
+    with Image.open(BytesIO(data)) as source:
+        image = source.convert("RGB")
+    return _jpeg(image.filter(ImageFilter.GaussianBlur(max(1.0, share * image.width))))
+
+
 def thumbnail_jpeg(image_file: object) -> bytes:
     """A 16:9 card picture from any image (a frame, or a resident's own upload)."""
     with Image.open(image_file) as source:  # type: ignore[arg-type]
