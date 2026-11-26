@@ -1049,6 +1049,7 @@ erDiagram
         int holder_id FK
         int default_credit_limit_ore
         bool is_main
+        int closing_months
         datetime created_at
     }
 
@@ -1084,6 +1085,65 @@ erDiagram
         string text
         string prev_hash
         string row_hash
+    }
+
+    credit_Anchor {
+        int id PK
+        string kind
+        int book_id FK
+        datetime as_of
+        datetime made_at
+        string root
+        int accounts
+        string postings
+        int previous_id FK
+        string anchor_hash
+        string signature
+        string key_id
+    }
+
+    credit_AnchorDelivery {
+        int id PK
+        int anchor_id FK
+        string way
+        string target
+        bool ok
+        text detail
+        datetime at
+    }
+
+    credit_Closing {
+        int id PK
+        int book_id FK
+        date period_start
+        date period_end
+        datetime ends_at
+        int previous_id FK
+        int closed_by_id FK
+        datetime closed_at
+        text note
+        int anchor_id FK
+    }
+
+    credit_ClosingBalance {
+        int id PK
+        int closing_id FK
+        int account_id FK
+        int balance
+        int last_posting_id FK
+        string chain_head
+        int bank_statement_ore
+    }
+
+    credit_Statement {
+        int id PK
+        int holder_id FK
+        int year
+        int month
+        int anchor_id FK
+        text recipients
+        string pdf_sha256
+        datetime sent_at
     }
 
     audit_AuditEvent }o--|o residents_Account : "actor"
@@ -1220,6 +1280,18 @@ erDiagram
     credit_Transfer ||--|o credit_Transfer : "companion_of"
     credit_Posting }o--|| credit_Transfer : "transfer"
     credit_Posting }o--|| credit_CreditAccount : "account"
+    credit_Anchor }o--|o credit_Book : "book"
+    credit_Anchor ||--|o credit_Anchor : "previous"
+    credit_AnchorDelivery }o--|| credit_Anchor : "anchor"
+    credit_Closing }o--|| credit_Book : "book"
+    credit_Closing ||--|o credit_Closing : "previous"
+    credit_Closing }o--|| residents_Account : "closed_by"
+    credit_Closing ||--|| credit_Anchor : "anchor"
+    credit_ClosingBalance }o--|| credit_Closing : "closing"
+    credit_ClosingBalance }o--|| credit_CreditAccount : "account"
+    credit_ClosingBalance }o--|o credit_Posting : "last_posting"
+    credit_Statement }o--|| credit_Holder : "holder"
+    credit_Statement }o--|| credit_Anchor : "anchor"
 ```
 
 ## access
@@ -1608,6 +1680,7 @@ erDiagram
         int holder_id FK
         int default_credit_limit_ore
         bool is_main
+        int closing_months
         datetime created_at
     }
 
@@ -1645,6 +1718,65 @@ erDiagram
         string row_hash
     }
 
+    credit_Anchor {
+        int id PK
+        string kind
+        int book_id FK
+        datetime as_of
+        datetime made_at
+        string root
+        int accounts
+        string postings
+        int previous_id FK
+        string anchor_hash
+        string signature
+        string key_id
+    }
+
+    credit_AnchorDelivery {
+        int id PK
+        int anchor_id FK
+        string way
+        string target
+        bool ok
+        text detail
+        datetime at
+    }
+
+    credit_Closing {
+        int id PK
+        int book_id FK
+        date period_start
+        date period_end
+        datetime ends_at
+        int previous_id FK
+        int closed_by_id FK
+        datetime closed_at
+        text note
+        int anchor_id FK
+    }
+
+    credit_ClosingBalance {
+        int id PK
+        int closing_id FK
+        int account_id FK
+        int balance
+        int last_posting_id FK
+        string chain_head
+        int bank_statement_ore
+    }
+
+    credit_Statement {
+        int id PK
+        int holder_id FK
+        int year
+        int month
+        int anchor_id FK
+        text recipients
+        string pdf_sha256
+        datetime sent_at
+    }
+
     core_Workgroup { }
 
     residents_Account { }
@@ -1662,6 +1794,18 @@ erDiagram
     credit_Transfer ||--|o credit_Transfer : "companion_of"
     credit_Posting }o--|| credit_Transfer : "transfer"
     credit_Posting }o--|| credit_CreditAccount : "account"
+    credit_Anchor }o--|o credit_Book : "book"
+    credit_Anchor ||--|o credit_Anchor : "previous"
+    credit_AnchorDelivery }o--|| credit_Anchor : "anchor"
+    credit_Closing }o--|| credit_Book : "book"
+    credit_Closing ||--|o credit_Closing : "previous"
+    credit_Closing }o--|| residents_Account : "closed_by"
+    credit_Closing ||--|| credit_Anchor : "anchor"
+    credit_ClosingBalance }o--|| credit_Closing : "closing"
+    credit_ClosingBalance }o--|| credit_CreditAccount : "account"
+    credit_ClosingBalance }o--|o credit_Posting : "last_posting"
+    credit_Statement }o--|| credit_Holder : "holder"
+    credit_Statement }o--|| credit_Anchor : "anchor"
 ```
 
 ## den_hurtige

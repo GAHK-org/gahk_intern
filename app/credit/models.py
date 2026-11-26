@@ -70,6 +70,10 @@ class Book(models.Model):
     default_credit_limit_ore = models.BigIntegerField(default=0)
     # The book where every person with a login gets a general account. One at most.
     is_main = models.BooleanField(default=False)
+    # How often its managers close it (credit.closing): every month, half year or year.
+    closing_months = models.PositiveSmallIntegerField(
+        default=1, choices=[(1, "Hver måned"), (6, "Hvert halve år"), (12, "Hvert år")]
+    )
     created_at = models.DateTimeField(default=timezone.now)
 
     class Meta:
@@ -211,3 +215,127 @@ class Posting(AppendOnly):
 
     def __str__(self) -> str:
         return f"{self.account}: {self.amount_ore} øre"
+
+
+class Anchor(AppendOnly):
+    """A fixed point of the ledger kept outside the database: one hash over every account's chain head
+    (or one book's, for a closing) as of a moment, signed, and delivered somewhere a rewrite of the
+    database cannot reach (credit.anchors). Anchors also chain to each other."""
+
+    class Kind(models.TextChoices):
+        DAILY = "daily", "Dagligt"
+        MONTH = "month", "Månedsskifte"  # what every monthly statement prints
+        CLOSING = "closing", "Lukning"  # one book's, made when its period is closed
+
+    kind = models.CharField(max_length=10, choices=Kind.choices)
+    book = models.ForeignKey(Book, null=True, blank=True, on_delete=models.PROTECT, related_name="anchors")
+    # The heads are each account's last posting from before this moment.
+    as_of = models.DateTimeField()
+    made_at = models.DateTimeField(default=timezone.now)
+    root = models.BinaryField(max_length=32)
+    accounts = models.PositiveIntegerField()
+    postings = models.PositiveBigIntegerField()
+    previous = models.OneToOneField(
+        "self", null=True, blank=True, on_delete=models.PROTECT, related_name="next_anchor"
+    )
+    # SHA-256 of the previous anchor's anchor_hash and this anchor's fields (credit.anchors.message).
+    anchor_hash = models.BinaryField(max_length=32)
+    signature = models.BinaryField(max_length=128, blank=True)
+    key_id = models.CharField(max_length=40, blank=True)
+
+    class Meta:
+        ordering = ["-id"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["kind", "as_of"],
+                condition=Q(book__isnull=True),
+                name="credit_one_global_anchor_per_moment",
+            ),
+            models.UniqueConstraint(
+                fields=["kind", "book", "as_of"],
+                condition=Q(book__isnull=False),
+                name="credit_one_book_anchor_per_moment",
+            ),
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.get_kind_display()} {self.as_of:%Y-%m-%d %H:%M}"
+
+
+class AnchorDelivery(AppendOnly):
+    """Where an anchor was sent, and whether it got there."""
+
+    class Way(models.TextChoices):
+        S3 = "s3", "S3 med objektlås"
+        MAIL = "mail", "E-mail"
+        NONE = "none", "Ingen modtager sat op"
+
+    anchor = models.ForeignKey(Anchor, on_delete=models.PROTECT, related_name="deliveries")
+    way = models.CharField(max_length=10, choices=Way.choices)
+    target = models.CharField(max_length=255, blank=True)
+    ok = models.BooleanField()
+    detail = models.TextField(blank=True)
+    at = models.DateTimeField(default=timezone.now)
+
+
+class Closing(AppendOnly):
+    """A book's period, closed and signed off by its managers: the balance of every account at its
+    end, the bank statements they match, and the book's anchor. Nothing can be recorded into a
+    closed period afterwards (a trigger refuses it); a correction goes into the open one."""
+
+    book = models.ForeignKey(Book, on_delete=models.PROTECT, related_name="closings")
+    period_start = models.DateField()
+    period_end = models.DateField()  # the period's last day
+    ends_at = models.DateTimeField()  # midnight after period_end, local time: the first moment after it
+    previous = models.OneToOneField(
+        "self", null=True, blank=True, on_delete=models.PROTECT, related_name="next_closing"
+    )
+    closed_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name="+")
+    closed_at = models.DateTimeField(default=timezone.now)
+    # Why something was not settled (a mellemregning in transit), written by whoever closed.
+    note = models.TextField(blank=True)
+    anchor = models.OneToOneField(Anchor, on_delete=models.PROTECT, related_name="closing")
+
+    class Meta:
+        ordering = ["-period_end"]
+        constraints = [
+            models.UniqueConstraint(fields=["book", "period_end"], name="credit_one_closing_per_period")
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.book.name}: {self.period_start} – {self.period_end}"
+
+
+class ClosingBalance(AppendOnly):
+    closing = models.ForeignKey(Closing, on_delete=models.PROTECT, related_name="balances")
+    account = models.ForeignKey(CreditAccount, on_delete=models.PROTECT, related_name="+")
+    balance = models.BigIntegerField()
+    last_posting = models.ForeignKey(
+        Posting, null=True, blank=True, on_delete=models.PROTECT, related_name="+"
+    )
+    chain_head = models.BinaryField(max_length=32)
+    # For an account standing for a bank: the bank statement's balance at the period's end, as typed.
+    bank_statement_ore = models.BigIntegerField(null=True, blank=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=["closing", "account"], name="credit_one_balance_per_closing")
+        ]
+
+
+class Statement(AppendOnly):
+    """A holder's monthly statement, sent once (the unique month is the send's identity)."""
+
+    holder = models.ForeignKey(Holder, on_delete=models.PROTECT, related_name="statements")
+    year = models.PositiveSmallIntegerField()
+    month = models.PositiveSmallIntegerField()
+    anchor = models.ForeignKey(Anchor, on_delete=models.PROTECT, related_name="statements")
+    recipients = models.TextField(blank=True)  # the addresses it went to, one per line
+    pdf_sha256 = models.CharField(max_length=64)
+    sent_at = models.DateTimeField(default=timezone.now)
+
+    class Meta:
+        ordering = ["-year", "-month"]
+        constraints = [
+            models.UniqueConstraint(fields=["holder", "year", "month"], name="credit_one_statement_per_month")
+        ]

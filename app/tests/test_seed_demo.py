@@ -389,6 +389,11 @@ def test_seed_demo_writes_a_gahk_konto_ledger_that_passes_the_check() -> None:
     assert report.in_transit
     cellar = Book.objects.get(name="Ølkælder")
     assert ledger.book_total(cellar) == 0
+    # A closed period, and the next one ready to close on the book page.
+    assert cellar.closings.count() == 1
+    from credit import closing
+
+    assert closing.may_close(cellar)
     # A second --fresh empties the append-only ledger and writes it again.
     call_command("seed_demo", "--fresh", "--force", "--residents", "12", verbosity=0)
     assert Book.objects.count() == 2

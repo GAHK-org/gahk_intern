@@ -63,6 +63,45 @@
     </table>
   </div>
 
+  <h2>Lukkede perioder</h2>
+  <div class="card overflow-x-auto mb-4">
+    <table cellpadding="6" class="text-sm" style="width:100%; border-collapse:collapse">
+      <thead><tr style="text-align:left; border-bottom:1px solid var(--border-strong)">
+        <th>Periode</th><th>Lukket af</th><th>Kontrolnummer</th><th>Bemærkning</th></tr></thead>
+      <tbody>
+      {% for closed in closings %}
+        <tr style="border-bottom:1px solid var(--border)">
+          <td class="whitespace-nowrap">{{ closed.period_start|date:"d.m.Y" }}–{{ closed.period_end|date:"d.m.Y" }}</td>
+          <td>{{ closed.closed_by.full_name }}, {{ closed.closed_at|date:"d.m.Y" }}</td>
+          <td style="font-family:monospace; word-break:break-all">{{ closed.anchor.anchor_hash|hexdigest }}</td>
+          <td>{{ closed.note }}</td>
+        </tr>
+      {% empty %}
+        <tr><td colspan="4" class="muted">Ingen perioder lukket endnu.</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% with start=next_period.0 end=next_period.1 %}
+    {% if may_close %}
+      <form method="post" action="{% url 'credit:close_period' book.pk %}" class="card mb-6" style="max-width:36rem"
+            onsubmit="return confirm('Luk perioden? Der kan ikke bogføres i den bagefter.')">
+        {% csrf_token %}
+        <h2>Luk perioden {{ start|date:"d.m.Y" }}–{{ end|date:"d.m.Y" }}</h2>
+        <p class="muted text-sm mb-2">Skriv saldoen på bankudtoget ved periodens slut. Den skal stemme med GAHK-konto.
+          Er en mellemregning ikke afregnet, så skriv hvorfor.</p>
+        {% for bank in banks %}
+          <p class="mb-2"><label for="bank_{{ bank.pk }}">{{ bank.name }} ({{ bank.bank_reference }}), kr</label><br>
+            <input id="bank_{{ bank.pk }}" name="bank_{{ bank.pk }}" inputmode="decimal" autocomplete="off" placeholder="0,00"></p>
+        {% endfor %}
+        <p class="mb-2"><label for="note">Bemærkning</label><br><textarea id="note" name="note" rows="2"></textarea></p>
+        <button type="submit" class="btn">Luk perioden</button>
+      </form>
+    {% else %}
+      <p class="muted mb-6">Næste periode, {{ start|date:"d.m.Y" }}–{{ end|date:"d.m.Y" }}, kan lukkes, når den er slut.</p>
+    {% endif %}
+  {% endwith %}
+
   <div class="flex flex-wrap gap-4">
     <form method="post" action="{% url 'credit:charge' book.pk %}" class="card" style="flex:1; min-width:18rem">
       {% csrf_token %}{{ charge_form.token }}
