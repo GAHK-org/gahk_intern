@@ -32,6 +32,8 @@ from django.db import IntegrityError, transaction
 from django.utils import timezone
 from django.utils.dateparse import parse_datetime
 
+from audit import trail
+
 from .forms import FremlejeForm, RundvisningForm
 from .models import Application
 
@@ -142,7 +144,8 @@ def _ingest_one(item: dict[str, Any], external_id: str) -> Application | None:
     application.submitted_at = submitted_at
     application.external_id = uuid.UUID(external_id)
     try:
-        with transaction.atomic():
+        # Nobody's action on intern: the applicant is not a resident, and the sync is a job.
+        with trail.event("admissions.application.submitted", actor=None, subject=application):
             application.save()
     except IntegrityError:
         # The same item, stored by a sync running alongside this one.

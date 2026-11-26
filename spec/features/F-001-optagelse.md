@@ -19,6 +19,16 @@
 - Indstillingen reviews applications on intern as before: `/optagelse/listansoegninger`, export,
   detail, received and discard. gahk.dk sends those addresses on to intern.
 
+## Audit trail (today)
+
+- Recorded (audit-trail.md): an application coming in from gahk.dk (by nobody: the applicant has no
+  account), marked received, discarded and un-discarded by whom, and the yearly purge as one event
+  by the system with how many it deleted.
+- The trail names an application only by its kind and number ("Rundvisning #12") and keeps none of
+  what the applicant wrote: name, e-mail, gender, age, studies, occupation, how they heard of us,
+  motivation, or gahk.dk's id for it. Applications are deleted after a year; the trail is kept five,
+  so anything personal in it would outlive the application by four.
+
 Everything below is the analysis of the legacy PHP site, kept for reference.
 
 - **Feature ID:** F-001

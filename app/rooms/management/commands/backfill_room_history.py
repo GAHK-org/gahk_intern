@@ -22,6 +22,7 @@ from django.core.management.base import BaseCommand
 from django.db import transaction
 from django.utils import timezone
 
+from audit import trail
 from core.etl import fetch_all, resident_id_remap
 from core.models import Room
 from residents.models import Resident
@@ -35,6 +36,11 @@ class Command(BaseCommand):
 
     def add_arguments(self, parser: Any) -> None:  # noqa: ANN401 (Django's ArgumentParser)
         parser.add_argument("--dry-run", action="store_true", help="Count only; write nothing.")
+
+    def execute(self, *args: object, **options: object) -> str | None:
+        # Loading old data is nobody's action: not one audit event per row (as etl_rooms).
+        with trail.unaudited():
+            return super().execute(*args, **options)
 
     @transaction.atomic
     def handle(self, *args: object, **opts: object) -> None:

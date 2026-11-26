@@ -28,6 +28,7 @@ from django.utils import timezone
 from django.utils.cache import patch_vary_headers
 from django.views.decorators.http import require_POST
 
+from audit import trail
 from core.clock import current_datetime
 from core.uploads import EXTENSION_HELP, prepare_image_upload
 from residents.models import Role
@@ -215,8 +216,9 @@ def create(request: HttpRequest) -> HttpResponse:
         images = _attached_images(request)
         task = form.save(commit=False)
         task.reported_by = current_resident(request)
-        task.save()
-        _save_images(task, images)
+        with trail.event("reparationer.task.reported", subject=task):
+            task.save()
+            _save_images(task, images)
         services.notify_new_task(task)
         live.task_changed(task.pk, "created")
         messages.success(request, "Reparationen er meldt ind.")
@@ -243,9 +245,10 @@ def set_status(request: HttpRequest, pk: int) -> HttpResponse:
     if status in RepairTask.Status.values and status != task.status:
         # Only a real move restarts the card's colour clock (models.RepairTask.column_age) — a
         # replayed POST for the column it is already in must not quietly make it look fresh.
-        task.status = status
-        task.status_changed_at = current_datetime()
-        task.save(update_fields=["status", "status_changed_at", "updated_at"])
+        with trail.event("reparationer.task.moved", subject=task):
+            task.status = status
+            task.status_changed_at = current_datetime()
+            task.save(update_fields=["status", "status_changed_at", "updated_at"])
         live.task_changed(task.pk)
     return _move_response(request, task)
 
@@ -276,8 +279,9 @@ def set_responsible(request: HttpRequest, pk: int) -> HttpResponse:
     if responsible == task.responsible:
         return _move_response(request, task)  # already there: nothing to save, nobody to notify
 
-    task.responsible = responsible
-    task.save(update_fields=["responsible", "updated_at"])
+    with trail.event("reparationer.task.handed_over", subject=task):
+        task.responsible = responsible
+        task.save(update_fields=["responsible", "updated_at"])
     live.task_changed(task.pk)
     if responsible == RepairTask.Responsible.REPPER:
         services.notify_handed_to_repper(task)
@@ -293,7 +297,8 @@ def set_responsible(request: HttpRequest, pk: int) -> HttpResponse:
 def delete(request: HttpRequest, pk: int) -> HttpResponseRedirect:
     task = get_object_or_404(RepairTask, pk=pk)
     task_pk = task.pk  # delete() clears it
-    task.delete()
+    with trail.event("reparationer.task.deleted", subject=task):
+        task.delete()
     live.task_changed(task_pk, "deleted")
     messages.success(request, "Reparationen er slettet.")
     return redirect("reparationer:board")
@@ -307,8 +312,9 @@ def archive_now(request: HttpRequest, pk: int) -> HttpResponseRedirect:
     the page renders already guarantees that, so anything else is a no-op rather than an error."""
     task = get_object_or_404(RepairTask, pk=pk)
     if task.status == RepairTask.Status.FAERDIG and task.archived_at is None:
-        task.archived_at = timezone.now()
-        task.save(update_fields=["archived_at"])
+        with trail.event("reparationer.task.archived", subject=task):
+            task.archived_at = timezone.now()
+            task.save(update_fields=["archived_at"])
         live.task_changed(task.pk)
         messages.success(request, "Reparationen er arkiveret.")
     return redirect("reparationer:detail", pk=task.pk)
@@ -321,8 +327,9 @@ def unarchive(request: HttpRequest, pk: int) -> HttpResponseRedirect:
     archive found it, since archiving never touched `status`."""
     task = get_object_or_404(RepairTask, pk=pk)
     if task.archived_at is not None:
-        task.archived_at = None
-        task.save(update_fields=["archived_at"])
+        with trail.event("reparationer.task.unarchived", subject=task):
+            task.archived_at = None
+            task.save(update_fields=["archived_at"])
         live.task_changed(task.pk)
         messages.success(request, "Reparationen er genåbnet fra arkivet.")
     return redirect("reparationer:detail", pk=task.pk)
@@ -384,8 +391,9 @@ def create_comment(request: HttpRequest, pk: int) -> HttpResponseRedirect:
         return redirect("reparationer:detail", pk=task.pk)
     comment.task = task
     comment.author = current_resident(request)
-    comment.save()
-    _save_images(task, images, comment)
+    with trail.event("reparationer.comment.added", subject=comment, involve=[(task, "task")]):
+        comment.save()
+        _save_images(task, images, comment)
     services.notify_new_comment(comment)
     live.task_changed(task.pk)  # the card's note count
     return redirect("reparationer:detail", pk=task.pk)
@@ -398,7 +406,8 @@ def delete_comment(request: HttpRequest, pk: int) -> HttpResponseRedirect:
     if not can_delete_comment(request, comment):
         raise PermissionDenied
     task_pk = comment.task_id
-    comment.delete()
+    with trail.event("reparationer.comment.deleted", subject=comment, involve=[(comment.task, "task")]):
+        comment.delete()
     live.task_changed(task_pk)
     messages.success(request, "Noten er slettet.")
     return redirect("reparationer:detail", pk=task_pk)

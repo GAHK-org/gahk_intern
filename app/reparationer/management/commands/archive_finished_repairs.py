@@ -11,6 +11,7 @@ import argparse
 from django.core.management.base import BaseCommand
 from django.utils import timezone
 
+from audit import trail
 from reparationer.models import ARCHIVE_AFTER_DAYS, RepairTask
 
 
@@ -31,5 +32,11 @@ class Command(BaseCommand):
             )
             return
 
-        due.update(archived_at=now)
+        # One event for the night's sweep, naming each ticket it took off the board; archived_at is
+        # not a field the trail follows (reparationer.auditing), so the update needs no change lines.
+        if n_due:
+            with trail.event("reparationer.archive.swept", actor=None, details={"count": n_due}) as event:
+                for task in due:
+                    event.involve(task, "archived")
+                due.update(archived_at=now)
         self.stdout.write(self.style.SUCCESS(f"Reparationer: {n_due} arkiveret."))

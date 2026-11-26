@@ -13,8 +13,7 @@ live here.
 
 import logging
 
-from django.db import transaction
-
+from audit import trail
 from residents.models import Residency, Resident, prev_period
 
 from .models import AkAutoApply, AkEntry, AkMonthlyCharge
@@ -27,7 +26,6 @@ def _tag(year: int, month: int) -> str:
     return f"Månedlig vurdering {year}-{month:02d}"
 
 
-@transaction.atomic
 def apply_monthly_charge(year: int, month: int, *, officer: Resident | None = None) -> tuple[int, int]:
     """Reconcile the MONTHLY ledger for (year, month) against the calendar-month schedule and current
     membership. The amount comes from the `AkMonthlyCharge` row for that *calendar* month (same every
@@ -35,33 +33,41 @@ def apply_monthly_charge(year: int, month: int, *, officer: Resident | None = No
 
     Returns (written, removed): how many MONTHLY entries were created/updated and how many were deleted.
     If that month's schedule is missing or inactive, every MONTHLY entry for the period is removed.
+
+    One audit event, by the system unless an officer ran it, with every line it wrote or removed.
     """
-    charge = AkMonthlyCharge.objects.filter(month=month).first()
-    existing = AkEntry.objects.filter(kind=AkEntry.Kind.MONTHLY, year=year, month=month)
+    with trail.event("ak.month.charged", actor=officer, details={"year": year, "month": month}) as event:
+        charge = AkMonthlyCharge.objects.filter(month=month).first()
+        event.involve(charge, "schedule")
+        existing = AkEntry.objects.filter(kind=AkEntry.Kind.MONTHLY, year=year, month=month)
 
-    if charge is None or not charge.active:
-        removed = existing.delete()[0]
-        return (0, removed)
+        if charge is None or not charge.active:
+            removed = existing.delete()[0]
+            event.details.update({"written": 0, "removed": removed})
+            return (0, removed)
 
-    member_ids = set(Residency.objects.filter(year=year, month=month).values_list("resident_id", flat=True))
-
-    # Drop charges for anyone no longer on that month's list (e.g. removed from the alumneliste).
-    removed = existing.exclude(resident_id__in=member_ids).delete()[0]
-
-    written = 0
-    for resident_id in member_ids:
-        AkEntry.objects.update_or_create(
-            resident_id=resident_id,
-            kind=AkEntry.Kind.MONTHLY,
-            year=year,
-            month=month,
-            defaults={
-                "delta": -charge.krydser,
-                "reason": _tag(year, month),
-                "created_by": officer,
-            },
+        member_ids = set(
+            Residency.objects.filter(year=year, month=month).values_list("resident_id", flat=True)
         )
-        written += 1
+
+        # Drop charges for anyone no longer on that month's list (e.g. removed from the alumneliste).
+        removed = existing.exclude(resident_id__in=member_ids).delete()[0]
+
+        written = 0
+        for resident_id in member_ids:
+            AkEntry.objects.update_or_create(
+                resident_id=resident_id,
+                kind=AkEntry.Kind.MONTHLY,
+                year=year,
+                month=month,
+                defaults={
+                    "delta": -charge.krydser,
+                    "reason": _tag(year, month),
+                    "created_by": officer,
+                },
+            )
+            written += 1
+        event.details.update({"written": written, "removed": removed})
     return (written, removed)
 
 

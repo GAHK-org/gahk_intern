@@ -25,8 +25,6 @@ LOGIN = "/admin/login"
 # Apps whose models are not in the trail yet; each is taken off as it is audited. The coverage test
 # below holds every other app to: each model registered, or exempted with a reason.
 PENDING_APPS = {
-    "admissions",
-    "ak",
     "cms",
     "core",
     "den_hurtige",
@@ -37,8 +35,6 @@ PENDING_APPS = {
     "opslagstavle",
     "photo_album",
     "regnskab",
-    "reparationer",
-    "rooms",
     "stats",
 }
 
