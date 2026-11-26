@@ -2,8 +2,8 @@
 
 Every mail is made by the code that sends it in real life — a password reset through the reset form,
 the ølkælder's monthly overview and debt warnings, the admissions auto-reply, the administrators'
-monthly summary — so subject, recipients, kind and lifetime are what the app stores (and, on a branch
-that adds a sender name or Reply-To, what it adds). Then each is given the state the deliverer
+monthly summary — so subject, recipients, sender name, Reply-To, kind and lifetime are what the app
+stores. Then each is given the state the deliverer
 (core.mail.deliver) would have left it in, at a time relative to now: content emptied once sent or
 expired, an error text as smtplib words it, attempts counted the way deliver counts them.
 

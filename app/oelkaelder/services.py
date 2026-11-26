@@ -14,10 +14,12 @@ from decimal import ROUND_HALF_UP, Decimal
 from typing import Any
 
 from django.conf import settings
-from django.core.mail import send_mail
+from django.core.mail import EmailMessage
 from django.db import models, transaction
 from django.db.models import Sum
 from django.utils import timezone
+
+from core import mail as outbox
 
 from .models import (
     Adjustment,
@@ -53,13 +55,13 @@ def send_debt_warnings(shopper: Shopper, old_ore: int, new_ore: int) -> None:
         if old_ore > warning.threshold_ore and new_ore < warning.threshold_ore:
             body = warning.message.replace("SALDOSALDOSALDO", _kr(new_ore)).replace("{saldo}", _kr(new_ore))
             try:
-                send_mail(
+                EmailMessage(
                     "Ølkælder saldo",
                     body,
-                    settings.OELKAELDER_FROM_EMAIL,
+                    outbox.sender("GAHK Ølkælderen"),
                     [shopper.resident.email],
-                    fail_silently=True,
-                )
+                    reply_to=[settings.OELKAELDER_EMAIL],
+                ).send(fail_silently=True)
             except Exception:
                 logger.exception("Failed to send ølkælder warning to shopper#%s", shopper.pk)
 

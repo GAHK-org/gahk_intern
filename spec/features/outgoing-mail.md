@@ -18,6 +18,22 @@ pace the account can take, and retried when it does not go through.
 
 - A mail that carries something with its own expiry can be given a shorter lifetime than its kind's.
 
+## Sender and replies
+
+- Every mail comes from one address, besked@gahk.dk: a mailbox used only for sending, whose password is
+  the only mail password the app holds.
+- The name in front of it says whose mail it is, and replies go to that group:
+
+| Mails | Shown as | Replies go to |
+|---|---|---|
+| password reset, welcome mail, admin mails | GAHK Intern | noreply@gahk.dk |
+| admissions auto-reply | GAHK Indstillingen | indstillingen@gahk.dk |
+| alumneregninger | GAHK Regnskabsgruppen | regnskab@gahk.dk |
+| ølkælder warnings and overviews | GAHK Ølkælderen | bierkeller@gahk.dk |
+
+- Every mail is marked as sent automatically, so out-of-office and other automatic replies are not
+  sent back to it.
+
 ## Sending
 
 - A mail is sent as soon as it is queued. A Haster mail is sent by the web server itself, so a
@@ -69,5 +85,10 @@ pace the account can take, and retried when it does not go through.
   would reveal that the address has an account, and the cause is one administrators must fix.
 - **A mail cut off mid-send is never re-sent by itself.** Two copies of an alumneregning are worse
   than one that someone has to check.
+- **One sending address, with names and Reply-To, instead of one per group.** one.com only lets an
+  account send as itself or its aliases, so a sender per group meant hanging every group address on
+  the sending account. The app's mail password is then only good for a mailbox nobody reads.
+- **besked@, not noreply@.** The address does not tell the reader not to reply, since a reply to a
+  group's mail reaches the group. Mail that belongs to no group sends its replies to noreply@.
 - **Mails have a lifetime.** A reset link arriving after it has expired, or a debt warning a week
   late, does more harm than none; a mail that has waited that long is reported instead.

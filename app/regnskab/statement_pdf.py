@@ -123,7 +123,7 @@ def _render_how_to_read(pdf: FPDF) -> None:
     pdf.cell(
         0,
         6,
-        f"Hvis du har spørgsmål, så kontakt din søde regnskabsgruppe på mail: {settings.ALUMNEREGNING_FROM_EMAIL}",
+        f"Hvis du har spørgsmål, så kontakt din søde regnskabsgruppe på mail: {settings.REGNSKAB_EMAIL}",
         new_x=XPos.LMARGIN,
         new_y=YPos.NEXT,
     )

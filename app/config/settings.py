@@ -633,15 +633,19 @@ EMAIL_PORT = int(os.environ.get("SMTP_PORT", "587"))
 # Port 465 = implicit TLS/SMTPS (e.g. one.com's send.one.com); 587 = STARTTLS. Django forbids both.
 EMAIL_USE_SSL = EMAIL_PORT == 465
 EMAIL_USE_TLS = not EMAIL_USE_SSL
-# Sender addresses. one.com rejects any From the SMTP_USER account is not itself or an alias of
-# ("550 5.7.1 [M9] User [x] not authorized to send on behalf of <y>"), so every *_FROM_EMAIL below
-# must be aliased onto SMTP_USER in the one.com control panel — otherwise nothing is delivered.
-# Verify each one after changing SMTP_USER:  manage.py sendtestemail you@example.com
-DEFAULT_FROM_EMAIL = os.environ.get("DEFAULT_FROM_EMAIL", "autosvar@gahk.dk")
-# Sender for the ølkælder debt-warning mails (legacy used bierkeller@gahk.dk).
-OELKAELDER_FROM_EMAIL = os.environ.get("OELKAELDER_FROM_EMAIL", "bierkeller@gahk.dk")
-# Recipient (not a sender) — where the admissions committee notifications go.
+# Every mail goes out from MAIL_SENDER, a mailbox used for nothing but sending: SMTP_USER itself (one.com
+# refuses any From that is not the account or an alias of it, "550 5.7.1 [M9]"). A mail shows whose it
+# is by the name in front of the address (core.mail.sender) and sends replies to that group's own
+# address (Reply-To); a mail without one gets DEFAULT_REPLY_TO (core.mail.queue).
+# Check after changing the account:  manage.py check_mail_server you@example.com
+MAIL_SENDER = os.environ.get("MAIL_SENDER", "besked@gahk.dk")
+DEFAULT_FROM_EMAIL = f"GAHK Intern <{MAIL_SENDER}>"
+DEFAULT_REPLY_TO = os.environ.get("DEFAULT_REPLY_TO", "noreply@gahk.dk")
+# The groups' own addresses, where replies to their mails go. The alumneregning PDF also gives
+# REGNSKAB_EMAIL as the address for questions.
 INDSTILLING_EMAIL = os.environ.get("INDSTILLING_EMAIL", "indstillingen@gahk.dk")
+OELKAELDER_EMAIL = os.environ.get("OELKAELDER_EMAIL", "bierkeller@gahk.dk")
+REGNSKAB_EMAIL = os.environ.get("REGNSKAB_EMAIL", "regnskab@gahk.dk")
 # Ølkælder bank account shown on the member's saldo page (where to transfer money to top up).
 OELKAELDER_BANK_REG = os.environ.get("OELKAELDER_BANK_REG", "9070")
 OELKAELDER_BANK_ACCOUNT = os.environ.get("OELKAELDER_BANK_ACCOUNT", "1642635456")
@@ -650,8 +654,7 @@ OELKAELDER_BANK_ACCOUNT = os.environ.get("OELKAELDER_BANK_ACCOUNT", "1642635456"
 ECONOMIC_APP_SECRET_TOKEN = os.environ.get("ECONOMIC_APP_SECRET_TOKEN", "demo" if DEBUG else "")
 ECONOMIC_AGREEMENT_GRANT_TOKEN = os.environ.get("ECONOMIC_AGREEMENT_GRANT_TOKEN", "demo" if DEBUG else "")
 
-# Sender + bank details for alumneregning mails (regnskab.alumneregning).
-ALUMNEREGNING_FROM_EMAIL = os.environ.get("ALUMNEREGNING_FROM_EMAIL", "regnskab@gahk.dk")
+# Alumneregning mails (regnskab.alumneregning); replies go to REGNSKAB_EMAIL above.
 # Off, alumneregninger are written to the console instead of mailed, whatever EMAIL_BACKEND says: a
 # local .env with real SMTP must not bill real (or seeded @gahk.dk) addresses from a dev machine.
 ALUMNEREGNING_SEND_MAIL = os.environ.get("ALUMNEREGNING_SEND_MAIL", "0" if DEBUG else "1") == "1"

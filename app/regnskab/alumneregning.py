@@ -157,8 +157,9 @@ def _email(prepared: PreparedStatement, date_from: date) -> EmailMessage:
     email = EmailMessage(
         subject="Alumneregning",
         body=prepared.body,
-        from_email=f"Regnskabsgruppen <{settings.ALUMNEREGNING_FROM_EMAIL}>",
+        from_email=outbox.sender("GAHK Regnskabsgruppen"),
         to=[prepared.resident.email],
+        reply_to=[settings.REGNSKAB_EMAIL],
         connection=None
         if settings.ALUMNEREGNING_SEND_MAIL
         else get_connection("django.core.mail.backends.console.EmailBackend"),

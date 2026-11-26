@@ -423,8 +423,8 @@ def _add_form_draft(request: HttpRequest, action: str) -> dict[str, object]:
 def _send_welcome_email(request: HttpRequest, resident: Resident) -> bool:
     """Welcome a newly created resident with a link to set their password (F-014). Best-effort — a
     mail failure must not undo the creation — but it is logged and reported, never swallowed: the
-    caller reports delivery to the user, and a wrong DEFAULT_FROM_EMAIL (one.com refuses senders the
-    SMTP account is not an alias of) must not look like success. Returns whether the mail was queued:
+    caller reports delivery to the user, and a refused mail (one.com refuses a MAIL_SENDER that is not
+    the SMTP account) must not look like success. Returns whether the mail was queued:
     core.mail sends it at once (password_link_mail), and a refusal then shows on the worker-jobs page."""
     uid = urlsafe_base64_encode(force_bytes(resident.pk))
     token = default_token_generator.make_token(resident)
