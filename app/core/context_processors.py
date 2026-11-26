@@ -6,7 +6,6 @@ from django.conf import settings
 from django.http import HttpRequest
 from django.urls import reverse
 
-from arkiv.access import roles_allowed as arkiv_allowed
 from core.middleware import kitchen_home
 from den_hurtige.access import roles_allowed as den_hurtige_allowed
 from events.access import roles_allowed as events_allowed
@@ -98,23 +97,15 @@ def _nav_intern(roles: Collection[str], user_pk: int) -> list[NavSection]:
     # what is happening NOW — the dashboard, your own profile, the three feeds, who lives here — and
     # you open those to see whether anything has changed. These are reference: nothing in them
     # changes between visits, and you go to them to look something up. That is what Ressourcer is,
-    # and it is why the wiki and the arkiv belong in it too.
+    # and it is why the wiki belongs in it too.
     #
     # Internal pages FIRST, the external links last. Keeping the outbound links together at the
     # bottom stops the sidebar mixing "leaves the site" with "does not" halfway down a list. Note
     # _active_nav_url skips anything with a scheme, so only the internal entries here can light up.
     #
-    # The two UNCONDITIONAL entries lead and the gated one follows, so the top of the section does
-    # not move depending on who is reading it.
     ressourcer: list[NavItem] = [
         (reverse("stamtree"), "Stamtræ", "tree"),
         (reverse("stats:index"), "Statistik", "chart"),
-    ]
-    # Conditional on the rollout gate, like Den Hurtige / Opslagstavlen / Begivenheder above — open
-    # today, and kept conditional for the reason given up there.
-    if arkiv_allowed(roles):
-        ressourcer.append((reverse("arkiv:root"), "Arkiv", "archive"))
-    ressourcer += [
         (settings.WIKI_URL, "Wiki", "book"),
         (settings.FEEDBACK_URL, "Fejl & ønsker", "bug"),
     ]
