@@ -16,7 +16,7 @@ from django.utils import timezone
 import config.urls
 from core import embeds as embed_syntax
 from gahkflix import access as gahkflix_access
-from gahkflix.models import Series, Video, Watch
+from gahkflix.models import PremiereBlur, Series, Video, Watch
 from opslagstavle import access as board_access
 from opslagstavle import embeds
 from opslagstavle import services as board_services
@@ -359,6 +359,52 @@ def test_a_draft_or_binned_film_is_drawn_only_for_those_who_may_see_it(
     assert '<span class="flix-state is-binned">I papirkurven</span>' in administrator
 
 
+def test_an_upcoming_premiere_is_drawn_for_everybody_as_its_premiere_card(
+    beboer: Resident, other: Resident, videos_open: None
+) -> None:
+    """As GAHKFlix's own card: the thumbnail blurred as chosen, never the banner (it is not blurred),
+    no description, length or play button, and a link to the page only for its uploader."""
+    show = Series.objects.create(title="Revyen", created_by=other)
+    film = make_video(
+        other,
+        title="Revy 2027",
+        series=show,
+        episode=2,
+        description="Hemmeligt indhold.",
+        premiere_at=timezone.now() + timedelta(days=2),
+        premiere_blur=PremiereBlur.MEDIUM,
+    )
+    notice = post(other, f"Premiere på fredag!\n\n{embed(film)}")
+    reader = client_for(beboer)
+
+    resident = body_of(reader.get(f"{BOARD}{notice.pk}").content.decode())
+    uploader = body_of(client_for(other).get(f"{BOARD}{notice.pk}").content.decode())
+
+    assert '<div class="flix-embed is-premiere">' in resident
+    assert '<span class="flix-embed-title">Revy 2027</span>' in resident
+    assert f'<span class="flix-state is-premiere">Premiere {film.premiere_label}</span>' in resident
+    assert '<b aria-hidden="true">G</b>Revyen' in resident and "Afsnit 2" in resident
+    picture = re.search(
+        rf'class="flix-embed-img" src="(/gahkflix/v/{film.pk}/billede/thumbnail\?v=[^"]+)"', resident
+    )
+    assert picture is not None
+    assert picture.group(1).endswith("&amp;premiere=medium")
+    for hidden in ("banner", "afspil", "Hemmeligt indhold.", "flix-embed-quality", "10 min"):
+        assert hidden not in resident
+    # The picture it names is one this reader is served.
+    assert reader.get(picture.group(1).replace("&amp;", "&")).status_code == 200
+    assert f'<a class="flix-embed-title" href="/gahkflix/v/{film.pk}">Revy 2027</a>' in uploader
+    assert "afspil" not in uploader
+
+    Video.objects.filter(pk=film.pk).update(premiere_at=timezone.now() - timedelta(minutes=1))
+    out = body_of(reader.get(f"{BOARD}{notice.pk}").content.decode())
+
+    assert '<div class="flix-embed">' in out
+    assert f'href="/gahkflix/v/{film.pk}/afspil"' in out
+    assert "Hemmeligt indhold." in out
+    assert "flix-state" not in out
+
+
 def test_no_film_widget_for_a_reader_gahkflix_keeps_out(beboer: Resident, member: Resident) -> None:
     """GAHKFlix's own rollout gate: its widget would be a play button that answers 403."""
     film = make_video(member, title="Revy")
@@ -506,6 +552,17 @@ def test_sharing_nothing_embeddable_opens_an_empty_composer(beboer: Resident, qu
     assert "autofocus" not in tag
 
 
+def test_an_upcoming_premiere_can_be_shared(beboer: Resident, videos_open: None) -> None:
+    film = make_video(beboer, title="Revy 2027", premiere_at=timezone.now() + timedelta(days=2))
+
+    page = client_for(beboer).get(f"/gahkflix/v/{film.pk}").content.decode()
+    html = client_for(beboer).get(BOARD + f"opret?gahkflix={film.pk}").content.decode()
+
+    assert f'href="/opslagstavle/opret?gahkflix={film.pk}"' in page
+    assert f"![Revy 2027](gahkflix:{film.pk})" in textarea(html)[1]
+    assert '<div class="flix-embed is-premiere">' in html
+
+
 def test_a_draft_cannot_be_shared(beboer: Resident, videos_open: None) -> None:
     draft = make_video(beboer, published=False)
 
@@ -544,9 +601,12 @@ def test_the_album_picker_lists_the_newest_and_finds_by_name(beboer: Resident) -
     assert "Ingen albummer matcher «xyz»." in none
 
 
-def test_the_film_picker_lists_published_films_only(beboer: Resident, videos_open: None) -> None:
+def test_the_film_picker_lists_published_films_and_upcoming_premieres_only(
+    beboer: Resident, videos_open: None
+) -> None:
     show = Series.objects.create(title="Gangen", created_by=beboer)
     film = make_video(beboer, title="Pilot", series=show)
+    upcoming = make_video(beboer, title="Snart", premiere_at=timezone.now() + timedelta(days=2))
     draft = make_video(beboer, title="Ufærdig", published=False)
     binned = make_video(beboer, title="Væk", deleted_at=timezone.now())
     client = client_for(beboer)
@@ -555,6 +615,10 @@ def test_the_film_picker_lists_published_films_only(beboer: Resident, videos_ope
     by_series = client.get(BOARD + "indlejr/gahkflix", {"q": "gang"}).content.decode()
 
     assert f"(gahkflix:{film.pk})" in listed
+    assert f"(gahkflix:{upcoming.pk})" in listed
+    assert f"Premiere {upcoming.premiere_label}" in listed
+    # Newest first, an upcoming premiere by its moment: it leads.
+    assert listed.index("Snart") < listed.index("Pilot")
     assert f"(gahkflix:{draft.pk})" not in listed
     assert f"(gahkflix:{binned.pk})" not in listed
     assert f"(gahkflix:{film.pk})" in by_series

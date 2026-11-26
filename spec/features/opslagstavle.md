@@ -101,15 +101,18 @@ widget where it stands:
   get a layout that fills the tile.
 - **A film** as a small GAHKFlix hero: the banner, the red wordmark, series, title, episode, release
   date, length, quality and description, `Afspil` (the player) and `Mere info` (the film's page), and
-  the reader's red progress bar. On a phone the words go under the banner.
+  the reader's red progress bar. On a phone the words go under the banner. An upcoming premiere is
+  drawn as GAHKFlix's premiere card: its thumbnail blurred as its uploader chose (never the banner),
+  series, title, episode and `Premiere <moment>`, with nothing to play; its title opens the film's
+  page only for its uploader and the administrators. From the premiere on it is an ordinary film.
 - In the text an embed is `![Julefrokost 2026](album:12)`: a reference, not an address. An embed
   in the middle of a sentence is drawn right after its paragraph. The feed shows the text and the
   first widget under it; the post's own page draws up to ten, each where it stands.
 - In the composer, `Indsæt` → `Fotoalbum` / `Video fra GAHKFlix` opens a picker of the newest albums
-  or published films, searched by name (and series) as you type; picking one puts its embed at the
+  or published films (upcoming premieres too, marked so), searched by name (and series) as you type; picking one puts its embed at the
   cursor. The widgets show under the text as they will in the post, each with `Fjern`, and the
   preview tab draws them in place. `Del på opslagstavlen` on an album's page or a published film's
-  page opens the composer with it embedded and the cursor above it.
+  page (an upcoming premiere's too) opens the composer with it embedded and the cursor above it.
 - `Vælg billeder` on an album's widget in the composer picks its pictures: every picture the tile may
   show, newest first, a page at a time; picking one adds it, picking it again takes it out, and each
   wears its place. The first is the large one, and a phone shows the first three. `Gem` writes them
@@ -120,7 +123,8 @@ widget where it stands:
 - Each widget follows its feature's rules for the reader. Albums for every resident, counting and
   showing only approved, unbinned items, so everyone sees the same tile. Films only for those
   GAHKFlix's rollout gate lets in, and only while they may see the film: a draft for its uploader and
-  the administrators (`Kladde`), a binned one for the administrators (`I papirkurven`). The kitchen
+  the administrators (`Kladde`), a binned one for the administrators (`I papirkurven`), an upcoming
+  premiere for all of them as its card. The kitchen
   account gets none.
 - Where no widget can be drawn (the reader may not see it, it is gone, or past the ten) the name it
   was embedded under stands in its place. A notification shows `📷 Julefrokost 2026`.

@@ -9,24 +9,28 @@
   looks like a button: it sits under the stretched link, so a tap on it opens the film's page like
   the rest of the widget, and a screen reader hears one link to the page rather than two.
 
+  An upcoming premiere (`widget.premiere`) is GAHKFlix's premiere card: the thumbnail blurred as its
+  uploader chose, title, series and moment, nothing to play; its title is a link only for those who
+  may open its page (`widget.url`), plain text for everybody else.
+
   In the composer (`compose`) the links open a new tab, so following one does not lose the draft.
 {% endcomment %}
-<div class="flix-embed{% if widget.progress %} has-progress{% endif %}">
+<div class="flix-embed{% if widget.progress %} has-progress{% endif %}{% if widget.premiere %} is-premiere{% endif %}">
   {% if widget.picture %}<img class="flix-embed-img" src="{{ widget.picture }}" alt="" loading="lazy" decoding="async">{% endif %}
   <span class="flix-embed-logo" aria-hidden="true">GAHKFLIX</span>
   <div class="flix-embed-body">
     {% if widget.video.series %}<span class="flix-embed-kicker"><b aria-hidden="true">G</b>{{ widget.video.series.title }}</span>{% endif %}
-    <a class="flix-embed-title" href="{{ widget.url }}"{% if compose %} target="_blank" rel="noopener"{% endif %}>{{ widget.video.title }}</a>
+    {% if widget.url %}<a class="flix-embed-title" href="{{ widget.url }}"{% if compose %} target="_blank" rel="noopener"{% endif %}>{{ widget.video.title }}</a>{% else %}<span class="flix-embed-title">{{ widget.video.title }}</span>{% endif %}
     <span class="flix-embed-meta">
-      {% if widget.state %}<span class="flix-state {% if widget.video.is_binned %}is-binned{% else %}is-draft{% endif %}">{{ widget.state }}</span>{% endif %}
+      {% if widget.state %}<span class="flix-state {% if widget.premiere %}is-premiere{% elif widget.video.is_binned %}is-binned{% else %}is-draft{% endif %}">{{ widget.state }}</span>{% endif %}
       {% for item in widget.meta %}<span>{{ item }}</span>{% endfor %}
-      <span class="flix-embed-quality">{% if widget.full_hd %}Full HD{% else %}HD{% endif %}</span>
+      {% if not widget.premiere %}<span class="flix-embed-quality">{% if widget.full_hd %}Full HD{% else %}HD{% endif %}</span>{% endif %}
     </span>
-    {% if widget.video.description %}<p class="flix-embed-desc">{{ widget.video.description }}</p>{% endif %}
-    <span class="flix-embed-actions">
+    {% if widget.video.description and not widget.premiere %}<p class="flix-embed-desc">{{ widget.video.description }}</p>{% endif %}
+    {% if not widget.premiere %}<span class="flix-embed-actions">
       <a class="flix-btn flix-btn-play" href="{{ widget.play_url }}"{% if compose %} target="_blank" rel="noopener"{% endif %} aria-label="{% if widget.resumes %}Fortsæt{% else %}Afspil{% endif %} {{ widget.video.title }}"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M7 4.5v15l12-7.5z"/></svg>{% if widget.resumes %}Fortsæt{% else %}Afspil{% endif %}</a>
       <span class="flix-btn flix-btn-info" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9.5"/><path d="M12 11v6M12 7.5v.5"/></svg>Mere info</span>
-    </span>
+    </span>{% endif %}
   </div>
   {% if widget.progress %}<span class="flix-progress" role="img" aria-label="{{ widget.progress|percent }} % set"><span style="width:{{ widget.progress|percent }}%"></span></span>{% endif %}
 </div>

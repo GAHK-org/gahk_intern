@@ -557,6 +557,8 @@ body.flix-play, body.flix-player-open { overflow: hidden; background: #000; }
 .flix-embed-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 6px; }
 .flix-embed .flix-btn { padding: 8px 18px; font-size: 15px; }
 .flix-embed .flix-btn-play { position: relative; z-index: 1; }
+/* An upcoming premiere: nothing to open for most, so the picture does not lean in. */
+.flix-embed.is-premiere:not(:has(a.flix-embed-title)):hover .flix-embed-img { transform: none; }
 .flix-embed .flix-progress { left: 0; right: 0; bottom: 0; height: 4px; border-radius: 0; }
 @media (max-width: 640px) {
   .flix-embed { display: block; min-height: 0; }
