@@ -9,6 +9,7 @@ from django.test import Client
 from django.urls import reverse
 from django.utils import timezone
 
+from audit.models import AuditEvent
 from core.models import Workgroup
 from drive import locks, services
 from drive.access import Viewer
@@ -91,6 +92,11 @@ def test_a_file_locks_a_year_after_its_last_version_and_a_folder_after_a_year_wi
     assert not Folder.objects.get(pk=new_folder.pk).lock_active()
     assert not Folder.objects.filter(kind__in=Folder.SYSTEM_KINDS, locked_at__isnull=False).exists()
     assert old.events.filter(action=Event.Action.LOCKED, details__automatic=True).exists()
+    locked = AuditEvent.objects.get(action="drive.items.auto_locked")
+    assert locked.actor_id is None
+    assert set(locked.entities.values_list("name", "operation")) >= {("old.txt", "updated")}
+    assert locks.auto_lock() == (0, 0)
+    assert AuditEvent.objects.filter(action="drive.items.auto_locked").count() == 1  # nothing new locked
 
 
 def test_a_locked_file_can_be_read_and_copied_but_not_changed(
@@ -273,6 +279,15 @@ def test_a_binned_file_is_purged_from_the_bin(people: dict[str, Resident], group
     locks.decide(_viewer(people["inspector"]), request, approve=True, reason="", actor=people["inspector"])
     assert not File.objects.filter(pk=file.pk).exists()
     assert Event.objects.filter(action=Event.Action.PURGED, file=None, name="Budget.xlsx").exists()
+    # The trail keeps the file, its versions and the decision, by the one who decided.
+    purged = AuditEvent.objects.get(action="drive.purge.approved")
+    assert purged.actor_id == people["inspector"].pk
+    assert set(purged.entities.values_list("kind", "operation", "role")) == {
+        ("drive.request", "updated", "subject"),
+        ("drive.file", "deleted", "target"),
+        ("drive.file_version", "deleted", ""),
+    }
+    assert AuditEvent.objects.get(action="drive.purge.requested").actor_id == people["member"].pk
 
 
 def test_the_requests_page_is_for_admins_and_inspektionen(people: dict[str, Resident]) -> None:

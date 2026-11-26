@@ -9,6 +9,7 @@ from django.test import Client
 from django.urls import reverse
 from django.utils import timezone
 
+from audit.models import AuditChange, AuditEvent
 from core.models import Workgroup
 from drive import operations, services
 from drive.models import Event, File, FileVersion, Folder, Space
@@ -49,6 +50,13 @@ def _client(resident: Resident) -> Client:
 
 def _content(response) -> bytes:  # noqa: ANN001
     return b"".join(response.streaming_content)
+
+
+def _trail(action: str, kind: str, pk: int) -> dict[str, list]:
+    """{field: [before, after]} of one thing in the newest event of `action`."""
+    event = AuditEvent.objects.filter(action=action).latest("id")
+    found = AuditChange.objects.filter(entity__event=event, entity__kind=kind, entity__entity_id=pk)
+    return {change.field: [change.before, change.after] for change in found}
 
 
 def _notes(resident: Resident) -> list[str]:
@@ -183,6 +191,13 @@ def test_moving_a_folder_to_another_space_asks_then_takes_its_subtree_along(
     )
     assert pictures.path == f"{common_year.path}{fest.pk}/{pictures.pk}/"
     assert services.subtree_totals([common_year])[common_year.pk][0] == 1
+    # Queryset updates, so the move says itself what changed.
+    assert _trail("drive.items.moved", "drive.folder", fest.pk) == {
+        "parent": [winter.pk, common_year.pk],
+        "space": [Space.GROUP, Space.COMMON],
+        "workgroup": [group.pk, None],
+        "period_start": [WINTER.start.isoformat(), common_year.period_start.isoformat()],
+    }
 
 
 def test_a_folder_cannot_go_inside_itself(members: tuple[Resident, Resident], group: Workgroup) -> None:
@@ -325,11 +340,14 @@ def test_only_an_empty_folder_can_be_deleted_and_restoring_a_file_brings_it_back
     fest.refresh_from_db()
     assert fest.deleted_at is not None
     assert client.get(reverse("drive:folder", args=[fest.uuid])).status_code == 404
+    assert _trail("drive.items.deleted", "drive.folder", fest.pk)["deleted_by"] == [None, members[0].pk]
 
     client.post(reverse("drive:restore", args=[file.uuid]))
     fest.refresh_from_db()
     file.refresh_from_db()
     assert (fest.deleted_at, file.deleted_at, file.folder_id) == (None, None, fest.pk)
+    assert _trail("drive.file.restored", "drive.folder", fest.pk)["deleted_by"] == [members[0].pk, None]
+    assert _trail("drive.file.restored", "drive.file", file.pk)["deleted_by"] == [members[0].pk, None]
 
 
 def test_the_bin_is_emptied_after_30_days_and_shared_bytes_stay(
@@ -348,11 +366,18 @@ def test_the_bin_is_emptied_after_30_days_and_shared_bytes_stay(
     store = services.storage()
 
     assert operations.empty_bin(timezone.now() + timedelta(days=29)) == (0, 0)
+    assert not AuditEvent.objects.filter(action="drive.bin.emptied").exists()  # nothing to empty
     with django_capture_on_commit_callbacks(execute=True):
         assert operations.empty_bin(timezone.now() + timedelta(days=31)) == (2, 0)
     assert not File.objects.filter(pk__in=[a.pk, b.pk]).exists()
     assert not store.exists(a_key)
     assert store.exists(b_key)  # the copy still points at it
+    emptied = AuditEvent.objects.get(action="drive.bin.emptied")
+    assert emptied.actor_id is None
+    assert set(emptied.entities.filter(kind="drive.file").values_list("name", "operation")) == {
+        ("a.txt", "deleted"),
+        ("b.txt", "deleted"),
+    }
     assert Event.objects.filter(action=Event.Action.DELETED, file=None, name="a.txt").exists()
 
 
