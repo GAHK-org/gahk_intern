@@ -65,6 +65,7 @@
       <div><dt>Kø</dt><dd>{{ job.queue|default:"–" }}</dd></div>
       <div><dt>Worker</dt><dd class="jobs-mono">{{ job.worker|default:"–" }}</dd></div>
       <div><dt>Genforsøg</dt><dd>{{ job.retries }}</dd></div>
+      <div><dt>Hukommelse, maks.</dt><dd>{% if job.peak_memory is None and not job.peak_program %}–{% else %}{% if job.peak_memory is not None %}{{ job.peak_memory|filesizeformat }} (worker'en){% endif %}{% if job.peak_program %}{% if job.peak_memory is not None %} · {% endif %}{{ job.peak_program_memory|filesizeformat }} ({{ job.peak_program }}){% endif %}{% if job.status == "STARTED" %} · indtil nu{% endif %}{% endif %}</dd></div>
       <div><dt>Argumenter</dt><dd class="jobs-mono">{{ job.arguments|default:"–" }}</dd></div>
       <div><dt>Nøgleordsargumenter</dt><dd class="jobs-mono">{{ job.keyword_arguments|default:"–" }}</dd></div>
       <div><dt>Forældrejob</dt><dd class="jobs-mono">{% if job.parent_id %}<a href="{% url 'siteadmin:worker_job_detail' job.parent_id %}">{{ job.parent_id }}</a>{% else %}–{% endif %}</dd></div>

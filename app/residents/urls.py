@@ -23,7 +23,6 @@ urlpatterns = [
     path("opslagstavle/", include("opslagstavle.urls")),
     path("begivenheder/", include("events.urls")),
     path("reparationer/", include("reparationer.urls")),
-    path("arkiv/", include("arkiv.urls")),
     path("fotoalbum/", include("photo_album.urls")),
     path("gahkflix/", include("gahkflix.urls")),
     path("ak/", include("ak.urls")),

@@ -6,8 +6,8 @@ file is reached through a view in gahkflix.views that re-checks who may see the 
 redirects to a short-lived signed URL (or, for the small images, serves a local disk copy).
 
 One thing the photo album does not need: the browser uploads the ORIGINAL straight to the bucket,
-through a presigned POST policy, as Arkiv does (arkiv/uploads.py explains why a multi-gigabyte
-video cannot go through the app server). `presigned_post` and `head` are the two calls that takes.
+through a presigned POST policy (gahkflix/uploads.py: a multi-gigabyte video cannot go through
+the app server). `presigned_post` and `head` are the two calls that takes.
 Under pytest there is no bucket, and both return None so the views fall back to posting the file
 through Django — the one path tests can cover.
 """
