@@ -14,6 +14,7 @@ from .models import (
     File,
     FileVersion,
     Folder,
+    ImagePreview,
     LastDownload,
     Share,
     SharedFolder,
@@ -198,6 +199,10 @@ trail.exempt(
     LastDownload,
     "the version a resident last downloaded, kept for the warning when they upload over a newer one; "
     "downloading changes nothing",
+)
+trail.exempt(
+    ImagePreview,
+    "a picture's smaller copies, built from its bytes by a worker and rebuilt at will; a cache",
 )
 trail.exempt(
     Event,
