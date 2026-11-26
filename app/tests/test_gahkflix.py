@@ -79,7 +79,7 @@ def admin3(make_resident: Callable[..., Resident]) -> Resident:
 
 @pytest.fixture
 def member(make_resident: Callable[..., Resident]) -> Resident:
-    """Fotogruppen: inside the rollout gate, and an "administrator" in GAHKFlix's sense."""
+    """Fotogruppen: an "administrator" in GAHKFlix's sense."""
     return make_resident(email="foto@gahk.dk", roles=(Role.FOTO,), first_name="Dorte")
 
 
@@ -90,7 +90,15 @@ def plain(make_resident: Callable[..., Resident]) -> Resident:
 
 @pytest.fixture
 def open_gate(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Pin the rollout gate open. Redundant against the shipped value now the trial is over, and kept
+    so these tests go on asserting the same thing if somebody re-gates GAHKFlix."""
     monkeypatch.setattr(access, "ACCESS_ROLES", None)
+
+
+@pytest.fixture
+def gate_limited(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Turn the rollout gate back on, as it was during the trial (administrators and Fotogruppen)."""
+    monkeypatch.setattr(access, "ACCESS_ROLES", (Role.ADMINISTRATOR, Role.FOTO))
 
 
 def client_for(resident: Resident) -> Client:
@@ -235,14 +243,14 @@ def details(video: Video, **changes: Any) -> dict[str, str]:  # noqa: ANN401
 
 
 def test_gate_admits_administrators_and_fotogruppen_only(
-    admin: Resident, member: Resident, plain: Resident
+    gate_limited: None, admin: Resident, member: Resident, plain: Resident
 ) -> None:
     assert client_for(admin).get(reverse("gahkflix:home")).status_code == 200
     assert client_for(member).get(reverse("gahkflix:home")).status_code == 200
     assert client_for(plain).get(reverse("gahkflix:home")).status_code == 403
 
 
-def test_sidebar_entry_follows_the_gate(admin: Resident, plain: Resident) -> None:
+def test_sidebar_entry_follows_the_gate(gate_limited: None, admin: Resident, plain: Resident) -> None:
     def urls(resident: Resident) -> list[str]:
         nav = client_for(resident).get("/").context["nav_intern"]
         return [url for _section, items in nav for url, _label, _icon in items]
@@ -251,15 +259,12 @@ def test_sidebar_entry_follows_the_gate(admin: Resident, plain: Resident) -> Non
     assert "/gahkflix/" not in urls(plain)
 
 
-def test_opening_the_gate_lets_every_resident_in(open_gate: None, plain: Resident) -> None:
-    assert client_for(plain).get(reverse("gahkflix:home")).status_code == 200
-
-
-def test_every_resident_is_let_in_with_debug_on(settings: Any, plain: Resident, admin: Resident) -> None:  # noqa: ANN401
-    """So a non-administrator's GAHKFlix can be tried locally while it is still under test."""
-    settings.DEBUG = True
+def test_every_resident_is_let_in_as_shipped(plain: Resident) -> None:
+    """The trial is over: no fixture here, so this asserts the shipped ACCESS_ROLES."""
     client = client_for(plain)
-    assert client.get(reverse("gahkflix:home")).status_code == 200
+    page = client.get(reverse("gahkflix:home"))
+    assert page.status_code == 200
+    assert "Under test" not in page.content.decode()
     assert "/gahkflix/" in [url for _s, items in client.get("/").context["nav_intern"] for url, *_ in items]
     # Inside, a resident is still a resident: none of the administrators' pages.
     assert client.get(reverse("gahkflix:drafts")).status_code == 403
@@ -2102,7 +2107,9 @@ def test_search_finds_titles_tags_credits_and_series(admin: Resident, plain: Res
     assert "Sommerfest" in response.content.decode()
 
 
-def test_cast_pages_and_the_profile_strip(admin: Resident, plain: Resident) -> None:
+def test_cast_pages_and_the_profile_strip(
+    admin: Resident, plain: Resident, monkeypatch: pytest.MonkeyPatch
+) -> None:
     video = make_video(admin, title="Revy")
     CastMember.objects.create(video=video, resident=plain, name=plain.full_name, role="Hamlet")
     CastMember.objects.create(video=video, name="Ole Udefra")
@@ -2111,7 +2118,11 @@ def test_cast_pages_and_the_profile_strip(admin: Resident, plain: Resident) -> N
     assert "Revy" in client.get(reverse("gahkflix:cast_name"), {"navn": "ole udefra"}).content.decode()
     assert client.get(reverse("gahkflix:cast_name"), {"navn": "ingen"}).status_code == 404
     assert "Medvirker i" in client.get(reverse("resident_profile", args=[plain.pk])).content.decode()
+    assert (
+        "Medvirker i" in client_for(plain).get(reverse("resident_profile", args=[plain.pk])).content.decode()
+    )
     # Behind the gate the strip is not drawn for a reader who cannot open GAHKFlix.
+    monkeypatch.setattr(access, "ACCESS_ROLES", (Role.ADMINISTRATOR, Role.FOTO))
     assert (
         "Medvirker i"
         not in client_for(plain).get(reverse("resident_profile", args=[plain.pk])).content.decode()

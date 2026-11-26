@@ -160,7 +160,7 @@ def preferences(request: HttpRequest) -> HttpResponse:
 
     groups = []
     for key, name, leaves in categories.grouped():
-        # GAHKFlix is still behind its rollout gate; nobody outside it can get these.
+        # Follows GAHKFlix's rollout gate (open today): nobody outside it can get these.
         if key == "gahkflix" and not gahkflix_access.request_allowed(request):
             continue
         rows = []

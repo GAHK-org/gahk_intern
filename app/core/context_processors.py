@@ -39,8 +39,8 @@ def _nav_intern(roles: Collection[str], user_pk: int) -> list[NavSection]:
     ]
     # No "Notifikationer" here: the bell in the topbar is the one place for them, and their settings
     # are in the avatar menu beside it (base.html). The sidebar is for features.
-    # EVERY ONE OF THESE GATES IS NOW OPEN — all four features shipped their staged rollout and
-    # their ACCESS_ROLES are None, so every call below answers True for every logged-in resident.
+    # EVERY ONE OF THESE GATES IS NOW OPEN — each feature has shipped its staged rollout and its
+    # ACCESS_ROLES is None, so every call below answers True for every logged-in resident.
     #
     # THE GUARDS STAY ANYWAY, and that is the point of asking rather than a leftover. Each feature's
     # access module promises that re-gating it is one edit ("TO RE-GATE IT: set ACCESS_ROLES to a
@@ -58,7 +58,7 @@ def _nav_intern(roles: Collection[str], user_pk: int) -> list[NavSection]:
     oversigt.append((reverse("directory"), "Alumneliste", "list"))
     if photo_album_allowed(roles):
         oversigt.append((reverse("photo_album:index"), "Fotoalbum", "photo"))
-    # Still gated to administrators and Fotogruppen (gahkflix.access.ACCESS_ROLES).
+    # Open too, and kept conditional for the reason given above.
     if gahkflix_allowed(roles):
         oversigt.append((reverse("gahkflix:home"), "GAHKFlix", "film"))
     vaerelser: list[NavItem] = [

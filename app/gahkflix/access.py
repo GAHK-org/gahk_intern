@@ -1,12 +1,11 @@
 """Who may reach GAHKFlix, and who may do what to a video.
 
-STAGED ROLLOUT: limited to administrators and Fotogruppen while it is tried out — except with DEBUG
-on, where every resident is let in, so a non-administrator's GAHKFlix can be tried locally (log in
-as one of seed_demo's residents).
+The staged rollout is over: it was tried out by administrators and Fotogruppen, ACCESS_ROLES is now
+None and every resident is in.
 
-    TO OPEN IT TO EVERY RESIDENT: set ACCESS_ROLES to None.
+    TO RE-GATE IT: set ACCESS_ROLES to a tuple of roles.
 
-That one edit widens the views, the sidebar entry, the "Under test" chip, the resident profile's
+That one edit narrows the views, the sidebar entry, the "Under test" chip, the resident profile's
 "Medvirker i" strip and the audience of the "new video" notification together (core.rollout).
 
 "ADMINISTRATORS" in the spec are the administrator role and Fotogruppen, and that is what
@@ -22,7 +21,6 @@ and delete as they like. The only other people who see a draft are the administr
 from collections.abc import Collection
 from datetime import datetime
 
-from django.conf import settings
 from django.db.models import Q, QuerySet
 from django.http import HttpRequest
 from django.utils import timezone
@@ -33,17 +31,14 @@ from residents.permissions import current_resident, request_has_role
 
 from .models import ChangeRequest, Series, Video
 
-# None = every logged-in resident. Administrators are listed for the notification audience, which
-# is matched on role assignments; for the views an administrator holds every role anyway.
-ACCESS_ROLES: tuple[str, ...] | None = (Role.ADMINISTRATOR, Role.FOTO)
+# None = every logged-in resident. A tuple = only those roles; list Role.ADMINISTRATOR in it too,
+# because the notification audience is matched on role assignments (for the views an administrator
+# holds every role anyway). The trial ran with (Role.ADMINISTRATOR, Role.FOTO).
+ACCESS_ROLES: tuple[str, ...] | None = None
 
-
-def _access_roles() -> tuple[str, ...] | None:
-    """ACCESS_ROLES, or nobody kept out at all in local development. Read on every call (core.rollout)."""
-    return None if settings.DEBUG else ACCESS_ROLES
-
-
-gate = Gate(_access_roles)
+# Read through a lambda, never passed by value: this global is what tests rebind and what re-gating
+# would flip, and a Gate holding the value would freeze at import. See core.rollout.
+gate = Gate(lambda: ACCESS_ROLES)
 access_required = gate.required
 
 ADMINISTRATOR_ROLES = (Role.ADMINISTRATOR, Role.FOTO)
@@ -65,10 +60,9 @@ def _with_roles(residents: QuerySet[Resident], roles: Collection[str]) -> QueryS
 
 def audience(residents: QuerySet[Resident]) -> QuerySet[Resident]:
     """`residents` narrowed to those who can open GAHKFlix — a notification must not lead to a 403."""
-    roles = _access_roles()
-    if roles is None:
+    if ACCESS_ROLES is None:
         return residents
-    return _with_roles(residents, roles)
+    return _with_roles(residents, ACCESS_ROLES)
 
 
 def administrators() -> QuerySet[Resident]:
