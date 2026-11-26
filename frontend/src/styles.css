@@ -2035,6 +2035,49 @@
   .repair-photos { display: flex; flex-wrap: wrap; gap: 8px; margin: 8px 0; }
   .repair-photos img { width: 120px; height: 120px; object-fit: cover; border-radius: 8px; border: 1px solid var(--border); display: block; }
 
+  /* --- Drive --------------------------------------------------------------------------------
+     A file browser is a list, not a grid: names are what is scanned, they are long and of wildly
+     different lengths, and a grid would truncate them. */
+  .drive-crumbs { display:flex; flex-wrap:wrap; align-items:center; gap:6px; font-size:13px; }
+  .drive-crumbs a { color:var(--brass); text-decoration:none; }
+  .drive-crumbs a:hover { text-decoration:underline; }
+  .drive-crumbs [aria-hidden], .drive-crumbs [aria-current] { color:var(--muted); }
+  .drive-list { list-style:none; margin:0; padding:0; border:1px solid var(--border); border-radius:10px;
+    overflow:hidden; background:var(--surface); }
+  .drive-list li { display:flex; align-items:center; gap:10px; padding:10px 14px;
+    border-bottom:1px solid var(--border); }
+  .drive-list li:last-child { border-bottom:0; }
+  .drive-list li > a, .drive-list li > .drive-static { display:flex; align-items:center; gap:10px;
+    flex:1 1 auto; min-width:0; color:inherit; text-decoration:none; }
+  .drive-list li > .drive-static { color:var(--muted); }
+  .drive-list li > a:hover .drive-name { text-decoration:underline; }
+  /* There is no base `.ni` rule: every use states its own size, stroke and fill. */
+  .drive-list .ni { width:18px; height:18px; flex:none; stroke:currentColor; fill:none; color:var(--brass); }
+  .drive-list .drive-static .ni { color:var(--muted); }
+  /* The period or year now running: where things go by default. */
+  .drive-list li.drive-current { background:var(--green-050); }
+  /* One row per item keeps a long folder scannable; the full name is still the link's name. */
+  .drive-name { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .drive-meta { flex:0 0 auto; font-size:12px; }
+  .drive-actions { display:flex; align-items:center; gap:12px 24px; flex-wrap:wrap; }
+  .drive-upload { display:flex; align-items:center; gap:12px; flex-wrap:wrap; }
+  /* The <input> is hidden and the <label> is the control, so it looks like every other button. */
+  .drive-upload label { cursor:pointer; margin:0; }
+  .drive-upload [data-upload-status] { font-size:13px; }
+  /* margin:auto, or the modal sits in the top-left corner (UA dialog styles are reset). */
+  .drive-dialog { margin:auto; max-width:min(440px, calc(100vw - 32px)); padding:20px; border:1px solid var(--border);
+    border-radius:12px; background:var(--surface); color:inherit; }
+  .drive-dialog::backdrop { background:rgb(0 0 0 / .35); }
+  .drive-dialog p { margin:0 0 16px; overflow-wrap:anywhere; }
+  .drive-dialog-buttons { display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
+  .drive-newfolder { display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin:0; flex:1 1 360px; }
+  /* width:auto, because inputs are 100% wide site-wide, which would push the button below. */
+  .drive-newfolder input[type=text] { width:auto; flex:1 1 200px; max-width:320px; margin:0; }
+  @media (max-width: 560px) {
+    /* The metadata goes first: on a phone the name is the point. */
+    .drive-meta { display:none; }
+  }
+
    /* --- Photo album ------------------------------------------------------------------------- */
    /* .main's overflow:auto makes it the sticky elements' scroller, and as the window does the
       scrolling they never stuck. On album pages it clips instead, so the year bar and the selection

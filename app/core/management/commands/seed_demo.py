@@ -48,6 +48,9 @@ from core.demo import seed as seed_mail
 from core.models import Cleaning, OutgoingMail, Room, Workgroup
 from den_hurtige.demo import seed as seed_den_hurtige
 from den_hurtige.models import QuickComment, QuickPost, QuickReaction
+from drive.demo import seed as seed_drive
+from drive.demo import wipe as wipe_drive
+from drive.models import Folder as DriveFolder
 from events.demo import seed as seed_events
 from events.models import CalendarFeedToken, Event, EventInvite, Rsvp
 from gahkflix.demo import seed as seed_gahkflix
@@ -172,6 +175,9 @@ WIPE_ORDER: list[type[models.Model]] = [
     GahkflixVideo,
     GahkflixSeries,
     GahkflixTag,
+    # Before Workgroup, which a group's folders PROTECT. Wiped by drive.demo.wipe, with its files and
+    # their bytes.
+    DriveFolder,
     # Also before Resident: both PROTECT their resident — audit records (the local immutable mirror
     # of e-conomic postings, and what was actually billed) should never silently vanish because a
     # Resident row was deleted.
@@ -249,6 +255,7 @@ class Command(BaseCommand):
         seed_events(residents, self.now, self.rng)
         seed_photo_album(residents, self.now, self.rng)
         seed_gahkflix(residents, self.now, self.rng)
+        seed_drive(residents, self.now, self.rng)
         # After both: these posts embed an album and a film seeded just above.
         seed_opslagstavle_embeds(residents, self.now)
         seed_den_hurtige(residents, self.now, self.rng)
@@ -265,6 +272,9 @@ class Command(BaseCommand):
                 # A sub-album PROTECTs its parent, so the tree is cleared from the leaves up.
                 for depth in sorted(set(Album.objects.values_list("depth", flat=True)), reverse=True):
                     Album.objects.filter(depth=depth).delete()
+                continue
+            if model is DriveFolder:
+                wipe_drive()
                 continue
             model._default_manager.all().delete()
         # The trail is append-only: its rows refuse DELETE, in the models and in the database. A demo

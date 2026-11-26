@@ -986,6 +986,46 @@ erDiagram
         int request_id FK
     }
 
+    drive_Folder {
+        int id PK
+        string uuid
+        int parent_id FK
+        string name
+        string name_key
+        string kind
+        string space
+        int workgroup_id FK
+        date period_start
+        string path
+        int created_by_id FK
+        datetime created_at
+    }
+
+    drive_File {
+        int id PK
+        string uuid
+        int folder_id FK
+        string name
+        string name_key
+        int size
+        string content_type
+        int created_by_id FK
+        datetime created_at
+        int changed_by_id FK
+        datetime changed_at
+    }
+
+    drive_FileVersion {
+        int id PK
+        int file_id FK
+        int number
+        string key
+        int size
+        string content_type
+        int created_by_id FK
+        datetime created_at
+    }
+
     regnskab_EconomicLedgerEntry {
         int id PK
         int resident_id FK
@@ -1135,6 +1175,14 @@ erDiagram
     gahkflix_VideoEvent }o--|| gahkflix_Video : "video"
     gahkflix_VideoEvent }o--|o residents_Resident : "actor"
     gahkflix_VideoEvent }o--|o gahkflix_ChangeRequest : "request"
+    drive_Folder }o--|o drive_Folder : "parent"
+    drive_Folder }o--|o core_Workgroup : "workgroup"
+    drive_Folder }o--|o residents_Resident : "created_by"
+    drive_File }o--|| drive_Folder : "folder"
+    drive_File }o--|o residents_Resident : "created_by"
+    drive_File }o--|o residents_Resident : "changed_by"
+    drive_FileVersion }o--|| drive_File : "file"
+    drive_FileVersion }o--|o residents_Resident : "created_by"
     regnskab_EconomicLedgerEntry }o--|| residents_Resident : "resident"
     regnskab_AlumneregningSend }o--|| residents_Resident : "resident"
     regnskab_AlumneregningSend }o--|o core_OutgoingMail : "mail"
@@ -1525,6 +1573,64 @@ erDiagram
     den_hurtige_QuickComment }o--|| residents_Resident : "author"
     den_hurtige_QuickReaction }o--|| den_hurtige_QuickPost : "post"
     den_hurtige_QuickReaction }o--|| residents_Resident : "author"
+```
+
+## drive
+
+```mermaid
+erDiagram
+    drive_Folder {
+        int id PK
+        string uuid
+        int parent_id FK
+        string name
+        string name_key
+        string kind
+        string space
+        int workgroup_id FK
+        date period_start
+        string path
+        int created_by_id FK
+        datetime created_at
+    }
+
+    drive_File {
+        int id PK
+        string uuid
+        int folder_id FK
+        string name
+        string name_key
+        int size
+        string content_type
+        int created_by_id FK
+        datetime created_at
+        int changed_by_id FK
+        datetime changed_at
+    }
+
+    drive_FileVersion {
+        int id PK
+        int file_id FK
+        int number
+        string key
+        int size
+        string content_type
+        int created_by_id FK
+        datetime created_at
+    }
+
+    core_Workgroup { }
+
+    residents_Resident { }
+
+    drive_Folder }o--|o drive_Folder : "parent"
+    drive_Folder }o--|o core_Workgroup : "workgroup"
+    drive_Folder }o--|o residents_Resident : "created_by"
+    drive_File }o--|| drive_Folder : "folder"
+    drive_File }o--|o residents_Resident : "created_by"
+    drive_File }o--|o residents_Resident : "changed_by"
+    drive_FileVersion }o--|| drive_File : "file"
+    drive_FileVersion }o--|o residents_Resident : "created_by"
 ```
 
 ## events

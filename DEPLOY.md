@@ -491,6 +491,8 @@ for ever as if somebody had added it by hand.
 | `abort-incomplete-uploads` | (all) | aborts stalled multipart uploads after 7 days — including an import archive the Dropbox script stopped sending halfway |
 | `expire-photo-album-zips` | `photo-album-zips/` | marks built zips at 7 days, purges the version a day later |
 | `expire-photo-album-zip-markers` | `photo-album-zips/` | clears the delete markers that leaves |
+| `expire-noncurrent-drive` | `drive/` | Drive's deleted files actually go, 30 days later |
+| `expire-drive-markers` | `drive/` | clears the delete markers that leaves |
 | `expire-noncurrent-versions` | `media/` | 30 days |
 | `retire-arkiv`, `retire-arkiv-thumb`, `retire-arkiv-preview`, `retire-arkiv-zip` | `arkiv/`, `arkiv-thumb/`, `arkiv-preview/`, `arkiv-zip/` | temporary: empties what Arkiv left, see below |
 | `retire-arkiv-markers`, `retire-arkiv-thumb-markers`, … | the same | clears the delete markers that leaves |

@@ -1,0 +1,84 @@
+"""What the audit trail keeps of Drive: its folders, files and their versions.
+
+Admins and Inspektionen see only the size and count of what is in a group's current period, and a
+Delt mappe only by its tag (spec/features/Drive.md), so the audit page names every Drive item by a
+tag and keeps names out of sight: they are private (audit.trail.Registration). Drive's own pages show
+them to whoever may read the item.
+"""
+
+from audit import trail
+
+from .models import File, FileVersion, Folder
+
+
+def _folder_path(folder: Folder) -> str:
+    """The path, since "2026" or "Uden periode" alone says little. Through the parent: a new folder's
+    own path is set only after the save the trail sees."""
+    parent = folder.parent
+    above = [*parent.ancestors(), parent] if parent is not None else []
+    return " / ".join(f.name for f in [*above, folder])
+
+
+trail.register(
+    Folder,
+    "drive.folder",
+    name=_folder_path,
+    label="Mappe",
+    private_name=True,
+    private={"name"},
+    # name_key and path follow the name and the parent; the uuid is set once, at creation.
+    ignore={"name_key", "path", "uuid"},
+    labels={
+        "parent": "Overmappe",
+        "name": "Navn",
+        "kind": "Slags",
+        "space": "Område",
+        "workgroup": "Embedsgruppe",
+        "period_start": "Periode",
+        "created_by": "Oprettet af",
+        "created_at": "Oprettet",
+    },
+)
+trail.register(
+    File,
+    "drive.file",
+    name=lambda f: f.name,
+    label="Fil",
+    private_name=True,
+    private={"name"},
+    # changed_by and changed_at are who and when, which the event says; name_key follows the name.
+    ignore={"name_key", "uuid", "changed_by", "changed_at"},
+    labels={
+        "folder": "Mappe",
+        "name": "Navn",
+        "size": "Størrelse",
+        "content_type": "Filtype",
+        "created_by": "Oprettet af",
+        "created_at": "Oprettet",
+    },
+)
+trail.register(
+    FileVersion,
+    "drive.file_version",
+    name=lambda v: f"{v.file.name}, version {v.number}",
+    label="Filversion",
+    private_name=True,
+    labels={
+        "file": "Fil",
+        "number": "Version",
+        "key": "Nøgle i bucketten",
+        "size": "Størrelse",
+        "content_type": "Filtype",
+        "created_by": "Lagt op af",
+        "created_at": "Lagt op",
+    },
+)
+
+trail.actions(
+    {
+        "drive.folder.created": "Oprettede mappe",
+        "drive.file.uploaded": "Lagde fil op",
+        "drive.file.version_uploaded": "Lagde ny version op",
+        "drive.structure.ensured": "Oprettede Drives faste mapper",
+    }
+)

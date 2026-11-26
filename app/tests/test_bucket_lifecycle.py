@@ -51,7 +51,7 @@ def test_every_kept_prefix_has_a_rule() -> None:
     """Prefix matching is literal: `photo-album/` does not cover `photo-album-zips/`, so each prefix
     with a lifetime of its own needs a rule that names it exactly."""
     prefixes = {r["Filter"].get("Prefix") for r in RULES}
-    for needed in ("photo-album-zips/", "media/", "data/"):
+    for needed in ("photo-album-zips/", "drive/", "media/", "data/"):
         assert needed in prefixes, f"no rule covers {needed}"
 
 
@@ -118,3 +118,13 @@ def test_the_merge_keeps_hand_added_rules_and_removes_retired_ones(monkeypatch: 
     assert "somebody-elses" in ids
     assert "expire-built-zips" not in ids
     assert set(ids) == OWNED | {"somebody-elses"}
+
+
+def test_drive_frees_what_it_deletes() -> None:
+    """Drive's files, zips and previews all live under drive/: deleted versions must expire, and the
+    delete markers left once they have must be cleared."""
+    from drive.services import KEY_PREFIX
+
+    rules = [r for r in RULES if r["Filter"].get("Prefix") == KEY_PREFIX]
+    assert any("NoncurrentVersionExpiration" in r for r in rules)
+    assert any(r.get("Expiration", {}).get("ExpiredObjectDeleteMarker") for r in rules)

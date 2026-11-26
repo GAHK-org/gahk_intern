@@ -82,6 +82,7 @@ INSTALLED_APPS = [
     "photo_album",
     "notifications",
     "gahkflix",
+    "drive",
     "regnskab",
 ]
 
@@ -486,6 +487,12 @@ CELERY_BEAT_SCHEDULE = {
         "task": "core.tasks.send_admin_monthly_summary",
         "schedule": crontab(minute=5, hour=9, day_of_month=1),
     },
+    # Drive (drive.structure): a folder for every embedsgruppe, and the next period's and year's
+    # folders from two weeks before they begin.
+    "drive-ensure-structure": {
+        "task": "drive.tasks.ensure_structure",
+        "schedule": crontab(minute=20, hour=0),
+    },
 }
 
 STATIC_URL = "static/"
@@ -805,6 +812,8 @@ NOTICE_IMAGE_CACHE_DAYS = int(os.environ.get("NOTICE_IMAGE_CACHE_DAYS", "30"))
 # GAHKFlix (gahkflix/). The largest film a resident may upload; it goes straight to the bucket, never
 # through the app server (gahkflix/uploads.py). A custom thumbnail or banner is an ordinary picture.
 GAHKFLIX_MAX_UPLOAD_GB = float(os.environ.get("GAHKFLIX_MAX_UPLOAD_GB", "5"))
+# Drive (spec/features/Drive.md): the largest file a resident may upload.
+DRIVE_MAX_UPLOAD_GB = float(os.environ.get("DRIVE_MAX_UPLOAD_GB", "5"))
 GAHKFLIX_PICTURE_MAX_MB = int(os.environ.get("GAHKFLIX_PICTURE_MAX_MB", "15"))
 # Local copies of its thumbnails, banners and frames, in MEDIA_CACHE_DIR/gahkflix/ (gahkflix/cache.py).
 GAHKFLIX_CACHE_MB = int(os.environ.get("GAHKFLIX_CACHE_MB", "1024"))
