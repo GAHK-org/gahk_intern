@@ -1,0 +1,65 @@
+{% extends "base.html" %}
+{% block title %}{% if op == "copy" %}Kopier{% else %}Flyt{% endif %} - Drive - GAHK Intern{% endblock %}
+{% block content_width %}max-w-5xl{% endblock %}
+
+{% block content %}
+  <div class="page-head">
+    <div>
+      <p class="eyebrow">Drive</p>
+      <h1>{% if op == "copy" %}Kopier{% else %}Flyt{% endif %} {{ selection.names|length }} emne{{ selection.names|length|pluralize:"r" }}</h1>
+    </div>
+  </div>
+  <p class="muted mb-4">{{ selection.names|join:", " }} · fra {{ source.name }}</p>
+
+  {% comment %} The picker: walk the folders; the folder shown is where the items go. {% endcomment %}
+  <nav class="drive-crumbs mb-4" aria-label="Sti">
+    <a href="?{{ query }}&at=">Drive</a>
+    {% for crumb in ancestors %}
+      <span aria-hidden="true">/</span>
+      <a href="?{{ query }}&at={{ crumb.uuid }}">{{ crumb.name }}</a>
+    {% endfor %}
+    {% if at %}
+      <span aria-hidden="true">/</span>
+      <span aria-current="page">{{ at.name }}</span>
+    {% endif %}
+  </nav>
+
+  {% if at %}
+    <form method="post" action="{% url 'drive:move' source.uuid %}" class="drive-move-target mb-4">
+      {% csrf_token %}
+      <input type="hidden" name="op" value="{{ op }}">
+      <input type="hidden" name="to" value="{{ at.uuid }}">
+      {% for file in selection.files %}<input type="hidden" name="file" value="{{ file.uuid }}">{% endfor %}
+      {% for folder in selection.folders %}<input type="hidden" name="folder" value="{{ folder.uuid }}">{% endfor %}
+      {% if access_after %}
+        <div class="drive-note">
+          <p><strong>Det ændrer, hvem der kan se det.</strong></p>
+          <p>Nu: {{ access_before }}</p>
+          <p>I {{ at.name }}: {{ access_after }}</p>
+        </div>
+        <input type="hidden" name="confirm" value="1">
+      {% endif %}
+      {% if problem %}
+        <p class="muted">{{ problem }}</p>
+      {% else %}
+        <button type="submit" class="btn">{% if op == "copy" %}Kopier{% else %}Flyt{% endif %} til {{ at.name }}</button>
+      {% endif %}
+      <a class="btn-link" href="{% url 'drive:folder' source.uuid %}">Annuller</a>
+    </form>
+  {% else %}
+    <p class="muted mb-4">Vælg en mappe.</p>
+  {% endif %}
+
+  {% if children %}
+    <ul class="drive-list">
+      {% for child in children %}
+        <li>
+          <a href="?{{ query }}&at={{ child.uuid }}">
+            <svg class="ni" aria-hidden="true"><use href="#i-folder"></use></svg>
+            <span class="drive-name">{{ child.name }}</span>
+          </a>
+        </li>
+      {% endfor %}
+    </ul>
+  {% endif %}
+{% endblock %}

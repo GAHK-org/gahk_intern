@@ -2,12 +2,26 @@
 // with a ticket for the bucket, `{"direct": false}` when there is no bucket and the file goes with
 // the request instead, or a 409 when a file of that name is there already. Then the bytes go
 // straight to the bucket in parts (directupload.ts, shared with the photo album), and commit makes
-// the rows. No-op on pages without [data-drive-upload].
+// the rows. On a file's page (`versionOf`) the picked file becomes that file's next version,
+// whatever it is called. Replacing a file somebody else changed after this resident downloaded it
+// is a second 409 (`stale`), which asks again.
+//
+// Also: the bar for ticked items in a listing (move, copy, delete), and a confirm() before any
+// form marked [data-drive-confirm].
 
 import { DirectUnavailable, UploadRefused, sendToBucket, type DirectUpload } from "./directupload"
 import { csrfToken } from "./htmx-csrf"
 
-type Config = { beginUrl: string; signUrl: string; commitUrl: string; directUrl: string; maxBytes: number }
+type Config = {
+  beginUrl: string
+  signUrl: string
+  commitUrl: string
+  directUrl: string
+  maxBytes: number
+  versionOf: string
+}
+
+type Dialogs = { conflict: HTMLDialogElement; stale: HTMLDialogElement }
 
 const formatBytes = (bytes: number): string => {
   const units = ["B", "KB", "MB", "GB"]
@@ -32,9 +46,9 @@ async function post(url: string, fields: Record<string, string | Blob>): Promise
   return { status: response.status, body: ((await response.json().catch(() => null)) ?? {}) as Record<string, unknown> }
 }
 
-/** Ask what to do when the name is taken: "replace" (a new version), "keep_both", or null to skip. */
-function askConflict(dialog: HTMLDialogElement, name: string): Promise<string | null> {
-  dialog.querySelector("[data-conflict-text]")!.textContent = `Der er allerede en fil, der hedder "${name}".`
+/** Ask what to do: "replace" (a new version), "keep_both", or null to skip. */
+function ask(dialog: HTMLDialogElement, text: string): Promise<string | null> {
+  dialog.querySelector("p")!.textContent = text
   dialog.returnValue = ""
   dialog.showModal()
   return new Promise((resolve) => {
@@ -46,20 +60,30 @@ function askConflict(dialog: HTMLDialogElement, name: string): Promise<string | 
   })
 }
 
-async function uploadOne(
-  config: Config,
-  dialog: HTMLDialogElement,
-  file: File,
-  say: (text: string) => void,
-): Promise<string> {
+async function uploadOne(config: Config, dialogs: Dialogs, file: File, say: (text: string) => void): Promise<string> {
   if (file.size > config.maxBytes) return `${file.name}: for stor (højst ${formatBytes(config.maxBytes)}).`
-  let onConflict = ""
+  const name = config.versionOf || file.name
+  let onConflict = config.versionOf ? "replace" : ""
+  let ignoreStale = ""
   for (;;) {
-    const begun = await post(config.beginUrl, { name: file.name, size: String(file.size), type: file.type, on_conflict: onConflict })
+    const begun = await post(config.beginUrl, {
+      name,
+      size: String(file.size),
+      type: file.type,
+      on_conflict: onConflict,
+      ignore_stale: ignoreStale,
+    })
     if (begun.status === 409 && begun.body.conflict && !onConflict) {
-      const choice = await askConflict(dialog, file.name)
-      if (choice === null) return `${file.name}: sprunget over.`
+      const choice = await ask(dialogs.conflict, `Der er allerede en fil, der hedder "${name}".`)
+      if (choice === null) return `${name}: sprunget over.`
       onConflict = choice
+      continue
+    }
+    if (begun.status === 409 && begun.body.stale && !ignoreStale) {
+      const choice = await ask(dialogs.stale, String(begun.body.error))
+      if (choice === null) return `${name}: annulleret.`
+      onConflict = choice
+      ignoreStale = "1"
       continue
     }
     if (begun.status >= 400) return `${file.name}: ${String(begun.body.error ?? "kunne ikke lægges op.")}`
@@ -78,19 +102,22 @@ async function uploadOne(
       return committed.status < 300 ? "" : `${file.name}: ${String(committed.body.error ?? "kunne ikke gemmes.")}`
     }
     say(`${file.name}: sender …`)
-    const sent = await post(config.directUrl, { file, on_conflict: onConflict })
+    const sent = await post(config.directUrl, { file, name, on_conflict: onConflict, ignore_stale: ignoreStale })
     return sent.status < 300 ? "" : `${file.name}: ${String(sent.body.error ?? "kunne ikke lægges op.")}`
   }
 }
 
-function init(): void {
+function initUpload(): void {
   const root = document.querySelector<HTMLElement>("[data-drive-upload]")
   const raw = document.getElementById("drive-upload-config")?.textContent
   if (!root || !raw) return
   const config = JSON.parse(raw) as Config
   const input = root.querySelector<HTMLInputElement>("[data-drive-files]")!
   const status = root.querySelector<HTMLElement>("[data-upload-status]")!
-  const dialog = root.querySelector<HTMLDialogElement>("[data-drive-conflict]")!
+  const dialogs = {
+    conflict: root.querySelector<HTMLDialogElement>("[data-drive-conflict]")!,
+    stale: root.querySelector<HTMLDialogElement>("[data-drive-stale]")!,
+  }
   const say = (text: string) => {
     status.textContent = text
   }
@@ -104,7 +131,7 @@ function init(): void {
     const problems: string[] = []
     for (const [index, file] of files.entries()) {
       say(`${index + 1} af ${files.length}: ${file.name} …`)
-      const problem = await uploadOne(config, dialog, file, say)
+      const problem = await uploadOne(config, dialogs, file, say)
       if (problem) problems.push(problem)
     }
     window.removeEventListener("beforeunload", guard)
@@ -119,4 +146,59 @@ function init(): void {
   })
 }
 
-init()
+/** The bar for ticked items: how many, and move, copy or delete them. */
+function initSelection(): void {
+  const bar = document.querySelector<HTMLElement>("[data-drive-selection]")
+  const raw = document.getElementById("drive-selection-config")?.textContent
+  if (!bar || !raw) return
+  const config = JSON.parse(raw) as { moveUrl: string; deleteUrl: string }
+  const ticks = Array.from(document.querySelectorAll<HTMLInputElement>("input[data-drive-tick]"))
+  const count = bar.querySelector<HTMLElement>("[data-selection-count]")!
+  const ticked = () => ticks.filter((tick) => tick.checked)
+  const update = () => {
+    const n = ticked().length
+    bar.hidden = n === 0
+    count.textContent = `${n} valgt`
+  }
+  for (const tick of ticks) tick.addEventListener("change", update)
+  update()
+
+  bar.addEventListener("click", (event) => {
+    const button = (event.target as HTMLElement).closest<HTMLButtonElement>("[data-selection-op]")
+    if (!button) return
+    const op = button.dataset.selectionOp!
+    const items = ticked().map((tick): [string, string] => [tick.dataset.driveTick!, tick.value])
+    if (op === "delete") {
+      if (!window.confirm(`Læg ${items.length} i papirkurven?`)) return
+      const form = document.createElement("form")
+      form.method = "post"
+      form.action = config.deleteUrl
+      const fields: [string, string][] = [["csrfmiddlewaretoken", csrfToken()], ...items]
+      for (const [name, value] of fields) {
+        const input = document.createElement("input")
+        input.type = "hidden"
+        input.name = name
+        input.value = value
+        form.append(input)
+      }
+      document.body.append(form)
+      form.submit()
+      return
+    }
+    const query = new URLSearchParams([["op", op], ...items])
+    window.location.href = `${config.moveUrl}?${query.toString()}`
+  })
+}
+
+/** Forms that destroy or replace something ask first. */
+function initConfirm(): void {
+  for (const form of document.querySelectorAll<HTMLFormElement>("form[data-drive-confirm]")) {
+    form.addEventListener("submit", (event) => {
+      if (!window.confirm(form.dataset.driveConfirm!)) event.preventDefault()
+    })
+  }
+}
+
+initUpload()
+initSelection()
+initConfirm()

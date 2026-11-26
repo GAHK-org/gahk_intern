@@ -1,0 +1,33 @@
+{% comment %}
+  The bytes go straight to the bucket, not through Django (drive/services.py,
+  frontend/src/drive.ts). Without JavaScript there is no upload.
+{% endcomment %}
+<div class="drive-upload" data-drive-upload>
+  {{ upload_config|json_script:"drive-upload-config" }}
+  <label class="btn btn-secondary">
+    {{ label }}
+    <input type="file"{% if multiple %} multiple{% endif %} hidden data-drive-files>
+  </label>
+  <span class="muted" data-upload-status aria-live="polite"></span>
+  <dialog class="drive-dialog" data-drive-conflict aria-labelledby="drive-conflict-text">
+    <form method="dialog">
+      <p id="drive-conflict-text" data-conflict-text></p>
+      <div class="drive-dialog-buttons">
+        <button class="btn" value="replace">Erstat (ny version)</button>
+        <button class="btn btn-secondary" value="keep_both">Behold begge</button>
+        <button class="btn-link" value="skip">Spring over</button>
+      </div>
+    </form>
+  </dialog>
+  {% comment %} Replacing a file somebody else changed after this resident downloaded it. {% endcomment %}
+  <dialog class="drive-dialog" data-drive-stale aria-labelledby="drive-stale-text">
+    <form method="dialog">
+      <p id="drive-stale-text" data-stale-text></p>
+      <div class="drive-dialog-buttons">
+        <button class="btn" value="replace">Læg op alligevel</button>
+        <button class="btn btn-secondary" value="keep_both">Behold begge</button>
+        <button class="btn-link" value="skip">Annuller</button>
+      </div>
+    </form>
+  </dialog>
+</div>

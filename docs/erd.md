@@ -999,6 +999,8 @@ erDiagram
         string path
         int created_by_id FK
         datetime created_at
+        datetime deleted_at
+        int deleted_by_id FK
     }
 
     drive_File {
@@ -1013,6 +1015,8 @@ erDiagram
         datetime created_at
         int changed_by_id FK
         datetime changed_at
+        datetime deleted_at
+        int deleted_by_id FK
     }
 
     drive_FileVersion {
@@ -1020,10 +1024,30 @@ erDiagram
         int file_id FK
         int number
         string key
+        int restored_from
         int size
         string content_type
         int created_by_id FK
         datetime created_at
+    }
+
+    drive_LastDownload {
+        int id PK
+        int file_id FK
+        int resident_id FK
+        int number
+        datetime at
+    }
+
+    drive_Event {
+        int id PK
+        datetime at
+        int actor_id FK
+        string action
+        int file_id FK
+        int folder_id FK
+        string name
+        json details
     }
 
     regnskab_EconomicLedgerEntry {
@@ -1178,11 +1202,18 @@ erDiagram
     drive_Folder }o--|o drive_Folder : "parent"
     drive_Folder }o--|o core_Workgroup : "workgroup"
     drive_Folder }o--|o residents_Resident : "created_by"
+    drive_Folder }o--|o residents_Resident : "deleted_by"
     drive_File }o--|| drive_Folder : "folder"
     drive_File }o--|o residents_Resident : "created_by"
     drive_File }o--|o residents_Resident : "changed_by"
+    drive_File }o--|o residents_Resident : "deleted_by"
     drive_FileVersion }o--|| drive_File : "file"
     drive_FileVersion }o--|o residents_Resident : "created_by"
+    drive_LastDownload }o--|| drive_File : "file"
+    drive_LastDownload }o--|| residents_Resident : "resident"
+    drive_Event }o--|o residents_Resident : "actor"
+    drive_Event }o--|o drive_File : "file"
+    drive_Event }o--|o drive_Folder : "folder"
     regnskab_EconomicLedgerEntry }o--|| residents_Resident : "resident"
     regnskab_AlumneregningSend }o--|| residents_Resident : "resident"
     regnskab_AlumneregningSend }o--|o core_OutgoingMail : "mail"
@@ -1592,6 +1623,8 @@ erDiagram
         string path
         int created_by_id FK
         datetime created_at
+        datetime deleted_at
+        int deleted_by_id FK
     }
 
     drive_File {
@@ -1606,6 +1639,8 @@ erDiagram
         datetime created_at
         int changed_by_id FK
         datetime changed_at
+        datetime deleted_at
+        int deleted_by_id FK
     }
 
     drive_FileVersion {
@@ -1613,10 +1648,30 @@ erDiagram
         int file_id FK
         int number
         string key
+        int restored_from
         int size
         string content_type
         int created_by_id FK
         datetime created_at
+    }
+
+    drive_LastDownload {
+        int id PK
+        int file_id FK
+        int resident_id FK
+        int number
+        datetime at
+    }
+
+    drive_Event {
+        int id PK
+        datetime at
+        int actor_id FK
+        string action
+        int file_id FK
+        int folder_id FK
+        string name
+        json details
     }
 
     core_Workgroup { }
@@ -1626,11 +1681,18 @@ erDiagram
     drive_Folder }o--|o drive_Folder : "parent"
     drive_Folder }o--|o core_Workgroup : "workgroup"
     drive_Folder }o--|o residents_Resident : "created_by"
+    drive_Folder }o--|o residents_Resident : "deleted_by"
     drive_File }o--|| drive_Folder : "folder"
     drive_File }o--|o residents_Resident : "created_by"
     drive_File }o--|o residents_Resident : "changed_by"
+    drive_File }o--|o residents_Resident : "deleted_by"
     drive_FileVersion }o--|| drive_File : "file"
     drive_FileVersion }o--|o residents_Resident : "created_by"
+    drive_LastDownload }o--|| drive_File : "file"
+    drive_LastDownload }o--|| residents_Resident : "resident"
+    drive_Event }o--|o residents_Resident : "actor"
+    drive_Event }o--|o drive_File : "file"
+    drive_Event }o--|o drive_Folder : "folder"
 ```
 
 ## events
