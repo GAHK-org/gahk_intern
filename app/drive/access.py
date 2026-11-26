@@ -38,7 +38,7 @@ from core.rollout import Gate
 from residents.models import Residency, Resident, Role, RoleAssignment, active_period
 from residents.permissions import current_resident, has_active_role, request_has_role
 
-from .models import File, Folder, Share, SharedFolder, SharedMember, Space
+from .models import File, Folder, Share, SharedFolder, SharedMember, Space, StandingFolder
 from .periods import Period, period_containing
 
 # Where nothing is put directly: residents' things go in the timeless, period and year folders.
@@ -75,6 +75,17 @@ class Level(IntEnum):
 
 def _next_month(year: int, month: int) -> tuple[int, int]:
     return (year + 1, 1) if month == 12 else (year, month + 1)
+
+
+def _writing_limits() -> dict[int, set[int]]:
+    limits: dict[int, set[int]] = {}
+    for standing_id, workgroup_id in StandingFolder.objects.filter(limited=True).values_list(
+        "pk", "writer_groups"
+    ):
+        limits.setdefault(standing_id, set())
+        if workgroup_id is not None:
+            limits[standing_id].add(workgroup_id)
+    return limits
 
 
 @dataclass(frozen=True)
@@ -122,6 +133,9 @@ class Viewer:
     archived: set[int] = field(default_factory=set)
     # What has been shared with the viewer, or with a group they have been in.
     grants: list["Grant"] = field(default_factory=list)
+    # Standing folders in Fælles that limit writing -> the groups that may write there besides
+    # admins and Inspektionen.
+    writing_limits: dict[int, set[int]] = field(default_factory=dict)
     # folder id -> the folder whose lock covers it, per request.
     _locks: dict[int, Folder | None] = field(default_factory=dict, repr=False, compare=False)
 
@@ -181,6 +195,7 @@ class Viewer:
             ),
             archived=set(SharedFolder.objects.filter(archived_at__isnull=False).values_list("pk", flat=True)),
             grants=Grant.load(resident_id, set(months)),
+            writing_limits=_writing_limits(),
         )
 
     def was_member(self, workgroup: int, period: Period) -> bool:
@@ -267,6 +282,9 @@ class Viewer:
 
     def _common(self, folder: Folder) -> Level:
         if folder.kind == Folder.Kind.COMMON_ROOT:
+            return Level.READ
+        limit = self.writing_limits.get(folder.standing_id or 0)
+        if limit is not None and not (self.oversees or limit & self.groups_now):
             return Level.READ
         if folder.period_start is None:  # Uden årstal
             return Level.WRITE

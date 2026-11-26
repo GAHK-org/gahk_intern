@@ -110,6 +110,8 @@ class Folder(Lockable):
         SHARED_ROOT = "shared_root", "Delte mapper"
         # Delte mapper/<year>/, where archived Delte mapper go.
         ARCHIVE_YEAR = "archive_year", "Arkiverede delte mapper"
+        # A standing folder's folder in one period or year (StandingFolder).
+        STANDING = "standing", "Stående mappe"
         # Made by residents.
         FOLDER = "folder", "Mappe"
         # The top of a Delt mappe: renamed and deleted only by its moderators, never moved by hand.
@@ -125,6 +127,7 @@ class Folder(Lockable):
             Kind.YEAR,
             Kind.SHARED_ROOT,
             Kind.ARCHIVE_YEAR,
+            Kind.STANDING,
         }
     )
 
@@ -145,6 +148,10 @@ class Folder(Lockable):
     # The Delt mappe a folder is in (itself included), for the folders of that space.
     shared = models.ForeignKey(
         "SharedFolder", null=True, blank=True, on_delete=models.PROTECT, related_name="folders"
+    )
+    # The standing folder a folder is in (itself included), for a write limit on it.
+    standing = models.ForeignKey(
+        "StandingFolder", null=True, blank=True, on_delete=models.PROTECT, related_name="folders"
     )
     path = models.CharField(max_length=500, editable=False, db_index=True)
     created_by = models.ForeignKey(
@@ -572,3 +579,41 @@ class Share(models.Model):
         if self.resident_id:
             return self.resident.full_name if self.resident else ""
         return self.workgroup.name if self.workgroup else ""
+
+
+class StandingFolder(models.Model):
+    """A folder made again in every period or year of a space, under the same name: `Fællesmøder`
+    in each year of Fælles, `Erfaringsrapporter` in each of a group's periods. It applies from the
+    next period or year after it is defined (`starts_on`), and can be stopped; folders made stay.
+
+    In Fælles it can limit writing (`limited`) to admins, Inspektionen and the members of
+    `writer_groups`; everyone still reads it. A naming rule (`item_label`) gives it a button that
+    asks for a date and makes `2026-11-03 Fællesmøde`."""
+
+    uuid = models.UUIDField(default=uuid4, unique=True, editable=False)  # in URLs, not the key
+    space = models.CharField(max_length=10, choices=Space.choices)
+    workgroup = models.ForeignKey(
+        "core.Workgroup",
+        null=True,
+        blank=True,
+        on_delete=models.CASCADE,
+        related_name="drive_standing_folders",
+    )
+    name = models.CharField(max_length=NAME_MAX_LENGTH)
+    item_label = models.CharField(max_length=60, blank=True)
+    limited = models.BooleanField(default=False)
+    writer_groups = models.ManyToManyField("core.Workgroup", blank=True, related_name="+")
+    starts_on = models.DateField()
+    stopped_at = models.DateTimeField(null=True, blank=True)
+    created_by = models.ForeignKey(
+        "residents.Resident", null=True, blank=True, on_delete=models.SET_NULL, related_name="+"
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self) -> str:
+        return self.name
+
+    @property
+    def all_name(self) -> str:
+        """`Fællesmøder (alle år)`, `Erfaringsrapporter (alle perioder)`."""
+        return f"{self.name} (alle {'år' if self.space == Space.COMMON else 'perioder'})"

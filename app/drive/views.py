@@ -6,6 +6,7 @@ non-member should be able to confirm the existence of by guessing ids. A folder 
 not open - admins and Inspektionen on a group's current period - is a 403.
 """
 
+from datetime import date
 from typing import Any
 from uuid import UUID
 
@@ -25,7 +26,7 @@ from residents.permissions import current_resident
 
 from . import access, locks, operations, services, shared, sharing
 from .access import Level, Viewer
-from .models import MAX_UNLOCK_DAYS, ApprovalRequest, File, FileVersion, Folder, SharedMember
+from .models import MAX_UNLOCK_DAYS, ApprovalRequest, File, FileVersion, Folder, SharedMember, Space
 from .periods import period_containing
 from .structure import ensure_structure_today
 
@@ -146,6 +147,7 @@ def folder(request: HttpRequest, uuid: UUID) -> HttpResponse:
     rows = _rows(viewer, _sorted_children(current))
     can_change_files = viewer.can_change_file_in(current)
     shared_folder = current.shared if current.kind == Folder.Kind.SHARED else None
+    instead = _instead(viewer, current)
     shared_files, shared_folders = sharing.shared_ids(files, [row["folder"] for row in rows])
     for file in files:
         file.is_shared = file.pk in shared_files  # type: ignore[attr-defined]
@@ -173,13 +175,43 @@ def folder(request: HttpRequest, uuid: UUID) -> HttpResponse:
             "can_select": bool(files) or any(row["can_open"] and not row["folder"].is_system for row in rows),
             "can_change_files": can_change_files,
             "in_bin": operations.bin_count(viewer, current),
-            "upload_config": _upload_config(current),
+            "upload_config": {**_upload_config(current), "instead": instead},
+            "instead": instead,
+            "standing_item": current.standing if current.kind == Folder.Kind.STANDING else None,
+            "space_root": current.kind in (Folder.Kind.COMMON_ROOT, Folder.Kind.GROUP),
             "selection_config": {
                 "moveUrl": reverse("drive:move", args=[current.uuid]),
                 "deleteUrl": reverse("drive:delete", args=[current.uuid]),
             },
         },
     )
+
+
+def _instead(viewer: Viewer, folder: Folder) -> dict[str, object] | None:
+    """On `Uden periode` and `Uden årstal` themselves: the current period or year, offered before
+    anything is put directly in the timeless folder - which outlives every period, and which
+    admins and Inspektionen read."""
+    if folder.kind != Folder.Kind.TIMELESS:
+        return None
+    if folder.space == Space.COMMON:
+        start = date(viewer.today.year, 1, 1)
+        kind = Folder.Kind.YEAR
+    else:
+        start = period_containing(viewer.today).start
+        kind = Folder.Kind.PERIOD
+    current = Folder.objects.filter(
+        parent=folder.parent, kind=kind, period_start=start, deleted_at__isnull=True
+    ).first()
+    if current is None or not viewer.can_upload_to(current):
+        return None
+    return {
+        "name": current.name,
+        "here": folder.name,
+        "url": reverse("drive:folder", args=[current.uuid]),
+        "beginUrl": reverse("drive:upload_begin", args=[current.uuid]),
+        "directUrl": reverse("drive:upload_direct", args=[current.uuid]),
+        "createUrl": reverse("drive:create_folder", args=[current.uuid]),
+    }
 
 
 def _lock_context(viewer: Viewer, folder: Folder) -> dict[str, object]:

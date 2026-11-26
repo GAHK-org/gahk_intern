@@ -1,6 +1,15 @@
 from django.contrib import admin
 
-from .models import ApprovalRequest, Event, File, FileVersion, Folder, SharedFolder, SharedMember
+from .models import (
+    ApprovalRequest,
+    Event,
+    File,
+    FileVersion,
+    Folder,
+    SharedFolder,
+    SharedMember,
+    StandingFolder,
+)
 
 
 @admin.register(Folder)
@@ -53,3 +62,11 @@ class SharedFolderAdmin(admin.ModelAdmin):
     list_filter = ("on_expiry",)
     raw_id_fields = ("created_by",)
     inlines = [SharedMemberInline]
+
+
+@admin.register(StandingFolder)
+class StandingFolderAdmin(admin.ModelAdmin):
+    list_display = ("name", "space", "workgroup", "starts_on", "limited", "stopped_at")
+    list_filter = ("space", "limited")
+    filter_horizontal = ("writer_groups",)
+    raw_id_fields = ("created_by",)

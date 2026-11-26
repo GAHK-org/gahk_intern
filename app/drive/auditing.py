@@ -18,6 +18,7 @@ from .models import (
     Share,
     SharedFolder,
     SharedMember,
+    StandingFolder,
 )
 
 
@@ -46,6 +47,7 @@ trail.register(
         "workgroup": "Embedsgruppe",
         "period_start": "Periode",
         "shared": "Delt mappe",
+        "standing": "Stående mappe",
         "created_by": "Oprettet af",
         "created_at": "Oprettet",
         "deleted_at": "Lagt i papirkurven",
@@ -169,6 +171,29 @@ trail.register(
     },
 )
 
+trail.register(
+    StandingFolder,
+    "drive.standing",
+    name=lambda s: s.name,
+    label="Stående mappe",
+    # A folder in every period, so its name is as private as theirs.
+    private_name=True,
+    private={"name", "item_label"},
+    ignore={"uuid"},
+    labels={
+        "space": "Område",
+        "workgroup": "Embedsgruppe",
+        "name": "Navn",
+        "item_label": "Navneregel",
+        "limited": "Kun nogle grupper skriver",
+        "writer_groups": "Grupper der skriver",
+        "starts_on": "Fra",
+        "stopped_at": "Stoppet",
+        "created_by": "Oprettet af",
+        "created_at": "Oprettet",
+    },
+)
+
 trail.exempt(
     LastDownload,
     "the version a resident last downloaded, kept for the warning when they upload over a newer one; "
@@ -214,5 +239,7 @@ trail.actions(
         "drive.shared.archived": "Arkiverede delt mappe ved udløbet",
         "drive.share.given": "Delte",
         "drive.share.stopped": "Stoppede en deling",
+        "drive.standing.defined": "Oprettede stående mappe",
+        "drive.standing.stopped": "Stoppede stående mappe",
     }
 )

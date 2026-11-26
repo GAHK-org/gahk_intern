@@ -81,6 +81,7 @@ def create_folder(viewer: Viewer, parent: Folder, name: str, resident: Resident)
         workgroup=parent.workgroup,
         period_start=parent.period_start,
         shared_id=parent.shared_id,
+        standing_id=parent.standing_id,
         created_by=resident,
     )
     try:
