@@ -1,9 +1,9 @@
 """Website content ("Hjemmeside"): the source of truth for everything gahk.dk shows.
 
 gahk.dk itself is rendered by gahk_web on separate hosting. This app holds the content, the image
-library, the menu and the audit trail, and cms.tasks publishes a signed snapshot of it to gahk.dk
+library and the menu, and cms.tasks publishes a signed snapshot of it to gahk.dk
 (see cms.snapshot). Every write goes through cms.services, which sanitizes HTML, keeps page
-versions, records a ContentChange and publishes after the commit; nothing else writes here at
+versions, records an audit event (audit.trail) and publishes after the commit; nothing else writes here at
 runtime (the Django admin no longer registers these models, so it cannot become an unaudited
 second write path).
 
@@ -264,8 +264,8 @@ class PageRedirect(models.Model):
 class PageVersion(models.Model):
     """A complete snapshot of one page's editable content, written on every save (cms.services).
 
-    This holds the content itself, which is what makes "gendan" possible; ContentChange is the
-    site-wide trail of who changed what.
+    This holds the content itself, which is what makes "gendan" possible; the audit trail
+    (audit.trail) records who changed what.
 
     `page` is SET_NULL rather than CASCADE on purpose: the version history *is* the recovery story,
     so deleting a page must not destroy the only remaining copy of its content. The snapshotted
@@ -337,65 +337,6 @@ class SiteSettings(models.Model):
     def load(cls) -> "SiteSettings":
         settings_row, _created = cls.objects.get_or_create(pk=1)
         return settings_row
-
-
-class ContentChange(models.Model):
-    """The audit trail for every change to the website's content: who, when, what, before/after.
-
-    Written by cms.services on every write (system changes have no user), never
-    by a signal, so a script or an import cannot fake an editor. `changes` holds the values
-    themselves — bodies included — as {field: [before, after]}, so "what did it say before?" can be
-    answered for news, events, the menu and images too, not only for pages (which also keep full
-    PageVersion snapshots for restoring).
-
-    `by_name` is a snapshot of the editor's name, so the trail still reads after the account is
-    gone; it is "System" for automatic changes.
-    """
-
-    class Action(models.TextChoices):
-        CREATE = "create", "Oprettet"
-        UPDATE = "update", "Rettet"
-        DELETE = "delete", "Slettet"
-        RESTORE = "restore", "Gendannet"
-        PUBLISH = "publish", "Udgivet"
-        UPLOAD = "upload", "Uploadet"
-        MENU = "menu", "Menu ændret"
-
-    class Kind(models.TextChoices):
-        PAGE = "page", "Side"
-        NEWS = "news", "Nyhed"
-        EVENT = "event", "Begivenhed"
-        IMAGE = "image", "Billede"
-        MENU = "menu", "Menu"
-        REDIRECT = "redirect", "Omdirigering"
-        SETTINGS = "settings", "Indstillinger"
-        SITE = "site", "Hjemmesiden"
-
-    at = models.DateTimeField(default=timezone.now, db_index=True)
-    by = models.ForeignKey(
-        settings.AUTH_USER_MODEL,
-        null=True,
-        blank=True,
-        on_delete=models.SET_NULL,
-        related_name="cms_content_changes",
-    )
-    by_name = models.CharField(max_length=255, blank=True)
-    action = models.CharField(max_length=10, choices=Action.choices)
-    kind = models.CharField(max_length=10, choices=Kind.choices)
-    object_id = models.PositiveBigIntegerField(null=True, blank=True)
-    label = models.CharField(max_length=255, blank=True)
-    changes = models.JSONField(default=dict, blank=True)
-
-    class Meta:
-        ordering = ["-at", "-id"]
-        indexes = [models.Index(fields=["kind", "object_id", "-at"])]
-        verbose_name = "Ændring"
-        verbose_name_plural = "Ændringer"
-
-    def __str__(self) -> str:
-        return (
-            f"{self.at:%d-%m-%Y %H:%M} {self.by_name or 'System'}: {self.get_action_display()} {self.label}"
-        )
 
 
 class Publication(models.Model):

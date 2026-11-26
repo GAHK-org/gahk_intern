@@ -74,7 +74,7 @@ class Moment:
     "system" outside both, as a shell or a management command."""
 
     at: datetime
-    play: Callable[[], None]
+    play: Callable[[], object]  # what it returns is not used
     actor: Resident | None = None
     ip: str | None = HOUSE
     path: str = "/"

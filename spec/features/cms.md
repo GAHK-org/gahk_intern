@@ -58,6 +58,10 @@ working when intern or the image storage is down; editing needs intern.
 - Every change is recorded: who, when, what, and the values before and after — pages, news,
   events, images, the menu, old addresses and settings alike. Automatic changes are recorded as
   "System", and the log's System filter shows all of them.
+- The change log is the website's part of intern's audit trail (audit-trail.md): the same events
+  are on the audit page. A change made outside the editor (a shell) is shown as such. The log kept
+  before the trail existed was carried into it.
+- The menu is recorded as one change, the whole list before and after.
 - Saving a news item without changing it writes nothing, even though its time is edited to the
   minute.
 - Every saved version of a page is kept and can be restored. A restore is itself a change, so it can
@@ -110,6 +114,12 @@ working when intern or the image storage is down; editing needs intern.
   gahk.dk updates its code only when intern asks it to: every 15 minutes, or at once with
   "Opdatér gahk.dk nu" (administrators only). An update that takes longer than the request waits
   goes on by itself on gahk.dk; how it ended, an error included, shows after the next sync.
+
+## Development seed data
+
+- A demo database's change log shows five weeks of made-up editing: every type and person its
+  filters offer, text changes, a rename, a restore, and a fix made outside the editor. The newest
+  save is a few hours old, so an editor has a recent "saved by" to show.
 
 ## Decisions
 
