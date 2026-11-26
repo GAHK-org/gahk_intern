@@ -27,6 +27,7 @@ from django.views.decorators.http import require_POST
 from django_celery_beat.models import PeriodicTask
 from kombu.exceptions import DecodeError
 
+from audit import trail
 from config.celery import app as celery_app
 from core.models import WorkerJobLog
 from core.tasks import task_time_limit
@@ -183,6 +184,10 @@ class Job(_TaskName):
     progress: float | None = None
     progress_step: str = ""
     progressed_at: datetime.datetime | None = None
+    # From the worker's record: the job's peak memory, in bytes (core/job_memory.py).
+    peak_memory: int | None = None
+    peak_program: str = ""
+    peak_program_memory: int | None = None
 
     @property
     def state_label(self) -> str:
@@ -256,6 +261,9 @@ class Job(_TaskName):
         self.progress = record.progress
         self.progress_step = record.progress_step
         self.progressed_at = record.progressed_at
+        self.peak_memory = record.peak_memory
+        self.peak_program = record.peak_program
+        self.peak_program_memory = record.peak_program_memory
 
 
 class _ResultUnpickler(pickle.Unpickler):
@@ -1186,18 +1194,27 @@ def roles(request: HttpRequest) -> HttpResponse:
         rid = request.POST.get("resident")
         role = request.POST.get("role")
         action = request.POST.get("action")
-        if rid and role in Role.values:
+        resident = Resident.objects.filter(pk=rid or 0).first() if (rid or "").isdecimal() else None
+        if resident is not None and role in Role.values:
+            details = {"role": role, "period": f"{year}-{month:02d}"}
             if action == "add":
-                RoleAssignment.objects.get_or_create(resident_id=rid, role=role, year=year, month=month)
-                Resident.objects.filter(id=rid).update(is_staff=True)
-                # Stamp the granter so they cannot also be the approver (residents.admin_access).
-                # The grant itself is opened by the signal, which covers the other three doors.
-                if role == Role.ADMINISTRATOR:
-                    AdminAccessGrant.objects.filter(
-                        resident_id=rid, status=AdminAccessGrant.Status.PENDING, requested_by=None
-                    ).update(requested_by=current_resident(request))
+                with trail.event("residents.role.added", subject=resident, details=details):
+                    RoleAssignment.objects.get_or_create(resident=resident, role=role, year=year, month=month)
+                    Resident.objects.filter(id=resident.pk).update(is_staff=True)
+                    # Stamp the granter so they cannot also be the approver (residents.admin_access).
+                    # The grant itself is opened by the signal, which covers the other three doors.
+                    if role == Role.ADMINISTRATOR:
+                        grant = AdminAccessGrant.objects.filter(
+                            resident=resident, status=AdminAccessGrant.Status.PENDING, requested_by=None
+                        ).first()
+                        if grant is not None:
+                            grant.requested_by = current_resident(request)
+                            grant.save(update_fields=["requested_by"])
             elif action == "remove":
-                RoleAssignment.objects.filter(resident_id=rid, role=role, year=year, month=month).delete()
+                with trail.event("residents.role.removed", subject=resident, details=details):
+                    RoleAssignment.objects.filter(
+                        resident=resident, role=role, year=year, month=month
+                    ).delete()
         return redirect("siteadmin:roles")
 
     residents = (
@@ -1233,7 +1250,9 @@ def preview_set(request: HttpRequest) -> HttpResponseRedirect:
     mode = request.POST.get("mode")
     if mode == "clear":
         request.session.pop(PREVIEW_SESSION_KEY, None)
-    elif mode == "resident":
+        trail.record("residents.preview.cleared")
+        return redirect("dashboard")
+    if mode == "resident":
         request.session[PREVIEW_SESSION_KEY] = []
     elif mode == "admin":
         request.session[PREVIEW_SESSION_KEY] = [Role.ADMINISTRATOR]
@@ -1242,6 +1261,8 @@ def preview_set(request: HttpRequest) -> HttpResponseRedirect:
     else:  # mode == "role"
         role = request.POST.get("role")
         request.session[PREVIEW_SESSION_KEY] = [role] if role in Role.values else []
+    # Seeing the site as someone else is an administrator's power over what others see: worth a line.
+    trail.record("residents.preview.set", details={"roles": request.session[PREVIEW_SESSION_KEY]})
     return redirect("dashboard")
 
 

@@ -6,6 +6,7 @@ Workgroup/Cleaning come from `intern_alumne_workgroup` / `intern_alumne_cleaning
 
 from django.conf import settings
 from django.db import models
+from django.utils import timezone
 
 
 class Room(models.Model):
@@ -169,6 +170,12 @@ class WorkerJobLog(models.Model):
     progress = models.FloatField(null=True, blank=True)
     progress_step = models.CharField(max_length=200, blank=True)
     progressed_at = models.DateTimeField(null=True, blank=True)
+    # Its peak memory in bytes (core/job_memory.py): the worker process's own, and the largest
+    # program's it ran (ffmpeg) with that program's name. Written as it runs, so a job killed for
+    # running out keeps what it had reached. Empty where it was not measured (not on Linux).
+    peak_memory = models.PositiveBigIntegerField(null=True, blank=True)
+    peak_program = models.CharField(max_length=64, blank=True)
+    peak_program_memory = models.PositiveBigIntegerField(null=True, blank=True)
 
     class Meta:
         indexes = [models.Index(fields=["finished_at"]), models.Index(fields=["parent_id"])]
@@ -210,3 +217,50 @@ class ServiceHeartbeat(models.Model):
 
     def __str__(self) -> str:
         return f"{self.name} {self.beat_at:%Y-%m-%d %H:%M:%S}"
+
+
+class OutgoingMail(models.Model):
+    """One mail the app sends, kept until it is delivered or given up on (#397). EMAIL_BACKEND is
+    core.mail.OutboxBackend, so every send_mail lands here — in the same transaction as whatever caused
+    it — and core.mail.deliver hands it to the real backend (MAIL_DELIVERY_BACKEND) by the rules of its
+    kind (core.mail.KINDS), retrying until it goes through, is refused outright or expires."""
+
+    class Kind(models.TextChoices):
+        # Someone is waiting for it (a password reset, a welcome mail): sent at once, first.
+        INTERACTIVE = "interactive", "Haster"
+        NORMAL = "normal", "Almindelig"
+        # The same mail to many (alumneregninger, ølkælder overviews): last, within MAIL_RATE_LIMIT.
+        BULK = "bulk", "Masseudsendelse"
+
+    class Status(models.TextChoices):
+        QUEUED = "queued", "I kø"
+        SENDING = "sending", "Sendes"
+        SENT = "sent", "Sendt"
+        FAILED = "failed", "Fejlede"
+        EXPIRED = "expired", "Udløbet"  # not sent within its kind's lifetime: given up on
+        UNKNOWN = "unknown", "Ukendt"  # cut off while being sent: it may or may not have arrived
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    subject = models.TextField()
+    recipients = models.TextField()  # comma-separated, for the admin and the log
+    # The message itself (core.mail.serialize). Emptied once delivered or expired, and a failed one's
+    # when its lifetime ends: it can hold a password-reset link, or a statement PDF of several MB.
+    payload = models.JSONField(default=dict, blank=True)
+    kind = models.CharField(max_length=12, choices=Kind.choices, default=Kind.NORMAL)
+    status = models.CharField(max_length=10, choices=Status.choices, default=Status.QUEUED)
+    attempts = models.PositiveSmallIntegerField(default=0)
+    next_attempt_at = models.DateTimeField(default=timezone.now)
+    last_attempt_at = models.DateTimeField(null=True, blank=True)  # what the rate limit counts
+    expires_at = models.DateTimeField()  # not sent by then, it is given up on (EXPIRED)
+    sent_at = models.DateTimeField(null=True, blank=True)
+    error = models.TextField(blank=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+        indexes = [
+            models.Index(fields=["status", "next_attempt_at"], name="outgoingmail_due"),
+            models.Index(fields=["last_attempt_at"], name="outgoingmail_attempted"),
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.subject} → {self.recipients} ({self.get_status_display()})"

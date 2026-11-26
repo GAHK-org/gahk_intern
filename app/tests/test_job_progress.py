@@ -22,7 +22,9 @@ logger = logging.getLogger("photo_album.tasks")
 @pytest.fixture
 def running() -> Iterator[LiveJob]:
     """A job registered as the worker would register it, in this thread, started long ago."""
-    job = LiveJob("job-1", timezone.now(), [])
+    # A whole second: the times below are the start plus whole minutes, and on a fractional
+    # monotonic start, 119 minutes minus 59 could come out a hair under the hour.
+    job = LiveJob("job-1", timezone.now(), [], started=float(int(time.monotonic())))
     job_progress.start(job, monitor=False)
     try:
         yield job
