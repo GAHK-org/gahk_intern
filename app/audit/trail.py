@@ -67,6 +67,11 @@ class Registration:
     redact: frozenset[str]
     # What the audit page calls a field the model has no Danish name for.
     labels: dict[str, str]
+    # Kept in full but not shown on the audit page, for what the feature itself keeps from
+    # administrators (a Delt mappe's files): fields shown as "changed", and with `private_name`, the
+    # thing named by a tag. A courtesy of the page, not a protection: they are in the database.
+    private: frozenset[str] = frozenset()
+    private_name: bool = False
 
     def fields(self) -> list[models.Field]:
         return [
@@ -83,6 +88,14 @@ class Registration:
             return str(self.name(obj))[:255]
         except Exception:
             return f"#{obj.pk}"
+
+    def tag(self, entity_id: int | None) -> str:
+        """What the audit page calls a thing with a private name: "Fil 3f2c9a". The same thing has the
+        same tag in every event, also once it is gone, and the tag does not count up."""
+        if entity_id is None:
+            return self.label
+        digest = salted_hmac("audit.private_name", f"{self.kind}:{entity_id}", algorithm="sha256")
+        return f"{self.label} {digest.hexdigest()[:6]}"
 
 
 _registry: dict[type[models.Model], Registration] = {}
@@ -101,8 +114,14 @@ def register(
     ignore: Iterable[str] = (),
     redact: Iterable[str] = (),
     labels: dict[str, str] | None = None,
+    private: Iterable[str] = (),
+    private_name: bool = False,
 ) -> None:
-    """Audit every write to `model`. `kind` is the stable name its history is kept under."""
+    """Audit every write to `model`. `kind` is the stable name its history is kept under.
+
+    `redact`: fields recorded as changed without their values. `private`: fields recorded in full but
+    shown on the audit page only as changed, and `private_name` the thing itself by a tag (see
+    Registration)."""
     if model in _registry or kind in _by_kind:
         raise ValueError(f"{model.__name__} / {kind} is registered twice")
     registration = Registration(
@@ -113,7 +132,12 @@ def register(
         ignore=frozenset(ignore),
         redact=frozenset(redact),
         labels=dict(labels or {}),
+        private=frozenset(private),
+        private_name=private_name,
     )
+    unknown = registration.private - {f.name for f in model._meta.get_fields()}
+    if unknown:
+        raise ValueError(f"{model.__name__} has no fields {sorted(unknown)} to keep private")
     _registry[model] = registration
     _by_kind[kind] = registration
     uid = f"audit:{kind}"
@@ -210,6 +234,10 @@ def address_hash(address: str) -> str:
 
 def kinds() -> list[str]:
     return list(_by_kind)
+
+
+def private_name_kinds() -> list[str]:
+    return [kind for kind, reg in _by_kind.items() if reg.private_name]
 
 
 # --- context: where a write comes from -------------------------------------------------------------

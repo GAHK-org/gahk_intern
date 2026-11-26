@@ -54,6 +54,10 @@ and what every changed field held before and after. Under Administration → Rev
   address typed into the login form), area (Login og adgang, Beboere og
   roller, …), source (web, worker, system), from and to dates, and only "Uden handling".
 - A person's name shows everything they did; a thing's name shows its whole history.
+- What a feature keeps from administrators (the names in a Delt mappe, say) is kept in the trail in
+  full but not shown here: such a thing is named by a tag ("Fil 3f2c9a", the same in every event), its
+  private fields read "ændret (vises ikke her)", and searching does not find it by name. The
+  feature's own pages show them to whoever may see them there.
 
 ## Pages of their own
 
@@ -71,6 +75,9 @@ and what every changed field held before and after. Under Administration → Rev
   purge ask the same function. Changing a period is a migration.
 - A change nobody claimed is still recorded, so nothing is unseen; in the test suite it is an error,
   so every screen and job names what it does.
+- Private names are hidden on the page, not in the database: administrators run the server and can
+  read it anyway. The page only keeps from showing what a feature has promised not to show them, and
+  a feature's own history can still read its part of the one trail.
 - Names are kept as they were at the time: a resident who changes name or is deleted still reads
   right in old events. Related things in a change are shown by their name today.
 
