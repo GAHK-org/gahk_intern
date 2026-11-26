@@ -20,7 +20,7 @@ from audit.models import AppendOnlyError, AuditChange, AuditEntity, AuditEvent
 from core.models import OutgoingMail
 from residents.models import AdminAccessGrant, Resident, Role, RoleAssignment, active_period
 
-LOGIN = "/admin/login"
+LOGIN = "/login"
 
 # Apps whose models are not in the trail yet; each is taken off as it is audited. The coverage test
 # below holds every other app to: each model registered, or exempted with a reason.
@@ -335,7 +335,7 @@ def test_a_login_and_a_logout(make_resident: Callable[..., Resident]) -> None:
     anna = make_resident(email="anna@gahk.dk", password="rigtig")
     client = Client(REMOTE_ADDR="10.0.0.7")
     client.post(LOGIN, {"username": "anna@gahk.dk", "password": "rigtig"})
-    client.post("/admin/logout")
+    client.post("/logout")
 
     login, logout = AuditEvent.objects.order_by("id")
     assert (login.action, login.actor_id, login.ip, login.source) == (
@@ -400,20 +400,20 @@ def test_password_change_and_reset(make_resident: Callable[..., Resident]) -> No
     client = Client()
     client.force_login(anna)
     client.post(
-        "/admin/password-change",
+        "/password-change",
         {
             "old_password": "rigtig",
             "new_password1": "Et-nyt-kodeord-42",
             "new_password2": "Et-nyt-kodeord-42",
         },
     )
-    Client().post("/admin/password-reset", {"email": "anna@gahk.dk"})
-    Client().post("/admin/password-reset", {"email": "ingen@gahk.dk"})
+    Client().post("/password-reset", {"email": "anna@gahk.dk"})
+    Client().post("/password-reset", {"email": "ingen@gahk.dk"})
     assert len(mail.outbox) == 1
     uid = urlsafe_base64_encode(force_bytes(anna.pk))
     token = default_token_generator.make_token(Resident.objects.get(pk=anna.pk))
     reset = Client()
-    url = reset.get(f"/admin/reset/{uid}/{token}/").url
+    url = reset.get(f"/password-reset/{uid}/{token}/").url
     reset.post(url, {"new_password1": "Endnu-et-kodeord-7", "new_password2": "Endnu-et-kodeord-7"})
 
     changed, asked, asked_unknown, completed = AuditEvent.objects.exclude(action="auth.login").order_by("id")

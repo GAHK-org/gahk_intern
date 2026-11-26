@@ -603,7 +603,7 @@ def test_the_composer_endpoints_are_for_residents(client: Client, method: str, u
     response = getattr(client, method)(BOARD + url)
 
     assert response.status_code == 302
-    assert response["Location"].startswith("/admin/login")
+    assert response["Location"].startswith("/login")
 
 
 def test_an_albums_widget_in_the_composer_offers_to_pick_its_pictures(
