@@ -391,6 +391,20 @@ token **404s**; the page offers **forny link**, which invalidates the old one; t
 only what `visible_to` allows; and `last_used_at` is written at most once an hour, because sixty
 phones polling hourly would otherwise turn a read endpoint into a write storm.
 
+## Audit trail
+
+- Creating, editing, cancelling and deleting an event, its guest list, every ja and nej (and whom a
+  nej let in from the venteliste), comments posted and deleted, and getting or changing one's
+  calendar address are in the audit trail (audit-trail.md). The same answer given twice records
+  nothing.
+- An event deleted by the purge keeps its lines in the trail, with its answers and comments.
+- The purge is one event, by nobody, with how many events it removed. A page load whose purge finds
+  nothing records nothing.
+- The calendar address itself is never in the trail, only that it was made or changed.
+- Left out, as bookkeeping kept by code: the calendar SEQUENCE, the "Redigeret" stamp, the deadline
+  reminder's marker, when a calendar last fetched the feed, and when an answer was given (the event
+  has the time).
+
 ## Decisions and rejected alternatives
 
 | Decision | Rejected alternative, and why it lost |

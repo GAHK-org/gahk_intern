@@ -41,6 +41,7 @@ from django.db import models
 from django.db.models.signals import post_delete
 from django.dispatch import receiver
 
+from audit import trail
 from core.clock import current_datetime
 from core.files import delete_attached_files
 
@@ -150,8 +151,13 @@ class EventQuerySet(models.QuerySet["Event"]):
 
         Attached images go with the rows through the post_delete receiver below — which is a signal
         precisely because this is a bulk delete and never calls Model.delete().
+
+        One audit event for the whole sweep, by nobody, with how many events went; a sweep that
+        found nothing records nothing (it runs on every page load of the list and the calendar).
         """
-        deleted, _ = self.expired(now).delete()
+        with trail.event("events.event.purged", actor=None, only_if_changed=True) as event:
+            deleted, per_model = self.expired(now).delete()
+            event.details["count"] = per_model.get(Event._meta.label, 0)
         return deleted
 
 
@@ -477,14 +483,17 @@ class CalendarFeedToken(models.Model):
         non-deterministic data step into the migration history, so `migrate` would stop being
         reproducible and the history could never be squashed cleanly.
         """
-        token, _ = cls.objects.get_or_create(resident=resident)
+        with trail.event("events.feed_token.created", only_if_changed=True) as event:
+            token, _ = cls.objects.get_or_create(resident=resident)
+            event.involve(token, "subject")
         return token
 
     def rotate(self) -> str:
         """Mint a new secret and invalidate the old one. Returns the new token."""
-        self.token = _new_feed_token()
-        self.rotated_at = current_datetime()
-        self.save(update_fields=["token", "rotated_at"])
+        with trail.event("events.feed_token.rotated", subject=self):
+            self.token = _new_feed_token()
+            self.rotated_at = current_datetime()
+            self.save(update_fields=["token", "rotated_at"])
         return self.token
 
 

@@ -33,6 +33,7 @@ from django.db import transaction
 from django.db.models import QuerySet
 from django.urls import reverse
 
+from audit import trail
 from core import push
 from core.clock import current_datetime
 from core.markdown import plain_text
@@ -138,7 +139,19 @@ def set_answer(event_pk: int, resident: Resident, answer: str) -> RsvpOutcome:
     event = Event.objects.get(pk=event_pk)
     if answers_locked(event):
         raise RsvpClosed(event)
+    # By whoever made the request: the resident answering, or an organiser answering for them. The
+    # same answer again changes nothing and records nothing.
+    with trail.event(
+        "events.rsvp.answered",
+        subject=event,
+        involve=[(resident, "resident")],
+        details={"answer": answer},
+        only_if_changed=True,
+    ):
+        return _set_answer(event, resident, answer)
 
+
+def _set_answer(event: Event, resident: Resident, answer: str) -> RsvpOutcome:
     before = {r.resident_id for r in seated(event)}
     now = current_datetime()
 
@@ -210,10 +223,11 @@ def cancel(event: Event) -> None:
     ignore.
     """
     now = current_datetime()
-    event.cancelled_at = now
-    event.edited_at = now
-    event.sequence += 1
-    event.save(update_fields=["cancelled_at", "edited_at", "sequence"])
+    with trail.event("events.event.cancelled", subject=event):
+        event.cancelled_at = now
+        event.edited_at = now
+        event.sequence += 1
+        event.save(update_fields=["cancelled_at", "edited_at", "sequence"])
     notify_cancelled(event)
 
 

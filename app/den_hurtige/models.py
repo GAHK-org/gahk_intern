@@ -56,6 +56,7 @@ from django.db.models.signals import post_delete
 from django.dispatch import receiver
 from django.utils import timezone
 
+from audit import trail
 from core.clock import current_datetime
 from core.files import delete_attached_files
 
@@ -254,11 +255,17 @@ class QuickPost(models.Model):
         claim -- exactly one caller can win it -- and the rowcount says whether this one did.
         """
         with transaction.atomic():
+            now = timezone.now()
             claimed = QuickPost.objects.filter(pk=self.pk, deleted_at__isnull=True).update(
-                content="", image="", deleted_at=timezone.now()
+                content="", image="", deleted_at=now
             )
             if not claimed:
                 return False
+            # An UPDATE no signal sees: the open audit event (the delete view's) is told what it did.
+            if (event := trail.current()) is not None:
+                event.change(self, "content", self.content, "")
+                event.change(self, "image", self.image.name, "")
+                event.change(self, "deleted_at", None, now)
             # Reads `self.image`, which the UPDATE above cleared in the database but not in memory.
             # The atomic block is what makes this safe: core.files defers the storage delete to
             # commit, so without one it would unlink the photograph before the row was written.

@@ -23,6 +23,7 @@ from django.urls import reverse
 from django.utils import timezone
 from django.views.decorators.http import require_GET, require_POST
 
+from audit import trail
 from core.clock import current_date, current_datetime
 from core.danish import MONTHS, WEEKDAYS_SHORT
 from core.uploads import attached_image
@@ -371,7 +372,8 @@ def create_comment(request: HttpRequest, pk: int) -> HttpResponseRedirect:
     comment.author = current_resident(request)
     if image is not None:
         comment.image = image
-    comment.save()
+    with trail.event("events.comment.posted", subject=comment, involve=[(event, "event")]):
+        comment.save()
     services.notify_new_comment(comment)
     live.event_changed(event.pk)
     return redirect(_comment_anchor(event.pk))
@@ -386,7 +388,8 @@ def delete_comment(request: HttpRequest, pk: int) -> HttpResponseRedirect:
     if not access.can_delete_comment(comment, current_resident(request)):
         raise PermissionDenied
     event_pk = comment.event_id
-    comment.delete()
+    with trail.event("events.comment.deleted", subject=comment, involve=[(comment.event, "event")]):
+        comment.delete()
     live.event_changed(event_pk)
     messages.success(request, "Kommentaren er slettet.")
     return redirect(_comment_anchor(event_pk))
@@ -404,10 +407,11 @@ def create(request: HttpRequest) -> HttpResponse:
 
     event = form.save(commit=False)
     event.organiser = resident
-    event.save()
-    # After the event exists, because an invite needs something to point at. The notification then
-    # reads the finished guest list, which is what decides who hears about a private event at all.
-    services.sync_invites(event, list(form.cleaned_data["invitees"]), invited_by=resident)
+    with trail.event("events.event.created", subject=event):
+        event.save()
+        # After the event exists, because an invite needs something to point at. The notification
+        # then reads the finished guest list, which decides who hears about a private event at all.
+        services.sync_invites(event, list(form.cleaned_data["invitees"]), invited_by=resident)
     mentioned = services.notify_mentions_in_description(event, resident)
     services.notify_new_event(event, skip=mentioned)
     messages.success(request, "Begivenheden er oprettet.")
@@ -438,15 +442,18 @@ def edit(request: HttpRequest, pk: int) -> HttpResponse:
 
     updated = form.save(commit=False)
     updated.edited_at = current_datetime()
-    if services.significant_change(before, updated):
-        # One predicate for both the SEQUENCE bump and the push, so a calendar client and a phone
-        # can never disagree about whether something changed.
-        updated.sequence += 1
-        updated.save()
-        services.notify_changed(updated)
-    else:
-        updated.save()
-    services.sync_invites(updated, list(form.cleaned_data["invitees"]), invited_by=current_resident(request))
+    with trail.event("events.event.edited", subject=updated, only_if_changed=True):
+        if services.significant_change(before, updated):
+            # One predicate for both the SEQUENCE bump and the push, so a calendar client and a phone
+            # can never disagree about whether something changed.
+            updated.sequence += 1
+            updated.save()
+            services.notify_changed(updated)
+        else:
+            updated.save()
+        services.sync_invites(
+            updated, list(form.cleaned_data["invitees"]), invited_by=current_resident(request)
+        )
     services.notify_mentions_in_description(updated, current_resident(request), old_description)
     live.event_changed(updated.pk)
     messages.success(request, "Begivenheden er opdateret.")
@@ -461,7 +468,8 @@ def delete(request: HttpRequest, pk: int) -> HttpResponseRedirect:
     if not access.can_delete(event, current_resident(request)):
         raise PermissionDenied
     event_pk = event.pk  # delete() clears it
-    event.delete()
+    with trail.event("events.event.deleted", subject=event):
+        event.delete()
     live.event_changed(event_pk, "deleted")
     messages.success(request, "Begivenheden er slettet.")
     return redirect("events:index")
