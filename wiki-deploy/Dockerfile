@@ -59,6 +59,11 @@ HEALTHCHECK --interval=30s --timeout=5s --retries=3 --start-period=30s \
 # session.upload_progress is disabled as defence in depth against CVE-2026-109619 (it is PHP's own
 # suggested mitigation); MediaWiki never uses it.
 #
+# display_errors is off: with no php.ini the image falls back on PHP's default, which prints every
+# warning into the page — server paths to whoever is looking, and a broken response wherever the
+# output must be exact (the API's JSON, load.php's CSS and JavaScript). log_errors sends them to
+# Apache's error log instead, which is the container log.
+#
 # PHP's upload limits, which the official image leaves at the stock 2M/8M. That is below a single
 # phone photograph, and the way it fails is the problem: PHP over upload_max_filesize discards the
 # FILE and MediaWiki reports "the file you uploaded seems to be empty", while over post_max_size it
@@ -78,11 +83,15 @@ RUN set -eux; \
       'post_max_size = 80M' \
       'memory_limit = 256M' \
       'session.upload_progress.enabled = 0' \
+      'display_errors = Off' \
+      'log_errors = On' \
       > /usr/local/etc/php/conf.d/gahk-uploads.ini; \
     php -i | grep -qx 'upload_max_filesize => 72M => 72M' \
       || { echo 'FATAL: PHP did not pick up gahk-uploads.ini'; exit 1; }; \
     php -i | grep -qx 'session.upload_progress.enabled => Off => Off' \
-      || { echo 'FATAL: session.upload_progress is still enabled'; exit 1; }
+      || { echo 'FATAL: session.upload_progress is still enabled'; exit 1; }; \
+    php -i | grep -qx 'display_errors => Off => Off' \
+      || { echo 'FATAL: display_errors is still on'; exit 1; }
 
 # User uploads (396 rows in wikiimage). Must be a mounted volume or they vanish on every redeploy.
 VOLUME /var/www/html/images
