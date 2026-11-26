@@ -43,6 +43,9 @@ ran and how it went, and what is scheduled next. Under Administration → Worker
 - Sent, started and finished on one line, with the wait and the run time between them; a running
   job's share of its time limit.
 - Queue, worker, retries, arguments, parent and root job (linked), ETA, expiry, origin.
+- Its peak memory: the worker's own, and that of the largest program it ran (ffmpeg), with the
+  program's name. Measured as it runs, so a job killed for running out of memory shows what it had
+  reached. Only measured on the server; "–" where it was not.
 - Its sub-jobs: how many in each status, then the first 200 — those still queued included.
 - Its result, its traceback, and what it logged. While it runs, the page refreshes itself every 10
   seconds (while the tab is in view), showing its progress and what it has logged so far, at most
@@ -74,6 +77,13 @@ ran and how it went, and what is scheduled next. Under Administration → Worker
 - Successful jobs are kept for 35 days, so the monthly summary can count a whole month. Any other
   job is kept until there are more than 1000 of the same type and status; then the oldest beyond the
   1000 go once they are 60 days old.
+
+## Demo data
+
+- The demo seed fills the page: jobs running (one with progress), one whose worker died, failed
+  ones (an error, the watchdog, a worker out of memory), an import with its sub-jobs, and the
+  routine Beat jobs over the last days, with peak memory on all but the oldest. The queue stays
+  empty: the local worker would take and run a seeded message at once.
 
 ## Decisions
 

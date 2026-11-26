@@ -27,9 +27,9 @@ from .models import Resident, Role, active_period
 #
 # HttpResponseBase rather than HttpResponse, because FileResponse and StreamingHttpResponse are NOT
 # HttpResponse subclasses - they descend from HttpResponseBase directly. Without this, any view that
-# hands back a file (arkiv's download, and anything like core.media.serve_media that ever wants
-# gating) cannot be decorated with role_required or a rollout Gate, which is the one place the
-# decorator is most worth having. Widening a return type is safe for every existing caller.
+# hands back a file (a download, or anything like core.media.serve_media that ever wants gating)
+# cannot be decorated with role_required or a rollout Gate, which is the one place the decorator is
+# most worth having. Widening a return type is safe for every existing caller.
 View = Callable[..., HttpResponseBase]
 # What request.user is statically typed as: django-stubs can't know it is always a Resident here.
 AnyUser = AbstractBaseUser | AnonymousUser
@@ -165,12 +165,23 @@ def role_required(*roles: str) -> Callable[[View], View]:
             if not request.user.is_authenticated:
                 return redirect_to_login(request.get_full_path())
             if effective_roles(request).isdisjoint(roles):
+                _audit_denied(request, roles)
                 raise PermissionDenied
             return view(request, *args, **kwargs)
 
         return wrapped
 
     return decorator
+
+
+def _audit_denied(request: HttpRequest, roles: tuple[str, ...]) -> None:
+    """A resident sent away from a page their roles do not open. Not while previewing: an
+    administrator looking at the site as a plain resident is refused on purpose."""
+    if PREVIEW_SESSION_KEY in request.session and can_preview(request.user):
+        return
+    from audit import trail
+
+    trail.record("auth.access.denied", details={"path": request.path, "roles": list(roles)})
 
 
 def require_can_preview(view: View) -> View:
