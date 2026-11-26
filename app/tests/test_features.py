@@ -27,6 +27,7 @@ def test_session_cookie_stays_on_the_intranet_host(monkeypatch: pytest.MonkeyPat
     ".gahk.dk" `sessionid`/`csrftoken` can never be mistaken for the current one."""
     monkeypatch.setenv("DJANGO_DEBUG", debug)
     monkeypatch.setenv("DATABASE_URL", "sqlite:///:memory:")
+    monkeypatch.setenv("DJANGO_SECRET_KEY", "test-secret")
     configured = run_path(config_settings.__file__)
 
     assert configured["SESSION_COOKIE_DOMAIN"] is None
@@ -41,6 +42,7 @@ def test_session_cookie_stays_on_the_intranet_host(monkeypatch: pytest.MonkeyPat
 def test_production_defaults_name_each_host(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("DJANGO_DEBUG", "0")
     monkeypatch.setenv("DATABASE_URL", "sqlite:///:memory:")
+    monkeypatch.setenv("DJANGO_SECRET_KEY", "test-secret")
     for name in ("SITE_URL", "PUBLIC_SITE_URL", "WIKI_URL"):
         monkeypatch.delenv(name, raising=False)
     configured = run_path(config_settings.__file__)

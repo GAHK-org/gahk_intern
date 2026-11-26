@@ -48,7 +48,7 @@
             Annulleret
           {% elif row.has_buyers %}
             <form method="post" action="{% url 'oelkaelder:void_sale' row.txn_id %}" style="display:inline"
-                  onsubmit="return confirm('Annullér købet på {{ row.total_ore|kr }} for {{ row.people }}? Købernes saldi rettes automatisk.');">
+                  onsubmit="return confirm('Annullér købet på {{ row.total_ore|kr }} for {{ row.people|escapejs }}? Købernes saldi rettes automatisk.');">
               {% csrf_token %}
               <input type="hidden" name="start" value="{{ start|date:'Y-m-d' }}">
               <input type="hidden" name="end" value="{{ end|date:'Y-m-d' }}">

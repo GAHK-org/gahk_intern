@@ -65,6 +65,16 @@ DETAIL_LABELS = {
     "date_to": "Til",
     "count": "Antal",
 }
+# What the page calls the values of some of those keys. The trail stores them in English, as code
+# names; only what a reader sees is Danish.
+DETAIL_VALUE_LABELS = {
+    "reason": {
+        "wrong password": "forkert kodeord",
+        "no account": "ingen konto med den adresse",
+        "account inactive": "kontoen er deaktiveret",
+        "throttled": "for mange forsøg, afvist",
+    },
+}
 
 
 @dataclass(frozen=True)
@@ -260,7 +270,7 @@ def _event_line(row: AuditEvent, names: "_RelatedNames") -> EventLine:
         ip=row.ip,
         unclaimed=row.unclaimed,
         details=[
-            (DETAIL_LABELS.get(str(key), str(key)), _plain(value))
+            (DETAIL_LABELS.get(str(key), str(key)), _detail_value(str(key), value))
             for key, value in (row.details or {}).items()
         ],
         subject=subject,
@@ -337,6 +347,11 @@ def _value(model_field: models.Field | None, value: Any, names: "_RelatedNames")
         if day is not None:
             return date_format(day, "j. b Y")
     return _plain(value)
+
+
+def _detail_value(key: str, value: Any) -> str:  # noqa: ANN401
+    labels = DETAIL_VALUE_LABELS.get(key, {})
+    return labels.get(value, _plain(value)) if isinstance(value, str) else _plain(value)
 
 
 def _plain(value: Any) -> str:  # noqa: ANN401

@@ -54,7 +54,9 @@ class AlumneregningSettingsForm(forms.ModelForm):
         upload = self.cleaned_data.get("followup_pdf")
         if isinstance(upload, UploadedFile):
             name = (upload.name or "").lower()
-            if upload.content_type != "application/pdf" and not name.endswith(".pdf"):
+            # The name decides what the file is stored as, so it must say PDF whatever the browser
+            # called the content: a parseable polyglot named x.html would otherwise be kept as one.
+            if not name.endswith(".pdf"):
                 raise forms.ValidationError("Følgebrevet skal være en PDF-fil.")
             # Extension/content-type alone don't prove it's a real PDF — a bad upload here would
             # otherwise only surface later, as a crash of every alumneregning send that reads it.

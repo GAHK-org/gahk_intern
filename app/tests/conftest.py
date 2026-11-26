@@ -88,6 +88,15 @@ def _isolate_from_dotenv(settings: object, tmp_path: Path) -> None:
 
 
 @pytest.fixture(autouse=True)
+def _empty_cache() -> None:
+    """Each test starts with an empty cache. It is the process's memory, so the login and reset counts
+    of residents.throttle would otherwise add up across the suite and refuse a later test's login."""
+    from django.core.cache import cache
+
+    cache.clear()
+
+
+@pytest.fixture(autouse=True)
 def _mail_through_the_outbox(settings: object, monkeypatch: pytest.MonkeyPatch) -> None:
     """Every mail a test sends goes through core.mail's outbox, as in production: Django's test runner
     sets EMAIL_BACKEND to locmem, which would send it straight past. The outbox then delivers it there

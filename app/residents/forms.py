@@ -7,11 +7,13 @@ from typing import Any
 from django import forms
 from django.conf import settings
 from django.contrib.auth.forms import AuthenticationForm, PasswordResetForm
+from django.core.exceptions import NON_FIELD_ERRORS
 from django.core.files.uploadedfile import UploadedFile
 
 from core import mail as outbox
 from core.uploads import validate_image_upload
 
+from . import throttle
 from .models import Resident
 
 
@@ -50,6 +52,21 @@ class EmailAuthenticationForm(AuthenticationForm):
                 "spellcheck": "false",
             }
         )
+
+    def clean(self) -> dict[str, Any]:
+        # The limit itself is residents.backends', which refuses the attempt as a failed login (and so
+        # the audit trail records it). Here it only changes what the page says: "Forkert e-mail eller
+        # kodeord" would send the resident off to guess again.
+        try:
+            return super().clean()
+        except forms.ValidationError:
+            if getattr(self.request, "login_throttled", False):
+                raise forms.ValidationError("Too many failed logins", code="throttled") from None
+            raise
+
+    @property
+    def throttled(self) -> bool:
+        return self.has_error(NON_FIELD_ERRORS, "throttled")
 
 
 class ResidentEditForm(forms.ModelForm):
@@ -165,6 +182,17 @@ class ResidentPasswordResetForm(PasswordResetForm):
             if unicodedata.normalize("NFKC", email).casefold()
             == unicodedata.normalize("NFKC", getattr(u, field)).casefold()
         )
+
+    def save(self, *args: Any, **kwargs: Any) -> None:  # noqa: ANN401 - Django's signature
+        # Over the limit, nothing is sent and the "done" page looks the same as ever: it never says
+        # whether a mail went out, so it cannot tell a stranger which addresses have an account.
+        # residents.auth.PasswordResetView records the request either way, and `throttled` as its reason.
+        request = kwargs.get("request")
+        self.throttled = request is not None and not throttle.password_reset_allowed(
+            request, self.cleaned_data["email"]
+        )
+        if not self.throttled:
+            super().save(*args, **kwargs)
 
     def send_mail(
         self,

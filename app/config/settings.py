@@ -6,6 +6,7 @@ Schema/decisions: see ../02-schema-etl.md. Target DB is PostgreSQL (via DATABASE
 import os
 from datetime import timedelta
 from pathlib import Path
+from urllib.parse import urlsplit
 
 import dj_database_url
 from celery.schedules import crontab
@@ -15,8 +16,13 @@ from dotenv import load_dotenv
 BASE_DIR = Path(__file__).resolve().parent.parent
 load_dotenv(BASE_DIR / ".env")
 
-SECRET_KEY = os.environ.get("DJANGO_SECRET_KEY", "dev-insecure-change-me")
+DEV_SECRET_KEY = "dev-insecure-change-me"  # noqa: S105  # nosec B105 - dev only, refused below
+SECRET_KEY = os.environ.get("DJANGO_SECRET_KEY", DEV_SECRET_KEY)
 DEBUG = os.environ.get("DJANGO_DEBUG", "1") == "1"
+# The key signs sessions, password-reset links and every other signed value. Outside development a
+# missing DJANGO_SECRET_KEY must stop the process, not run it on a key that is public in this file.
+if not DEBUG and SECRET_KEY in ("", DEV_SECRET_KEY):
+    raise ImproperlyConfigured("DJANGO_SECRET_KEY must be set outside development.")
 ALLOWED_HOSTS = os.environ.get("DJANGO_ALLOWED_HOSTS", "localhost,127.0.0.1").split(",")
 
 # Behind Coolify/Traefik, TLS is terminated at the proxy and plain HTTP is forwarded to uvicorn.
@@ -28,6 +34,13 @@ SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
 CSRF_TRUSTED_ORIGINS = [o for o in os.environ.get("CSRF_TRUSTED_ORIGINS", "").split(",") if o]
 SESSION_COOKIE_SECURE = not DEBUG
 CSRF_COOKIE_SECURE = not DEBUG
+# HSTS: once a browser has seen the site over HTTPS, it never tries plain http for it again, so a
+# network in the middle (a café's Wi-Fi) cannot strip TLS from the first request. A year, and the
+# subdomains of intern.gahk.dk (it has none; gahk.dk and wiki.gahk.dk are not covered). Not preloaded:
+# that is a promise to browser vendors that is slow to take back. Off in development, where a
+# browser that remembered it for localhost would refuse every other dev server on plain http.
+SECURE_HSTS_SECONDS = 0 if DEBUG else 60 * 60 * 24 * 365
+SECURE_HSTS_INCLUDE_SUBDOMAINS = not DEBUG
 # Host-only cookies (no Domain attribute): the intranet's session must reach intern.gahk.dk and
 # nothing else. It used to be ".gahk.dk", shared with the public site — which now runs on separate,
 # less trusted webhosting that must never see an intranet session. New names as well, because a
@@ -56,6 +69,20 @@ GAHK_WEB_KEY = os.environ.get("GAHK_WEB_KEY", "")
 # Shared with gahk.dk through the parent domain; host-only in development, where the two run on
 # different ports.
 EDITOR_HINT_COOKIE_DOMAIN = os.environ.get("EDITOR_HINT_COOKIE_DOMAIN", "" if DEBUG else ".gahk.dk") or None
+
+# Browser features no page here uses, switched off for every page and every frame in it
+# (core/security_headers.py). Photos are picked with a file input (its `capture` opens the camera app,
+# which this does not govern), and GAHKFlix's fullscreen is not listed.
+PERMISSIONS_POLICY = "camera=(), microphone=(), geolocation=(), payment=(), usb=(), display-capture=()"
+# The Content-Security-Policy every page gets unless its view sets one (core/security_headers.py),
+# which also adds frame-ancestors to match X-Frame-Options. object-src: no page embeds a plugin, so an
+# injected <object>/<embed> runs nothing. base-uri: an injected <base> cannot point the page's relative
+# script and form URLs at another site. gahk.dk is the one exception, because the Hjemmeside editor
+# shows gahk.dk's preview in a srcdoc frame (frontend/src/cms.ts), which inherits this policy, and that
+# preview's <base> is GAHK_WEB_URL (cms.views.with_base) so its stylesheets and images load from there.
+# No script-src yet: inline scripts, inline handlers and the standard Alpine build all need one first.
+_gahk_web = urlsplit(GAHK_WEB_URL)
+CONTENT_SECURITY_POLICY = ["object-src 'none'", f"base-uri 'self' {_gahk_web.scheme}://{_gahk_web.netloc}"]
 
 INSTALLED_APPS = [
     "django.contrib.admin",
@@ -101,6 +128,9 @@ MIDDLEWARE = [
     "cms.middleware.EditorHintCookie",
     "core.middleware.KitchenAccountGate",
     "django.contrib.messages.middleware.MessageMiddleware",
+    # Permissions-Policy and Content-Security-Policy. Before XFrameOptionsMiddleware, so it sees
+    # that one's header on the way out and mirrors it as frame-ancestors (core/security_headers.py).
+    "core.security_headers.SecurityHeaders",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
     # No visit counter: gahk.dk counts its own visits, and cms.tasks.sync_gahk_web pulls the totals.
     # DEBUG only: presigned URLs follow the host the page was opened on, so a phone on the LAN works.
@@ -172,6 +202,8 @@ if os.environ.get("DATABASE_POOL") == "1":
 
 # --- Auth (01-infrastructure.md A4/A5; 02-schema-etl.md §1.6) ---
 AUTH_USER_MODEL = "residents.Resident"
+# Django's ModelBackend behind the login limits (residents/throttle.py), for every login form.
+AUTHENTICATION_BACKENDS = ["residents.backends.ThrottledModelBackend"]
 
 # First hasher = default for new/upgraded passwords. The legacy hasher (last) only verifies the old
 # unsalted sha256 hashes, then Django re-hashes on next login (upgrade-on-login, scope §5).
