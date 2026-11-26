@@ -5,6 +5,8 @@ class OpslagstavleConfig(AppConfig):
     default_auto_field = "django.db.models.BigAutoField"
     name = "opslagstavle"
     verbose_name = "Opslagstavlen"
+    # Storage names this app owns; only its code writes under them (spec/architecture.md).
+    storage_prefixes = ("opslag/",)
 
     def ready(self) -> None:
         from core.media import register_cacheable

@@ -5,6 +5,8 @@ class CmsConfig(AppConfig):
     default_auto_field = "django.db.models.BigAutoField"
     name = "cms"
     verbose_name = "Hjemmeside"
+    # Storage names this app owns; only its code writes under them (spec/architecture.md).
+    storage_prefixes = ("cms/",)
 
     def ready(self) -> None:
         from core.media import register_public_copy

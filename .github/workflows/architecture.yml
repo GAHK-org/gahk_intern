@@ -1,0 +1,129 @@
+name: Architecture
+
+# Reports code that crosses an app boundary. The rules are in spec/architecture.md, the short
+# version in AGENTS.md. NOT a required check yet: the totals start high and are expected to fall,
+# so a red run here does not block a merge. The `architecture` job's summary lists what the PR adds
+# compared with its base. Keep that list empty.
+#
+#   static    tach (imports), ruff with ruff-architecture.toml (raw SQL), check_architecture
+#             (relations and storage). No database.
+#   runtime   the test suite with ARCHITECTURE_REPORT set: writes to another app's tables or storage
+#             prefixes, and SQL that did not come from the ORM (tests/architecture_guard.py). The
+#             `test` job in ci.yml stays the judge of whether the tests pass.
+#
+# Both run twice, on the PR and on its base, each with that checkout's own tooling. A base from
+# before these checks existed has none, and then everything counts as new.
+#
+# Temporary until January 2027 (#484): `--fail-on new` below, so the job fails only when a PR adds a
+# finding, and it is not a required check. Then the report goes back to `--fail-on any` (with an
+# agreed list of exceptions) and "architecture" joins the required checks of the dev and main
+# rulesets.
+
+on:
+  pull_request:
+  push:
+    branches: [dev]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: architecture-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  UV_PYTHON: "3.13"
+  # The PR's base, or the previous tip of dev for a push.
+  BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before || github.sha }}
+
+jobs:
+  static:
+    name: static (${{ matrix.side }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        side: [head, base]
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ matrix.side == 'base' && env.BASE_SHA || github.sha }}
+      - uses: astral-sh/setup-uv@v7
+        with: { enable-cache: true }
+      # `|| true` throughout: a finding exits non-zero, and the report job decides what that means.
+      # A check that cannot run leaves an empty file, which the report shows as "did not run".
+      - name: Collect
+        env:
+          DJANGO_SECRET_KEY: ci-secret
+        run: |
+          out="$RUNNER_TEMP/out" && mkdir -p "$out"
+          uv run tach check --output json > "$out/tach.json" || true
+          cd app
+          uv run ruff check --config ruff-architecture.toml --output-format json --exit-zero . > "$out/ruff.json" || true
+          uv run python manage.py check_architecture --json > "$out/models.json" || true
+      - uses: actions/upload-artifact@v7
+        with:
+          name: static-${{ matrix.side }}
+          path: ${{ runner.temp }}/out/
+          retention-days: 7
+
+  runtime:
+    name: runtime (${{ matrix.side }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        side: [head, base]
+    services:
+      postgres:
+        image: postgres:16
+        env: { POSTGRES_DB: gahk, POSTGRES_USER: gahk, POSTGRES_PASSWORD: gahk }
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U gahk" --health-interval 5s
+          --health-timeout 5s --health-retries 20
+    env:
+      DATABASE_URL: postgres://gahk:gahk@localhost:5432/gahk
+      DJANGO_DEBUG: "1"
+      DJANGO_SECRET_KEY: ci-secret
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ matrix.side == 'base' && env.BASE_SHA || github.sha }}
+      - uses: astral-sh/setup-uv@v7
+        with: { enable-cache: true }
+      - name: Run the tests with the architecture guard
+        working-directory: app
+        run: |
+          mkdir -p "$RUNNER_TEMP/out"
+          ARCHITECTURE_REPORT="$RUNNER_TEMP/out/runtime.json" uv run python -m pytest -q -p no:cacheprovider || true
+      - uses: actions/upload-artifact@v7
+        with:
+          name: runtime-${{ matrix.side }}
+          path: ${{ runner.temp }}/out/
+          retention-days: 7
+          if-no-files-found: ignore  # a base from before the guard writes nothing
+
+  # The one check to make required later.
+  report:
+    name: architecture
+    needs: [static, runtime]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
+        continue-on-error: true
+        with: { pattern: "*-head", merge-multiple: true, path: "${{ runner.temp }}/head" }
+      - uses: actions/download-artifact@v8
+        continue-on-error: true
+        with: { pattern: "*-base", merge-multiple: true, path: "${{ runner.temp }}/base" }
+      - name: Compare with the base
+        run: |
+          status=0
+          python3 scripts/architecture_report.py "$RUNNER_TEMP/head" "$RUNNER_TEMP/base" --fail-on new \
+            > "$RUNNER_TEMP/report.md" || status=$?
+          cat "$RUNNER_TEMP/report.md" >> "$GITHUB_STEP_SUMMARY"
+          cat "$RUNNER_TEMP/report.md"
+          exit "$status"

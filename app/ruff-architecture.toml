@@ -1,0 +1,32 @@
+# The raw-SQL rule of spec/architecture.md, as a ruff run of its own:
+#
+#   uv run ruff check --config ruff-architecture.toml .     (from app/; `task architecture` runs it)
+#
+# Kept out of ruff.toml on purpose: CI's required `lint` job reads that file, and this rule only
+# reports for now (.github/workflows/architecture.yml). Raw SQL bypasses every boundary check — the
+# ORM is how the checks know which app's table a query touches — so it belongs to the kernel's
+# infrastructure: health checks, Celery's and kombu's tables, locks, sequences, per-thread
+# connections. The per-file-ignores below are that allow-list, and tests/architecture_guard.py reads
+# the same list for its runtime check, so keep both in one place: here.
+extend = "ruff.toml"
+
+[lint]
+select = ["TID251"]
+
+[lint.flake8-tidy-imports.banned-api]
+"django.db.connection".msg = "Raw database access is kernel infrastructure only (spec/architecture.md). Use the ORM, or the owning app's api."
+"django.db.connections".msg = "Raw database access is kernel infrastructure only (spec/architecture.md). Use the ORM, or the owning app's api."
+"django.db.models.expressions.RawSQL".msg = "Raw SQL bypasses the domain boundaries (spec/architecture.md). Use the ORM, or the owning app's api."
+
+[lint.per-file-ignores]
+"tests/*" = ["TID251"]
+"*/migrations/*" = ["TID251"]
+"audit/tasks.py" = ["TID251"]                            # the trail's retention purge
+"core/admin_summary.py" = ["TID251"]                     # Celery's task-result table
+"core/health.py" = ["TID251"]                            # SELECT 1
+"core/heartbeat.py" = ["TID251"]                         # closes its thread's connection
+"core/job_progress.py" = ["TID251"]                      # closes its thread's connection
+"core/mail.py" = ["TID251"]                              # the outbox's advisory lock
+"core/push.py" = ["TID251"]                              # closes its thread's connection
+"core/tasks.py" = ["TID251"]                             # kombu's and Celery's tables
+"core/management/commands/reset_sequences.py" = ["TID251"]  # sequences after an import

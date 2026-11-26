@@ -6,6 +6,8 @@ class DenHurtigeConfig(AppConfig):
     default_auto_field = "django.db.models.BigAutoField"
     name = "den_hurtige"
     verbose_name = "Den Hurtige"
+    # Storage names this app owns; only its code writes under them (spec/architecture.md).
+    storage_prefixes = ("quick_posts/", "quick_comments/")
 
     def ready(self) -> None:
         # Only the channel registry is validated here. The VAPID key pair moved to core.apps with

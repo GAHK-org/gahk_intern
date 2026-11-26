@@ -5,6 +5,12 @@ from pathlib import Path
 import pytest
 
 from residents.models import Resident, RoleAssignment, active_period
+from tests import architecture_guard
+
+
+def pytest_configure(config: pytest.Config) -> None:
+    # Reports writes across app boundaries (spec/architecture.md); see the module's docstring.
+    config.pluginmanager.register(architecture_guard, "architecture_guard")
 
 
 def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:

@@ -203,6 +203,18 @@ tasks:
     desc: Static type-check with mypy (+ django-stubs). Runs from the repo root (config in pyproject.toml).
     cmds: ['uv run mypy app']
 
+  architecture:
+    desc: Report code that crosses app boundaries (spec/architecture.md). Reports, never fails; the tests report the runtime half
+    # Each check runs even when the one before it found something: the point is the whole list.
+    # The CI counterpart is .github/workflows/architecture.yml, which also compares with the base.
+    cmds:
+      - cmd: uv run tach check
+        ignore_error: true
+      - cmd: cd app && uv run ruff check --config ruff-architecture.toml .
+        ignore_error: true
+      - cmd: cd app && uv run python manage.py check_architecture
+        ignore_error: true
+
   hooks:
     desc: Install the prek git pre-commit hooks (ruff + mypy run on commit)
     cmds: ['uv run prek install']

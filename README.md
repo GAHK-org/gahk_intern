@@ -62,6 +62,19 @@ runner) via `.pre-commit-config.yaml`. Derefter kører **ruff** (check + format)
 ved hvert commit. Kør manuelt på alt med `uv run prek run --all-files`. De samme tjek håndhæves i CI
 (`.github/workflows/ci.yml`): `lint`, `typecheck`, `test`, `security` og `build`.
 
+## Arkitektur: domænegrænser
+
+Hver app ejer sine egne tabeller og filer, og andre apps når den kun gennem dens `api.py`. Reglerne
+står i [spec/architecture.md](spec/architecture.md), kortversionen i [AGENTS.md](AGENTS.md).
+
+```sh
+task architecture  # Tach (imports), rå SQL og check_architecture (relationer og filplacering)
+```
+
+Testsuiten melder desuden, når en test skriver i en anden apps tabeller eller filer. CI's
+Architecture-workflow sammenligner en PR med dens base. Den er ikke et påkrævet tjek endnu og fejler
+kun, når en PR tilføjer nye fund (midlertidigt, indtil januar 2027: #484).
+
 ## Branches og pull requests
 
 Ingen kan pushe direkte til `main` eller `dev`; alt går gennem pull requests. `dev` samler det
