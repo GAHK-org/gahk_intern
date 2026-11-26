@@ -19,6 +19,9 @@ regnskab@'s budget after regnskab@ downloaded it (so replacing it warns), an old
 copy, a move, a rename that tells ak@, and the bin - a receipt a colleague deleted (regnskab@ is
 told), a file three days from going for good, and beboer@'s deleted folder kept for the file in it.
 
+Delte mapper (`_seed_shared`): one moderated by beboer@ with every kind of member change, one by
+oel@ and regnskab@ about to expire, and an expired one archived for everyone to read.
+
 Last, locks (`_seed_locks`), as they stop changes: what the nightly task locked, regnskab@'s
 closed accounts and `Årsafslutning` folder locked by hand, and the requests page for admin@ and
 formand@ with an unlock and a purge in each state - pending, approved (the logo is unlocked for now
@@ -44,15 +47,17 @@ from io import BytesIO, StringIO
 from unittest import mock
 
 from django.core.files.base import ContentFile
+from django.urls import reverse
 from django.utils import timezone
 
 from core.models import Workgroup
+from notifications.models import Notification
 from residents.models import Residency, Resident, Role
 from residents.permissions import has_active_role
 
-from . import locks, operations, services
+from . import locks, operations, services, shared
 from .access import Viewer
-from .models import ApprovalRequest, Event, File, FileVersion, Folder, Space
+from .models import ApprovalRequest, Event, File, FileVersion, Folder, SharedFolder, SharedMember, Space
 from .periods import Period, period_containing
 from .structure import COMMON_TIMELESS, ensure_structure, folder_name
 
@@ -154,6 +159,7 @@ class _Seeder:
         files, folders = ([item.uuid], []) if isinstance(item, File) else ([], [item.uuid])
         with _at(when):
             operations.delete(viewer, operations.select(source, files, folders), by)
+        item.refresh_from_db()
 
     def restore(self, file: File, by: Resident, when: datetime) -> None:
         viewer = self.viewer(by, when)
@@ -200,6 +206,48 @@ class _Seeder:
         viewer = self.viewer(by, when)
         with _at(when):
             locks.decide(viewer, request, approve=approve, reason=reason, actor=by)
+
+    # --- Delte mapper -------------------------------------------------------------------------------
+
+    def share_folder(
+        self,
+        name: str,
+        by: Resident,
+        members: list[Resident],
+        expires_on: date,
+        on_expiry: str,
+        when: datetime,
+    ) -> Folder:
+        viewer = self.viewer(by, when)
+        with _at(when):
+            return shared.create(
+                viewer,
+                name=name,
+                members=[m.pk for m in members],
+                expires_on=expires_on,
+                on_expiry=on_expiry,
+                actor=by,
+            )
+
+    def member(
+        self, folder: Folder, change: str, who: Resident, by: Resident, when: datetime, role: str = ""
+    ) -> None:
+        """`add`, `role` or `remove` a member; `remove` with `who` == `by` is leaving."""
+        viewer = self.viewer(by, when)
+        assert folder.shared is not None  # noqa: S101  # nosec B101 - a Delt mappe's top folder
+        with _at(when):
+            if change == "add":
+                shared.add_member(viewer, folder.shared, who.pk, role, by)
+            elif change == "role":
+                shared.set_role(viewer, folder.shared, who.pk, role, by)
+            else:
+                shared.remove_member(viewer, folder.shared, who.pk, by)
+
+    def expiry(self, folder: Folder, expires_on: date, on_expiry: str, by: Resident, when: datetime) -> None:
+        viewer = self.viewer(by, when)
+        assert folder.shared is not None  # noqa: S101  # nosec B101 - a Delt mappe's top folder
+        with _at(when):
+            shared.set_expiry(viewer, folder.shared, expires_on, on_expiry, by)
 
 
 def _noon(day: date) -> datetime:
@@ -278,8 +326,14 @@ def seed(residents: list[Resident], now: datetime, _rng: random.Random) -> int:
     _seed_common(s)
     _seed_groups(s)
     _seed_changes(s)
+    _seed_shared(s)
     # Last: a lock stops the changes above.
     _seed_locks(s)
+    # What the nightly purge (notifications.services.purge_expired) would have removed by now: the
+    # notifications of the steps longest ago, such as the invitation to a Delt mappe in September.
+    Notification.objects.filter(
+        url__startswith=reverse("drive:home"), expires_at__lt=now - timedelta(days=30)
+    ).delete()
     return File.objects.count()
 
 
@@ -480,6 +534,81 @@ def _seed_changes(s: _Seeder) -> None:
     s.delete(party, beboer, s.ago(5, not_before=year_start))
 
 
+def _seed_shared(s: _Seeder) -> None:
+    """Delte mapper. Only members see one: beboer@ moderates `Temafest`, oel@ `Studietur` (with
+    regnskab@, and formand@ as a member), and admin@, in neither, sees each as `Delt mappe <tag>`
+    with its size and file count. `Høstfest` has expired and been archived to `Delte mapper/<year>`,
+    readable by everyone under its name."""
+    beboer, oel, ak = s.login("beboer@gahk.dk"), s.login("oel@gahk.dk"), s.login("ak@gahk.dk")
+    regnskab, formand = s.login("regnskab@gahk.dk"), s.login("formand@gahk.dk")
+    # The first of the earliest month seed_demo gives residencies (this one and the two before).
+    first_month = s.today.replace(day=1)
+    for _ in range(2):
+        first_month = (first_month - timedelta(days=1)).replace(day=1)
+    # Residents who lived here then and now, as a Delt mappe only takes those living here.
+    others = list(
+        Resident.objects.exclude(email__in=LOGINS)
+        .filter(residencies__year=first_month.year, residencies__month=first_month.month)
+        .filter(residencies__year=s.today.year, residencies__month=s.today.month)
+        .order_by("pk")[:4]
+    )
+    if len(others) < 4:  # seed_demo --residents with hardly anyone beyond the logins
+        return
+    archive, delete = SharedFolder.OnExpiry.ARCHIVE, SharedFolder.OnExpiry.DELETE
+
+    # Made early in the seeded months, expired ten days ago and archived by the daily task.
+    first_month += timedelta(days=2)
+    expired = s.today - timedelta(days=10)
+    harvest = s.share_folder(
+        "Høstfest", ak, [oel, others[0], others[1]], expired, archive, _noon(first_month)
+    )
+    s.upload(harvest, "Indkøb.xlsx", _xlsx(_HARVEST), ak, _noon(first_month + timedelta(days=4)))
+    s.upload(
+        harvest,
+        "Høstfest.jpg",
+        _jpg("Høstfest", "#b0702a", (1600, 1067)),
+        oel,
+        _noon(first_month + timedelta(days=20)),
+    )
+    with _at(_noon(expired + timedelta(days=1))):
+        shared.run_expiry(expired + timedelta(days=1))
+
+    # Every kind of member change in the activity: invited, made read-only, removed, left, added late,
+    # and the expiry moved.
+    theme = s.share_folder(
+        "Temafest",
+        beboer,
+        [oel, ak, *others[:3]],
+        shared.default_expiry(s.today - timedelta(days=45)),
+        archive,
+        s.ago(45),
+    )
+    s.member(theme, "role", others[2], beboer, s.ago(44), role=SharedMember.Role.READ)
+    s.upload(theme, "Plan.docx", _docx("Temafest", _THEME_PLAN), beboer, s.ago(44))
+    s.upload(theme, "Gammel plan.docx", _docx("Temafest (udkast)", _THEME_PLAN[:1]), oel, s.ago(43))
+    s.member(theme, "remove", others[1], beboer, s.ago(30))
+    s.upload(theme, "Playliste.txt", _PLAYLIST.encode(), oel, s.ago(30))
+    decorations = s.folder(theme, "Pynt", ak, s.ago(25))
+    s.upload(decorations, "Inspiration.jpg", _jpg("Inspiration", "#315b8d", (1200, 800)), ak, s.ago(25))
+    s.member(theme, "remove", others[0], others[0], s.ago(20))
+    s.member(theme, "add", regnskab, beboer, s.ago(15), role=SharedMember.Role.EDIT)
+    s.expiry(theme, s.today + timedelta(days=200), archive, beboer, s.ago(10))
+    # A purge in a Delt mappe is its moderators' to decide: beboer@ has one waiting.
+    draft = _in(theme, "Gammel plan.docx")
+    s.delete(draft, oel, s.ago(35))
+    s.ask_purge(draft, None, "Udkastet skal ikke kunne findes igen.", oel, s.ago(9))
+
+    # Two moderators, and an expiry close enough that the daily task has warned them.
+    trip = s.share_folder(
+        "Studietur", oel, [regnskab, formand, others[3]], s.today + timedelta(days=10), delete, s.ago(60)
+    )
+    s.member(trip, "role", regnskab, oel, s.ago(59), role=SharedMember.Role.MODERATOR)
+    s.upload(trip, "Program.pdf", _pdf("Studietur", _TRIP), oel, s.ago(58))
+    s.upload(trip, "Budget.xlsx", _xlsx(_TRIP_BUDGET), regnskab, s.ago(50))
+    with _at(s.ago(0)):
+        shared.run_expiry(s.today)
+
+
 def _seed_locks(s: _Seeder) -> None:
     """Locks, and requests in every state: the requests page (admin@, formand@) has two pending, two
     approved and two rejected, and whoever asked for a decided one has been told the outcome."""
@@ -567,6 +696,7 @@ def wipe() -> None:
     File.objects.all().delete()
     while Folder.objects.exists():
         Folder.objects.filter(children__isnull=True).delete()
+    SharedFolder.objects.all().delete()  # after its folders, which PROTECT it
 
 
 # --- Contents ------------------------------------------------------------------------------------
@@ -755,6 +885,13 @@ _BALANCE: list[list[object]] = [
     ["Tilgodehavender", 4200, 3100],
     ["Skyldige omkostninger", -12000, -9800],
 ]
+_HARVEST: list[list[object]] = [["Vare", "Antal", "Pris (kr.)"], ["Æbler", 40, 120], ["Cider", 24, 480]]
+_TRIP_BUDGET: list[list[object]] = [
+    ["Post", "Kr. pr. person"],
+    ["Tog", 900],
+    ["Vandrehjem", 750],
+    ["Mad", 600],
+]
 _SUPPLIERS: list[list[object]] = [
     ["Leverandør", "Kontakt", "Leveringsdag"],
     ["Bryggeriet", "ordre@bryggeriet.example", "Tirsdag"],
@@ -780,6 +917,14 @@ _LAUNDRY = [
 ]
 _EXPENSE_FORM = ["Navn:", "Værelse:", "Beløb:", "Formål:", "Vedlæg kvitteringen."]
 _AUDIT = ["Regnskabet for perioden er revideret uden bemærkninger.", "Revisor"]
+_THEME_PLAN = ["Tema: 80'erne.", "Musik: Ole og Astrid.", "Pynt: Astrid.", "Mad: alle tager en ret med."]
+_TRIP = ["Dag 1: Afgang kl. 8 fra Hovedbanegården.", "Dag 2: Byvandring og museum.", "Dag 3: Hjemrejse."]
+_PLAYLIST = """Playliste til temafesten
+
+1. Take On Me
+2. Girls Just Want to Have Fun
+3. Don't You (Forget About Me)
+"""
 _PARTY_PROGRAMME = ["Kl. 14: Gårdspil", "Kl. 18: Grill i gården", "Kl. 22: Band i fællesrummet"]
 _GENERAL_MEETING = [
     "Dagsorden: valg af dirigent, beretning, regnskab, indkomne forslag, eventuelt.",

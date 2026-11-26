@@ -14,7 +14,7 @@ from django.views.decorators.http import require_POST
 
 from residents.permissions import current_resident
 
-from . import access, operations
+from . import access, history, operations
 from .access import Level, Viewer
 from .models import Event, File, Folder
 from .views import _folder, _render, _sorted_children, as_uuid, live_file
@@ -209,10 +209,13 @@ def restore_version(request: HttpRequest, uuid: UUID, number: int) -> HttpRespon
 @access.access_required
 def folder_history(request: HttpRequest, uuid: UUID) -> HttpResponse:
     """The folder's own lines, and those of the files and folders in it now."""
-    folder, _, _ = _folder(request, uuid)
-    events = Event.objects.filter(
-        Q(folder=folder) | Q(folder__parent=folder) | Q(file__folder=folder)
-    ).select_related("actor")[:300]
+    folder, viewer, _ = _folder(request, uuid)
+    events = history.visible(
+        viewer,
+        Event.objects.filter(
+            Q(folder=folder) | Q(folder__parent=folder) | Q(file__folder=folder)
+        ).select_related("actor"),
+    )
     return _render(
         request,
         "drive/history.html",

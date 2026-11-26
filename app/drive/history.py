@@ -19,6 +19,10 @@ from residents.models import Resident
 from .access import Level, Viewer
 from .models import BIN_DAYS, Event, File, Folder
 
+# How many lines a history page reads, and shows of what the reader may see.
+SCAN = 3000
+SHOWN = 300
+
 
 def record(
     action: str,
@@ -40,7 +44,30 @@ def record(
         space=where.space if where else "",
         workgroup_id=where.workgroup_id if where else None,
         period_start=where.period_start if where else None,
+        shared_id=where.shared_id if where else None,
     )
+
+
+def visible(viewer: Viewer, events: Iterable[Event]) -> list[Event]:
+    """The lines whose item the viewer could read where it was. A folder's history includes its
+    subfolders' lines, and a subfolder can be private where its parent is not - a Delt mappe in
+    `Delte mapper`."""
+    shown = []
+    for count, event in enumerate(events):
+        if count == SCAN:
+            break
+        where = Folder(
+            kind=Folder.Kind.FOLDER,
+            space=event.space,
+            workgroup_id=event.workgroup_id,
+            period_start=event.period_start,
+            shared_id=event.shared_id,
+        )
+        if viewer.level(where) >= Level.READ:
+            shown.append(event)
+            if len(shown) == SHOWN:
+                break
+    return shown
 
 
 @dataclass(frozen=True)

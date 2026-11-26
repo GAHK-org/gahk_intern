@@ -21,7 +21,7 @@ and the joins small.
 """
 
 import unicodedata
-from datetime import datetime
+from datetime import date, datetime
 from uuid import uuid4
 
 from django.core.exceptions import ValidationError
@@ -36,6 +36,12 @@ BIN_DAYS = 30
 LOCK_AFTER_DAYS = 365
 # The longest an unlock lasts.
 MAX_UNLOCK_DAYS = 30
+# A Delt mappe: the fewest members it may have, how long it lasts unless set otherwise, how far ahead
+# its expiry may be set (in years from its creation), and how long before it moderators are told.
+MIN_SHARED_MEMBERS = 3
+SHARED_DEFAULT_MONTHS = 6
+SHARED_MAX_YEARS = 2
+SHARED_WARN_DAYS = 14
 
 
 def normalize_name(value: str) -> str:
@@ -89,6 +95,7 @@ class Lockable(models.Model):
 class Space(models.TextChoices):
     COMMON = "common", "Fælles"
     GROUP = "group", "Embedsgruppe"
+    SHARED = "shared", "Delt mappe"
 
 
 class Folder(Lockable):
@@ -100,11 +107,25 @@ class Folder(Lockable):
         TIMELESS = "timeless", "Uden periode eller årstal"
         PERIOD = "period", "Periode"
         YEAR = "year", "År"
+        SHARED_ROOT = "shared_root", "Delte mapper"
+        # Delte mapper/<year>/, where archived Delte mapper go.
+        ARCHIVE_YEAR = "archive_year", "Arkiverede delte mapper"
         # Made by residents.
         FOLDER = "folder", "Mappe"
+        # The top of a Delt mappe: renamed and deleted only by its moderators, never moved by hand.
+        SHARED = "shared", "Delt mappe"
 
     SYSTEM_KINDS = frozenset(
-        {Kind.COMMON_ROOT, Kind.GROUPS_ROOT, Kind.GROUP, Kind.TIMELESS, Kind.PERIOD, Kind.YEAR}
+        {
+            Kind.COMMON_ROOT,
+            Kind.GROUPS_ROOT,
+            Kind.GROUP,
+            Kind.TIMELESS,
+            Kind.PERIOD,
+            Kind.YEAR,
+            Kind.SHARED_ROOT,
+            Kind.ARCHIVE_YEAR,
+        }
     )
 
     uuid = models.UUIDField(default=uuid4, unique=True, editable=False)  # in URLs, not the key
@@ -121,6 +142,10 @@ class Folder(Lockable):
         "core.Workgroup", null=True, blank=True, on_delete=models.PROTECT, related_name="drive_folders"
     )
     period_start = models.DateField(null=True, blank=True)
+    # The Delt mappe a folder is in (itself included), for the folders of that space.
+    shared = models.ForeignKey(
+        "SharedFolder", null=True, blank=True, on_delete=models.PROTECT, related_name="folders"
+    )
     path = models.CharField(max_length=500, editable=False, db_index=True)
     created_by = models.ForeignKey(
         "residents.Resident", null=True, blank=True, on_delete=models.SET_NULL, related_name="+"
@@ -133,9 +158,11 @@ class Folder(Lockable):
 
     class Meta:
         constraints = [
+            # Not among Delte mapper: a name refused because it is taken would tell that a Delt mappe
+            # of that name exists.
             models.UniqueConstraint(
                 fields=["parent", "name_key"],
-                condition=Q(deleted_at__isnull=True),
+                condition=Q(deleted_at__isnull=True) & ~Q(kind="shared"),
                 name="drive_folder_unique_name",
             ),
             models.UniqueConstraint(
@@ -280,6 +307,12 @@ class Event(models.Model):
         PURGE_REQUESTED = "purge_requested", "Permanent sletning ønsket"
         PURGE_DECIDED = "purge_decided", "Permanent sletning besluttet"
         PURGED = "purged", "Slettet permanent"
+        MEMBER_ADDED = "member_added", "Medlem tilføjet"
+        MEMBER_REMOVED = "member_removed", "Medlem fjernet"
+        MEMBER_LEFT = "member_left", "Medlem gået"
+        ROLE_CHANGED = "role_changed", "Rolle ændret"
+        EXPIRY_CHANGED = "expiry_changed", "Udløb ændret"
+        ARCHIVED = "archived", "Arkiveret"
 
     at = models.DateTimeField(auto_now_add=True, db_index=True)
     actor = models.ForeignKey(
@@ -302,6 +335,9 @@ class Event(models.Model):
         "core.Workgroup", null=True, blank=True, on_delete=models.SET_NULL, related_name="+"
     )
     period_start = models.DateField(null=True, blank=True)
+    shared = models.ForeignKey(
+        "SharedFolder", null=True, blank=True, on_delete=models.SET_NULL, related_name="+"
+    )
 
     class Meta:
         ordering = ["-at", "-pk"]
@@ -345,6 +381,18 @@ class Event(models.Model):
                 return f"Bad om at slette {_what(self.name, d)} permanent: {d.get('reason')}"
             case self.Action.PURGE_DECIDED:
                 return f"Afviste at slette {_what(self.name, d)} permanent: {d.get('reason')}"
+            case self.Action.MEMBER_ADDED:
+                return f"Gav {d.get('member')} adgang som {d.get('role')}"
+            case self.Action.MEMBER_REMOVED:
+                return f"Fjernede {d.get('member')}"
+            case self.Action.MEMBER_LEFT:
+                return f"Forlod {self.name}"
+            case self.Action.ROLE_CHANGED:
+                return f"Gjorde {d.get('member')} til {d.get('role')}"
+            case self.Action.EXPIRY_CHANGED:
+                return f"Satte udløbet til {d.get('expires_on')}, hvor mappen {d.get('then')}"
+            case self.Action.ARCHIVED:
+                return f"{self.name} blev arkiveret ved udløbet"
             case self.Action.PURGED:
                 return f"{_what(self.name, d, capital=True)} slettet permanent af {d.get('requested_by')}, godkendt af {d.get('approved_by')}"
         return str(self)
@@ -377,6 +425,10 @@ class ApprovalRequest(models.Model):
     # One of the two. Null once what it was about is gone; `name` and `where` stay.
     file = models.ForeignKey(File, null=True, blank=True, on_delete=models.SET_NULL, related_name="+")
     folder = models.ForeignKey(Folder, null=True, blank=True, on_delete=models.SET_NULL, related_name="+")
+    # The Delt mappe it is in, whose moderators decide it instead of admins and Inspektionen.
+    shared = models.ForeignKey(
+        "SharedFolder", null=True, blank=True, on_delete=models.SET_NULL, related_name="+"
+    )
     # A purge of one version, rather than of a binned file.
     version_number = models.PositiveIntegerField(null=True, blank=True)
     name = models.CharField(max_length=NAME_MAX_LENGTH)
@@ -398,3 +450,72 @@ class ApprovalRequest(models.Model):
 
     def __str__(self) -> str:
         return f"{self.get_kind_display()}: {self.name}"
+
+
+class SharedFolder(models.Model):
+    """A Delt mappe: a folder for the residents invited to it, until it expires.
+
+    Its top folder (kind SHARED) and every folder below point here. At expiry it is deleted for good,
+    or archived: moved to `Delte mapper/<year it was created>/`, readable by every resident under its
+    real name, and kept for good. Admins and Inspektionen see only its tag, member count, file
+    count and size."""
+
+    class OnExpiry(models.TextChoices):
+        DELETE = "delete", "slettes"
+        ARCHIVE = "archive", "arkiveres"
+
+    uuid = models.UUIDField(default=uuid4, unique=True, editable=False)  # in URLs, not the key
+    expires_on = models.DateField()
+    on_expiry = models.CharField(max_length=10, choices=OnExpiry.choices)
+    created_by = models.ForeignKey(
+        "residents.Resident", null=True, blank=True, on_delete=models.SET_NULL, related_name="+"
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    # The expiry the moderators were warned about; moving the date warns again.
+    warned_for = models.DateField(null=True, blank=True)
+    archived_at = models.DateTimeField(null=True, blank=True)
+
+    def __str__(self) -> str:
+        return f"Delt mappe {self.tag}"
+
+    @property
+    def tag(self) -> str:
+        """What overseers know it by: the start of its random uuid, so the label says nothing about
+        how many there are. Six hex digits, so two may in rare cases share a tag. Their member count
+        and size still tell them apart."""
+        return self.uuid.hex[:6]
+
+    def top(self) -> "Folder":
+        return Folder.objects.get(shared=self, kind=Folder.Kind.SHARED)
+
+    def latest_expiry(self) -> date:
+        created = timezone.localtime(self.created_at).date() if self.created_at else timezone.localdate()
+        return add_years(created, SHARED_MAX_YEARS)
+
+
+def add_years(day: date, years: int) -> date:
+    """The same day `years` later; 29 February becomes 28 February."""
+    try:
+        return day.replace(year=day.year + years)
+    except ValueError:
+        return day.replace(year=day.year + years, day=28)
+
+
+class SharedMember(models.Model):
+    class Role(models.TextChoices):
+        MODERATOR = "moderator", "moderator"
+        EDIT = "edit", "redaktør"
+        READ = "read", "læser"
+
+    shared = models.ForeignKey(SharedFolder, on_delete=models.CASCADE, related_name="members")
+    resident = models.ForeignKey("residents.Resident", on_delete=models.CASCADE, related_name="+")
+    role = models.CharField(max_length=10, choices=Role.choices, default=Role.EDIT)
+    added_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=["shared", "resident"], name="drive_shared_member_once")
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.resident_id} in {self.shared_id} ({self.role})"

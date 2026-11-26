@@ -8,7 +8,16 @@ them to whoever may read the item.
 
 from audit import trail
 
-from .models import ApprovalRequest, Event, File, FileVersion, Folder, LastDownload
+from .models import (
+    ApprovalRequest,
+    Event,
+    File,
+    FileVersion,
+    Folder,
+    LastDownload,
+    SharedFolder,
+    SharedMember,
+)
 
 
 def _folder_path(folder: Folder) -> str:
@@ -35,6 +44,7 @@ trail.register(
         "space": "Område",
         "workgroup": "Embedsgruppe",
         "period_start": "Periode",
+        "shared": "Delt mappe",
         "created_by": "Oprettet af",
         "created_at": "Oprettet",
         "deleted_at": "Lagt i papirkurven",
@@ -112,6 +122,32 @@ trail.register(
     },
 )
 
+trail.register(
+    SharedFolder,
+    "drive.shared",
+    label="Delt mappe",
+    # Named by its tag already ("Delt mappe 3f2c9a"); its name is the top folder's. warned_for only
+    # marks the expiry warning as sent.
+    ignore={"uuid", "warned_for"},
+    labels={
+        "expires_on": "Udløber",
+        "on_expiry": "Ved udløb",
+        "created_by": "Oprettet af",
+        "created_at": "Oprettet",
+        "archived_at": "Arkiveret",
+    },
+)
+trail.register(
+    SharedMember,
+    "drive.shared_member",
+    name=lambda m: f"{m.resident.full_name} i {m.shared}",
+    label="Medlem af delt mappe",
+    # Admins and Inspektionen see how many members a Delt mappe has, never who.
+    private_name=True,
+    private={"resident"},
+    labels={"shared": "Delt mappe", "resident": "Beboer", "role": "Rolle", "added_at": "Tilføjet"},
+)
+
 trail.exempt(
     LastDownload,
     "the version a resident last downloaded, kept for the warning when they upload over a newer one; "
@@ -145,5 +181,15 @@ trail.actions(
         "drive.purge.requested": "Bad om permanent sletning",
         "drive.purge.approved": "Godkendte permanent sletning",
         "drive.purge.rejected": "Afviste permanent sletning",
+        "drive.shared.created": "Oprettede delt mappe",
+        "drive.shared.member_added": "Tilføjede medlem til delt mappe",
+        "drive.shared.role_changed": "Ændrede rolle i delt mappe",
+        "drive.shared.member_removed": "Fjernede medlem fra delt mappe",
+        "drive.shared.left": "Forlod delt mappe",
+        "drive.shared.expiry_changed": "Ændrede udløbet af delt mappe",
+        "drive.shared.renamed": "Omdøbte delt mappe",
+        "drive.shared.deleted": "Lagde delt mappe i papirkurven",
+        "drive.shared.purged": "Slettede delt mappe ved udløbet",
+        "drive.shared.archived": "Arkiverede delt mappe ved udløbet",
     }
 )

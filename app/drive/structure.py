@@ -19,6 +19,7 @@ from .periods import periods_with_folders, years_with_folders
 
 GROUP_TIMELESS = "Uden periode"
 COMMON_TIMELESS = "Uden årstal"
+SHARED_ROOT = "Delte mapper"
 
 
 def folder_name(workgroup: Workgroup) -> str:
@@ -46,6 +47,8 @@ def _ensure_structure(day: date) -> None:
     _child(common, COMMON_TIMELESS, Folder.Kind.TIMELESS, space=Space.COMMON)
     for year in years_with_folders(day):
         _child(common, str(year), Folder.Kind.YEAR, space=Space.COMMON, period_start=date(year, 1, 1))
+
+    _child(None, SHARED_ROOT, Folder.Kind.SHARED_ROOT, space=Space.SHARED)
 
     groups = _child(None, "Embedsgrupper", Folder.Kind.GROUPS_ROOT, space=Space.GROUP)
     periods = periods_with_folders(day)

@@ -80,6 +80,7 @@ def create_folder(viewer: Viewer, parent: Folder, name: str, resident: Resident)
         space=parent.space,
         workgroup=parent.workgroup,
         period_start=parent.period_start,
+        shared_id=parent.shared_id,
         created_by=resident,
     )
     try:

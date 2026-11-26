@@ -41,6 +41,20 @@
       {% endif %}
     </div>
 
+    {% if shared %}
+      <p class="muted mb-4">
+        {% if shared.archived_at %}
+          Arkiveret {{ shared.archived_at|date:"j. M Y" }}: alle beboere kan læse den.
+        {% else %}
+          {{ shared_members }} medlemmer · udløber {{ shared.expires_on|date:"j. M Y" }} og {{ shared.get_on_expiry_display }} da ·
+          <a href="{% url 'drive:shared' shared.uuid %}">Medlemmer og udløb</a>
+        {% endif %}
+      </p>
+    {% endif %}
+    {% if can_create_shared %}
+      <p class="mb-4"><a class="btn btn-secondary" href="{% url 'drive:create_shared' %}">Opret delt mappe</a></p>
+    {% endif %}
+
     {% if lock_holder %}
       <div class="drive-note mb-4">
         {% if lock_holder.pk == folder.pk %}
@@ -55,7 +69,7 @@
       </div>
     {% endif %}
   {% else %}
-    {% if oversees %}
+    {% if decides %}
       <p class="drive-links mb-4"><a href="{% url 'drive:requests' %}">Anmodninger{% if pending_requests %} ({{ pending_requests }} venter){% endif %}</a></p>
     {% endif %}
   {% endif %}
@@ -107,8 +121,8 @@
           {% endif %}
           {% if row.can_open %}
             <a href="{% url 'drive:folder' row.folder.uuid %}">
-              <svg class="ni" aria-hidden="true"><use href="#i-folder"></use></svg>
-              <span class="drive-name">{{ row.folder.name }}</span>
+              <svg class="ni" aria-hidden="true"><use href="#i-{% if row.folder.kind == 'shared' %}users{% else %}folder{% endif %}"></use></svg>
+              <span class="drive-name">{{ row.name }}</span>
               {% if row.folder.lock_active %}<svg class="ni drive-locked" role="img" aria-label="Låst"><use href="#i-lock"></use></svg>{% endif %}
             </a>
           {% else %}
@@ -118,12 +132,12 @@
             {% endcomment %}
             <span class="drive-static" title="Du kan se, at mappen findes, men ikke åbne den">
               <svg class="ni" aria-hidden="true"><use href="#i-lock"></use></svg>
-              <span class="drive-name">{{ row.folder.name }}</span>
+              <span class="drive-name">{{ row.name }}</span>
             </span>
           {% endif %}
           {% if row.is_current %}<span class="chip">Nu</span>{% endif %}
           {% if row.count is not None %}
-            <span class="muted drive-meta">{{ row.count }} fil{{ row.count|pluralize:"er" }} · {{ row.size|filesizeformat }}</span>
+            <span class="muted drive-meta">{% if row.members is not None %}{{ row.members }} medlemmer · {% endif %}{{ row.count }} fil{{ row.count|pluralize:"er" }} · {{ row.size|filesizeformat }}</span>
           {% endif %}
         </li>
       {% endfor %}

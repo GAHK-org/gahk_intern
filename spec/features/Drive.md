@@ -64,12 +64,14 @@ Drive
 
 ### Delte mapper
 
-- Any resident can create a Delt mappe and becomes its first moderator. It has at least 3 members, counting every role. Nobody can be removed, or leave, if that would leave fewer than 3. Moving out does not count.
+- Any resident can create a Delt mappe and becomes its first moderator; those invited start as editors. Only residents living here can be invited. It has at least 3 members, counting every role. Nobody can be removed, or leave, if that would leave fewer than 3. Moving out does not count.
 - Roles: moderator (everything edit can, plus inviting and removing members, changing roles, and renaming or deleting the folder), edit (upload, create folders, edit, rename, delete), read-only (view and download).
 - There is always a moderator. The last one cannot leave or step down without naming another.
-- Only members can see it. Admins and Inspektionen see `Delt mappe #0042`, its member count, file count and size, never its name or contents.
+- Only members can see it. Admins and Inspektionen see it by a short random tag (`Delt mappe 3f2c9a`, never a number that counts up), its member count, file count and size, never its name or contents.
 - At creation the moderator sets an expiry date (default 6 months, at most 2 years after creation) and chooses whether the folder is deleted or archived when it expires. Moderators can move the date within those 2 years. The choice can change from archive to delete, never from delete to archive.
-- Moderators are notified 14 days before expiry.
+- Moderators are notified 14 days before expiry, and again if the date is moved. A Delt mappe expires the day after its expiry date.
+- Two Delte mapper may have the same name: refusing a name would tell that a Delt mappe of that name exists.
+- Moderators can delete a Delt mappe once it is empty, like any folder.
 - Deletion at expiry is permanent, with no bin.
 - An archived Delt mappe moves to `Delte mapper/<year it was created>/<name>` (with `(2)` added if the name is taken). It becomes read-only for every resident, its real name is shown to everyone, and it never expires.
 
