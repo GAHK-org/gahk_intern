@@ -32,4 +32,7 @@
       <a href="{% url 'directory' %}">Annullér</a>
     </div>
   </form>
+  {% if account and perms.access.access_manage %}
+    <p class="mt-2"><a href="{% url 'access:person' account.pk %}">Adgang: hvad {{ person.first_name }} kan, hvorfor, og roller givet i hånden →</a></p>
+  {% endif %}
 {% endblock %}

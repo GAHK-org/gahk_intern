@@ -1,0 +1,59 @@
+{% extends "base.html" %}
+{% block title %}{% if own %}Min adgang{% else %}Adgang for {{ account.full_name }}{% endif %} - GAHK Intern{% endblock %}
+{% block content %}
+  <h1>{% if own %}Min adgang{% else %}Adgang for {{ account.full_name }}{% endif %}</h1>
+  <p class="muted mb-4">Hvad {% if own %}du{% else %}{{ account.first_name }}{% endif %} kan åbne og gøre på GAHK Intern, og hvorfor. Det følger alumnelisten, embedsgrupperne og det, der er givet i hånden.</p>
+
+  <div class="card">
+    <h2>Roller</h2>
+    <table class="w-full border-collapse">
+      <tbody>
+      {% for reason in explanation.roles %}
+        <tr class="border-b border-line"><td class="p-2 font-semibold">{{ reason.label }}</td><td class="p-2">{{ reason.why }}</td></tr>
+      {% empty %}
+        <tr><td class="p-2 muted">Ingen roller: ingen adgang. {% if own %}Kontakt Indstillingen, hvis det er en fejl.{% endif %}</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  <div class="card">
+    <h2>Det kommer</h2>
+    <table class="w-full border-collapse">
+      <tbody>
+      {% for on, text in changes %}
+        <tr class="border-b border-line"><td class="p-2 whitespace-nowrap">Fra {{ on }}</td><td class="p-2">{{ text }}</td></tr>
+      {% empty %}
+        <tr><td class="p-2 muted">Intet det næste år, så vidt listerne og det givne rækker.</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  <div class="card">
+    <h2>Hvad rollerne giver</h2>
+    <p class="muted">Se: åbne siderne. Bruge: skrive, tilmelde, sætte krydser. Styre: det, gruppen bag gør. Administrere: kun administratorer.</p>
+    <table class="w-full border-collapse">
+      <thead><tr class="border-b border-line"><th class="p-2 text-left">Del af siden</th><th class="p-2 text-left">Adgang</th><th class="p-2 text-left">Fordi</th></tr></thead>
+      <tbody>
+      {% for feature in explanation.features %}
+        <tr class="border-b border-line{% if not feature.grade %} muted{% endif %}">
+          <td class="p-2">{{ feature.label }}</td><td class="p-2">{{ feature.grade_label }}</td><td class="p-2">{{ feature.given_by }}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  {% if grant_form %}{% include "access/_person.html" %}{% endif %}
+
+  {% if may_preview %}
+    <form method="post" action="{% url 'siteadmin:preview_set' %}" class="mt-4">
+      {% csrf_token %}
+      <input type="hidden" name="mode" value="person">
+      <input type="hidden" name="person" value="{{ account.pk }}">
+      <button type="submit" class="btn">Se siden med {{ whose }} roller</button>
+      <p class="muted text-sm mt-1">Du ser, hvad rollerne åbner, ikke {{ whose }} egne beskeder og opslag.</p>
+    </form>
+  {% endif %}
+{% endblock %}

@@ -153,6 +153,7 @@
                 <a role="menuitem" href="{% url 'resident_profile' user.pk %}">Min profil</a>
               {% endif %}
               <a role="menuitem" href="{% url 'notifications:preferences' %}">Notifikationsindstillinger</a>
+              <a role="menuitem" href="{% url 'access:mine' %}">Min adgang</a>
               <a role="menuitem" href="{% url 'password_change' %}">Skift kodeord</a>
               <form method="post" action="{% url 'logout' %}">
                 {% csrf_token %}<button type="submit" role="menuitem">Log ud</button>

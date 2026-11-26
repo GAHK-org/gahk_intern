@@ -7,7 +7,7 @@
   {% if kitchen_form %}
     <div class="card">
       <h2>Køkkenpersonale</h2>
-      <p class="muted">Hver i køkkenet har sin egen konto. De ser køkkenets kanal på Den Hurtige, deres egne opslag og Reparationer.</p>
+      <p class="muted">Hver i køkkenet har sin egen konto. De ser køkkenets kanal på Den Hurtige, opslag til køkkenet og Reparationer.</p>
       <table class="w-full border-collapse mt-2">
         <tbody>
         {% for grant in kitchen %}
@@ -43,16 +43,16 @@
   {% if perms.access.access_manage %}
     <div class="card">
       <h2>Givet i hånden</h2>
-      <p class="muted">Roller givet til nogen, som alumnelisten ikke beskriver. Gives på rollesiden.</p>
+      <p class="muted">Roller givet til nogen, som alumnelisten ikke beskriver. Gives fra personens side her.</p>
       <table class="w-full border-collapse mt-2">
         <thead><tr class="border-b border-line"><th class="p-2">Hvem</th><th class="p-2">Rolle</th><th class="p-2">Hvorfor</th><th class="p-2">Periode</th><th class="p-2"></th></tr></thead>
         <tbody>
         {% for grant, label in others %}
           <tr class="border-b border-line">
-            <td class="p-2">{% if grant.account.house %}<a href="{% url 'edit_resident' grant.account.house.pk %}">{{ grant.account.full_name }}</a>{% else %}{{ grant.account.full_name }}{% endif %}</td>
+            <td class="p-2"><a href="{% url 'access:person' grant.account_id %}">{{ grant.account.full_name }}</a></td>
             <td class="p-2">{{ label }}</td>
             <td class="p-2">{{ grant.reason }}</td>
-            <td class="p-2">{{ grant.starts_on|date:"j. M Y" }} – {% if grant.ends_on %}{{ grant.ends_on|date:"j. M Y" }}{% else %}indtil videre{% endif %}</td>
+            <td class="p-2">{{ grant.starts_on|date:"j. F Y" }} – {% if grant.ends_on %}{{ grant.ends_on|date:"j. F Y" }}{% else %}indtil videre{% endif %}</td>
             <td class="p-2 text-right">
               <form method="post" action="{% url 'access:grant_end' grant.pk %}">{% csrf_token %}
                 <button type="submit" class="btn btn-secondary">Afslut</button>

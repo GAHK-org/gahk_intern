@@ -18,23 +18,33 @@ from django.http import HttpRequest, HttpResponse, HttpResponseRedirect
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
 from django.utils.encoding import force_bytes
-from django.utils.http import urlsafe_base64_encode
+from django.utils.http import url_has_allowed_host_and_scheme, urlsafe_base64_encode
 from django.views.decorators.http import require_POST
 
 from audit import trail
 from core.clock import current_date
+from core.danish import genitive
 from residents.forms import password_link_mail
 from residents.models import Account, Person
 from residents.permissions import current_resident
 
-from .api import ADMINISTRATOR, KITCHEN, ROLE_LABELS, permission_required
-from .forms import KitchenStaffForm
+from .api import ADMINISTRATOR, KITCHEN, ROLE_LABELS, can_preview, permission_required
+from .explain import day, explain
+from .forms import GrantForm, KitchenStaffForm
 from .models import Grant
 
 logger = logging.getLogger(__name__)
 
 KITCHEN_STAFF = "access.access_kitchen_staff"
 MANAGE = "access.access_manage"
+
+
+def _back(request: HttpRequest) -> HttpResponseRedirect:
+    """To the page the form was on (a person's page), or the Adgang page."""
+    nxt = request.POST.get("next", "")
+    if nxt and url_has_allowed_host_and_scheme(nxt, allowed_hosts={request.get_host()}):
+        return redirect(nxt)
+    return redirect("access:index")
 
 
 def _label(grant: Grant) -> str:
@@ -74,7 +84,7 @@ def grant_end(request: HttpRequest, pk: int) -> HttpResponseRedirect:
             grant.ends_on = yesterday
             grant.save(update_fields=["ends_on"])
     messages.success(request, f"{grant.account.full_name} har ikke længere {_label(grant)}.")
-    return redirect("access:index")
+    return _back(request)
 
 
 @require_POST
@@ -139,3 +149,63 @@ def _send_welcome(request: HttpRequest, account: Account) -> bool:
         logger.exception("Failed sending the welcome mail to kitchen account %s", account.pk)
         return False
     return True
+
+
+@permission_required(MANAGE)
+def person(request: HttpRequest, pk: int) -> HttpResponse:
+    """One account's access, and why: its roles with where each comes from, what each feature is
+    open for, and what is about to change. With its grants, and a form to give one."""
+    account = get_object_or_404(Account, pk=pk)
+    grants = Grant.objects.filter(account=account).select_related("granted_by").order_by("-starts_on")
+    today = current_date()
+    return render(
+        request,
+        "access/person.html",
+        {
+            **_person_page(request, account, own=False),
+            "grants": [(g, _label(g), g.ends_on is None or g.ends_on >= today) for g in grants],
+            "grant_form": GrantForm(),
+        },
+    )
+
+
+def mine(request: HttpRequest) -> HttpResponse:
+    """The same page about oneself."""
+    return render(request, "access/person.html", _person_page(request, current_resident(request), own=True))
+
+
+def _person_page(request: HttpRequest, account: Account, *, own: bool) -> dict[str, object]:
+    explanation = explain(account)
+    return {
+        "account": account,
+        "own": own,
+        "explanation": explanation,
+        "changes": [(day(change.on), change.text) for change in explanation.changes],
+        "may_preview": not own and can_preview(request.user),
+        "whose": genitive(account.first_name),
+    }
+
+
+@require_POST
+@permission_required(MANAGE)
+def grant_add(request: HttpRequest, pk: int) -> HttpResponseRedirect:
+    """Give `pk` a role by hand, from the person page."""
+    account = get_object_or_404(Account, pk=pk)
+    form = GrantForm(request.POST)
+    if not form.is_valid():
+        messages.error(
+            request, "Rollen blev ikke givet: " + "; ".join(str(e) for es in form.errors.values() for e in es)
+        )
+        return redirect("access:person", pk=account.pk)
+    data = form.cleaned_data
+    with trail.event("access.grant.added", subject=account, details={"role": data["role"]}):
+        Grant.objects.create(
+            account=account,
+            role=data["role"],
+            reason=data["reason"],
+            starts_on=data["starts_on"],
+            ends_on=data["ends_on"],
+            granted_by=current_resident(request),
+        )
+    messages.success(request, f"{account.full_name} har fået {ROLE_LABELS[data['role']]}.")
+    return redirect("access:person", pk=account.pk)

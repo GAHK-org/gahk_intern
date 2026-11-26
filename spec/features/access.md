@@ -133,6 +133,19 @@ audience narrows who; the roles still decide what.
   effect on the 1st, the months pass, grants start and end), and after every migrate, which also
   writes each group's permissions.
 
+## The access page
+
+- Every account has "Min adgang" in its account menu, the kitchen staff's and one with no access
+  too. The Indstilling opens anyone's from their edit page, and gives a role by hand there: an
+  embedsgruppe's role with a reason, a first day and an optional last day (not administrator, not
+  the kitchen's, not a stage).
+- It lists each role with where it comes from (the list and month, the embedsgruppe, who gave it,
+  why and until when), each part of the site with its grade and the roles that give it, and what
+  will change: the list made ahead, a grant ending, and for someone not on the newest list the
+  moved-out stages as they come. Nothing is projected past the newest list for someone on it.
+- An administrator can see the site with one person's roles from their page ("Se siden med Annas
+  roller"). It shows what the roles open, not that person's own messages and posts.
+
 ## Decisions
 
 - **Channels stay in code, with their audience beside them.** Notification settings are made from
