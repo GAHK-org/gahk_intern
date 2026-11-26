@@ -1,6 +1,6 @@
 from celery import shared_task
 
-from . import locks, operations, shared
+from . import locks, operations, preview, shared
 from .structure import ensure_structure
 
 
@@ -26,3 +26,15 @@ def auto_lock_task() -> None:
 def shared_expiry_task() -> None:
     """Daily: warn the moderators of Delte mapper about to expire, and delete or archive expired ones."""
     shared.run_expiry()
+
+
+@shared_task(name="drive.tasks.build_image_preview")
+def build_image_preview(key: str) -> bool:
+    """An image's viewer copy and thumbnail, queued on "thumbnails" when it is uploaded."""
+    return preview.build(key)
+
+
+@shared_task(name="drive.tasks.queue_stranded_previews")
+def queue_stranded_previews() -> int:
+    """Nightly: image previews still waiting an hour after they were asked for are queued again."""
+    return preview.queue_stranded()

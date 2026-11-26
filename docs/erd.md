@@ -1127,6 +1127,16 @@ erDiagram
         datetime created_at
     }
 
+    drive_ImagePreview {
+        int id PK
+        string key
+        string state
+        string viewer_key
+        string thumbnail_key
+        int attempts
+        datetime created_at
+    }
+
     regnskab_EconomicLedgerEntry {
         int id PK
         int resident_id FK
@@ -1847,6 +1857,16 @@ erDiagram
         date starts_on
         datetime stopped_at
         int created_by_id FK
+        datetime created_at
+    }
+
+    drive_ImagePreview {
+        int id PK
+        string key
+        string state
+        string viewer_key
+        string thumbnail_key
+        int attempts
         datetime created_at
     }
 

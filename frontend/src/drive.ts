@@ -258,7 +258,48 @@ function initInstead(): void {
   }
 }
 
+/** An image's page: the arrow keys and a swipe go to the folder's previous and next image, and a
+ * preview still being made is waited for by loading the page again a few times. */
+function initViewer(): void {
+  const previous = document.querySelector<HTMLAnchorElement>('[data-drive-prev]')
+  const next = document.querySelector<HTMLAnchorElement>('[data-drive-next]')
+  if (previous || next) {
+    document.addEventListener('keydown', (event) => {
+      const target = event.target as HTMLElement | null
+      if (event.altKey || event.ctrlKey || event.metaKey || target?.closest('input, textarea, select, [contenteditable]')) return
+      if (event.key === 'ArrowLeft' && previous) previous.click()
+      if (event.key === 'ArrowRight' && next) next.click()
+    })
+    const image = document.querySelector<HTMLElement>('.drive-image')
+    let startX: number | null = null
+    let startY = 0
+    image?.addEventListener('touchstart', (event) => {
+      startX = event.touches.length === 1 ? event.touches[0].clientX : null
+      startY = event.touches[0].clientY
+    }, { passive: true })
+    image?.addEventListener('touchend', (event) => {
+      if (startX === null) return
+      const dx = event.changedTouches[0].clientX - startX
+      const dy = event.changedTouches[0].clientY - startY
+      startX = null
+      if (Math.abs(dx) < 60 || Math.abs(dy) > Math.abs(dx)) return
+      if (dx > 0 && previous) previous.click()
+      if (dx < 0 && next) next.click()
+    })
+  }
+  if (document.querySelector('[data-drive-preview-pending]')) {
+    const key = `drive-preview-wait:${location.pathname}`
+    let tries = 0
+    try { tries = Number(sessionStorage.getItem(key) ?? 0) } catch { /* storage off: one try */ }
+    if (tries < 10) {
+      try { sessionStorage.setItem(key, String(tries + 1)) } catch { /* ignore */ }
+      window.setTimeout(() => location.reload(), 3000)
+    }
+  }
+}
+
 initUpload()
+initViewer()
 initInstead()
 initSelection()
 initConfirm()

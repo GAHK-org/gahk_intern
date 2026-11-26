@@ -7,15 +7,16 @@ on the presigned GET (`ResponseContentDisposition`) or on the response.
 from urllib.parse import quote
 
 
-def content_disposition(filename: str) -> str:
-    """`attachment` with the resident's filename, spelled both ways.
+def content_disposition(filename: str, *, inline: bool = False) -> str:
+    """`attachment` with the resident's filename, spelled both ways - or `inline`, for what the
+    browser is to show itself (a PDF, a video), still under that name if it is saved from there.
 
     Both spellings, because neither alone is enough: the quoted `filename=` is all an old client
     understands and cannot carry a non-ASCII byte, and `filename*=` is the RFC 5987 form that can.
     Danish names have spaces and æøå in them, so this is the normal case here, not the edge one.
     """
     encoded = quote(filename, safe="")
-    return f"attachment; filename=\"{_ascii_fallback(filename)}\"; filename*=UTF-8''{encoded}"
+    return f"{'inline' if inline else 'attachment'}; filename=\"{_ascii_fallback(filename)}\"; filename*=UTF-8''{encoded}"
 
 
 def _ascii_fallback(filename: str) -> str:

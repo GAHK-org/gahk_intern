@@ -151,6 +151,9 @@ Drive
 | Office (docx, xlsx, pptx, odt, ods, odp) | OnlyOffice, view mode |
 
 - Images get thumbnails; other files get an icon for their type.
+- An image is shown as a copy of at most 1600 px, made in the background with its thumbnail, so a HEIC is seen in every browser. Images over 50 MB are only downloaded. Next and previous follow the folder's images by name, also with the arrow keys and a swipe, and are not offered to someone the file alone is shared with.
+- A file's type is read from its name, never from what the uploader's browser said. Text is read as UTF-8, or as Windows' Western encoding for what a Danish Excel saves; a CSV shows its first 2,000 rows; markdown is rendered without any HTML of its own.
+- Until OnlyOffice is switched on, office files are downloaded.
 - docx, xlsx and pptx can be edited live together in OnlyOffice, showing who else is in the document. Any folder you can write to has `Nyt dokument`, `Nyt regneark` and `Ny præsentation`.
 - Where you cannot write, or the file is locked, OnlyOffice opens in view mode.
 - Older formats (doc, xls, ppt, odt …) open for viewing. `Rediger` makes a docx, xlsx or pptx copy next to the original.

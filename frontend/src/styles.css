@@ -2113,6 +2113,24 @@
   .drive-pick li[hidden] { display:none; }
   .drive-inline-form { display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin:0; }
   .drive-inline-form select, .drive-inline-form input[type=text] { width:auto; margin:0; max-width:100%; }
+  .drive-thumb { width:36px; height:36px; flex:none; object-fit:cover; border-radius:6px; background:var(--border); }
+  .drive-preview { display:grid; gap:10px; }
+  .drive-image { display:block; max-width:100%; max-height:75vh; margin:0 auto; border-radius:8px; }
+  .drive-viewer-nav { display:flex; align-items:center; justify-content:space-between; gap:12px; font-size:14px; }
+  .drive-viewer-nav a { display:inline-flex; align-items:center; gap:4px; color:var(--brass); text-decoration:none; }
+  .drive-viewer-nav a:hover { text-decoration:underline; }
+  .drive-viewer-nav .ni { width:16px; height:16px; stroke:currentColor; fill:none; }
+  .drive-pdf { width:100%; height:75vh; border:1px solid var(--border); border-radius:8px; background:#fff; }
+  .drive-video { display:block; width:100%; max-height:75vh; border-radius:8px; background:#000; }
+  .drive-audio { width:100%; }
+  .drive-text { margin:0; padding:12px 14px; max-height:70vh; overflow:auto; border:1px solid var(--border); border-radius:8px;
+    font-size:13px; line-height:1.5; white-space:pre-wrap; overflow-wrap:anywhere; }
+  .drive-table-wrap { max-height:70vh; overflow:auto; border:1px solid var(--border); border-radius:8px; }
+  .drive-table { border-collapse:collapse; font-size:13px; min-width:100%; }
+  .drive-table th, .drive-table td { padding:6px 10px; border-bottom:1px solid var(--border); text-align:left; white-space:nowrap; }
+  .drive-table th { position:sticky; top:0; background:var(--surface); font-weight:600; }
+  .drive-markdown { padding:12px 14px; border:1px solid var(--border); border-radius:8px; background:var(--surface); overflow-wrap:anywhere; }
+  .drive-preview-note { margin:0; font-size:13px; }
   .drive-member { flex-wrap:wrap; }
   .drive-list .ni.drive-locked { width:14px; height:14px; color:var(--muted); }
   .drive-pending { font-size:12px; }
