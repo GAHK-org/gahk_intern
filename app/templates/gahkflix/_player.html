@@ -8,8 +8,12 @@
   {# Subtitles, drawn here rather than by the browser, so they move up out of the way of the controls. #}
   <div class="flix-captions" aria-hidden="true" data-flix-captions></div>
   <div class="flix-player-top">
-    <a class="flix-back" href="{% url 'gahkflix:home' %}" aria-label="Tilbage" data-flix-back>←</a>
-    <h1><span data-flix-title></span><small data-flix-subtitle></small></h1>
+    {# The arrow and the title together are the way back: a corner on its own is too small a target. #}
+    <a class="flix-back" href="{% url 'gahkflix:home' %}" title="Tilbage" data-flix-back>
+      <span class="flix-back-arrow" aria-hidden="true">←</span>
+      <span class="sr-only">Tilbage:</span>
+      <h1><span data-flix-title></span><small data-flix-subtitle></small></h1>
+    </a>
     <label class="flix-autoplay"><input type="checkbox" role="switch" data-flix-autoplay checked> Autoplay</label>
   </div>
   {# A double tap on either side of the screen jumps 10 seconds; this shows which way. #}
@@ -17,6 +21,11 @@
   <span class="flix-jump is-ahead" aria-hidden="true" data-flix-jump="ahead">+10 s</span>
   {# A play or pause from a click on the picture, shown for a moment in the middle. #}
   <span class="flix-flash" aria-hidden="true" data-flix-flash></span>
+  {# Play/pause in the middle: with the controls on a touch screen, and while paused with a mouse. #}
+  <button class="flix-center" type="button" aria-label="Afspil" data-flix-center hidden>
+    <svg class="when-paused" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5v14l11-7z" fill="currentColor"/></svg>
+    <svg class="when-playing" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 5h3.5v14H7zM13.5 5H17v14h-3.5z" fill="currentColor"/></svg>
+  </button>
   <span class="flix-spinner" aria-hidden="true" data-flix-spinner hidden></span>
   <button class="flix-skip" type="button" data-flix-skip hidden>Spring intro over</button>
   <a class="flix-next" href="#" data-flix-next hidden>Næste afsnit ▸</a>

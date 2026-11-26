@@ -266,8 +266,11 @@ body.flix-play, body.flix-player-open { overflow: hidden; background: #000; }
 .flix-player.is-idle .flix-player-top, .flix-player.is-idle .flix-controls { opacity: 0; pointer-events: none; }
 .flix-player.is-idle .flix-player-top > * { pointer-events: none; }
 .flix-player.is-idle { cursor: none; }
-.flix-back { display: grid; place-items: center; width: 44px; height: 44px; border-radius: 50%; color: #fff; text-decoration: none; font-size: 26px; flex: none; }
+/* Back: the arrow and the title, reaching out to the corner of the screen so a thumb finds it. */
+.flix-back { display: flex; align-items: center; gap: 6px; min-width: 0; min-height: 52px; margin: -12px 0 -12px -16px; padding: 4px 18px 4px 10px; border-radius: 28px; color: #fff; text-decoration: none; }
+.flix-back-arrow { display: grid; place-items: center; width: 44px; height: 44px; flex: none; font-size: 26px; }
 .flix-back:hover { background: rgba(255,255,255,.15); }
+.flix-back:focus-visible { outline: 2px solid #fff; outline-offset: -2px; }
 /* Skip, the next episode and the end card stand clear of the controls. */
 .flix-skip, .flix-next { position: absolute; right: 4vw; bottom: max(12vh, calc(var(--flix-bar) + 16px)); border: 1px solid rgba(255,255,255,.7); border-radius: 4px; padding: 12px 22px; background: rgba(0,0,0,.6); color: #fff; font: inherit; font-size: 16px; font-weight: 700; cursor: pointer; text-decoration: none; }
 .flix-skip:hover, .flix-next:hover { background: #fff; color: #000; }
@@ -342,7 +345,18 @@ body.flix-play, body.flix-player-open { overflow: hidden; background: #000; }
 .flix-jump.is-back { left: 10%; }
 .flix-jump.is-ahead { right: 10%; }
 .flix-jump.is-on { animation: flix-flash .7s ease-out; }
-.flix-spinner { position: absolute; left: 50%; top: 50%; width: 52px; height: 52px; margin: -26px 0 0 -26px; border: 4px solid rgba(255,255,255,.25); border-top-color: #fff; border-radius: 50%; animation: flix-spin .8s linear infinite; pointer-events: none; }
+/* Play/pause in the middle. A finger gets it with the controls (a tap shows them, the button then
+   pauses); a mouse sees it while the film is paused, as the sign that it is. The spinner rings it. */
+.flix-center { position: absolute; left: 50%; top: 50%; z-index: 1; display: grid; place-items: center; width: 76px; height: 76px; margin: -38px 0 0 -38px; border: 0; border-radius: 50%; padding: 0; background: rgba(0,0,0,.5); color: #fff; cursor: pointer; transition: opacity .4s; }
+.flix-center svg { width: 40px; height: 40px; }
+.flix-center:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
+.flix-center[hidden], .flix-player:has(.flix-upnext:not([hidden])) .flix-center, .flix-player:has(.flix-start:not([hidden])) .flix-center { display: none; }
+.flix-player.is-idle .flix-center { opacity: 0; pointer-events: none; }
+@media (hover: hover) and (pointer: fine) {
+  .flix-player:not(.is-paused) .flix-center { opacity: 0; pointer-events: none; }
+  .flix-center:hover { background: rgba(0,0,0,.7); }
+}
+.flix-spinner { position: absolute; left: 50%; top: 50%; width: 88px; height: 88px; margin: -44px 0 0 -44px; box-sizing: border-box; border: 4px solid rgba(255,255,255,.25); border-top-color: #fff; border-radius: 50%; animation: flix-spin .8s linear infinite; pointer-events: none; }
 .flix-spinner[hidden] { display: none; }
 @keyframes flix-spin { to { transform: rotate(360deg); } }
 @media (prefers-reduced-motion: reduce) { .flix-flash.is-on, .flix-jump.is-on { animation-duration: .01s; } }

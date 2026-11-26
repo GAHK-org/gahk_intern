@@ -1182,6 +1182,18 @@ async function fetchFilm(url: string): Promise<FilmConfig> {
   return (await response.json()) as FilmConfig;
 }
 
+/** Running as the installed app (display "standalone" in the manifest), not in a browser tab. */
+function inInstalledApp(): boolean {
+  return window.matchMedia("(display-mode: standalone)").matches;
+}
+
+/** A phone or a tablet: where fullscreen should turn the screen to the film's own shape. */
+function onTouchScreen(): boolean {
+  return window.matchMedia("(pointer: coarse)").matches;
+}
+
+type LockableOrientation = ScreenOrientation & { lock?: (orientation: "landscape" | "portrait") => Promise<void> };
+
 type WebkitVideo = HTMLVideoElement & {
   webkitDisplayingFullscreen?: boolean;
   webkitEnterFullscreen?: () => void;
@@ -1220,6 +1232,7 @@ class Player {
   private pip: HTMLButtonElement;
   private fullscreen: HTMLButtonElement;
   private flash: HTMLElement;
+  private center: HTMLButtonElement;
   private spinner: HTMLElement;
 
   private stillWatching = false;
@@ -1248,6 +1261,9 @@ class Player {
   private lastPointer = "mouse";
   private scrubbing = false;
   private closed = false;
+  // The installed app plays fullscreen: asked for with the first click or tap that browsers accept
+  // it from, and not again once it has been left.
+  private wantsFullscreen = inInstalledApp() && document.fullscreenEnabled;
   private listeners = new AbortController();
 
   constructor(
@@ -1286,6 +1302,7 @@ class Player {
     this.pip = find("[data-flix-pip]");
     this.fullscreen = find("[data-flix-fullscreen]");
     this.flash = find("[data-flix-flash]");
+    this.center = find("[data-flix-center]");
     this.spinner = find("[data-flix-spinner]");
     this.pip.hidden = !document.pictureInPictureEnabled;
     this.speeds.replaceChildren(...SPEEDS.map((rate) => this.menuItem(speedLabel(rate), "speed", String(rate))));
@@ -1298,6 +1315,8 @@ class Player {
     this.phase = "intro";
     this.filmWanted = false;
     this.controls.hidden = true;
+    this.center.hidden = true;
+    this.autoFullscreen();
     this.closeMenus();
     this.next.hidden = true;
     this.errorBox.hidden = true;
@@ -1329,11 +1348,9 @@ class Player {
     document.title = `${film.subtitle || film.title} – GAHKFlix`;
     if (!this.overlay) this.back.href = film.backUrl;
     const qualities = Object.keys(film.streams);
+    // As chosen last time; else the best there is (the server lists them best first).
     this.quality = stored(QUALITY_KEY) ?? "";
-    if (!qualities.includes(this.quality)) {
-      const narrow = window.matchMedia("(max-width: 900px)").matches;
-      this.quality = narrow && qualities.includes("hd") ? "hd" : qualities[0];
-    }
+    if (!qualities.includes(this.quality)) this.quality = qualities[0];
     this.qualityBar.replaceChildren(
       ...qualities.map((quality) => this.menuItem(film.qualityLabels[quality] ?? quality, "quality", quality)),
     );
@@ -1354,6 +1371,7 @@ class Player {
     this.phase = "film";
     this.skip.hidden = true;
     this.controls.hidden = false;
+    this.center.hidden = false;
     this.load(this.filmTime, true);
     this.showTrack();
   }
@@ -1595,18 +1613,48 @@ class Player {
     } else {
       this.video.pause();
     }
-    if (flash && this.phase === "film") this.showFlash(this.video.paused ? "pause" : "play");
+    // Pausing brings up the play button in the middle, which says it already.
+    if (flash && this.phase === "film" && !this.video.paused) this.showFlash("play");
   }
 
   private toggleFullscreen(): void {
     if (document.fullscreenElement) {
       void document.exitFullscreen().catch(() => undefined);
-    } else if (document.fullscreenEnabled && this.root.requestFullscreen) {
-      void this.root.requestFullscreen().catch(() => undefined);
+    } else if (document.fullscreenEnabled) {
+      void this.enterFullscreen();
     } else {
       // An iPhone: only the video itself, in the system's player.
       this.video.webkitEnterFullscreen?.();
     }
+  }
+
+  private enterFullscreen(): Promise<boolean> {
+    return this.root
+      .requestFullscreen({ navigationUI: "hide" })
+      .then(() => {
+        this.turnScreen();
+        return true;
+      })
+      .catch(() => false);
+  }
+
+  /** The installed app goes fullscreen at once. Only from inside a click or a tap: a browser turns
+   * down anything else, and then the next one tries again. */
+  private autoFullscreen(): void {
+    if (!this.wantsFullscreen || document.fullscreenElement || this.closed) return;
+    void this.enterFullscreen().then((entered) => {
+      if (entered) this.wantsFullscreen = false;
+    });
+  }
+
+  /** Fullscreen on a phone turns to the film's shape, so nobody has to turn the phone to see it big;
+   * the installed app is held upright otherwise (the manifest's orientation). Wide until the film's
+   * size is known: the intro is. */
+  private turnScreen(): void {
+    const orientation = screen.orientation as LockableOrientation | undefined;
+    if (!orientation?.lock || document.fullscreenElement !== this.root || !onTouchScreen()) return;
+    const { videoWidth, videoHeight } = this.video;
+    orientation.lock(videoHeight > videoWidth ? "portrait" : "landscape").catch(() => undefined);
   }
 
   private toggleSubtitles(): void {
@@ -1739,6 +1787,7 @@ class Player {
     this.video.removeAttribute("src");
     this.video.load();
     if (document.fullscreenElement) void document.exitFullscreen().catch(() => undefined);
+    screen.orientation?.unlock?.();
     if (document.pictureInPictureElement === this.video) void document.exitPictureInPicture().catch(() => undefined);
     this.root.remove();
     body.classList.remove("flix-player-open");
@@ -1752,6 +1801,18 @@ class Player {
     this.start.addEventListener("click", () => {
       this.start.hidden = true;
       void video.play();
+    });
+    // A player opened straight from a link has had no click yet to go fullscreen with: the first one.
+    this.root.addEventListener(
+      "click",
+      (event) => {
+        if (!(event.target as HTMLElement).closest("[data-flix-back]")) this.autoFullscreen();
+      },
+      { capture: true },
+    );
+    this.center.addEventListener("click", () => {
+      this.togglePlay();
+      this.wake();
     });
     this.skip.addEventListener("click", () => this.startFilm());
     this.back.addEventListener("click", (event) => {
@@ -1802,9 +1863,15 @@ class Player {
     this.fullscreen.addEventListener("click", () => this.toggleFullscreen());
     document.addEventListener(
       "fullscreenchange",
-      () => this.root.classList.toggle("is-fullscreen", document.fullscreenElement === this.root),
+      () => {
+        const full = document.fullscreenElement === this.root;
+        this.root.classList.toggle("is-fullscreen", full);
+        if (!full) screen.orientation?.unlock?.();
+      },
       { signal },
     );
+    // The film's own shape is known now: a portrait one turns the screen back upright.
+    video.addEventListener("loadedmetadata", () => this.turnScreen());
     this.pip.addEventListener("click", () => {
       if (document.pictureInPictureElement) void document.exitPictureInPicture().catch(() => undefined);
       else if (this.phase === "film") void video.requestPictureInPicture().catch(() => undefined);
@@ -1896,6 +1963,7 @@ class Player {
       this.root.classList.remove("is-paused");
       this.toggle.setAttribute("aria-label", "Pause");
       this.toggle.title = "Pause (k)";
+      this.center.setAttribute("aria-label", "Pause");
       this.hideUpNext();
       this.wake();
     });
@@ -1903,6 +1971,7 @@ class Player {
       this.root.classList.add("is-paused");
       this.toggle.setAttribute("aria-label", "Afspil");
       this.toggle.title = "Afspil (k)";
+      this.center.setAttribute("aria-label", "Afspil");
       this.wake();
     });
     // A spinner while the film waits for more of itself, unless that is over at once.
@@ -1990,7 +2059,15 @@ class Player {
       { signal },
     );
 
-    this.root.addEventListener("mousemove", () => this.wake(), { passive: true });
+    // A real mouse only: a phone sends a made-up mousemove with every tap, just before the click, and
+    // waking on that made the tap that should show the controls hide them again.
+    this.root.addEventListener(
+      "pointermove",
+      (event) => {
+        if (event.pointerType === "mouse") this.wake();
+      },
+      { passive: true },
+    );
     this.root.addEventListener("keydown", () => this.wake(), { passive: true });
     this.controls.addEventListener("pointerdown", () => this.wake(), { passive: true });
     this.wake();
