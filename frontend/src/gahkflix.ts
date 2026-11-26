@@ -1224,9 +1224,8 @@ class Player {
   private volume: HTMLInputElement;
   private time: HTMLElement;
   private qualityBar: HTMLElement;
-  private qualityGroup: HTMLElement;
   private speeds: HTMLElement;
-  private captionsWrap: HTMLElement;
+  private captionsButton: HTMLButtonElement;
   private captionsMenu: HTMLElement;
   private captions: HTMLElement;
   private pip: HTMLButtonElement;
@@ -1294,9 +1293,8 @@ class Player {
     this.volume = find("[data-flix-volume]");
     this.time = find("[data-flix-time]");
     this.qualityBar = find("[data-flix-quality]");
-    this.qualityGroup = find("[data-flix-quality-group]");
     this.speeds = find("[data-flix-speeds]");
-    this.captionsWrap = find("[data-flix-captions-wrap]");
+    this.captionsButton = find("[data-flix-captions-button]");
     this.captionsMenu = find('[data-flix-menu="captions"]');
     this.captions = find("[data-flix-captions]");
     this.pip = find("[data-flix-pip]");
@@ -1351,10 +1349,21 @@ class Player {
     // As chosen last time; else the best there is (the server lists them best first).
     this.quality = stored(QUALITY_KEY) ?? "";
     if (!qualities.includes(this.quality)) this.quality = qualities[0];
+    // Every quality the service makes, best first; what this video lacks (a small original has no
+    // Full HD) shows greyed out rather than leaving the choice looking missing.
+    const known = [...new Set([...Object.keys(film.qualityLabels), ...qualities])];
     this.qualityBar.replaceChildren(
-      ...qualities.map((quality) => this.menuItem(film.qualityLabels[quality] ?? quality, "quality", quality)),
+      ...known.map((quality) => {
+        const item = this.menuItem(film.qualityLabels[quality] ?? quality, "quality", quality);
+        if (!qualities.includes(quality)) {
+          item.disabled = true;
+          const note = document.createElement("small");
+          note.textContent = "Ikke tilgængelig";
+          item.append(note);
+        }
+        return item;
+      }),
     );
-    this.qualityGroup.hidden = qualities.length < 2;
     this.setTracks(film.subtitles ?? []);
     this.next.href = film.next?.url ?? "#";
     this.next.textContent = "Næste afsnit ▸";
@@ -1454,11 +1463,20 @@ class Player {
       element.track.addEventListener("cuechange", () => this.drawCues());
     }
     const choosable = tracks.filter((track) => !track.forced);
-    this.captionsWrap.hidden = choosable.length === 0;
-    this.captionsMenu.replaceChildren(
-      this.menuItem("Fra", "subtitles", ""),
-      ...choosable.map((track) => this.menuItem(track.label, "subtitles", String(track.id))),
-    );
+    const none = choosable.length === 0;
+    this.captionsButton.classList.toggle("is-unavailable", none);
+    this.captionsButton.setAttribute("aria-label", none ? "Undertekster (ingen til denne video)" : "Undertekster");
+    if (none) {
+      const note = document.createElement("p");
+      note.className = "flix-popup-note";
+      note.textContent = "Ingen undertekster til denne video";
+      this.captionsMenu.replaceChildren(note);
+    } else {
+      this.captionsMenu.replaceChildren(
+        this.menuItem("Fra", "subtitles", ""),
+        ...choosable.map((track) => this.menuItem(track.label, "subtitles", String(track.id))),
+      );
+    }
     // As chosen last time, by language; else the track the file marks as its default.
     const wanted = stored(SUBTITLES_KEY);
     this.track =
@@ -1658,7 +1676,7 @@ class Player {
   }
 
   private toggleSubtitles(): void {
-    if (this.captionsWrap.hidden) return;
+    if (this.captionsButton.classList.contains("is-unavailable")) return;
     this.chooseTrack(this.track ? null : this.lastTrack);
   }
 

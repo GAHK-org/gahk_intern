@@ -69,7 +69,8 @@ intern site's sidebar and top bar; its own header links back to the intern site.
   its language and its default and forced flags. Picture subtitles (DVD, Blu-ray) cannot become text,
   and only the original keeps them.
 - The subtitles menu names each track by its language in Danish (`Dansk`, `Engelsk (Kommentarer)`),
-  with `Fra` for none. The choice is remembered by language: a film with that language starts with
+  with `Fra` for none. A video without subtitles still has the button, dimmed, its menu saying there
+  are none; the quality menu likewise lists Full HD and HD always, greying out the one a video lacks. The choice is remembered by language: a film with that language starts with
   it, any other with the track the file marks as its default, if any. Forced tracks (signs, foreign
   speech) are not in the menu; they show whenever nothing else is chosen. Subtitles are drawn above
   the controls while those show, and lower when they fade.

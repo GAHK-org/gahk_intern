@@ -286,7 +286,7 @@ body.flix-play, body.flix-player-open { overflow: hidden; background: #000; }
 .flix-control svg { width: 26px; height: 26px; }
 .flix-control:hover { background: rgba(255,255,255,.14); }
 .flix-control:focus-visible, .flix-timeline:focus-visible, .flix-popup-item:focus-visible { outline: 2px solid #fff; outline-offset: 1px; }
-.flix-control[hidden], .flix-popup-wrap[hidden], .flix-popup-group[hidden] { display: none; }
+.flix-control[hidden] { display: none; }
 .flix-player.is-paused .when-playing, .flix-player:not(.is-paused) .when-paused { display: none; }
 .flix-player.is-fullscreen .when-windowed, .flix-player:not(.is-fullscreen) .when-fullscreen { display: none; }
 [data-flix-mute]:not([data-level="loud"]) .when-loud, [data-flix-mute]:not([data-level="quiet"]) .when-quiet, [data-flix-mute]:not([data-level="muted"]) .when-muted { display: none; }
@@ -324,6 +324,12 @@ body.flix-play, body.flix-player-open { overflow: hidden; background: #000; }
 .flix-popup-item[aria-checked="true"] { color: #fff; font-weight: 700; }
 .flix-popup-item[aria-checked="true"]::before { content: "✓"; }
 .flix-popup-item:hover { background: rgba(255,255,255,.1); }
+.flix-popup-item small { margin-left: auto; padding-left: 12px; font-size: 12px; }
+/* What this video does not have: there, so the choice is not missing, but not to be chosen. */
+.flix-popup-item:disabled { color: rgba(255,255,255,.38); cursor: default; }
+.flix-popup-item:disabled:hover { background: transparent; }
+.flix-popup-note { margin: 4px 10px; font-size: 14px; color: var(--flix-muted); white-space: nowrap; }
+.flix-control.is-unavailable { opacity: .45; }
 
 /* Subtitles: low on the picture, lifted over the controls while they show. */
 .flix-captions { position: absolute; left: 6%; right: 6%; bottom: 7vh; display: flex; flex-direction: column; align-items: center; gap: 4px; pointer-events: none; transition: bottom .25s; text-align: center; }
