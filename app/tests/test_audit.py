@@ -28,18 +28,14 @@ PENDING_APPS = {
     "admissions",
     "ak",
     "cms",
-    "core",
     "den_hurtige",
     "events",
     "gahkflix",
-    "notifications",
     "oelkaelder",
     "opslagstavle",
     "photo_album",
-    "regnskab",
     "reparationer",
     "rooms",
-    "stats",
 }
 
 
@@ -328,6 +324,20 @@ def test_the_django_admin_is_recorded_unclaimed_without_a_warning(
 
 
 # --- security events -------------------------------------------------------------------------------
+
+
+@pytest.mark.django_db
+def test_request_user_as_the_subject_is_the_resident(make_resident: Callable[..., Resident]) -> None:
+    """A view's request.user is a lazy wrapper: the trail still knows it as a resident."""
+    from django.utils.functional import SimpleLazyObject
+
+    anna = make_resident(email="anna@gahk.dk", phone="111")
+    lazy = SimpleLazyObject(lambda: Resident.objects.get(pk=anna.pk))
+    with trail.event("residents.profile.updated", actor=None, subject=lazy) as event:
+        event.change(lazy, "phone", "111", "222")
+    entity = AuditEvent.objects.get().entities.get()
+    assert (entity.kind, entity.entity_id, entity.role) == ("residents.resident", anna.pk, "subject")
+    assert _changes(AuditEvent.objects.get(), "residents.resident") == {"phone": ("111", "222")}
 
 
 @pytest.mark.django_db

@@ -14,6 +14,7 @@ from django.http import HttpRequest, HttpResponse, HttpResponseRedirect
 from django.shortcuts import get_object_or_404, redirect, render
 from django.views.decorators.http import require_POST
 
+from audit import trail
 from core.clock import current_datetime
 from core.models import PushDeliveryDay, PushSubscription
 from residents.permissions import role_required
@@ -99,14 +100,25 @@ def _stats() -> dict[str, object]:
 def notifications(request: HttpRequest) -> HttpResponse:
     form = BroadcastForm(request.POST or None)
     if request.method == "POST" and form.is_valid():
-        reached = services.notify(
-            services.everyone() | services.kitchen(),
-            category=form.cleaned_data["category"],
-            importance=Importance(form.cleaned_data["importance"]),
-            title=form.cleaned_data["title"],
-            body=form.cleaned_data["body"],
-            url=form.cleaned_data["url"],
-        )
+        message = {
+            "category": form.cleaned_data["category"],
+            "importance": int(form.cleaned_data["importance"]),
+            "title": form.cleaned_data["title"],
+            "body": form.cleaned_data["body"],
+            "url": form.cleaned_data["url"],
+        }
+        # The notifications themselves are delivery bookkeeping (notifications.auditing): the event
+        # holds what was sent, and to how many.
+        with trail.event("notifications.broadcast.sent", details=message) as event:
+            reached = services.notify(
+                services.everyone() | services.kitchen(),
+                category=message["category"],
+                importance=Importance(message["importance"]),
+                title=message["title"],
+                body=message["body"],
+                url=message["url"],
+            )
+            event.details["reached"] = reached
         messages.success(request, f"Sendt til {reached} beboer(e).")
         return redirect("siteadmin:notifications")
 
@@ -131,6 +143,7 @@ def cancel_device(request: HttpRequest, pk: int) -> HttpResponseRedirect:
     subscribe it again from the settings page, which will show it as not subscribed."""
     device = get_object_or_404(PushSubscription, pk=pk)
     owner = device.user.full_name
-    device.delete()
+    with trail.event("core.push_subscription.cancelled", subject=device, involve=[(device.user, "owner")]):
+        device.delete()
     messages.success(request, f"Abonnementet for {owner} er annulleret.")
     return redirect("siteadmin:notifications")

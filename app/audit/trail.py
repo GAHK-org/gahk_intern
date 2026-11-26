@@ -299,7 +299,9 @@ class Event:
     # -- what the event involves
 
     def _entity(self, obj: models.Model, operation: str) -> _Entity | None:
-        reg = registration(type(obj))
+        # __class__, not type(): request.user is a lazy wrapper whose type is SimpleLazyObject, while
+        # its __class__ is the resident's model.
+        reg = registration(obj.__class__)
         if reg is None:
             return None
         key = (reg.kind, obj.pk)
@@ -331,7 +333,7 @@ class Event:
 
     def change(self, obj: models.Model, field_name: str, before: Any, after: Any) -> None:  # noqa: ANN401
         """Record a change no signal saw: a queryset update, a bulk write."""
-        reg = registration(type(obj))
+        reg = registration(obj.__class__)
         entity = self._entity(obj, "updated")
         if entity is None or reg is None:
             return

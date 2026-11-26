@@ -30,6 +30,7 @@ from django.http import HttpRequest, HttpResponse, JsonResponse
 from django.templatetags.static import static
 from pywebpush import WebPushException, webpush
 
+from audit import trail
 from residents.permissions import current_resident
 
 from .clock import current_datetime
@@ -167,7 +168,14 @@ def _dispatch(
             # status defensively — a direct exc.response.status_code raises AttributeError there.
             status = getattr(exc.response, "status_code", None)
             if status in DEAD_ENDPOINT_STATUSES:
-                subscription.delete()
+                # By nobody: the push service said the browser threw the subscription away.
+                with trail.event(
+                    "core.push_subscription.expired",
+                    actor=None,
+                    subject=subscription,
+                    details={"status": status},
+                ):
+                    subscription.delete()
                 removed += 1
             else:
                 logger.warning("push failed (%s) for subscription %s", status, subscription.pk)
@@ -292,17 +300,23 @@ def handle_subscription_request(request: HttpRequest) -> HttpResponse:
         return JsonResponse({"state": state})
 
     if fields["status_type"] == "unsubscribe":
-        PushSubscription.objects.filter(user=resident, endpoint=fields["endpoint"]).delete()
+        device = PushSubscription.objects.filter(user=resident, endpoint=fields["endpoint"]).first()
+        if device is not None:
+            with trail.event("core.push_subscription.unsubscribed", subject=device):
+                device.delete()
         return HttpResponse(status=202)
 
-    PushSubscription.objects.update_or_create(
-        endpoint=fields["endpoint"],
-        defaults={
-            "user": resident,
-            "auth": fields["auth"],
-            "p256dh": fields["p256dh"],
-            "user_agent": fields["user_agent"],
-            "failure_count": 0,
-        },
-    )
+    # Subscribing a device that already is, unchanged, records nothing.
+    with trail.event("core.push_subscription.subscribed", only_if_changed=True) as event:
+        device, _created = PushSubscription.objects.update_or_create(
+            endpoint=fields["endpoint"],
+            defaults={
+                "user": resident,
+                "auth": fields["auth"],
+                "p256dh": fields["p256dh"],
+                "user_agent": fields["user_agent"],
+                "failure_count": 0,
+            },
+        )
+        event.involve(device, "subject")
     return HttpResponse(status=201)

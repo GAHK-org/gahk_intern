@@ -251,6 +251,18 @@ Administrators only.
 - **Broadcast** — send a System or Generelt notification, at any importance, with a title, body and
   on-site link, to everyone.
 
+## Audit trail
+
+- Recorded (audit-trail.md): a resident changing their settings (each category's exception made,
+  changed or removed, and the vibration switches, before and after); a device subscribed, changed
+  or unsubscribed; an administrator cancelling a device; a device the push service reported gone,
+  removed by nobody; an administrator's broadcast, with its category, importance, title, text,
+  link and how many it reached.
+- Left out: the notifications themselves, their being seen, and the nightly purge. Telling someone
+  is part of the event of whatever caused it, and reading is nobody's decision. A device's address
+  and keys are recorded as changed, never their values; its last delivery and failure count, and
+  the delivery statistics per day, are bookkeeping.
+
 ## Routes
 
 `/notifikationer/` (page), `seneste` (dropdown), `set` (mark all seen, POST),

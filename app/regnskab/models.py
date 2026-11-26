@@ -80,8 +80,9 @@ class AlumneregningSettings(models.Model):
 
     @classmethod
     def get_solo(cls) -> "AlumneregningSettings":
-        obj, _ = cls.objects.get_or_create(pk=1)
-        return obj
+        """The settings row, or the defaults unsaved until regnskab first saves them: reading the
+        settings is no edit, and makes nothing for the audit trail to account for."""
+        return cls.objects.filter(pk=1).first() or cls(pk=1)
 
 
 class AlumneregningSend(models.Model):

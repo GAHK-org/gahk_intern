@@ -10,6 +10,8 @@
 - **Mest besøgte sider (30 dage):** gahk.dk's pages by views over the last 30 days, with their
   visitors (each day's unique visitors, added up).
 - Nothing here counts visits to intern itself.
+- Not in the audit trail: the visit counts are gahk.dk's own totals, copied in and rewritten by a
+  worker, and nobody decides them. The rest of the page only reads.
 
 Everything below is the analysis of the legacy PHP site, kept for reference.
 
