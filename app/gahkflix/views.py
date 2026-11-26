@@ -49,7 +49,9 @@ from .models import (
     Tag,
     Video,
     VideoEvent,
+    VideoFile,
     VideoFrame,
+    VideoSubtitle,
     ViewEvent,
     key_of,
 )
@@ -434,6 +436,45 @@ def detail(request: HttpRequest, pk: int) -> HttpResponse:
 
 
 QUALITY_LABELS = {"fullhd": "Full HD", "hd": "HD"}
+
+# A subtitle track's language as the player's menu names it, by the ISO 639-2 code the file gives
+# (both the bibliographic and the terminological one where they differ).
+LANGUAGE_NAMES = {
+    "dan": "Dansk", "eng": "Engelsk", "swe": "Svensk", "nor": "Norsk", "nob": "Norsk",
+    "nno": "Nynorsk", "isl": "Islandsk", "ice": "Islandsk", "fao": "Færøsk", "fin": "Finsk",
+    "deu": "Tysk", "ger": "Tysk", "fra": "Fransk", "fre": "Fransk", "spa": "Spansk", "ita": "Italiensk",
+    "nld": "Hollandsk", "dut": "Hollandsk", "por": "Portugisisk", "pol": "Polsk", "rus": "Russisk",
+    "ukr": "Ukrainsk", "tur": "Tyrkisk", "ara": "Arabisk", "zho": "Kinesisk", "chi": "Kinesisk",
+    "jpn": "Japansk", "kor": "Koreansk", "grc": "Oldgræsk", "ell": "Græsk", "gre": "Græsk",
+    "lat": "Latin",
+}  # fmt: skip
+
+
+def _subtitle_label(track: VideoSubtitle, number: int) -> str:
+    """ "Dansk", "Engelsk (Kommentarspor)", "Dansk – kun tvungne"; "Spor 2" when the file says nothing."""
+    language = LANGUAGE_NAMES.get(track.language.lower(), track.language)
+    title = track.title.strip()
+    if language and title and title.lower() != language.lower():
+        label = f"{language} ({title})"
+    else:
+        label = language or title or f"Spor {number}"
+    return f"{label} – kun tvungne" if track.is_forced else label
+
+
+def _subtitle_tracks(video_file: VideoFile, video: Video) -> list[dict[str, Any]]:
+    return [
+        {
+            "id": track.pk,
+            "label": _subtitle_label(track, number),
+            "language": track.language,
+            "url": reverse("gahkflix:subtitles", args=[video.pk, track.pk]),
+            "default": track.is_default,
+            "forced": track.is_forced,
+        }
+        for number, track in enumerate(video_file.subtitles.all(), start=1)
+    ]
+
+
 UP_NEXT_DESCRIPTION = 200
 
 
@@ -471,6 +512,7 @@ def _player_config(video: Video, start_at: float, resident: Account) -> dict[str
         "subtitle": subtitle,
         "streams": {q: reverse("gahkflix:stream", args=[video.pk, q]) for q in video.file.qualities},
         "qualityLabels": QUALITY_LABELS,
+        "subtitles": _subtitle_tracks(video.file, video),
         "startAt": start_at,
         "viewUrl": reverse("gahkflix:record_view", args=[video.pk]),
         "positionUrl": reverse("gahkflix:position", args=[video.pk]),
@@ -535,6 +577,24 @@ def stream(request: HttpRequest, pk: int, quality: str) -> HttpResponseBase:
     if video.file is None or field is None or not getattr(video.file, field):
         raise Http404("no such rendition")
     return _serve(key_of(getattr(video.file, field)), content_type="video/mp4", expire=STREAM_URL_TTL)
+
+
+@access.access_required
+def subtitles(request: HttpRequest, pk: int, track: int) -> HttpResponseBase:
+    """A subtitle track, from here rather than redirected to the bucket: a browser reads a <track> only
+    from the page's own origin (or with CORS the bucket does not send), and the files are small."""
+    video = _visible_video(request, pk)
+    if video.file is None:
+        raise Http404("no file")
+    subtitle = get_object_or_404(VideoSubtitle, pk=track, file=video.file)
+    try:
+        with get_video_storage().open(key_of(subtitle.track), "rb") as handle:
+            body = handle.read()
+    except (FileNotFoundError, OSError) as exc:
+        raise Http404("subtitle file not found") from exc
+    response = HttpResponse(body, content_type="text/vtt; charset=utf-8")
+    response.headers["Cache-Control"] = "private, max-age=3600"
+    return response
 
 
 # What "Hent" offers: variant -> (field on VideoFile, label).
