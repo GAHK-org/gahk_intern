@@ -45,7 +45,7 @@ WORKGROUP_ROLE = {
     "Ølkælderen": Role.OELKAELDER,
     "Regnskabsgruppen": Role.REGNSKAB,  # legacy intern_alumne_workgroup name (id 23)
     "PR-gruppen": Role.PR,  # grants CMS/frontpage editing
-    "Repperne": Role.REPPER,  # manages the Reparationer board (reparationer.views.MANAGE_ROLES)
+    "Repperne": Role.REPPER,  # manages the Reparationer board (reparationer.manage)
     "Vicevært": Role.VICEVAERT,  # triages Reparationer before handing it to Repperne
     "Fotogruppen": Role.FOTO,  # curates the photo album (photo_album.access)
 }
@@ -133,7 +133,7 @@ class Resident(AbstractBaseUser, PermissionsMixin):
         default=False
     )  # = holds any role in the active period (set by ETL/signals)
     # The shared kitchen-staff login: not a resident, sees only Den Hurtige's køkken channel,
-    # Reparationer and its own opslag (core.middleware.KitchenAccountGate).
+    # Reparationer and its own opslag (access.policy).
     is_kitchen = models.BooleanField(default=False)
     date_joined = models.DateTimeField(default=timezone.now)
 
@@ -264,9 +264,9 @@ class Resident(AbstractBaseUser, PermissionsMixin):
         return super().has_module_perms(app_label) or self._has_admin_role()
 
     def _has_admin_role(self) -> bool:
-        from .permissions import has_active_role  # imported here: permissions imports this module
+        from access.api import ADMINISTRATOR, real_roles  # imported here: access imports this module
 
-        if not (self.is_active and has_active_role(self, Role.ADMINISTRATOR)):
+        if not (self.is_active and ADMINISTRATOR in real_roles(self)):
             return False
         # Memoised per instance, like real_roles: the admin index asks once per registered model.
         approved = getattr(self, _ADMIN_GRANT_MEMO, None)

@@ -3,13 +3,10 @@
 from django.http import HttpRequest, HttpResponse
 from django.shortcuts import render
 
-from residents.permissions import role_required
-
 from . import presentation, trail
 from .models import AuditEvent
 
 
-@role_required("administrator")
 def audit_trail(request: HttpRequest) -> HttpResponse:
     filters = presentation.Filters.from_query(request.GET)
     raw_before = request.GET.get("before", "")

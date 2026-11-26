@@ -17,10 +17,11 @@ from django.shortcuts import get_object_or_404, redirect, render
 from django.utils import timezone
 from django.views.decorators.http import require_POST
 
+from access.api import can, permission_required
 from audit import trail
 from core.models import Room
 from residents.models import Residency, Resident, RoleAssignment, active_period, next_period, prev_period
-from residents.permissions import current_resident, request_has_role, role_required
+from residents.permissions import current_resident
 
 from .kvotient import compute_k, compute_k_parts, month_choices, month_index, month_label
 from .models import KvotientApplication, KvotientOrlov, KvotientPriority, RoomOffer
@@ -240,7 +241,7 @@ def my(request: HttpRequest) -> HttpResponse:
 @login_required
 def detail(request: HttpRequest, pk: int) -> HttpResponse:
     app = get_object_or_404(KvotientApplication, pk=pk)
-    is_indstilling = request_has_role(request, "indstilling")
+    is_indstilling = can(request, "soegvaerelse.manage")
     if app.resident_id != request.user.id and not is_indstilling:
         raise PermissionDenied
     # So Indstillingen can see the resident's declared orlov against the auto-computed suggestion.
@@ -269,7 +270,7 @@ def delete_application(request: HttpRequest, pk: int) -> HttpResponseRedirect:
         app.delete()
         messages.success(request, "Din ansøgning er trukket tilbage.")
         return redirect("soegvaerelse:my")
-    if not request_has_role(request, "indstilling"):
+    if not can(request, "soegvaerelse.manage"):
         raise PermissionDenied
     name = app.resident.full_name
     # 200 leaves room for the sentence in front of it in the notification body (300 at most).
@@ -280,7 +281,7 @@ def delete_application(request: HttpRequest, pk: int) -> HttpResponseRedirect:
     return redirect("soegvaerelse:admin")
 
 
-@role_required("indstilling")
+@permission_required("soegvaerelse.manage")
 def admin(request: HttpRequest) -> HttpResponse:
     offers = list(RoomOffer.objects.select_related("room").order_by("month", "room__number"))
     alloc = {m: allocate_round(m) for m in {o.month for o in offers}}
@@ -302,7 +303,7 @@ def admin(request: HttpRequest) -> HttpResponse:
 
 
 @require_POST
-@role_required("indstilling")
+@permission_required("soegvaerelse.manage")
 def create_offer(request: HttpRequest) -> HttpResponseRedirect:
     target = month_index(*next_period())  # offers are always for the upcoming month
     try:
@@ -314,7 +315,7 @@ def create_offer(request: HttpRequest) -> HttpResponseRedirect:
     return redirect("soegvaerelse:admin")
 
 
-@role_required("indstilling")
+@permission_required("soegvaerelse.manage")
 def applicants(request: HttpRequest, offer_id: int) -> HttpResponse:
     offer = get_object_or_404(RoomOffer, pk=offer_id)
     prios = (
@@ -338,7 +339,7 @@ def applicants(request: HttpRequest, offer_id: int) -> HttpResponse:
 
 
 @require_POST
-@role_required("indstilling")
+@permission_required("soegvaerelse.manage")
 def close_offer(request: HttpRequest, offer_id: int) -> HttpResponseRedirect:
     offer = get_object_or_404(RoomOffer, pk=offer_id)
     with transaction.atomic():
@@ -355,7 +356,7 @@ def close_offer(request: HttpRequest, offer_id: int) -> HttpResponseRedirect:
 
 
 @require_POST
-@role_required("indstilling")
+@permission_required("soegvaerelse.manage")
 def resolve_tie(request: HttpRequest, offer_id: int) -> HttpResponseRedirect:
     """Record indstillingen's manual resolution of a K-tie (the dorm coin flip): pin this offer's
     winner to the chosen application. allocate_round then treats the room as decided, which can cascade
@@ -392,7 +393,7 @@ def _carry_roster_forward(sy: int, sm: int, ty: int, tm: int) -> None:
 
 
 @require_POST
-@role_required("indstilling")
+@permission_required("soegvaerelse.manage")
 def end_round(request: HttpRequest) -> HttpResponseRedirect:
     """Finish the round: carry the current roster forward to each offered month, then move every
     winner (highest-K, global greedy) into their won room, then clear the round.

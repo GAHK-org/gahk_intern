@@ -17,6 +17,7 @@ from django.utils import timezone
 from django.utils.encoding import force_bytes
 from django.utils.http import url_has_allowed_host_and_scheme, urlsafe_base64_encode
 
+from access.api import KITCHEN, RESIDENT, ROLE_LABELS, can, permission_required, request_roles
 from audit import trail
 from core.danish import MONTHS
 from core.mentions import mentionable
@@ -33,7 +34,7 @@ from .models import (
     active_period,
     next_period,
 )
-from .permissions import current_resident, effective_roles, role_required
+from .permissions import current_resident
 
 logger = logging.getLogger(__name__)
 
@@ -51,7 +52,7 @@ def dashboard(request: HttpRequest) -> HttpResponse:
 
     ensure_previous_month_charged()
     year, month = active_period()
-    roles = sorted(effective_roles(request))
+    roles = sorted(ROLE_LABELS[r] for r in request_roles(request) if r not in (RESIDENT, KITCHEN))
     return render(
         request,
         "residents/dashboard.html",
@@ -232,7 +233,7 @@ def directory(request: HttpRequest) -> HttpResponse:
             "dir": direction,
             "headers": _sort_headers(sort, direction),
             # Only indstilling acts on (or sees) room conflicts; skip the query for everyone else.
-            "clash_rooms": _clash_rooms(year, month) if "indstilling" in effective_roles(request) else [],
+            "clash_rooms": _clash_rooms(year, month) if can(request, "directory.manage") else [],
         },
     )
 
@@ -258,7 +259,7 @@ def directory_rows(request: HttpRequest) -> HttpResponse:
     )
 
 
-@role_required("indstilling")
+@permission_required("directory.manage")
 def edit_resident(request: HttpRequest, pk: int) -> HttpResponse | HttpResponseRedirect:
     """Indstilling edits a resident's core data (name, e-mail, phone, dates, studie, fylgje). Room,
     embedsgruppe and rengøring are per-month and stay on the next-month list editor."""
@@ -501,7 +502,7 @@ def _target_period(request: HttpRequest, current: tuple[int, int]) -> tuple[int,
     return next_period(current)
 
 
-@role_required("indstilling")  # administrator/superuser pass via all-access
+@permission_required("directory.manage")
 def next_month_list(request: HttpRequest) -> HttpResponse | HttpResponseRedirect:
     """Indstilling (and admin) edit an alumneliste: copy the list forward, then set each resident's
     room, embedsgruppe (workgroup) and cleaning, and add/remove people. A privileged embedsgruppe

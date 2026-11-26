@@ -19,10 +19,11 @@ from django.urls import reverse
 from django.utils import timezone
 from django.views.decorators.http import require_POST
 
+from access.api import permission_required
 from core.exports import csv_or_xlsx_response
 from core.uploads import attached_image
 from residents.models import Resident
-from residents.permissions import current_resident, role_required
+from residents.permissions import current_resident
 
 from .forms import InterestPolicyForm, PurchasePolicyForm, WarningForm
 from .models import (
@@ -156,7 +157,7 @@ def my_balance(request: HttpRequest) -> HttpResponse:
     )
 
 
-@role_required("oelkaelder")
+@permission_required("oelkaelder.manage")
 def admin(request: HttpRequest) -> HttpResponse:
     active = Shopper.objects.filter(active=True).select_related("resident")
     rows = sorted(((s, s.balance_ore) for s in active), key=lambda t: t[1])  # debtors first
@@ -195,7 +196,7 @@ def admin(request: HttpRequest) -> HttpResponse:
 
 
 @require_POST
-@role_required("oelkaelder")
+@permission_required("oelkaelder.manage")
 def deactivate_shopper(request: HttpRequest, pk: int) -> HttpResponseRedirect:
     Shopper.objects.filter(pk=pk).update(active=False)
     messages.success(request, "Alumne deaktiveret.")
@@ -203,7 +204,7 @@ def deactivate_shopper(request: HttpRequest, pk: int) -> HttpResponseRedirect:
 
 
 @require_POST
-@role_required("oelkaelder")
+@permission_required("oelkaelder.manage")
 def activate_shopper(request: HttpRequest) -> HttpResponseRedirect:
     shopper = get_object_or_404(Shopper, pk=request.POST.get("shopper") or 0)
     shopper.active = True
@@ -213,7 +214,7 @@ def activate_shopper(request: HttpRequest) -> HttpResponseRedirect:
 
 
 @require_POST
-@role_required("oelkaelder")
+@permission_required("oelkaelder.manage")
 def add_shopper(request: HttpRequest) -> HttpResponseRedirect:
     resident = get_object_or_404(Resident, pk=request.POST.get("resident") or 0)
     _, created = Shopper.objects.get_or_create(resident=resident, defaults={"active": True})
@@ -225,7 +226,7 @@ def add_shopper(request: HttpRequest) -> HttpResponseRedirect:
 
 
 @require_POST
-@role_required("oelkaelder")
+@permission_required("oelkaelder.manage")
 def update_warning(request: HttpRequest, pk: int) -> HttpResponseRedirect:
     warning = get_object_or_404(Warning, pk=pk)
     form = WarningForm(request.POST, instance=warning)
@@ -238,7 +239,7 @@ def update_warning(request: HttpRequest, pk: int) -> HttpResponseRedirect:
 
 
 @require_POST
-@role_required("oelkaelder")
+@permission_required("oelkaelder.manage")
 def update_interest(request: HttpRequest) -> HttpResponseRedirect:
     form = InterestPolicyForm(request.POST, instance=InterestPolicy.get())
     if form.is_valid():
@@ -250,7 +251,7 @@ def update_interest(request: HttpRequest) -> HttpResponseRedirect:
 
 
 @require_POST
-@role_required("oelkaelder")
+@permission_required("oelkaelder.manage")
 def update_purchase_policy(request: HttpRequest) -> HttpResponseRedirect:
     form = PurchasePolicyForm(request.POST, instance=PurchasePolicy.get())
     if form.is_valid():
@@ -262,7 +263,7 @@ def update_purchase_policy(request: HttpRequest) -> HttpResponseRedirect:
 
 
 @require_POST
-@role_required("oelkaelder")
+@permission_required("oelkaelder.manage")
 def apply_interest_view(request: HttpRequest) -> HttpResponseRedirect:
     count = apply_interest()
     if count:
@@ -300,7 +301,7 @@ def _report_response(
     )
 
 
-@role_required("oelkaelder")
+@permission_required("oelkaelder.manage")
 def report_deposits(request: HttpRequest) -> HttpResponse:
     start, end = _report_range(request)
     lo = timezone.make_aware(datetime.combine(start, datetime.min.time()))
@@ -316,7 +317,7 @@ def report_deposits(request: HttpRequest) -> HttpResponse:
     )
 
 
-@role_required("oelkaelder")
+@permission_required("oelkaelder.manage")
 def report_sales(request: HttpRequest) -> HttpResponse:
     start, end = _report_range(request)
     lo = timezone.make_aware(datetime.combine(start, datetime.min.time()))
@@ -331,7 +332,7 @@ def report_sales(request: HttpRequest) -> HttpResponse:
     return _report_response(request, "Salg", ["Vare", "Antal", "Beløb"], data, f"salg-{start}-{end}")
 
 
-@role_required("oelkaelder")
+@permission_required("oelkaelder.manage")
 def report_quantity(request: HttpRequest) -> HttpResponse:
     start, end = _report_range(request)
     lo = timezone.make_aware(datetime.combine(start, datetime.min.time()))
@@ -462,7 +463,7 @@ def _sale_rows(transactions: Iterable[Transaction]) -> list[_SaleRow]:
     return rows
 
 
-@role_required("oelkaelder")
+@permission_required("oelkaelder.manage")
 def all_sales(request: HttpRequest) -> HttpResponse:
     """Salgsoverblik: every sale, one row per transaction, with the buyers who split it."""
     start, end = _sales_range(request)
@@ -514,7 +515,7 @@ def all_sales(request: HttpRequest) -> HttpResponse:
 
 
 @require_POST
-@role_required("oelkaelder")
+@permission_required("oelkaelder.manage")
 def void_sale(request: HttpRequest, pk: int) -> HttpResponseRedirect:
     """Annullér a mistaken sale. POST-only: the legacy `deleteTransaction` moved money on GET."""
     if void_purchase(pk, current_resident(request).email):
@@ -525,7 +526,7 @@ def void_sale(request: HttpRequest, pk: int) -> HttpResponseRedirect:
     return redirect(f"{reverse('oelkaelder:all_sales')}?{query}")
 
 
-@role_required("oelkaelder")
+@permission_required("oelkaelder.manage")
 def person_history(request: HttpRequest) -> HttpResponse:
     """One resident's full ølkælder history — purchases, deposits and adjustments — so the ØK can see
     not just what somebody bought but why their balance is what it is."""
@@ -572,7 +573,7 @@ def _signed_ore(amount_kr: str, direction: str) -> int:
 
 
 @require_POST
-@role_required("oelkaelder")
+@permission_required("oelkaelder.manage")
 def add_adjustment(request: HttpRequest, pk: int) -> HttpResponseRedirect:
     """Manually correct one shopper's balance, with a mandatory written explanation."""
     shopper = get_object_or_404(Shopper, pk=pk)
@@ -588,7 +589,7 @@ def add_adjustment(request: HttpRequest, pk: int) -> HttpResponseRedirect:
 
 
 @require_POST
-@role_required("oelkaelder")
+@permission_required("oelkaelder.manage")
 def void_adjustment_view(request: HttpRequest, pk: int) -> HttpResponseRedirect:
     adjustment = get_object_or_404(Adjustment, pk=pk)
     if void_adjustment(pk, current_resident(request).email):
@@ -599,7 +600,7 @@ def void_adjustment_view(request: HttpRequest, pk: int) -> HttpResponseRedirect:
 
 
 @require_POST
-@role_required("oelkaelder")
+@permission_required("oelkaelder.manage")
 def add_deposit(request: HttpRequest, pk: int) -> HttpResponseRedirect:
     shopper = get_object_or_404(Shopper, pk=pk)
     try:
@@ -612,7 +613,7 @@ def add_deposit(request: HttpRequest, pk: int) -> HttpResponseRedirect:
 
 
 @require_POST
-@role_required("oelkaelder")
+@permission_required("oelkaelder.manage")
 def void_deposit(request: HttpRequest, pk: int) -> HttpResponseRedirect:
     """Soft-delete a mistaken deposit (is_valid=False) — the balance is derived, so it just drops out."""
     deposit = get_object_or_404(Deposit, pk=pk, is_valid=True)
@@ -630,7 +631,7 @@ def _kr_to_ore(value: str) -> int:
     return ore
 
 
-@role_required("oelkaelder")
+@permission_required("oelkaelder.manage")
 def products(request: HttpRequest) -> HttpResponse:
     """Manage the kiosk assortment: name, price, in/out of the till, featured, and image."""
     return render(
@@ -641,7 +642,7 @@ def products(request: HttpRequest) -> HttpResponse:
 
 
 @require_POST
-@role_required("oelkaelder")
+@permission_required("oelkaelder.manage")
 def product_create(request: HttpRequest) -> HttpResponseRedirect:
     name = (request.POST.get("name") or "").strip()
     if not name:
@@ -664,7 +665,7 @@ def product_create(request: HttpRequest) -> HttpResponseRedirect:
 
 
 @require_POST
-@role_required("oelkaelder")
+@permission_required("oelkaelder.manage")
 def product_update(request: HttpRequest, pk: int) -> HttpResponseRedirect:
     product = get_object_or_404(Product, pk=pk)
     name = (request.POST.get("name") or "").strip()

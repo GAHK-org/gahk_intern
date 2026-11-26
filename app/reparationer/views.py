@@ -4,10 +4,10 @@ Open to every logged-in resident for reporting, same openness as Opslagstavlen: 
 broken needs no role. Two crews then work the pipeline in sequence — see models.RepairTask for the
 `responsible`/`status` split — and each has a different ceiling:
 
-  * Viceværterne (MOVE_ROLES minus MANAGE_ROLES) triage: they may move a ticket to any status
+  * Viceværterne ("reparationer.move") triage: they may move a ticket to any status
     EXCEPT the two in MANAGER_ONLY_STATUSES, and hand `responsible` over to Reppergruppen (see
     set_responsible).
-  * Reppergruppen, Inspektionen and administrator (MANAGE_ROLES) have no ceiling: every status,
+  * Reppergruppen, Inspektionen and administrator ("reparationer.manage") have no ceiling: every status,
     including MANAGER_ONLY_STATUSES and closing a ticket, plus delete.
 
 set_status is one view for both crews rather than two, because the columns a Vicevært may use are a
@@ -28,17 +28,14 @@ from django.utils import timezone
 from django.utils.cache import patch_vary_headers
 from django.views.decorators.http import require_POST
 
+from access.api import can, permission_required
 from core.clock import current_datetime
 from core.uploads import EXTENSION_HELP, prepare_image_upload
-from residents.models import Role
-from residents.permissions import current_resident, request_has_role, role_required
+from residents.permissions import current_resident
 
 from . import live, services
 from .forms import COMMON_AREAS, RepairCommentForm, RepairTaskForm
 from .models import RepairComment, RepairImage, RepairTask
-
-MANAGE_ROLES = (Role.REPPER, Role.INSPEKTION, Role.ADMINISTRATOR)
-MOVE_ROLES = (*MANAGE_ROLES, Role.VICEVAERT)
 
 # The board's "sted" filter — same two-way split as the location dropdown itself (COMMON_AREAS vs.
 # everything else, which is only ever a room or a floor's toilet — see forms.location_choices).
@@ -83,7 +80,7 @@ def can_delete_comment(request: HttpRequest, comment: RepairComment) -> bool:
     """The comment's author, or a manager — mirrors opslagstavle.access.can_delete_comment."""
     if not request.user.is_authenticated:
         return False
-    return comment.author_id == request.user.pk or request_has_role(request, *MANAGE_ROLES)
+    return comment.author_id == request.user.pk or can(request, "reparationer.manage")
 
 
 def _redirect_after(request: HttpRequest, task_pk: int) -> HttpResponseRedirect:
@@ -177,8 +174,8 @@ def board(request: HttpRequest) -> HttpResponse:
             "result_count": sum(len(items) for _, _, items in columns) if query else None,
             # Dragging a card is the board's only move control (see board.html). Both flags are read
             # by frontend/src/reparationer.ts, which wires up nothing at all without can_move.
-            "can_move": request_has_role(request, *MOVE_ROLES),
-            "can_manage": request_has_role(request, *MANAGE_ROLES),
+            "can_move": can(request, "reparationer.move"),
+            "can_manage": can(request, "reparationer.manage"),
             "manager_only_statuses": MANAGER_ONLY_STATUSES,
         },
     )
@@ -203,7 +200,7 @@ def archive_list(request: HttpRequest) -> HttpResponse:
         {
             "tasks": tasks,
             "query": query,
-            "can_manage": request_has_role(request, *MANAGE_ROLES),
+            "can_manage": can(request, "reparationer.manage"),
         },
     )
 
@@ -229,12 +226,12 @@ def create(request: HttpRequest) -> HttpResponse:
 
 
 @require_POST
-@role_required(*MOVE_ROLES)
+@permission_required("reparationer.move")
 def set_status(request: HttpRequest, pk: int) -> HttpResponse:
     task = get_object_or_404(RepairTask, pk=pk)
     status = request.POST.get("status")
-    if status in MANAGER_ONLY_STATUSES and not request_has_role(request, *MANAGE_ROLES):
-        # A Vicevært passed the view-level MOVE_ROLES gate but this status is manager-only — see
+    if status in MANAGER_ONLY_STATUSES and not can(request, "reparationer.manage"):
+        # A Vicevært passed the view-level "reparationer.move" check but this status is manager-only — see
         # MANAGER_ONLY_STATUSES. Answered rather than ignored: the board lets them pick a card up
         # and carry it anywhere, so landing on a column that is not theirs is an ordinary slip, and
         # it deserves the card back plus a reason. The buttons on the detail page still never render
@@ -251,7 +248,7 @@ def set_status(request: HttpRequest, pk: int) -> HttpResponse:
 
 
 @require_POST
-@role_required(*MOVE_ROLES)
+@permission_required("reparationer.move")
 def set_responsible(request: HttpRequest, pk: int) -> HttpResponse:
     """Hand a ticket between the two crews, in either direction.
 
@@ -260,7 +257,7 @@ def set_responsible(request: HttpRequest, pk: int) -> HttpResponse:
     after all. Without it the only way back was the Django admin, and a handoff nobody can undo is
     one people hesitate to make in the first place.
 
-    Both crews may move it both ways — MOVE_ROLES, not a gate per direction. Which crew is holding a
+    Both crews may move it both ways — "reparationer.move", not a gate per direction. Which crew is holding a
     ticket is a working arrangement between two crews who talk to each other, not a privilege one of
     them holds over the other, and either side of a handoff is equally entitled to say it was wrong.
     The ceiling that does matter — closing a ticket, or committing AK hours to it — sits on `status`
@@ -289,7 +286,7 @@ def set_responsible(request: HttpRequest, pk: int) -> HttpResponse:
 
 
 @require_POST
-@role_required(*MANAGE_ROLES)
+@permission_required("reparationer.manage")
 def delete(request: HttpRequest, pk: int) -> HttpResponseRedirect:
     task = get_object_or_404(RepairTask, pk=pk)
     task_pk = task.pk  # delete() clears it
@@ -300,7 +297,7 @@ def delete(request: HttpRequest, pk: int) -> HttpResponseRedirect:
 
 
 @require_POST
-@role_required(*MANAGE_ROLES)
+@permission_required("reparationer.manage")
 def archive_now(request: HttpRequest, pk: int) -> HttpResponseRedirect:
     """Archive a Færdig ticket immediately instead of waiting for the nightly sweep
     (archive_finished_repairs). Only meaningful for a Færdig, not-yet-archived ticket — the button
@@ -315,7 +312,7 @@ def archive_now(request: HttpRequest, pk: int) -> HttpResponseRedirect:
 
 
 @require_POST
-@role_required(*MANAGE_ROLES)
+@permission_required("reparationer.manage")
 def unarchive(request: HttpRequest, pk: int) -> HttpResponseRedirect:
     """Bring an archived ticket back onto the board — it reappears in Færdig, exactly where the
     archive found it, since archiving never touched `status`."""
@@ -337,7 +334,7 @@ def detail(request: HttpRequest, pk: int) -> HttpResponse:
     comments = list(task.comments.select_related("author").prefetch_related("images"))
     for comment in comments:
         comment.can_delete = can_delete_comment(request, comment)  # type: ignore[attr-defined]
-    can_manage = request_has_role(request, *MANAGE_ROLES)
+    can_manage = can(request, "reparationer.manage")
     return render(
         request,
         "reparationer/detail.html",
@@ -350,8 +347,8 @@ def detail(request: HttpRequest, pk: int) -> HttpResponse:
             "statuses": RepairTask.Status.choices,
             "manager_only_statuses": MANAGER_ONLY_STATUSES,
             "can_manage": can_manage,
-            "can_move": request_has_role(request, *MOVE_ROLES),
-            "can_handoff": request_has_role(request, *MOVE_ROLES),
+            "can_move": can(request, "reparationer.move"),
+            "can_handoff": can(request, "reparationer.move"),
             "other_responsible": (
                 RepairTask.Responsible.REPPER
                 if task.responsible == RepairTask.Responsible.VICEVAERT

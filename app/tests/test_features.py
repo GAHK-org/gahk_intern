@@ -14,10 +14,10 @@ from django.test import Client, override_settings
 from django.urls import reverse
 from django.utils import timezone
 
+from access.api import user_can
 from admissions.models import Application
 from config import settings as config_settings
 from residents.models import Resident, Role, active_period
-from residents.permissions import CMS_EDITOR_ROLES, has_active_role
 
 
 @pytest.mark.parametrize("debug", ["0", "1"])
@@ -423,7 +423,7 @@ def test_pr_embedsgruppe_grants_cms_access(make_resident: Callable) -> None:
     _sync_month_roles(r.id, pr_group, y, m, is_admin=False)  # what the next-month editor runs
 
     assert r.has_role("pr", (y, m))
-    assert has_active_role(r, *CMS_EDITOR_ROLES)
+    assert user_can(r, "website.manage")
 
 
 @pytest.mark.django_db

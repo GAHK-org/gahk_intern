@@ -35,8 +35,9 @@ from django.db.models import Q, QuerySet
 from django.http import HttpRequest
 from django.http.response import HttpResponseBase
 
+from access.api import Feature, Grade, holders, request_permissions, request_roles
 from residents.models import RoleAssignment, active_period
-from residents.permissions import View, effective_roles
+from residents.permissions import View
 
 
 class Gate:
@@ -44,10 +45,18 @@ class Gate:
 
     `roles` returns None when the feature is open to every logged-in resident, or a tuple of role
     names when it is still limited to them.
+
+    `feature` is the feature's place in access.features: a request is allowed only if its
+    permissions open it as well, so another feature asking (Opslagstavlen's embeds, the dashboard's
+    agenda, a live socket) gets the same answer as the gate in front of the views.
     """
 
-    def __init__(self, roles: Callable[[], tuple[str, ...] | None]) -> None:
+    def __init__(self, roles: Callable[[], tuple[str, ...] | None], feature: Feature) -> None:
         self._roles = roles
+        self._feature = feature
+
+    def _opens(self, request: HttpRequest) -> bool:
+        return request_permissions(request).grade(self._feature) >= Grade.VIEW
 
     def is_limited(self) -> bool:
         """Whether the gate is still on — what drives the "Under test" chip."""
@@ -65,7 +74,11 @@ class Gate:
     def request_allowed(self, request: HttpRequest) -> bool:
         """Same question for a request. Uses *effective* roles, so an administrator previewing as a
         plain beboer is locked out too — which is exactly the rollout being simulated."""
-        return request.user.is_authenticated and self.roles_allowed(effective_roles(request))
+        return (
+            request.user.is_authenticated
+            and self.roles_allowed(request_roles(request))
+            and self._opens(request)
+        )
 
     def required(self, view: View) -> View:
         """@login_required plus the gate. Every view gets it, not just the page: a partial that
@@ -75,7 +88,7 @@ class Gate:
         def wrapped(request: HttpRequest, *args: object, **kwargs: object) -> HttpResponseBase:
             if not request.user.is_authenticated:
                 return redirect_to_login(request.get_full_path())
-            if not self.roles_allowed(effective_roles(request)):
+            if not self.roles_allowed(request_roles(request)) or not self._opens(request):
                 raise PermissionDenied
             return view(request, *args, **kwargs)
 
@@ -90,10 +103,12 @@ class Gate:
 
         Addressed to people rather than devices (it used to filter PushSubscription rows): an in-app
         notification has no device, so the audience is narrowed before anyone's devices are looked
-        up. Filtered in SQL rather than by calling real_roles() per resident: this runs on every
-        post. Superusers are matched separately because they hold every role without holding any
-        assignment.
+        up. Filtered in SQL rather than by working out each resident's roles: this runs on every
+        post. Narrowed first to whoever may open the feature at all (access.api.holders), then to the
+        rollout's roles; superusers are matched separately because they hold every role without
+        holding any assignment.
         """
+        qs = qs.filter(pk__in=holders(f"{self._feature}.view").values("pk"))
         access_roles = self._roles()
         if access_roles is None:
             return qs

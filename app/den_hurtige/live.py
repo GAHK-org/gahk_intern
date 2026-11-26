@@ -12,8 +12,8 @@ write, and the feed's slow backstop poll is what takes it off the screen.
 
 from django.http import HttpRequest
 
+from access.api import Feature, request_roles
 from core import live
-from residents.permissions import effective_roles
 
 from . import channels
 from .access import request_allowed
@@ -29,9 +29,7 @@ def may_listen(request: HttpRequest, slug: str) -> bool:
     """The feature's gate, then the channel's own roles — exactly what views._channel_or_404 asks."""
     channel = channels.lookup(slug) if slug else None
     return (
-        channel is not None
-        and request_allowed(request)
-        and channels.allowed(channel, effective_roles(request))
+        channel is not None and request_allowed(request) and channels.allowed(channel, request_roles(request))
     )
 
 
@@ -41,4 +39,4 @@ def message_changed(channel: str, pk: int, kind: live.Kind = "changed") -> None:
 
 
 def register() -> None:
-    live.register(FEATURE, may_listen)
+    live.register(FEATURE, may_listen, Feature.DEN_HURTIGE)

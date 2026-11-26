@@ -15,8 +15,8 @@ history with no way to tell a real edit from an import. The cost is that a shell
 trail of its own; the first edit afterwards still snapshots the database state before it changes
 anything, so what an editor overwrites can always be got back.
 
-Permissions are the caller's business (the views check CMS_EDITOR_ROLES, and administrator for
-deleting a page); these functions trust `by`.
+Permissions are the caller's business (the views check website.manage, and website.administer
+for deleting a page); these functions trust `by`.
 """
 
 import datetime
