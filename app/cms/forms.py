@@ -9,10 +9,13 @@ address is composed from a section (a top-level page) and a last segment, so an 
 `faciliteter-kokken` where `faciliteter/kokken` was meant.
 """
 
+import datetime
 from typing import Any, cast
 
 from django import forms
 from django.core.exceptions import ValidationError
+
+from core.date_and_time import DateAndTimeField
 
 from .models import FRONT_PAGE_ID, CmsImage, Page
 from .paths import is_reserved, join_path, normalize_segment, split_path, validate_page_path
@@ -163,12 +166,8 @@ class PageForm(forms.Form):
 
 class NewsForm(forms.Form):
     title = forms.CharField(label="Titel", max_length=255)
-    published_at = forms.DateTimeField(
-        label="Udgivet",
-        required=False,
-        widget=forms.DateTimeInput(attrs={"type": "datetime-local"}, format="%Y-%m-%dT%H:%M"),
-        input_formats=["%Y-%m-%dT%H:%M", "%Y-%m-%d %H:%M", "%Y-%m-%dT%H:%M:%S"],
-        help_text="Nyhederne står nyeste først. Tomt: nu.",
+    published_at = DateAndTimeField(
+        label="Udgivet", required=False, help_text="Nyhederne står nyeste først. Tomt: nu."
     )
     body = forms.CharField(label="Tekst", required=False, widget=forms.Textarea(attrs=EDITOR_ATTRS))
 
@@ -185,8 +184,17 @@ class NewsForm(forms.Form):
         return {
             "title": raw.get("title", ""),
             "body": raw.get("body", ""),
-            "published_at": str(raw.get("published_at") or "").replace("T", " "),
+            "published_at": self._unsaved_published_at(),
         }
+
+    def _unsaved_published_at(self) -> datetime.datetime | None:
+        """The preview's time as typed, or None (the preview then says "now") while it is unfinished."""
+        field = self.fields["published_at"]
+        typed = field.widget.value_from_datadict(self.data, self.files, self.add_prefix("published_at"))
+        try:
+            return field.clean(typed)
+        except ValidationError:
+            return None
 
 
 class EventForm(forms.Form):

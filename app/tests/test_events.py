@@ -44,6 +44,8 @@ from notifications import categories
 from notifications.models import Notification
 from residents.models import Resident, Role
 
+from .form_data import date_and_time
+
 EVENTS = "/begivenheder/"
 
 
@@ -136,7 +138,7 @@ def told(category: str) -> list[tuple[int, str]]:
 def make_event(organiser: Resident, **extra: object) -> Event:
     """An event as the form would have produced it — minute precision, no stray microseconds.
 
-    That matters for the edit tests: `datetime-local` only ever submits whole minutes, so an event
+    That matters for the edit tests: the form's time box only ever submits whole minutes, so an event
     carrying microseconds would look changed the first time anyone saved the form without touching
     the time, and `significant_change` would fire a notification nobody asked for.
     """
@@ -247,7 +249,7 @@ def test_a_resident_creates_an_event(client: Client, beboer: Resident, pushes: l
             "title": "Filmaften",
             "description": "",
             "location": "TV-stuen",
-            "starts_at": when,
+            **date_and_time("starts_at", when),
             "visibility": Visibility.AABENT,
         },
     )
@@ -264,7 +266,7 @@ def test_an_event_cannot_start_in_the_past(client: Client, beboer: Resident) -> 
 
     client.post(
         EVENTS + "opret",
-        {"title": "I går", "starts_at": when, "visibility": Visibility.AABENT},
+        {"title": "I går", **date_and_time("starts_at", when), "visibility": Visibility.AABENT},
     )
 
     assert not Event.objects.exists()
@@ -285,8 +287,8 @@ def test_an_organiser_can_set_a_svarfrist_from_the_form(client: Client, beboer: 
         {
             "title": "Med frist",
             "visibility": Visibility.AABENT,
-            "starts_at": timezone.localtime(start).strftime("%Y-%m-%dT%H:%M"),
-            "rsvp_deadline_at": timezone.localtime(deadline).strftime("%Y-%m-%dT%H:%M"),
+            **date_and_time("starts_at", start),
+            **date_and_time("rsvp_deadline_at", deadline),
         },
     )
 
@@ -308,10 +310,8 @@ def test_a_svarfrist_after_the_start_is_refused(client: Client, beboer: Resident
         {
             "title": "Frist efter start",
             "visibility": Visibility.AABENT,
-            "starts_at": timezone.localtime(start).strftime("%Y-%m-%dT%H:%M"),
-            "rsvp_deadline_at": timezone.localtime(start + datetime.timedelta(hours=1)).strftime(
-                "%Y-%m-%dT%H:%M"
-            ),
+            **date_and_time("starts_at", start),
+            **date_and_time("rsvp_deadline_at", start + datetime.timedelta(hours=1)),
         },
     )
 
@@ -326,8 +326,8 @@ def test_the_end_must_come_after_the_start(client: Client, beboer: Resident) -> 
         {
             "title": "Bagvendt",
             "visibility": Visibility.AABENT,
-            "starts_at": timezone.localtime(start).strftime("%Y-%m-%dT%H:%M"),
-            "ends_at": timezone.localtime(start - datetime.timedelta(hours=1)).strftime("%Y-%m-%dT%H:%M"),
+            **date_and_time("starts_at", start),
+            **date_and_time("ends_at", start - datetime.timedelta(hours=1)),
         },
     )
     assert not Event.objects.exists()
@@ -366,7 +366,7 @@ def test_moving_the_start_bumps_sequence_and_notifies(
     moved = timezone.localtime(event.starts_at + datetime.timedelta(hours=2)).strftime("%Y-%m-%dT%H:%M")
     client.post(
         f"{EVENTS}{event.pk}/rediger",
-        {"title": event.title, "starts_at": moved, "visibility": Visibility.AABENT},
+        {"title": event.title, **date_and_time("starts_at", moved), "visibility": Visibility.AABENT},
     )
 
     event.refresh_from_db()
@@ -391,7 +391,7 @@ def test_editing_only_the_description_notifies_nobody(
             "title": event.title,
             "visibility": Visibility.AABENT,
             "description": "Rettet stavefejl",
-            "starts_at": timezone.localtime(event.starts_at).strftime("%Y-%m-%dT%H:%M"),
+            **date_and_time("starts_at", event.starts_at),
         },
     )
 
@@ -574,7 +574,7 @@ def test_the_capacity_cannot_be_lowered_below_the_seated_count(
         {
             "title": event.title,
             "visibility": Visibility.AABENT,
-            "starts_at": timezone.localtime(event.starts_at).strftime("%Y-%m-%dT%H:%M"),
+            **date_and_time("starts_at", event.starts_at),
             "capacity": "1",
         },
     )
@@ -845,7 +845,7 @@ def test_a_new_event_notifies_everyone_but_the_organiser(
 
     client.post(
         EVENTS + "opret",
-        {"title": "Fest", "starts_at": when, "visibility": Visibility.AABENT},
+        {"title": "Fest", **date_and_time("starts_at", when), "visibility": Visibility.AABENT},
     )
 
     assert told(categories.EVENTS_NEW) == [(other.pk, "Fest")]
@@ -861,7 +861,7 @@ def test_the_notification_links_to_the_event_not_the_list(
 
     client.post(
         EVENTS + "opret",
-        {"title": "Fest", "starts_at": when, "visibility": Visibility.AABENT},
+        {"title": "Fest", **date_and_time("starts_at", when), "visibility": Visibility.AABENT},
     )
 
     event = Event.objects.get()
@@ -881,7 +881,10 @@ def test_a_resident_without_a_phone_still_hears_about_a_new_event(
     client.force_login(beboer)
     when = timezone.localtime(timezone.now() + datetime.timedelta(days=2)).strftime("%Y-%m-%dT%H:%M")
 
-    client.post(EVENTS + "opret", {"title": "Fest", "starts_at": when, "visibility": Visibility.AABENT})
+    client.post(
+        EVENTS + "opret",
+        {"title": "Fest", **date_and_time("starts_at", when), "visibility": Visibility.AABENT},
+    )
 
     row = Notification.objects.get()
     assert (row.recipient_id, row.in_app, row.pushed) == (other.pk, True, False)
@@ -1606,7 +1609,7 @@ def test_an_invite_only_event_needs_four_invitees(
         EVENTS + "opret",
         {
             "title": "For lille",
-            "starts_at": when,
+            **date_and_time("starts_at", when),
             "visibility": Visibility.KUN_INVITEREDE,
             "invitees": [g.pk for g in guests[:3]],
         },
@@ -1618,7 +1621,7 @@ def test_an_invite_only_event_needs_four_invitees(
         EVENTS + "opret",
         {
             "title": "Stor nok",
-            "starts_at": when,
+            **date_and_time("starts_at", when),
             "visibility": Visibility.KUN_INVITEREDE,
             "invitees": [g.pk for g in guests],
         },
@@ -1638,7 +1641,7 @@ def test_the_minimum_is_enforced_on_edit_too(
         f"{EVENTS}{event.pk}/rediger",
         {
             "title": event.title,
-            "starts_at": timezone.localtime(event.starts_at).strftime("%Y-%m-%dT%H:%M"),
+            **date_and_time("starts_at", event.starts_at),
             "visibility": Visibility.KUN_INVITEREDE,
         },
     )
