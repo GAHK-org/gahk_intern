@@ -163,13 +163,13 @@ def test_the_feed_shows_the_excerpt_and_the_first_widget_under_it(beboer: Reside
     ]
 
 
-def test_an_embed_in_a_sentence_is_drawn_after_its_paragraph(beboer: Resident) -> None:
-    notice = post(beboer, f"Se {embed(album())} fra i går.")
+def test_an_embed_between_two_lines_is_drawn_between_them(beboer: Resident) -> None:
+    notice = post(beboer, f"Se\n{embed(album())}\nfra i går.")
 
     text = body_of(client_for(beboer).get(f"{BOARD}{notice.pk}").content.decode())
 
     [widget] = album_widgets(text)
-    assert text.index("<p>Se  fra i går.</p>") < text.index(widget)
+    assert text.index("<p>Se</p>") < text.index(widget) < text.index("<p>fra i går.</p>")
 
 
 def test_the_album_widget_counts_pictures_and_videos_all_the_way_down(beboer: Resident) -> None:

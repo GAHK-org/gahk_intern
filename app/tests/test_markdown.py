@@ -377,11 +377,28 @@ def test_an_embed_alone_in_its_paragraph_becomes_its_widget() -> None:
     assert "album:12" not in html.replace(WIDGETS["album:12"], "")
 
 
-def test_an_embed_in_a_sentence_is_drawn_after_its_paragraph() -> None:
-    """A widget is a block, and a block inside a <p> is not HTML."""
-    html = render_markdown("Se ![Revy](gahkflix:3) her.", embeds=WIDGETS)
+def test_an_embed_between_lines_is_drawn_between_them() -> None:
+    """One paragraph, `Før` and `Efter` on the lines around the embed: the widget splits it."""
+    html = render_markdown("Før\n![Julefrokost 2026](album:12)\nEfter\n\nTil sidst", embeds=WIDGETS)
 
-    assert html.index("<p>Se  her.</p>") < html.index(WIDGETS["gahkflix:3"])
+    assert html.index("<p>Før</p>") < html.index(WIDGETS["album:12"]) < html.index("<p>Efter</p>")
+    assert html.index("<p>Efter</p>") < html.index("<p>Til sidst</p>")
+
+
+def test_an_embed_in_a_sentence_splits_it() -> None:
+    """A widget is a block, and a block inside a <p> is not HTML: the sentence goes on below it."""
+    html = render_markdown("Se ![Revy](gahkflix:3) her og ![Julefrokost](album:12)", embeds=WIDGETS)
+
+    assert html.index("<p>Se</p>") < html.index(WIDGETS["gahkflix:3"]) < html.index("<p>her og</p>")
+    assert html.index("<p>her og</p>") < html.index(WIDGETS["album:12"])
+    assert html.count("<p>") == 2
+
+
+def test_an_excerpt_keeps_the_text_around_an_embed_together() -> None:
+    """Without the widget there is nothing to split the paragraph for."""
+    html = render_markdown("Før\n![Julefrokost 2026](album:12)\nEfter", embeds=WIDGETS, place_embeds=False)
+
+    assert html.count("<p>") == 1 and "Før" in html and "Efter" in html and "ALBUM" not in html
 
 
 def test_an_embed_without_a_widget_shows_its_name() -> None:

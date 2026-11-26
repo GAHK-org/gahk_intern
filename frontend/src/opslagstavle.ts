@@ -143,8 +143,8 @@ function init(form: HTMLElement): void {
 }
 
 /** Put an embed (`![Julefrokost 2026](album:12)`) in the body at the cursor, on a paragraph of its
- * own: an embed is drawn as a widget after the paragraph it is in, so one alone is drawn exactly
- * where it was put. */
+ * own: the widget is drawn where it stands either way, and a blank line around it keeps the
+ * Markdown readable. */
 function insertEmbed(area: HTMLTextAreaElement, markdown: string): void {
   const before = area.value.slice(0, area.selectionStart);
   const after = area.value.slice(area.selectionEnd);
