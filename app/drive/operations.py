@@ -27,6 +27,7 @@ from django.db.models import Value
 from django.db.models.functions import Concat, Substr
 from django.utils import timezone
 
+from audit import trail
 from residents.models import Resident
 
 from . import history, services, sharing
@@ -106,7 +107,7 @@ def rename_file(viewer: Viewer, file: File, name: str, actor: Resident) -> None:
     old = file.name
     file.name = name
     try:
-        with transaction.atomic():
+        with trail.event("drive.file.renamed", subject=file, actor=actor):
             file.save(update_fields=["name", "name_key"])
     except IntegrityError as exc:
         raise _clash(file.folder, name) from exc
@@ -130,7 +131,7 @@ def rename_folder(viewer: Viewer, folder: Folder, name: str, actor: Resident) ->
     old = folder.name
     folder.name = name
     try:
-        with transaction.atomic():
+        with trail.event("drive.folder.renamed", subject=folder, actor=actor):
             folder.save()
     except IntegrityError as exc:
         raise _clash(parent, name) from exc
@@ -202,16 +203,30 @@ def check_move(viewer: Viewer, selection: Selection, destination: Folder) -> Non
             raise _clash(destination, name)
 
 
-@transaction.atomic
 def move(viewer: Viewer, selection: Selection, destination: Folder, actor: Resident) -> None:
+    involve = [(selection.source, "from"), (destination, "to")]
+    with trail.event("drive.items.moved", actor=actor, involve=involve):
+        _move(viewer, selection, destination, actor)
+
+
+def _move(viewer: Viewer, selection: Selection, destination: Folder, actor: Resident) -> None:
     check_move(viewer, selection, destination)
     origin = selection.source.display_path()
     to = destination.display_path()
     if ends_shares(selection, destination):
         sharing.end(selection.files, selection.folders)
+    event = trail.current()
     for folder in selection.folders:
         old_path = folder.path
         Folder.objects.filter(pk=folder.pk).update(parent=destination)
+        if event is not None:
+            # Queryset updates, which the trail does not see on its own. The subtree follows.
+            event.change(folder, "parent", folder.parent_id, destination.pk)
+            for name in ("space", "workgroup_id", "period_start"):
+                if getattr(folder, name) != getattr(destination, name):
+                    event.change(
+                        folder, name.removesuffix("_id"), getattr(folder, name), getattr(destination, name)
+                    )
         Folder.objects.filter(path__startswith=old_path).update(
             path=Concat(Value(f"{destination.path}{folder.pk}/"), Substr("path", len(old_path) + 1)),
             space=destination.space,
@@ -294,9 +309,15 @@ def _copy_folder(folder: Folder, destination: Folder, actor: Resident, now: date
     return count
 
 
-@transaction.atomic
 def copy(viewer: Viewer, selection: Selection, destination: Folder, actor: Resident) -> int:
     """Returns how many files were copied."""
+    with trail.event(
+        "drive.items.copied", actor=actor, involve=[(selection.source, "from"), (destination, "to")]
+    ):
+        return _copy(viewer, selection, destination, actor)
+
+
+def _copy(viewer: Viewer, selection: Selection, destination: Folder, actor: Resident) -> int:
     check_copy(viewer, selection, destination)
     now = timezone.now()
     count = 0
@@ -318,8 +339,12 @@ def _has_contents(folder: Folder) -> bool:
     )
 
 
-@transaction.atomic
 def delete(viewer: Viewer, selection: Selection, actor: Resident) -> None:
+    with trail.event("drive.items.deleted", actor=actor, involve=[(selection.source, "folder")]):
+        _delete(viewer, selection, actor)
+
+
+def _delete(viewer: Viewer, selection: Selection, actor: Resident) -> None:
     if not selection:
         raise ValidationError("Vælg noget at slette.")
     check_files(viewer, selection.files)
@@ -328,8 +353,12 @@ def delete(viewer: Viewer, selection: Selection, actor: Resident) -> None:
         if _has_contents(folder):
             raise ValidationError(f"{folder.name} kan kun slettes, når den er tom.")
     now = timezone.now()
+    event = trail.current()
     for folder in selection.folders:
         Folder.objects.filter(pk=folder.pk).update(deleted_at=now, deleted_by=actor)
+        if event is not None:  # a queryset update, which the trail does not see on its own
+            event.change(folder, "deleted_at", None, now)
+            event.change(folder, "deleted_by", None, actor.pk)
         history.record(Event.Action.DELETED, actor=actor, folder=folder, name=folder.name)
     for file in selection.files:
         file.deleted_at, file.deleted_by = now, actor
@@ -385,10 +414,14 @@ def bin_count(viewer: Viewer, folder: Folder) -> int:
     return sum(1 for file in files if viewer.can_change_file_in(file.folder))
 
 
-@transaction.atomic
 def restore(viewer: Viewer, file: File, actor: Resident) -> File:
     """Out of the bin, into its folder - and the folder, and any above it, out of the bin too. A
     name taken meanwhile gets a number: `Budget (2).xlsx`."""
+    with trail.event("drive.file.restored", subject=file, actor=actor, only_if_changed=True):
+        return _restore(viewer, file, actor)
+
+
+def _restore(viewer: Viewer, file: File, actor: Resident) -> File:
     file = File.objects.select_for_update().select_related("folder").get(pk=file.pk)
     if file.deleted_at is None:
         return file
@@ -404,6 +437,10 @@ def restore(viewer: Viewer, file: File, actor: Resident) -> File:
         Folder.objects.filter(pk=folder.pk).update(
             name=name, name_key=name_key(name), deleted_at=None, deleted_by=None
         )
+        if (event := trail.current()) is not None:  # a queryset update, unseen by the trail
+            event.change(folder, "name", folder.name, name)
+            event.change(folder, "deleted_at", folder.deleted_at, None)
+            event.change(folder, "deleted_by", folder.deleted_by_id, None)
         history.record(Event.Action.RESTORED, actor=actor, folder=folder, name=name)
     if services.taken(file.folder, file.name_key):
         file.name = services.free_name(file.folder, file.name)
@@ -417,7 +454,7 @@ def empty_bin(now: datetime | None = None) -> tuple[int, int]:
     """Remove for good what has been in the bin for BIN_DAYS, and the bytes no version points at
     any more. Returns (files, folders) removed."""
     cutoff = (now or timezone.now()) - timedelta(days=BIN_DAYS)
-    with transaction.atomic():
+    with trail.event("drive.bin.emptied", actor=None, only_if_changed=True):
         expired = File.objects.filter(deleted_at__lt=cutoff)
         keys = set(FileVersion.objects.filter(file__in=expired).values_list("key", flat=True))
         _, removed = expired.delete()
@@ -439,9 +476,13 @@ def empty_bin(now: datetime | None = None) -> tuple[int, int]:
 # --- Versions --------------------------------------------------------------------------------------
 
 
-@transaction.atomic
 def restore_version(viewer: Viewer, file: File, number: int, actor: Resident) -> FileVersion:
     """An old version becomes the newest, on top: nothing in between is lost."""
+    with trail.event("drive.file.version_restored", subject=file, actor=actor, details={"number": number}):
+        return _restore_version(viewer, file, number, actor)
+
+
+def _restore_version(viewer: Viewer, file: File, number: int, actor: Resident) -> FileVersion:
     file = File.objects.select_for_update().get(pk=file.pk)
     if file.deleted_at is not None:
         raise PermissionDenied
