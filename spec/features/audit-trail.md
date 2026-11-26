@@ -19,8 +19,8 @@ and what every changed field held before and after. Under Administration → Rev
 - Roles given and removed, admin access approved and refused, the alumneliste copied, saved and
   added to, residents created and edited, the room round ended, and an administrator viewing the
   site as another role.
-- Sending mail by hand: failed mails sent again from the Django admin, the alumneregninger sent, and
-  one sent again because it did not arrive.
+- Sending mail by hand: a failed mail sent again from Administration → Mails, the alumneregninger
+  sent, and one sent again because it did not arrive.
 - Edits in the Django admin, and anything written from a shell, are recorded as "Uden handling":
   every field, by whoever was logged in, without a name for what was meant.
 - Work done by the background workers is marked as such, with no person behind it.

@@ -499,20 +499,18 @@ def _failed_mail(recipient: str, status: str = "failed") -> OutgoingMail:
 def test_the_outbox_itself_is_left_out_but_sending_a_mail_again_is_an_event(
     make_resident: Callable[..., Resident], monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """The deliverer rewrites a mail on every attempt (core.auditing); a person sending one again acts."""
+    """The deliverer rewrites a mail on every attempt (core.auditing); a person sending one again from
+    the mail page acts."""
     from core import mail as outbox
 
     monkeypatch.setattr(outbox, "_schedule_delivery", lambda mail_kind: None)
-    admin = make_resident(email="admin@gahk.dk", roles=[Role.ADMINISTRATOR], is_superuser=True)
+    admin = make_resident(email="admin@gahk.dk", roles=[Role.ADMINISTRATOR])
     failed, sent = _failed_mail("anna@gahk.dk"), _failed_mail("bo@gahk.dk", status="sent")
     assert not AuditEvent.objects.exists(), "queueing and delivering a mail writes no event"
     client = Client()
     client.force_login(admin)
 
-    client.post(
-        "/django-admin/core/outgoingmail/",
-        {"action": "send_again", "_selected_action": [failed.pk, sent.pk]},
-    )
+    client.post(reverse("siteadmin:mail_send_again", args=[failed.pk]))
 
     event = AuditEvent.objects.get(action="core.mail.sent_again")
     assert (event.actor, event.details, event.unclaimed) == (admin, {"count": 1}, False)
@@ -521,7 +519,7 @@ def test_the_outbox_itself_is_left_out_but_sending_a_mail_again_is_an_event(
     assert mail_entity.name == "Alumneregning → anna@gahk.dk"
     assert OutgoingMail.objects.get(pk=failed.pk).status == OutgoingMail.Status.QUEUED
 
-    client.post("/django-admin/core/outgoingmail/", {"action": "send_again", "_selected_action": [sent.pk]})
+    client.post(reverse("siteadmin:mail_send_again", args=[sent.pk]))
     assert AuditEvent.objects.filter(action="core.mail.sent_again").count() == 1, "nothing sent again"
 
 

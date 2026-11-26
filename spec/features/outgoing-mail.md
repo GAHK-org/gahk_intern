@@ -38,15 +38,27 @@ pace the account can take, and retried when it does not go through.
 
 - A failed or expired mail fails the mail job on the worker-jobs page, naming the recipient and the
   reason. A mail server that is down fails the job only once mail has waited more than half an hour.
-- Administrators see every mail in Django admin under "Outgoing mails", and can send a failed or
-  Ukendt mail again while it is still within its lifetime.
-- The alumneregninger status page shows each alumne's mail: in the queue, sent, failed or Ukendt.
-  For an Ukendt mail, regnskab asks the alumne and, if it did not arrive, sends it again with one
-  button. Sending the period again re-sends every statement whose mail failed or expired.
+- **Administration → Mails** (administrators only) lists every mail kept: subject, recipient, kind,
+  status, when it was queued, attempts, and when it was sent or will be given up on. Never what it
+  says: a reset link or a statement is not shown to anyone.
+  - At the top, refreshed every 10 seconds while the tab is in view: mails waiting and how long the
+    oldest has waited, mails sent within the last 5 minutes against the bulk limit (and how many
+    bulk mails it holds back, and for how long), mails not sent and mails sent in the last 24 hours.
+    Below them, the mails waiting again after a failed try, with the error and the next try.
+  - The list filters by status ("Ikke sendt" gathers failed, expired and Ukendt), kind, period (24
+    hours, 7 days, 30 days, everything kept) and recipient or subject; 25 per page, newest first.
+  - A mail's page shows its times, attempts, kind, whether its content is kept, and its full error.
+    A failed or Ukendt mail still within its lifetime can be sent again from there, as it was.
+- The administration front page shows how many mails were not sent in the last 24 hours. A failed
+  mail job links to the mails not sent; the monthly admin summary counts the month's mail.
+- The alumneregninger status page shows each alumne's mail: in the queue, sent, failed or Ukendt,
+  and links to its page for administrators. For an Ukendt mail, regnskab asks the alumne and, if it
+  did not arrive, sends it again with one button. Sending the period again re-sends every statement
+  whose mail failed or expired.
 
 ## Demo data
 
-- `task seed` fills the queue with a mail of every kind and status — a bulk ølkælder overview held by
+- `task seed` fills the queue, and so Administration → Mails, with a mail of every kind and status — a bulk ølkælder overview held by
   the rate limit, resets sent, waiting again and expired, failures that can and cannot be sent again,
   one being sent, one Ukendt — made by the code that sends each, then given the state delivery would
   have left it in. Seeding sends nothing. Mails left in the queue are seeded only when mail is printed,
@@ -71,3 +83,5 @@ pace the account can take, and retried when it does not go through.
   than one that someone has to check.
 - **Mails have a lifetime.** A reset link arriving after it has expired, or a debt warning a week
   late, does more harm than none; a mail that has waited that long is reported instead.
+- **The mail page shows no content.** Administrators need to know whether a mail went out and why
+  not; what it said is between the app and the recipient, and may be a working login link.

@@ -319,6 +319,35 @@ def test_seed_demo_leaves_no_mail_waiting_for_a_backend_that_really_sends(settin
 
 
 @pytest.mark.django_db
+def test_the_seeded_outbox_shows_on_the_mail_page(settings: object) -> None:
+    """`task seed` gives Administration → Mails something in every place: each status in the filter,
+    the bulk mails the rate limit holds back, the mails waiting again, a failure to send again — and
+    the admin summary's MAILS section a failure of last month."""
+    from django.test import Client
+    from django.urls import reverse
+
+    from core.models import OutgoingMail
+
+    settings.MAIL_RATE_LIMIT = 3  # type: ignore[attr-defined]  # see the test above
+    call_command("seed_demo", "--fresh", "--force", "--residents", "12", verbosity=0)
+    client = Client()
+    client.force_login(Resident.objects.get(email="formand@gahk.dk"))
+
+    page = client.get(reverse("siteadmin:mails")).content.decode()
+
+    for label in ("I kø", "Sendes", "Sendt", "Fejlet", "Udløbet", "Ukendt"):
+        assert label in page
+    assert "3 masseudsendelser venter" in page
+    assert "Prøves igen (2)" in page
+    failed = OutgoingMail.objects.filter(status=OutgoingMail.Status.FAILED).exclude(payload={}).first()
+    assert "Send igen" in client.get(reverse("siteadmin:mail_detail", args=[failed.pk])).content.decode()
+    # Last month's mail in the admin summary, a failure included.
+    from core.admin_summary import compose
+
+    assert "  Fejlet: 1" in compose()[1]
+
+
+@pytest.mark.django_db
 def test_seed_demo_fills_the_worker_jobs_page_in_every_state(client: Client) -> None:
     """No worker has run in a seeded database, and none on a Mac measures memory, so the page would
     be empty: every state it shows comes from the seed, through the page's own queries."""

@@ -1,7 +1,7 @@
 """The administrators' monthly summary, mailed on the 1st by core.tasks.send_admin_monthly_summary.
 
-Two halves: what the background jobs did in the month that just ended (read from Celery's result
-table, which is why core.tasks.WORKER_JOB_RETENTION outlasts a month), and who holds access as the
+What the background jobs did in the month that just ended (read from Celery's result table, which
+is why core.tasks.WORKER_JOB_RETENTION outlasts a month), the month's mail, and who holds access as the
 mail goes out — superusers, administrators and whether Django admin is open to them, the other
 roles, and the Django-admin grants decided during the month.
 
@@ -14,6 +14,7 @@ from collections import Counter
 
 from django.conf import settings
 from django.db import connection
+from django.db.models import Count
 from django.urls import reverse
 from django.utils import timezone
 from django.utils.formats import date_format, number_format
@@ -37,6 +38,8 @@ def compose(today: datetime.date | None = None) -> tuple[str, str]:
         f"Her er månedsoversigten for {month}.",
         "",
         *_jobs(start, end),
+        "",
+        *_mails(start, end),
         "",
         *_access(start, end, month),
         "",
@@ -67,6 +70,29 @@ def _jobs(start: datetime.date, end: datetime.date) -> list[str]:
         lines += ["", "Fejlede job efter type:"]
         lines += [f"  {task}: {_number(count)}" for task, count in sorted(failed.items(), key=_most_first)]
         lines += ["", f"Se de fejlede job her: {_url('siteadmin:worker_jobs')}?status=FAILURE"]
+    return lines
+
+
+def _mails(start: datetime.date, end: datetime.date) -> list[str]:
+    """The month's mail (core.mail), by when it was queued: how much went out, and what did not."""
+    from core.models import OutgoingMail
+
+    Status = OutgoingMail.Status
+    counts = Counter(
+        dict(
+            OutgoingMail.objects.filter(created_at__gte=_midnight(start), created_at__lt=_midnight(end))
+            .values_list("status")
+            .annotate(n=Count("id"))
+            .values_list("status", "n")
+        )
+    )
+    not_sent = [(Status.FAILED, "Fejlet"), (Status.EXPIRED, "Udløbet"), (Status.UNKNOWN, "Ukendt om sendt")]
+    lines = ["MAILS", f"Sendt: {_number(counts[Status.SENT])}"]
+    missing = sum(counts[status] for status, _label in not_sent)
+    lines.append(f"Ikke sendt: {_number(missing)}")
+    if missing:
+        lines += [f"  {label}: {_number(counts[status])}" for status, label in not_sent if counts[status]]
+        lines += ["", f"Se dem her: {_url('siteadmin:mails')}?status=not_sent"]
     return lines
 
 

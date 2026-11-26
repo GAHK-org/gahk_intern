@@ -48,8 +48,18 @@ from .permissions import (
 @role_required("administrator")
 def home(request: HttpRequest) -> HttpResponse:
     # The pending list rides on the front page as well as its own screen: the mail in
-    # residents.tasks is best-effort, and this is the one page every administrator opens.
-    return render(request, "siteadmin/home.html", {"pending_grants": admin_access.pending()})
+    # residents.tasks is best-effort, and this is the one page every administrator opens. Mails that
+    # did not go out lately are counted here for the same reason.
+    from core.views_admin import not_sent_since
+
+    return render(
+        request,
+        "siteadmin/home.html",
+        {
+            "pending_grants": admin_access.pending(),
+            "mails_not_sent": not_sent_since(timezone.now() - datetime.timedelta(hours=24)),
+        },
+    )
 
 
 # ---- Worker jobs: what waits, what runs, what ran, and what Beat will send next ----

@@ -110,8 +110,8 @@ python manage.py check_mail_server you@example.com --from "$OELKAELDER_FROM_EMAI
 `check_mail_server` sends straight through the real backend, past the app's mail queue, and fails with
 the server's answer; no error = the server accepted it. (`sendtestemail` would only queue the mail:
 every mail goes through `core.mail`'s outbox.) In running use, a refused mail fails the
-`core.tasks.deliver_mail` job on the worker-jobs page and is listed under "Outgoing mails" in Django
-admin, where it can be sent again once the cause is fixed.
+`core.tasks.deliver_mail` job on the worker-jobs page and is listed on Administration → Mails
+(`/admin/mails`), where it can be sent again once the cause is fixed.
 
 ## 3. CI (GitHub Actions — `.github/workflows/ci.yml`) **[you: create the repo]**
 Fresh repo (do **not** import the legacy history — it contains plaintext secrets, scope §5). Jobs:

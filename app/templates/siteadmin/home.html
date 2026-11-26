@@ -20,6 +20,7 @@
       <li><a href="{% url 'siteadmin:preview' %}">Vis siden som rolle</a> -se hvordan siden ser ud for hver embedsgruppe</li>
       <li><a href="{% url 'siteadmin:notifications' %}">Notifikationer</a> - push-enheder, statistik og udsendelser</li>
       <li><a href="{% url 'siteadmin:worker_jobs' %}">Worker-job</a> - kø, historik og planlagte opgaver</li>
+      <li><a href="{% url 'siteadmin:mails' %}">Mails</a> - mailkø, sendte og fejlede mails{% if mails_not_sent %} — <a class="font-semibold text-neg underline" href="{% url 'siteadmin:mails' %}?status=not_sent&amp;period=24h#mails">{{ mails_not_sent }} ikke sendt det seneste døgn</a>{% endif %}</li>
       <li><a href="{% url 'siteadmin:photo_album' %}">Fotoalbum</a> - indhold, datering og lager</li>
       <li><a href="{% url 'cms:overview' %}">Hjemmeside</a> - indholdet på gahk.dk, udgivelse og opdatering af gahk.dk</li>
       <li><a href="{% url 'admissions:list' %}">Ansøgninger</a></li>
