@@ -170,6 +170,12 @@ class WorkerJobLog(models.Model):
     progress = models.FloatField(null=True, blank=True)
     progress_step = models.CharField(max_length=200, blank=True)
     progressed_at = models.DateTimeField(null=True, blank=True)
+    # Its peak memory in bytes (core/job_memory.py): the worker process's own, and the largest
+    # program's it ran (ffmpeg) with that program's name. Written as it runs, so a job killed for
+    # running out keeps what it had reached. Empty where it was not measured (not on Linux).
+    peak_memory = models.PositiveBigIntegerField(null=True, blank=True)
+    peak_program = models.CharField(max_length=64, blank=True)
+    peak_program_memory = models.PositiveBigIntegerField(null=True, blank=True)
 
     class Meta:
         indexes = [models.Index(fields=["finished_at"]), models.Index(fields=["parent_id"])]
