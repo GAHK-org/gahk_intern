@@ -1,17 +1,87 @@
 {% comment %}
   The player's markup, filled in by gahkflix.ts from the film's config: on the play page, and cloned
-  from the <template> in base.html when "Afspil" opens it over the page instead.
+  from the <template> in base.html when "Afspil" opens it over the page instead. The controls are our
+  own (the <video> has none), so they look the same in every browser.
 {% endcomment %}
 <div class="flix-player" data-flix-player>
   <video playsinline preload="auto"></video>
+  {# Subtitles, drawn here rather than by the browser, so they move up out of the way of the controls. #}
+  <div class="flix-captions" aria-hidden="true" data-flix-captions></div>
   <div class="flix-player-top">
     <a class="flix-back" href="{% url 'gahkflix:home' %}" aria-label="Tilbage" data-flix-back>←</a>
     <h1><span data-flix-title></span><small data-flix-subtitle></small></h1>
     <label class="flix-autoplay"><input type="checkbox" role="switch" data-flix-autoplay checked> Autoplay</label>
   </div>
-  <div class="flix-quality" role="group" aria-label="Kvalitet" data-flix-quality hidden></div>
+  {# A double tap on either side of the screen jumps 10 seconds; this shows which way. #}
+  <span class="flix-jump is-back" aria-hidden="true" data-flix-jump="back">−10 s</span>
+  <span class="flix-jump is-ahead" aria-hidden="true" data-flix-jump="ahead">+10 s</span>
+  {# A play or pause from a click on the picture, shown for a moment in the middle. #}
+  <span class="flix-flash" aria-hidden="true" data-flix-flash></span>
+  <span class="flix-spinner" aria-hidden="true" data-flix-spinner hidden></span>
   <button class="flix-skip" type="button" data-flix-skip hidden>Spring intro over</button>
   <a class="flix-next" href="#" data-flix-next hidden>Næste afsnit ▸</a>
+
+  <div class="flix-controls" data-flix-controls hidden>
+    <div class="flix-timeline" role="slider" tabindex="0" aria-label="Tidslinje" aria-valuemin="0" aria-valuemax="0" aria-valuenow="0" data-flix-timeline>
+      <div class="flix-timeline-track">
+        <span class="flix-timeline-buffered" data-flix-buffered></span>
+        <span class="flix-timeline-played" data-flix-played></span>
+        <span class="flix-timeline-thumb" data-flix-thumb></span>
+      </div>
+      <span class="flix-timeline-tip" data-flix-tip hidden></span>
+    </div>
+    <div class="flix-controls-row">
+      <button class="flix-control" type="button" aria-label="Afspil" title="Afspil (k)" data-flix-toggle>
+        <svg class="when-paused" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 4.5v15l12.5-7.5z" fill="currentColor"/></svg>
+        <svg class="when-playing" viewBox="0 0 24 24" aria-hidden="true"><path d="M6.5 4.5h4v15h-4zM13.5 4.5h4v15h-4z" fill="currentColor"/></svg>
+      </button>
+      <button class="flix-control" type="button" aria-label="10 sekunder tilbage" title="10 sekunder tilbage (j)" data-flix-seek="-10">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4.5 12a7.5 7.5 0 1 0 2.2-5.3" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><path d="M6.4 2.8v4.1h4.1" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/><text x="12" y="15.3" text-anchor="middle" font-size="7.5" font-weight="700" fill="currentColor">10</text></svg>
+      </button>
+      <button class="flix-control" type="button" aria-label="10 sekunder frem" title="10 sekunder frem (l)" data-flix-seek="10">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M19.5 12a7.5 7.5 0 1 1-2.2-5.3" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><path d="M17.6 2.8v4.1h-4.1" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/><text x="12" y="15.3" text-anchor="middle" font-size="7.5" font-weight="700" fill="currentColor">10</text></svg>
+      </button>
+      <div class="flix-volume">
+        <button class="flix-control" type="button" aria-label="Slå lyden fra" title="Lyd (m)" data-flix-mute>
+          <svg class="when-loud" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9.5h3.5L12 5.5v13l-4.5-4H4z" fill="currentColor"/><path d="M15.5 8.5a5 5 0 0 1 0 7M18 6a8.5 8.5 0 0 1 0 12" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+          <svg class="when-quiet" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9.5h3.5L12 5.5v13l-4.5-4H4z" fill="currentColor"/><path d="M15.5 8.5a5 5 0 0 1 0 7" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+          <svg class="when-muted" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9.5h3.5L12 5.5v13l-4.5-4H4z" fill="currentColor"/><path d="M15.5 9.5l5 5M20.5 9.5l-5 5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+        </button>
+        <input type="range" min="0" max="1" step="0.05" value="1" aria-label="Lydstyrke" data-flix-volume>
+      </div>
+      <span class="flix-time" data-flix-time>0:00 / 0:00</span>
+      <span class="flix-controls-gap"></span>
+      <div class="flix-popup-wrap" data-flix-captions-wrap hidden>
+        <button class="flix-control" type="button" aria-label="Undertekster" title="Undertekster (c)" aria-haspopup="true" aria-expanded="false" data-flix-menu-button="captions">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="5.5" width="18" height="13" rx="2.5" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M10.5 10.3a2.2 2.2 0 1 0 0 3.4M17 10.3a2.2 2.2 0 1 0 0 3.4" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+        </button>
+        <div class="flix-popup" role="menu" aria-label="Undertekster" data-flix-menu="captions" hidden></div>
+      </div>
+      <div class="flix-popup-wrap">
+        <button class="flix-control" type="button" aria-label="Indstillinger" title="Kvalitet og hastighed" aria-haspopup="true" aria-expanded="false" data-flix-menu-button="settings">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 8.8a3.2 3.2 0 1 0 0 6.4 3.2 3.2 0 0 0 0-6.4z" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M19.4 13.5a7.6 7.6 0 0 0 0-3l2-1.6-2-3.4-2.4 1a7.5 7.5 0 0 0-2.6-1.5L14 2.5h-4l-.4 2.5A7.5 7.5 0 0 0 7 6.5l-2.4-1-2 3.4 2 1.6a7.6 7.6 0 0 0 0 3l-2 1.6 2 3.4 2.4-1a7.5 7.5 0 0 0 2.6 1.5l.4 2.5h4l.4-2.5a7.5 7.5 0 0 0 2.6-1.5l2.4 1 2-3.4z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/></svg>
+        </button>
+        <div class="flix-popup" role="menu" aria-label="Indstillinger" data-flix-menu="settings" hidden>
+          <div class="flix-popup-group" data-flix-quality-group>
+            <p class="flix-popup-title">Kvalitet</p>
+            <div data-flix-quality></div>
+          </div>
+          <div class="flix-popup-group">
+            <p class="flix-popup-title">Hastighed</p>
+            <div data-flix-speeds></div>
+          </div>
+        </div>
+      </div>
+      <button class="flix-control" type="button" aria-label="Billede i billede" title="Billede i billede" data-flix-pip hidden>
+        <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="2.5" y="4.5" width="19" height="15" rx="2" fill="none" stroke="currentColor" stroke-width="1.8"/><rect x="12" y="11.5" width="7" height="5.5" rx="1" fill="currentColor"/></svg>
+      </button>
+      <button class="flix-control" type="button" aria-label="Fuld skærm" title="Fuld skærm (f)" data-flix-fullscreen>
+        <svg class="when-windowed" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9V4h5M15 4h5v5M20 15v5h-5M9 20H4v-5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        <svg class="when-fullscreen" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 4v5H4M20 9h-5V4M15 20v-5h5M4 15h5v5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </button>
+    </div>
+  </div>
+
   {# The end card: what plays next, with a countdown — or, after a few in a row, a question. #}
   <section class="flix-upnext" aria-live="polite" data-flix-upnext hidden>
     <img alt="" data-flix-upnext-image>
