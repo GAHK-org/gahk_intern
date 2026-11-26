@@ -1,0 +1,49 @@
+{% extends "base.html" %}
+{% block title %}{% if query %}{{ query.text }} - {% endif %}Søg - GAHK Intern{% endblock %}
+{% block content_width %}max-w-3xl{% endblock %}
+
+{% block content %}
+  <div class="page-head">
+    <div>
+      <p class="eyebrow">Hele intranettet</p>
+      <h1>Søg</h1>
+    </div>
+  </div>
+
+  {# A plain GET form, so a search is a link and back/forward works. Also the way in on a phone, where the top bar has no room for the field. #}
+  <form class="board-search" method="get" action="{% url 'search:results' %}" role="search">
+    <div class="board-search-field">
+      <button type="submit" class="board-search-go" aria-label="Søg">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
+      </button>
+      <input type="search" name="q" value="{{ q }}" placeholder="Søg efter beboere, opslag, sider…" maxlength="200"
+             aria-label="Søg på intranettet" enterkeyhint="search"{% if not query %} autofocus{% endif %}>
+    </div>
+  </form>
+
+  {% if too_short %}
+    <p class="muted">Skriv mindst {{ min_length }} tegn.</p>
+  {% elif query %}
+    {% for section in sections %}
+      <section class="card search-section" aria-labelledby="search-{{ section.key }}">
+        <h2 id="search-{{ section.key }}" class="search-section-head">
+          <svg aria-hidden="true"><use href="#i-{{ section.icon }}"></use></svg>{{ section.label }}
+        </h2>
+        <div class="search-section-hits">
+          {% for hit in section.hits %}{% include "search/_hit.html" %}{% endfor %}
+        </div>
+        {% if section.more %}
+          {% if section.more_url %}
+            <a class="search-more" href="{{ section.more_url }}">{{ section.more_label }} →</a>
+          {% else %}
+            <p class="search-more muted">Viser de første {{ section.hits|length }}. Skriv mere for at indsnævre.</p>
+          {% endif %}
+        {% endif %}
+      </section>
+    {% empty %}
+      <p class="muted">Intet fundet for “{{ query.text }}”.</p>
+    {% endfor %}
+  {% else %}
+    <p class="muted">Søg efter beboere på alumnelisten, opslag, begivenheder, fotoalbum, reparationer og intranettets sider. Du ser kun det, du selv har adgang til.</p>
+  {% endif %}
+{% endblock %}

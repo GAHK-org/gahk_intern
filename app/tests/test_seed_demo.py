@@ -256,6 +256,29 @@ def test_seed_demo_writes_weeks_of_audit_history(settings: Any) -> None:  # noqa
 
 
 @pytest.mark.django_db
+def test_seed_demo_has_a_match_for_every_search_group() -> None:
+    """The top bar's search groups its results by feature; each group should find something on a
+    fresh checkout, Reparationer's archived tickets included."""
+    from django.test import Client
+    from django.urls import reverse
+
+    call_command("seed_demo", "--fresh", "--force", "--residents", "12", verbosity=0)
+    client = Client()
+    client.force_login(Resident.objects.get(email="formand@gahk.dk"))  # a CMS editor: Hjemmeside too
+
+    def groups(q: str) -> dict[str, list[str]]:
+        sections = client.get(reverse("search:results"), {"q": q}).context["sections"]
+        return {section.key: [hit.detail for hit in section.hits] for section in sections}
+
+    found = {key for q in ["kalender", "bente", "fællesspisning", "sommerfest", "revy"] for key in groups(q)}
+    found |= groups("vaskemaskine").keys()
+    found |= groups("optagelse").keys()
+    assert found == {"pages", "residents", "notices", "events", "albums", "films", "repairs", "website"}
+    # An archived ticket is found too, after the open ones.
+    assert any(detail.startswith("Arkiveret") for detail in groups("køleskab")["repairs"])
+
+
+@pytest.mark.django_db
 def test_seed_demo_fills_the_outbox_with_every_kind_and_status(settings: object) -> None:
     """The mail page needs a mail in every state, and seeding must send none of them (core.demo)."""
     from datetime import timedelta

@@ -119,13 +119,29 @@
 
     <header class="topbar">
       <button class="hamburger" @click="sidebar = !sidebar" aria-label="Menu">☰</button>
-      {% if user.is_authenticated and "koekken" not in effective_roles %}{# searches the alumneliste: not for the kitchen account, nor before logging in #}
-        <form class="topsearch" method="get" action="{% url 'directory' %}" role="search">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
-          <input type="search" name="q" placeholder="Søg beboer, studie, e-mail…" aria-label="Søg beboer">
+      {% comment %}
+        The site-wide search (search app): suggestions drop down as you type (htmx, with the arrow keys
+        handled by frontend/src/search.ts), Enter opens every result. Not before logging in. The kitchen
+        account has it too and finds only what it may open (search.views). On a phone the field has no
+        room, so the magnifier in the right-hand group opens the results page instead.
+      {% endcomment %}
+      {% if user.is_authenticated %}
+        <form class="topsearch" method="get" action="{% url 'search:results' %}" role="search" data-site-search>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
+          <input type="search" name="q" placeholder="Søg på intranettet…" aria-label="Søg på intranettet"
+                 autocomplete="off" maxlength="200" enterkeyhint="search"
+                 role="combobox" aria-expanded="false" aria-autocomplete="list" aria-controls="search-suggestions"
+                 hx-get="{% url 'search:suggestions' %}" hx-trigger="input changed delay:200ms, search"
+                 hx-target="#search-suggestions" hx-sync="this:replace">
+          <div id="search-suggestions" class="search-suggestions" hidden></div>
         </form>
       {% endif %}
       <div class="topright">
+        {% if user.is_authenticated %}
+          <a href="{% url 'search:results' %}" class="btn-top topsearch-phone" aria-label="Søg">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
+          </a>
+        {% endif %}
         <a href="{{ public_site_url }}/" class="btn-top" title="Til GAHK-forsiden">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 11l9-8 9 8"/><path d="M5 10v10h14V10"/></svg>
           <span class="hidden sm:inline">Forsiden</span>

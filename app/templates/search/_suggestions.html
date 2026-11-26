@@ -1,0 +1,22 @@
+{% comment %}
+  The top bar's dropdown (base.html), fetched by htmx as you type; frontend/src/search.ts moves through
+  its options with the arrow keys. Empty when there is nothing to show, which closes it. The last row
+  is always "every result", the page Enter opens.
+{% endcomment %}
+{% if query %}
+  <div class="search-suggestions-list" role="listbox" aria-label="Søgeforslag">
+    {% for section in sections %}
+      <div class="search-group" role="group" aria-label="{{ section.label }}">
+        <div class="search-group-label" aria-hidden="true">{{ section.label }}</div>
+        {% for hit in section.hits %}
+          {% include "search/_hit.html" with option=True %}
+        {% endfor %}
+      </div>
+    {% empty %}
+      <p class="search-none">Intet fundet for “{{ query.text }}”.</p>
+    {% endfor %}
+    <a class="search-all" href="{% url 'search:results' %}?q={{ query.text|urlencode }}" role="option" aria-selected="false" tabindex="-1">
+      Se alle resultater for “{{ query.text }}”
+    </a>
+  </div>
+{% endif %}

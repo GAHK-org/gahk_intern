@@ -28,6 +28,7 @@ urlpatterns = [
     path("ak/", include("ak.urls")),
     path("oelkaelder/", include("oelkaelder.urls")),
     path("statistik/", include("stats.urls")),
+    path("search/", include("search.urls")),
     path("vaerelsestjek/", include("rooms.urls_vaerelsestjek")),
     path("soegvaerelse/", include("rooms.urls_soegvaerelse")),
     path(

@@ -19,6 +19,7 @@ import "./mention"; // @-mention picker on every [data-mentionable] field (no-op
 import "./imageviewer"; // full-screen picture viewer: opslagstavlen, Den Hurtige
 import "./photo-album"; // photo album gallery viewer (no-op outside album pages)
 import "./gahkflix"; // GAHKFlix: rows, uploader, editors and player (no-op outside body.flix)
+import "./search"; // the top bar's site-wide search: suggestions as you type, arrow keys, "/" (no-op logged out)
 import "./topbar"; // hide the sticky top bar on scroll-down (phones only)
 import "./sidebar"; // the menu scrolls with the page until its end is in view (desktop only)
 import "./cms-loader"; // Hjemmeside, the gahk.dk editor: fetches its own code on its pages only
