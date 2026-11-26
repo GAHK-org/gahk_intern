@@ -670,13 +670,15 @@ def test_private_names_and_fields_are_kept_but_not_shown_or_searched(
     monkeypatch.setitem(trail._registry, Resident, hidden)
     monkeypatch.setitem(trail._by_kind, "residents.resident", hidden)
     admin = make_resident(email="admin@gahk.dk", roles=[Role.ADMINISTRATOR])
-    anna = make_resident(email="anna@gahk.dk", first_name="Anna", last_name="Berg", phone="111")
+    # Values with spaces: a random token on the page (a nonce, an asset's hash) never has one.
+    before, after = "55 11 11 11", "55 22 22 22"
+    anna = make_resident(email="anna@gahk.dk", first_name="Anna", last_name="Berg", phone=before)
     with trail.event("residents.resident.updated", actor=admin, subject=anna):
-        anna.phone = "222"
+        anna.phone = after
         anna.save()
     event = AuditEvent.objects.get(action="residents.resident.updated")
     assert event.entities.get().name == "Anna Berg"  # kept in full
-    assert AuditChange.objects.get(entity__event=event).after == "222"
+    assert AuditChange.objects.get(entity__event=event).after == after
 
     tag = hidden.tag(anna.pk)
     assert tag.startswith("Beboer ") and len(tag) == len("Beboer ") + 6
@@ -685,7 +687,7 @@ def test_private_names_and_fields_are_kept_but_not_shown_or_searched(
     client.force_login(admin)
     page = client.get("/admin/audit?area=residents").content.decode()
     assert tag in page and "ændret (vises ikke her)" in page
-    assert "Anna Berg" not in page and "111" not in page and "222" not in page
+    assert "Anna Berg" not in page and before not in page and after not in page
     history = client.get(f"/admin/audit?kind=residents.resident&id={anna.pk}").content.decode()
     assert f"«{tag}»" in history and "Anna Berg" not in history
     assert not presentation.Filters(q="Anna Berg").queryset().exists()  # not even that it exists
@@ -694,7 +696,7 @@ def test_private_names_and_fields_are_kept_but_not_shown_or_searched(
     lines, _ = presentation.page(presentation.Filters(kind="residents.resident"), show_private=True)
     line = next(line for line in lines if line.action == "residents.resident.updated")
     assert line.subject is not None and line.subject.name == "Anna Berg"
-    assert [(c.before, c.after, c.hidden) for c in line.subject.changes] == [("111", "222", False)]
+    assert [(c.before, c.after, c.hidden) for c in line.subject.changes] == [(before, after, False)]
 
 
 def test_a_private_field_must_exist() -> None:
