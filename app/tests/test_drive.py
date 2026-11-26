@@ -11,6 +11,7 @@ import pytest
 from django.test import Client
 from django.urls import reverse
 
+from audit import presentation
 from audit.models import AuditChange, AuditEvent
 from core.models import Room, Workgroup
 from drive import services
@@ -349,6 +350,11 @@ def test_every_change_is_in_the_audit_trail(member: Client, group: Workgroup) ->
     }
     size = AuditChange.objects.get(entity__event=replaced, entity__kind="drive.file", field="size")
     assert (size.before, size.after) == (3, 5)
+    # Kept in full, but the audit page names Drive's items by a tag.
+    shown, _ = presentation.page(presentation.Filters(area="drive"))
+    names = {entity.name for line in shown for entity in line.entities}
+    assert names and all(name.split()[0] in {"Mappe", "Fil", "Filversion"} for name in names)
+    assert not presentation.Filters(q="Budget").queryset().exists()
 
 
 def test_uploads_need_write_access(
