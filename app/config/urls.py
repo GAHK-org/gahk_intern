@@ -9,10 +9,10 @@ can hold the site-admin tools.
 
 from django.contrib import admin
 from django.urls import include, path, re_path
-from django.views.generic import TemplateView
+from django.views.generic import RedirectView, TemplateView
 
+from calendars import views as calendars_views
 from core.media import serve_media
-from events import views as events_views
 from photo_album.views import serve_media as serve_photo_album_media
 
 urlpatterns = [
@@ -21,15 +21,22 @@ urlpatterns = [
     path("admin/", include("residents.urls_admin")),  # site-admin tools (roles, worker jobs, …)
     # The editor for gahk.dk's content (cms). gahk.dk's "Rediger siden" links to hjemmeside/sider/<id>/.
     path("hjemmeside/", include("cms.urls")),
-    # The subscribable calendar feed carries no auth decorator — the token in the path is the
-    # credential (see events.views.calendar_feed). gahk.dk passes its old /kalender/ URLs through
-    # to this one, so feeds handed out before the move keep refreshing.
+    # The resident's calendar subscription: its settings page and the subscribable feed. The feed
+    # carries no auth decorator — the token in the path is the credential (see
+    # calendars.views.calendar_feed).
     #
     # Mounted before the intranet on purpose: if somebody adds Django's LoginRequiredMiddleware or a
     # gate in front of the intranet, a feed underneath it dies SILENTLY. Calendar clients do not
     # report a failed refresh; they just stop updating, which is the worst failure this feature can
     # have.
-    path("kalender/<str:token>.ics", events_views.calendar_feed, name="events_feed"),
+    path("calendar/", include("calendars.urls")),
+    # The addresses before the move, both permanent redirects: the feed (gahk.dk passes its old
+    # /kalender/ feed URLs through to intern), and the settings page, once under begivenheder.
+    path("kalender/<str:token>.ics", calendars_views.old_feed_address),
+    path(
+        "begivenheder/kalender/abonnement",
+        RedirectView.as_view(pattern_name="calendars:settings", permanent=True),
+    ),
     # User-uploaded media. Routed through Django in EVERY environment, and the URL space is fixed
     # forever: MEDIA_URL is a prefix of content stored in the database (opslag Markdown bodies,
     # cms.Page.background_image), so /media/ cannot move without a data migration — core/storage.py

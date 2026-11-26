@@ -319,6 +319,39 @@ def test_seed_demo_leaves_no_mail_waiting_for_a_backend_that_really_sends(settin
 
 
 @pytest.mark.django_db
+def test_seed_demo_gives_the_logins_calendar_subscriptions_in_each_state() -> None:
+    """/calendar/settings shows when the address was last fetched and warns after a week; the settings change
+    what the feed holds. A subscription is otherwise only made on the first visit, never fetched."""
+    from django.test import Client
+    from django.urls import reverse
+
+    from calendars.models import CalendarSubscription
+
+    call_command("seed_demo", "--fresh", "--force", "--residents", "12", verbosity=0)
+
+    def page(email: str) -> str:
+        client = Client()
+        client.force_login(Resident.objects.get(email=email))
+        return client.get(reverse("calendars:settings")).content.decode()
+
+    assert "Sidst hentet" in page("beboer@gahk.dk")
+    assert "ikke hentet adressen i over en uge" in page("formand@gahk.dk")
+    assert "Ikke hentet af en kalender-app endnu" in page("oel@gahk.dk")
+    assert not CalendarSubscription.objects.filter(resident__email="admin@gahk.dk").exists()
+    assert "Ikke hentet af en kalender-app endnu" in page("admin@gahk.dk"), "made on the first visit"
+
+    def feed(email: str) -> str:
+        token = CalendarSubscription.objects.get(resident__email=email).token
+        return Client().get(reverse("calendars:feed", args=[token])).content.decode()
+
+    everything, accepted_only = feed("beboer@gahk.dk"), feed("ak@gahk.dk")
+    for entry in ("Ikke svaret: ", "Venteliste: ", "Aflyst: ", "fylder"):
+        assert entry in everything, entry
+    assert "Ikke svaret: " not in accepted_only and "fylder" not in accepted_only
+    assert CalendarSubscription.objects.get(resident__email="ak@gahk.dk").rotated_at is not None
+
+
+@pytest.mark.django_db
 def test_seed_demo_fills_the_worker_jobs_page_in_every_state(client: Client) -> None:
     """No worker has run in a seeded database, and none on a Mac measures memory, so the page would
     be empty: every state it shows comes from the seed, through the page's own queries."""

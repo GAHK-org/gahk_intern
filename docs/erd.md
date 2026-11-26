@@ -623,13 +623,16 @@ erDiagram
         datetime created_at
     }
 
-    events_CalendarFeedToken {
+    calendars_CalendarSubscription {
         int id PK
         int resident_id FK
         string token
         datetime created_at
         datetime rotated_at
+        string events
+        bool include_birthdays
         datetime last_used_at
+        int fetch_count
     }
 
     reparationer_RepairTask {
@@ -1087,7 +1090,7 @@ erDiagram
     events_Rsvp }o--|| residents_Resident : "resident"
     events_EventComment }o--|| events_Event : "event"
     events_EventComment }o--|| residents_Resident : "author"
-    events_CalendarFeedToken ||--|| residents_Resident : "resident"
+    calendars_CalendarSubscription ||--|| residents_Resident : "resident"
     reparationer_RepairTask }o--|| residents_Resident : "reported_by"
     reparationer_RepairComment }o--|| reparationer_RepairTask : "task"
     reparationer_RepairComment }o--|| residents_Resident : "author"
@@ -1254,6 +1257,27 @@ erDiagram
     audit_AuditEvent }o--|o residents_Resident : "actor"
     audit_AuditEntity }o--|| audit_AuditEvent : "event"
     audit_AuditChange }o--|| audit_AuditEntity : "entity"
+```
+
+## calendars
+
+```mermaid
+erDiagram
+    calendars_CalendarSubscription {
+        int id PK
+        int resident_id FK
+        string token
+        datetime created_at
+        datetime rotated_at
+        string events
+        bool include_birthdays
+        datetime last_used_at
+        int fetch_count
+    }
+
+    residents_Resident { }
+
+    calendars_CalendarSubscription ||--|| residents_Resident : "resident"
 ```
 
 ## cms
@@ -1583,15 +1607,6 @@ erDiagram
         datetime created_at
     }
 
-    events_CalendarFeedToken {
-        int id PK
-        int resident_id FK
-        string token
-        datetime created_at
-        datetime rotated_at
-        datetime last_used_at
-    }
-
     residents_Resident { }
 
     events_Event }o--|| residents_Resident : "organiser"
@@ -1603,7 +1618,6 @@ erDiagram
     events_Rsvp }o--|| residents_Resident : "resident"
     events_EventComment }o--|| events_Event : "event"
     events_EventComment }o--|| residents_Resident : "author"
-    events_CalendarFeedToken ||--|| residents_Resident : "resident"
 ```
 
 ## gahkflix

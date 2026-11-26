@@ -26,6 +26,8 @@ from django.test import Client
 from django.test.utils import CaptureQueriesContext
 from django.utils import timezone
 
+from calendars import feed
+from calendars.models import CalendarSubscription
 from core import push
 from core.models import PushSubscription
 from events import access, services
@@ -33,7 +35,6 @@ from events import icalendar as icalendar_mod
 from events.models import (
     RETENTION_AFTER_END,
     Answer,
-    CalendarFeedToken,
     Event,
     EventComment,
     EventInvite,
@@ -153,7 +154,7 @@ def make_event(organiser: Resident, **extra: object) -> Event:
 
 # The gate is the same for every route; only the verb differs. Anything not listed here is POSTed,
 # so a new write route that is forgotten below still gets checked rather than silently skipped.
-GATED_GET_ROUTES = ("", "opret", "kalender", "kalender/abonnement", "1", "1/rediger", "1/ics")
+GATED_GET_ROUTES = ("", "opret", "kalender", "1", "1/rediger", "1/ics")
 
 
 @pytest.mark.parametrize(
@@ -162,8 +163,6 @@ GATED_GET_ROUTES = ("", "opret", "kalender", "kalender/abonnement", "1", "1/redi
         "",
         "opret",
         "kalender",
-        "kalender/abonnement",
-        "kalender/nyt-link",
         "1",
         "1/rediger",
         "1/slet",
@@ -181,9 +180,7 @@ def test_every_route_is_closed_to_non_administrators(
 
     Parametrised over every route so a new view cannot quietly be added outside the gate.
 
-    The site-root feed (`/kalender/<token>.ics`) is deliberately absent: it carries no auth decorator
-    at all, because a calendar client cannot log in. Its gate is the token, and
-    `test_the_feed_belongs_to_one_resident` is what pins it.
+    The calendar subscription (/calendar/settings, its own app) is not here: see test_calendars.py.
     """
     client.force_login(beboer)
     url = EVENTS + path
@@ -212,8 +209,6 @@ def test_the_route_table_covers_every_url_pattern() -> None:
         "index",
         "create",
         "calendar",
-        "feed_settings",
-        "rotate_token",
         "detail",
         "edit",
         "delete",
@@ -1864,7 +1859,7 @@ def test_a_birthday_is_a_note_on_the_day_not_an_event(
 ) -> None:
     """The whole point of the feature, in one assertion pair: the name is on the calendar, and
     nothing was written to Event. If this ever fails the other way round, birthdays have acquired
-    an organiser, an RSVP form, a push audience and a VEVENT in sixty subscribed calendars."""
+    an organiser, an RSVP form and a push audience."""
     _celebrant(make_resident, datetime.date(2001, 9, 12), first_name="Mette", last_name="Hansen")
     client.force_login(beboer)
 
@@ -2027,19 +2022,6 @@ def test_a_birthday_only_day_can_still_be_tapped_open(
     assert "dag=2026-09-12" in body
 
 
-def test_a_birthday_never_reaches_a_subscribed_calendar(
-    client: Client, beboer: Resident, make_resident: Callable[..., Resident]
-) -> None:
-    """The .ics feed is the one place where "it is only a note" stops being a rendering detail: an
-    entry that lands there is copied into Google and Apple and outlives anything done here."""
-    _celebrant(make_resident, datetime.date(2001, 9, 12), first_name="Mette", last_name="Hansen")
-
-    body = client.get(_feed_url(beboer)).content.decode()
-
-    assert "Mette" not in body
-    assert "BEGIN:VEVENT" not in body
-
-
 def test_an_unbelievable_birth_year_shows_no_age(
     client: Client, beboer: Resident, make_resident: Callable[..., Resident]
 ) -> None:
@@ -2176,7 +2158,7 @@ def test_the_uid_is_stable_and_identical_in_download_and_feed(beboer: Resident) 
     event.save()
 
     after = icalendar_mod.one_event(event)
-    in_feed = icalendar_mod.feed([(event, False)], name="test")
+    in_feed = feed.render(CalendarSubscription.for_resident(beboer))
     uid = f"UID:begivenhed-{event.pk}@gahk.dk"
     assert uid in before
     assert uid in after
@@ -2247,126 +2229,6 @@ def test_the_output_parses_with_an_independent_implementation(beboer: Resident) 
     assert str(vevent["SUMMARY"]) == "Fællesspisning; grøn karry"
     assert str(vevent["LOCATION"]) == "Køkkenet, 1. sal"
     assert str(vevent["UID"]) == event.ical_uid
-
-
-# --- the subscribable feed --------------------------------------------------------------------------
-
-
-def _feed_url(resident: Resident) -> str:
-    return f"/kalender/{CalendarFeedToken.for_resident(resident).token}.ics"
-
-
-def test_the_feed_needs_no_session(client: Client, beboer: Resident) -> None:
-    """The whole point. Google's servers fetch this, not the subscriber's browser — no cookies, no
-    login form, no redirect to follow. Behind @login_required this would 200 with the login page's
-    HTML and Google would show an empty calendar with no error anywhere."""
-    make_event(beboer)
-    url = _feed_url(beboer)
-
-    response = Client().get(url)  # deliberately not logged in
-
-    assert response.status_code == 200
-    assert response["Content-Type"] == "text/calendar; charset=utf-8"
-
-
-def test_the_feed_contains_only_what_i_said_ja_to(client: Client, beboer: Resident) -> None:
-    mine = make_event(beboer, title="Jeg kommer")
-    make_event(beboer, title="Ikke svaret")
-    declined = make_event(beboer, title="Sagt nej")
-    services.set_answer(mine.pk, beboer, Answer.JA)
-    services.set_answer(declined.pk, beboer, Answer.NEJ)
-
-    body = Client().get(_feed_url(beboer)).content.decode()
-
-    assert "Jeg kommer" in body
-    assert "Ikke svaret" not in body
-    assert "Sagt nej" not in body
-
-
-def test_a_waitlisted_event_is_tentative_and_transparent(beboer: Resident, other: Resident) -> None:
-    """It shows in the calendar but does not block the time — queuing for a trip should not make you
-    look busy for an afternoon you may not get."""
-    event = make_event(beboer, capacity=1, title="Fuld tur")
-    services.set_answer(event.pk, other, Answer.JA)
-    services.set_answer(event.pk, beboer, Answer.JA)  # beboer is second, so queued
-
-    body = Client().get(_feed_url(beboer)).content.decode()
-
-    assert "STATUS:TENTATIVE" in body
-    assert "TRANSP:TRANSPARENT" in body
-
-
-def test_the_feed_never_contains_a_private_event_i_was_not_invited_to(
-    beboer: Resident, other: Resident
-) -> None:
-    """The leak that would matter most, because the file leaves the building."""
-    event = make_private(other, [], title="Hemmelig fest")
-    Rsvp.objects.create(event=event, resident=beboer, answer=Answer.JA, answered_at=timezone.now())
-
-    body = Client().get(_feed_url(beboer)).content.decode()
-
-    assert "Hemmelig fest" not in body
-
-
-def test_the_calendar_declares_a_name_and_a_refresh_interval(beboer: Resident) -> None:
-    """Both spellings of the name: NAME is RFC 7986, X-WR-CALNAME is what Apple and Google read.
-    Without them the subscription is called "gahk.dk"."""
-    body = Client().get(_feed_url(beboer)).content.decode()
-
-    assert "X-WR-CALNAME:GAHK" in body
-    assert "REFRESH-INTERVAL;VALUE=DURATION:PT1H" in body
-
-
-def test_an_unknown_token_is_404_not_403(client: Client) -> None:
-    """403 would confirm a token once existed."""
-    assert Client().get("/kalender/ikke-et-rigtigt-token.ics").status_code == 404
-
-
-def test_a_rotated_token_stops_working_and_the_new_one_works(beboer: Resident) -> None:
-    old_url = _feed_url(beboer)
-    CalendarFeedToken.for_resident(beboer).rotate()
-
-    assert Client().get(old_url).status_code == 404
-    assert Client().get(_feed_url(beboer)).status_code == 200
-
-
-def test_the_feed_response_refuses_to_be_cached_or_indexed(beboer: Resident) -> None:
-    """The URL is a bearer credential, so it must not sit in a proxy or turn up in a crawler."""
-    response = Client().get(_feed_url(beboer))
-
-    assert "no-store" in response["Cache-Control"]
-    assert response["X-Robots-Tag"] == "noindex, nofollow"
-    assert response["Referrer-Policy"] == "no-referrer"
-    # inline, not attachment: a subscribing client GETs this, and attachment would make a resident
-    # who pastes the URL into a browser download a file instead of seeing it work.
-    assert response["Content-Disposition"].startswith("inline")
-
-
-def test_last_used_is_recorded_at_most_once_an_hour(beboer: Resident) -> None:
-    """A write on every GET turns a read endpoint into a write storm — sixty phones, hourly."""
-    url = _feed_url(beboer)
-    Client().get(url)
-    first = CalendarFeedToken.objects.get(resident=beboer).last_used_at
-    assert first is not None
-
-    Client().get(url)
-    assert CalendarFeedToken.objects.get(resident=beboer).last_used_at == first
-
-
-def test_the_token_appears_on_no_page_but_the_subscription_page(client: Client, beboer: Resident) -> None:
-    make_event(beboer)
-    token = CalendarFeedToken.for_resident(beboer).token
-    client.force_login(beboer)
-
-    assert token in client.get(f"{EVENTS}kalender/abonnement").content.decode()
-    for path in (EVENTS, f"{EVENTS}kalender"):
-        assert token not in client.get(path).content.decode()
-
-
-def test_deleting_a_resident_deletes_their_token(beboer: Resident) -> None:
-    CalendarFeedToken.for_resident(beboer)
-    beboer.delete()
-    assert not CalendarFeedToken.objects.exists()
 
 
 # --- the deadline reminder ----------------------------------------------------------------------------
@@ -2588,35 +2450,11 @@ def test_event_pages_leak_no_template_syntax(client: Client, beboer: Resident) -
         f"{EVENTS}opret",
         f"{EVENTS}{event.pk}/rediger",
         f"{EVENTS}kalender",
-        f"{EVENTS}kalender/abonnement",
     ):
         body = client.get(path).content.decode()
         assert "Begivenhed" in body, f"{path} rendered nothing — the check would be vacuous"
         for leaked in ("{#", "#}", "{%", "%}", "{{", "}}"):
             assert leaked not in body, f"{path} leaked {leaked!r}"
-
-
-def test_a_calendar_token_is_minted_lazily_and_is_unique(beboer: Resident, other: Resident) -> None:
-    """Never backfilled by a migration: sixty secrets for people who may never use the feature, and
-    a RunPython calling secrets.token_urlsafe bakes a non-deterministic step into the history."""
-    assert not CalendarFeedToken.objects.exists()
-
-    mine = CalendarFeedToken.for_resident(beboer)
-    theirs = CalendarFeedToken.for_resident(other)
-
-    assert mine.token != theirs.token
-    assert len(mine.token) >= 32
-    assert CalendarFeedToken.for_resident(beboer).pk == mine.pk  # get_or_create, not a second row
-
-
-def test_rotating_a_token_changes_it(beboer: Resident) -> None:
-    token = CalendarFeedToken.for_resident(beboer)
-    before = token.token
-
-    after = token.rotate()
-
-    assert after != before
-    assert token.rotated_at is not None
 
 
 # --- the other end of the link, on the event page ----------------------------------------------------

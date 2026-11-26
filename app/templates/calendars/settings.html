@@ -1,0 +1,159 @@
+{% extends "base.html" %}
+{% block title %}Kalenderabonnement - GAHK Intern{% endblock %}
+{% block content_width %}max-w-3xl{% endblock %}
+
+{% block content %}
+  <div class="page-head">
+    <div>
+      <p class="eyebrow">Indstillinger</p>
+      <h1>Kalenderabonnement</h1>
+    </div>
+  </div>
+
+  <p class="calsub-intro">
+    Abonnér på din egen GAHK-kalender i Google Kalender, Outlook eller Apple Kalender. Den opdaterer
+    sig selv, når noget bliver flyttet, aflyst eller tilføjet.
+  </p>
+
+  <section class="card-flat calsub-section">
+    <div class="card-head"><h2>Din adresse</h2></div>
+    <div class="card-pad calsub-box">
+      {% comment %}
+        The address IS the credential: no Referer may carry it (rel="noreferrer" on every link that
+        holds it). See calendars.views.calendar_feed. frontend/src/copy.ts runs the copy button.
+      {% endcomment %}
+      <div class="calsub-address">
+        <input type="text" id="calsub-url" value="{{ feed_url }}" readonly aria-label="Adressen til din kalender" data-select-on-focus>
+        <button type="button" class="btn" data-copy="calsub-url">Kopiér</button>
+      </div>
+      <div class="calsub-open">
+        <a class="btn btn-secondary" href="{{ webcal_url }}" rel="noreferrer">Åbn i kalender-app</a>
+        <a class="btn btn-secondary" href="https://calendar.google.com/calendar/render?cid={{ webcal_url }}" target="_blank" rel="noreferrer noopener">Tilføj i Google Kalender</a>
+      </div>
+      <p class="muted calsub-help">
+        »Åbn i kalender-app« virker i Apple Kalender og Outlook på computeren. Ellers: kopiér adressen,
+        og tilføj den som abonnement — se vejledningen nedenfor. Hent ikke filen og importér den: så
+        opdaterer den sig aldrig.
+      </p>
+
+      {% if stale %}
+        <div class="feed-warn" role="status">
+          <svg class="ni" aria-hidden="true"><use href="#i-clock"></use></svg>
+          <div>
+            <strong>Din kalender har ikke hentet adressen i over en uge.</strong>
+            <p>
+              Kalender-apps henter den mindst én gang om dagen, så måske er abonnementet ikke sat rigtigt
+              op, eller det er blevet fjernet. Prøv at tilføje adressen igen efter vejledningen nedenfor.
+            </p>
+          </div>
+        </div>
+      {% endif %}
+      <p class="muted calsub-usage">
+        {% if subscription.last_used_at %}
+          Sidst hentet af en kalender-app for {{ subscription.last_used_at|timesince }} siden
+          ({{ subscription.last_used_at|date:"j. F \k\l. H:i" }}).
+        {% else %}
+          Ikke hentet af en kalender-app endnu. Når du har tilføjet adressen, kan du se her, hvornår den sidst blev hentet.
+        {% endif %}
+      </p>
+
+      <div class="feed-warn">
+        <svg class="ni" aria-hidden="true"><use href="#i-lock"></use></svg>
+        <div>
+          <strong>Del ikke adressen med andre.</strong>
+          <p class="muted">
+            Den fungerer som en nøgle: alle der har den, kan se din kalender uden at logge ind.
+          </p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <form method="post" class="card-flat calsub-section">
+    {% csrf_token %}
+    <div class="card-head"><h2>Hvad skal med</h2></div>
+    <div class="card-pad calsub-box">
+      <fieldset class="calsub-choice">
+        <legend>Begivenheder</legend>
+        {% for radio in form.events %}
+          <label>{{ radio.tag }} {{ radio.choice_label }}</label>
+        {% endfor %}
+        <p class="muted calsub-help">
+          Står der »Ikke svaret:« foran titlen, har du ikke svaret endnu — linket i begivenheden fører
+          til siden, hvor du svarer. Kun det, du har sagt ja til, optager tid i din kalender.
+        </p>
+      </fieldset>
+
+      <fieldset class="calsub-choice">
+        <legend>Andet</legend>
+        <label>{{ form.include_birthdays }} Fødselsdage på kollegiet</label>
+        <label class="calsub-later"><input type="checkbox" checked disabled> Køkkenvagter <span class="muted">(kommer senere)</span></label>
+        <label class="calsub-later"><input type="checkbox" checked disabled> Rengøringsvagter <span class="muted">(kommer senere)</span></label>
+      </fieldset>
+
+      <div><button type="submit" class="btn">Gem</button></div>
+    </div>
+  </form>
+
+  <section class="calsub-section">
+    <h2 class="calsub-heading">Sådan tilføjer du kalenderen</h2>
+    <p class="muted calsub-help">Kopiér først adressen ovenfor. Tilføj den som et abonnement, ikke som en import.</p>
+
+    <details class="card calsub-app">
+      <summary>Google Kalender</summary>
+      <ol>
+        <li>Åbn <a href="https://calendar.google.com" target="_blank" rel="noreferrer noopener">calendar.google.com</a> på en computer. Det kan ikke gøres i mobilappen.</li>
+        <li>I venstre side: tryk på <strong>+</strong> ud for <strong>Andre kalendere</strong>, og vælg <strong>Fra webadresse</strong>.</li>
+        <li>Indsæt adressen, og tryk på <strong>Tilføj kalender</strong>.</li>
+      </ol>
+      <p class="muted">
+        Kalenderen kommer af sig selv på din telefon. Kan du ikke se den på Android, så åbn appens
+        indstillinger, tryk på kalenderen og slå <strong>Synkroniser</strong> til. Google henter
+        ændringer med op til et døgns mellemrum.
+      </p>
+    </details>
+
+    <details class="card calsub-app">
+      <summary>Outlook</summary>
+      <ol>
+        <li><strong>Outlook på nettet og nye Outlook:</strong> gå til kalenderen, tryk på <strong>Tilføj kalender</strong>, og vælg <strong>Abonner fra internettet</strong>.</li>
+        <li>Indsæt adressen, giv kalenderen navnet <strong>GAHK</strong>, og tryk på <strong>Importér</strong>.</li>
+      </ol>
+      <p class="muted">
+        I klassisk Outlook til Windows: <strong>Tilføj kalender</strong> &rarr; <strong>Fra internettet</strong>,
+        indsæt adressen og tryk <strong>OK</strong>. Outlook-appen på telefonen viser kalenderen, når den er
+        tilføjet. Outlook henter ændringer med nogle timers mellemrum.
+      </p>
+    </details>
+
+    <details class="card calsub-app">
+      <summary>Apple Kalender (iPhone, iPad og Mac)</summary>
+      <ol>
+        <li><strong>iPhone og iPad:</strong> tryk på <strong>Åbn i kalender-app</strong> ovenfor, og vælg <strong>Abonner</strong>.
+          Eller: <strong>Indstillinger</strong> &rarr; <strong>Apps</strong> &rarr; <strong>Kalender</strong> &rarr;
+          <strong>Kalenderkonti</strong> &rarr; <strong>Tilføj konto</strong> &rarr; <strong>Andet</strong> &rarr;
+          <strong>Tilføj abonneret kalender</strong>, indsæt adressen og tryk <strong>Næste</strong> og <strong>Gem</strong>.</li>
+        <li><strong>Mac:</strong> åbn Kalender, vælg <strong>Arkiv</strong> &rarr; <strong>Nyt kalenderabonnement</strong>,
+          indsæt adressen og tryk <strong>Abonner</strong>. Vælg <strong>iCloud</strong> som placering, så kommer den
+          også på din iPhone, og sæt <strong>Opdater automatisk</strong> til hver time.</li>
+      </ol>
+    </details>
+  </section>
+
+  <section class="card-flat calsub-section">
+    <div class="card-head"><h2>Ny adresse</h2></div>
+    <form method="post" action="{% url 'calendars:rotate_token' %}" class="card-pad"
+          onsubmit="return confirm('Lav en ny adresse? Den gamle holder op med at virke, og du skal tilføje den nye i din kalender igen.')">
+      {% csrf_token %}
+      <button type="submit" class="btn btn-secondary">Lav en ny adresse</button>
+      {% comment %}
+        Said plainly because calendar clients fail SILENTLY on a 404 — they simply stop updating,
+        with no error anywhere.
+      {% endcomment %}
+      <p class="muted calsub-help">
+        Brug det, hvis adressen er kommet ud til nogen. Husk at rette den i din kalender bagefter —
+        din kalender siger ikke selv fra, den holder bare op med at opdatere.
+      </p>
+    </form>
+  </section>
+{% endblock %}

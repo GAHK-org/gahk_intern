@@ -33,7 +33,8 @@ KITCHEN_ALLOWED_PREFIXES = (
     "/static/",
     "/media/",
     "/ws/",
-    "/kalender/",
+    "/calendar/feed/",
+    "/kalender/",  # the old feed address, a redirect to /calendar/feed/<token>.ics
 )
 # /install is public anyway (how to install the app), and the kitchen tablet may itself carry the old
 # app from gahk.dk, whose notice links there: a 403 only for the kitchen account would make no sense.

@@ -10,7 +10,7 @@ identical "Begivenheder" sections — `cms.Event` is the public one. See events.
 
 from django.contrib import admin
 
-from .models import CalendarFeedToken, Event, EventComment, EventInvite, Rsvp
+from .models import Event, EventComment, EventInvite, Rsvp
 
 
 class EventInviteInline(admin.TabularInline):
@@ -52,18 +52,3 @@ class RsvpAdmin(admin.ModelAdmin):
     list_filter = ("answer",)
     search_fields = ("resident__first_name", "resident__last_name", "event__title")
     readonly_fields = ("created_at",)
-
-
-@admin.register(CalendarFeedToken)
-class CalendarFeedTokenAdmin(admin.ModelAdmin):
-    """Revocation, and answering "is my calendar actually pulling?".
-
-    The token column is deliberately absent from every display: it is a bearer credential, and an
-    admin changelist is exactly the place it should not be readable from. Delete the row to revoke;
-    the resident's next visit mints a new one.
-    """
-
-    list_display = ("resident", "created_at", "rotated_at", "last_used_at")
-    search_fields = ("resident__first_name", "resident__last_name", "resident__email")
-    readonly_fields = ("created_at", "rotated_at", "last_used_at")
-    fields = ("resident", "created_at", "rotated_at", "last_used_at")

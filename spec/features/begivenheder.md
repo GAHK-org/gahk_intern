@@ -91,8 +91,6 @@ so they are never read as an id.
 "opret"                  create         GET/POST
 "abonner"                save_subscription  POST  push consent for the `events` topic
 "kalender"               calendar       GET       month grid; ?maaned=, ?dag=
-"kalender/abonnement"    feed_settings  GET       shows the subscribe URL
-"kalender/nyt-link"      rotate_token   POST      invalidates the old feed URL
 "<int:pk>"               detail
 "<int:pk>/rediger"       edit           GET/POST
 "<int:pk>/slet"          delete         POST
@@ -101,17 +99,8 @@ so they are never read as an id.
 "<int:pk>/ics"           event_ics      GET       single-event download
 ```
 
-One route lives **outside** the intranet's URLconf, in `config/urls.py`:
-
-```
-"/kalender/<token>.ics"  events_feed    GET       NO auth decorator
-```
-
-Mounted on its own, ahead of the intranet, on purpose. If the intranet is ever gated at the proxy,
-or someone adds Django's `LoginRequiredMiddleware`, a feed inside it dies **silently** — and silence
-is the entire failure mode of a calendar subscription. The token is the credential; see below.
-Feed URLs handed out before the move say `gahk.dk/kalender/…`; gahk.dk passes those through to
-intern.gahk.dk, so they keep refreshing.
+The resident's calendar subscription (settings page and `.ics` feed) is its own feature under
+`/calendar/`; see `calendar-subscription.md`.
 
 ## Data model
 
@@ -122,7 +111,6 @@ Event         organiser FK, co_organisers M2M, title, description (Markdown), im
 EventInvite   (event, resident, invited_by?, invited_at)      unique (event, resident)
 Rsvp          (event, resident, answer, answered_at, promoted_at?, created_at)
                                                               unique (event, resident)
-CalendarFeedToken   OneToOne(resident), token, created_at, rotated_at?, last_used_at?
 ```
 
 Shape choices, in short — each is argued at length where it lives:
@@ -144,10 +132,6 @@ Shape choices, in short — each is argued at length where it lives:
   changes. A typo fix in the description must not re-notify sixty phones.
 - **`ical_uid` is derived from the pk** (`begivenhed-{pk}@gahk.dk`), never stored and never
   host-derived: the same event must present the same UID in the download and in every feed, forever.
-- **`CalendarFeedToken` is its own model, not a column on `Resident`.** `Resident` is the auth
-  principal, loaded by every request and dumped by the alumneliste export; a secret there is one a
-  stray `.values()` can leak from code that has no idea it is handling a credential. Revocation is
-  a row you delete rather than a column you remember to null.
 
 ## Tilmelding, capacity and the venteliste
 
@@ -339,11 +323,11 @@ list view. Two things about it are load-bearing:
 Two paths, both from `visible_to`:
 
 - **Per event** — `<pk>/ics`, `Content-Disposition: attachment`.
-- **Per resident** — `/kalender/<token>.ics`, a subscribable feed, rendered inline (a subscription
-  that downloads is not a subscription), plus `X-WR-CALNAME` and
-  `REFRESH-INTERVAL;VALUE=DURATION:PT1H`.
+- **Per resident** — the calendar subscription (`calendar-subscription.md`), which carries the
+  events among other things.
 
-The iCalendar output is **hand-rolled**, ~120 lines in `events/icalendar.py`. No dependency: CI runs
+The iCalendar output is **hand-rolled**: the format in `core/icalendar.py`, an event's VEVENT in
+`events/icalendar.py`. No dependency: CI runs
 `pip-audit` over a frozen lockfile, and this codebase has already made exactly this call once —
 `core/push.py` explains dropping `django-webpush` for ~30 lines of direct code.
 
@@ -377,19 +361,9 @@ What the format decisions are, and why:
   the request's host: the link lands in somebody's calendar and must still work from a phone that
   has never heard of `localhost:8000`. Unlike the UID it follows the site: it pointed at
   gahk.dk/intern/ until the intranet moved to intern.gahk.dk, while the UID kept `@gahk.dk`.
-- **`DESCRIPTION` carries `plain_text`, never the Markdown source or HTML.** A calendar has no more
-  use for `**bold**` than a lock screen does, and `X-ALT-DESC` is Outlook-only.
-
-### The feed token
-
-The feed view carries **no auth decorator** — a calendar client cannot log in — so the token *is*
-the credential. Everything follows from that: `secrets.token_urlsafe(32)` via a named module
-function so migrations can serialise the default; minted **lazily on first use**, never backfilled
-by a migration (that would mint sixty secrets for people who may never use the feature, and bake a
-non-deterministic data step into a history that could then never be squashed cleanly); an unknown
-token **404s**; the page offers **forny link**, which invalidates the old one; the feed contains
-only what `visible_to` allows; and `last_used_at` is written at most once an hour, because sixty
-phones polling hourly would otherwise turn a read endpoint into a write storm.
+- **`DESCRIPTION` carries `plain_text`, never the Markdown source or HTML,** followed by the event's
+  link, since Google and Outlook never show `URL:`. A calendar has no more use for `**bold**` than a
+  lock screen does, and `X-ALT-DESC` is Outlook-only.
 
 ## Decisions and rejected alternatives
 

@@ -1570,6 +1570,30 @@
   .feed-warn .ni { width: 17px; height: 17px; stroke: currentColor; fill: none; flex: none; margin-top: 2px; }
   .feed-warn p { margin: 3px 0 0; font-size: 12.5px; }
 
+  /* /calendar/ (calendars/settings.html): the resident's calendar subscription. */
+  .calsub-intro { margin: 0 0 16px; }
+  .calsub-section { margin-bottom: 18px; }
+  .calsub-box { display: flex; flex-direction: column; gap: 12px; }
+  .calsub-box > p, .calsub-help { margin: 0; }
+  .calsub-help, .calsub-usage { font-size: 12.5px; }
+  .calsub-address { display: flex; gap: 8px; align-items: stretch; }
+  .calsub-address input { flex: 1; min-width: 0; font-size: 13px; background: var(--sunken); }
+  .calsub-open { display: flex; flex-wrap: wrap; gap: 8px; }
+  .calsub-choice { border: 0; margin: 0; padding: 0; min-width: 0; }
+  .calsub-choice legend { font-weight: 700; font-size: 14px; margin-bottom: 4px; padding: 0; }
+  .calsub-choice .calsub-help { margin-top: 6px; }
+  .calsub-later { display: flex; align-items: center; gap: 8px; font-weight: 400; margin: 4px 0; color: var(--muted); }
+  .calsub-heading { font-size: 16px; font-weight: 700; margin: 0 0 4px; }
+  .calsub-app { padding: 0; margin: 10px 0; }
+  .calsub-app > summary { display: flex; align-items: center; justify-content: space-between; gap: 12px;
+    padding: 14px 18px; font-size: 15px; font-weight: 700; cursor: pointer; list-style: none; }
+  .calsub-app > summary::-webkit-details-marker { display: none; }
+  .calsub-app > summary::after { content: "▾"; color: var(--muted); transition: rotate .15s ease; }
+  .calsub-app[open] > summary::after { rotate: 180deg; }
+  .calsub-app > :not(summary) { margin: 0 18px 12px; font-size: 14px; }
+  .calsub-app ol { list-style: decimal; padding-left: 22px; display: grid; gap: 8px; }
+  .calsub-app a { color: var(--green-700); font-weight: 600; text-decoration: underline; }
+
   .event-form { display: flex; flex-direction: column; gap: 2px; }
   .event-field { margin-bottom: 6px; }
   /* The field's own label, not the ones inside a radio/checkbox list — hence the child selector. */

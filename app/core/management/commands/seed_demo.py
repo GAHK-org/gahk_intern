@@ -39,6 +39,8 @@ from ak.services import apply_monthly_charge
 from audit import trail
 from audit.demo import seed as seed_audit_trail
 from audit.models import AuditChange, AuditEntity, AuditEvent
+from calendars.demo import seed as seed_calendars
+from calendars.models import CalendarSubscription
 from cms.models import ContentChange, NewsItem, Page, PageVersion, PylonEvent
 
 # CmsEvent, never Event: the internal events app has one of the same name, and both are seeded
@@ -51,7 +53,7 @@ from core.worker_jobs_demo import wipe as wipe_worker_job_results
 from den_hurtige.demo import seed as seed_den_hurtige
 from den_hurtige.models import QuickComment, QuickPost, QuickReaction
 from events.demo import seed as seed_events
-from events.models import CalendarFeedToken, Event, EventInvite, Rsvp
+from events.models import Event, EventInvite, Rsvp
 from gahkflix.demo import seed as seed_gahkflix
 from gahkflix.models import ChangeRequest as GahkflixRequest
 from gahkflix.models import Series as GahkflixSeries
@@ -132,7 +134,7 @@ ROOM_CRITERIA = [
 WIPE_ORDER: list[type[models.Model]] = [
     Rsvp,
     EventInvite,
-    CalendarFeedToken,
+    CalendarSubscription,
     Event,
     NoticeReaction,
     NoticeComment,
@@ -251,6 +253,7 @@ class Command(BaseCommand):
         self._seed_stats()
         seed_opslagstavle(residents, self.now, self.rng)
         seed_events(residents, self.now, self.rng)
+        seed_calendars(residents, self.now, self.rng)
         seed_photo_album(residents, self.now, self.rng)
         seed_gahkflix(residents, self.now, self.rng)
         # After both: these posts embed an album and a film seeded just above.
