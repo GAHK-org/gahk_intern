@@ -1,18 +1,25 @@
 {% comment %}
   The bell's panel, fetched by htmx into #notif-panel the first time the bell opens
-  (notifications/_bell.html). The ten most recent active in-app notifications, most important first.
+  (notifications/_bell.html). The ten most important unseen in-app notifications; a seen one leaves
+  the panel but stays on the page. "Ryd" marks them all seen and swaps this panel back in, emptied.
 {% endcomment %}
 <div class="notif-panel-head">
   <strong>Notifikationer</strong>
-  <a href="{% url 'notifications:preferences' %}" class="muted">Indstillinger</a>
+  <span class="notif-panel-actions">
+    {% if rows %}
+      <button type="button" class="notif-clear" hx-post="{% url 'notifications:mark_all_seen' %}" hx-target="#notif-panel">Ryd</button>
+    {% endif %}
+    <a href="{% url 'notifications:preferences' %}" class="muted">Indstillinger</a>
+  </span>
 </div>
 <div class="notif-list">
   {% for row in rows %}
     {% include "notifications/_item.html" %}
   {% empty %}
-    <p class="muted notif-empty">Ingen notifikationer.</p>
+    <p class="muted notif-empty">Ingen nye notifikationer.</p>
   {% endfor %}
 </div>
 <div class="notif-panel-foot">
   <a href="{% url 'notifications:index' %}">Se alle</a>
 </div>
+{% include "notifications/_badge.html" with oob=True %}

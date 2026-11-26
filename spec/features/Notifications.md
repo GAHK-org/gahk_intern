@@ -81,7 +81,7 @@ resident has to act on. Their push and vibration can be turned off. `gahkflix.ne
 Four levels: **Lav**, **Normal**, **Høj**, **Kritisk**. Each category has a default; a call may raise
 it. "Someone reacted to your message" is the typical Lav.
 
-- In the dropdown and on the page, the unseen come first, then the most important. Høj and Kritisk
+- On the page the unseen come first, then the most important (the dropdown has only the unseen). Høj and Kritisk
   get a coloured left border and a level label, Kritisk also a tinted background.
 - **Kritisk overrides every preference** — in-app (where the category has an in-app row), push and
   vibration — so a resident gets it even with the category turned off. The push uses `requireInteraction`, so it stays on screen until
@@ -137,8 +137,9 @@ they would get a 403 on opening. Acting on your own content never notifies you.
 ### The dropdown
 
 A button with an unseen-count badge in the top bar opens a dropdown (loaded with htmx on click) with
-the **10** first active in-app notifications — unseen first, then most important, then most
-recent — and a link to the page.
+the **10** first **unseen** active in-app notifications — most important, then most recent — and a
+link to the page. A seen notification leaves the dropdown but stays on the page. **Ryd** marks every
+one seen and empties the dropdown (#393).
 
 ### The notifications page — `/notifikationer/`
 
