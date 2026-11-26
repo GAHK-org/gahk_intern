@@ -37,6 +37,9 @@ broken to preview. The viewer copies and thumbnails are built at the end, as a w
 Search and sorting (`_seed_search`): a folder of a dozen receipts by two people, and minutes of the
 same name in several periods and groups.
 
+Live editing (`_seed_office`): a presentation from `Ny præsentation`, a version saved by a live
+session with its three editors, and an OpenDocument file to view and copy.
+
 Last, locks (`_seed_locks`), as they stop changes: what the nightly task locked, regnskab@'s
 closed accounts and `Årsafslutning` folder locked by hand, and the requests page for admin@ and
 formand@ with an unlock and a purge in each state - pending, approved (the logo is unlocked for now
@@ -73,7 +76,7 @@ from notifications.models import Notification
 from residents.models import Residency, Resident, Role
 from residents.permissions import has_active_role
 
-from . import locks, operations, preview, services, shared, sharing, standing
+from . import locks, office, operations, preview, services, shared, sharing, standing
 from .access import Viewer
 from .models import (
     ApprovalRequest,
@@ -400,6 +403,7 @@ def seed(residents: list[Resident], now: datetime, _rng: random.Random) -> int:
     _seed_standing(s)
     _seed_previews(s)
     _seed_search(s)
+    _seed_office(s)
     # Last: a lock stops the changes above.
     _seed_locks(s)
     # The viewer copies and thumbnails the "thumbnails" queue makes, made here so the lists show them
@@ -937,6 +941,35 @@ def _seed_search(s: _Seeder) -> None:
         )
 
 
+def _seed_office(s: _Seeder) -> None:
+    """For live editing, built switched off: with the dev compose's `office` profile up these open in
+    Euro-Office, and without it they show the greyed-out buttons. A presentation made by `Ny
+    præsentation` and renamed, a document version saved by a live session with three editors, and
+    an OpenDocument file, an older format that opens for viewing with `Rediger en kopi`."""
+    formand, beboer, oel = s.login("formand@gahk.dk"), s.login("beboer@gahk.dk"), s.login("oel@gahk.dk")
+    year_start = date(s.today.year, 1, 1)
+    this_year = _year_folder(s.today.year)
+    when = s.ago(9, not_before=year_start)
+    viewer = s.viewer(formand, when)
+    with _at(when):
+        slides = office.new_document(viewer, this_year, "presentation", formand)
+    s.rename(slides, "Velkomst til nye beboere.pptx", formand, when + timedelta(minutes=5))
+
+    # Saved when the last of its three editors closed it (office._save lists them on the version).
+    minutes = _in(this_year, "Husmøde referat.docx")
+    s.upload(
+        this_year,
+        minutes.name,
+        _docx("Husmøde", [*_HOUSE_MEETING, "Tilføjet under mødet."]),
+        formand,
+        s.ago(28, not_before=year_start),
+    )
+    minutes.latest_version().editors.set([formand, beboer, oel])
+
+    guides = Folder.objects.get(name="Vejledninger", kind=Folder.Kind.FOLDER)
+    s.upload(guides, "Gammel husorden.odt", _odt("Husorden (2019)", _OLD_RULES), formand, s.ago(190))
+
+
 def _seed_locks(s: _Seeder) -> None:
     """Locks, and requests in every state: the requests page (admin@, formand@) has two pending, two
     approved and two rejected, and whoever asked for a decided one has been told the outcome."""
@@ -1126,6 +1159,37 @@ def _zip(names: list[str]) -> bytes:
                 zipfile.ZipInfo(name, date_time=(2026, 1, 1, 0, 0, 0)),
                 _jpg(name, ["#dd6b43", "#d8a32f", "#315b8d"][index % 3], (800, 1100)),
             )
+    return output.getvalue()
+
+
+def _odt(title: str, paragraphs: list[str]) -> bytes:
+    """The smallest OpenDocument text LibreOffice opens: the stored mimetype first, a manifest and
+    the content."""
+    office_ns = 'xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0"'
+    text_ns = 'xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0"'
+    body = "".join(f"<text:p>{escape(line)}</text:p>" for line in [title, *paragraphs])
+    content = (
+        f'<?xml version="1.0" encoding="UTF-8"?><office:document-content {office_ns} {text_ns} '
+        f'office:version="1.3"><office:body><office:text>{body}</office:text></office:body>'
+        "</office:document-content>"
+    )
+    manifest = (
+        '<?xml version="1.0" encoding="UTF-8"?>'
+        '<manifest:manifest xmlns:manifest="urn:oasis:names:tc:opendocument:xmlns:manifest:1.0" '
+        'manifest:version="1.3">'
+        '<manifest:file-entry manifest:full-path="/" '
+        'manifest:media-type="application/vnd.oasis.opendocument.text"/>'
+        '<manifest:file-entry manifest:full-path="content.xml" manifest:media-type="text/xml"/>'
+        "</manifest:manifest>"
+    )
+    output = BytesIO()
+    with zipfile.ZipFile(output, "w") as archive:
+        stamp = (2026, 1, 1, 0, 0, 0)
+        archive.writestr(zipfile.ZipInfo("mimetype", stamp), "application/vnd.oasis.opendocument.text")
+        for name, text in (("META-INF/manifest.xml", manifest), ("content.xml", content)):
+            info = zipfile.ZipInfo(name, stamp)
+            info.compress_type = zipfile.ZIP_DEFLATED
+            archive.writestr(info, text)
     return output.getvalue()
 
 
@@ -1357,6 +1421,7 @@ _THERMOSTATS = """{
   "gange": {"dag": 18, "nat": 16}
 }
 """
+_OLD_RULES = ["Den gamle husorden, fra før den blev skrevet om.", "Ro på gangene efter kl. 22."]
 _PARTY_PROGRAMME = ["Kl. 14: Gårdspil", "Kl. 18: Grill i gården", "Kl. 22: Band i fællesrummet"]
 _GENERAL_MEETING = [
     "Dagsorden: valg af dirigent, beretning, regnskab, indkomne forslag, eventuelt.",

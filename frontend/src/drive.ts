@@ -249,11 +249,13 @@ function initInstead(): void {
     form.addEventListener("submit", async (event) => {
       if (asked) return
       event.preventDefault()
+      // The button pressed carries a value of its own (`Nyt dokument` and the like): submit with it.
+      const submitter = event.submitter instanceof HTMLButtonElement ? event.submitter : null
       const choice = await askTimeless()
       if (choice === null) return
       if (choice === "instead") form.action = form.dataset.driveInstead!
       asked = true
-      form.requestSubmit()
+      form.requestSubmit(submitter)
     })
   }
 }
@@ -302,7 +304,32 @@ function waitAndReload(limit: number): void {
   window.setTimeout(() => location.reload(), 3000)
 }
 
+/** The live editing page: load the Document Server's script and open the document in it. A
+ * server that does not answer leaves a message instead of a blank page. */
+function initOffice(): void {
+  const host = document.querySelector<HTMLElement>("[data-drive-office]")
+  const raw = document.getElementById("drive-office-config")?.textContent
+  if (!host || !raw) return
+  const failed = () => {
+    host.replaceChildren()
+    const note = document.createElement("p")
+    note.className = "drive-note"
+    note.textContent = "Editoren svarer ikke lige nu. Hent filen i stedet, eller prøv igen senere."
+    host.append(note)
+  }
+  const script = document.createElement("script")
+  script.src = host.dataset.driveOffice!
+  script.addEventListener("load", () => {
+    const api = (window as unknown as { DocsAPI?: { DocEditor: new (id: string, config: unknown) => unknown } }).DocsAPI
+    if (!api) return failed()
+    new api.DocEditor("drive-office-editor", JSON.parse(raw))
+  })
+  script.addEventListener("error", failed)
+  document.head.append(script)
+}
+
 initUpload()
+initOffice()
 initViewer()
 initInstead()
 initSelection()

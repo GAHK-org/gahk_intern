@@ -30,14 +30,32 @@
     </div>
   {% endif %}
 
+  {% if office.state == "on" and office.in_use %}<p class="drive-note mb-4">Filen bliver redigeret lige nu. Ændringerne bliver en ny version, når den sidste lukker den.</p>{% endif %}
   {% include "drive/_preview.html" %}
 
   <div class="drive-actions mb-4">
-    <a class="btn" href="{% url 'drive:download' file.uuid %}">Hent</a>
+    {% if office.state == "on" %}
+      <a class="btn" href="{% url 'drive:office' file.uuid %}">{% if office.edit %}Rediger{% else %}Åbn{% endif %}</a>
+      {% if office.convert %}
+        <form method="post" action="{% url 'drive:office_convert' file.uuid %}" class="drive-inline-form">
+          {% csrf_token %}
+          <button type="submit" class="btn btn-secondary" title="Laver en kopi i et nyere format ved siden af originalen">Rediger en kopi</button>
+        </form>
+      {% endif %}
+      <a class="btn btn-secondary" href="{% url 'drive:download' file.uuid %}">Hent</a>
+    {% else %}
+      <a class="btn" href="{% url 'drive:download' file.uuid %}">Hent</a>
+      {% if office %}
+        <button type="button" class="btn btn-secondary" disabled aria-describedby="drive-office-state">{% if office.edit %}Rediger{% else %}Åbn{% endif %} i browseren</button>
+      {% endif %}
+    {% endif %}
     {% if can_version %}
       {% include "drive/_upload.html" with label="Upload ny version" multiple=False %}
     {% endif %}
   </div>
+  {% if office and office.state != "on" %}
+    <p id="drive-office-state" class="drive-office-state">{% include "drive/_office_state.html" with state=office.state %}</p>
+  {% endif %}
 
   <div class="drive-links mb-6">
     {% if can_change %}
@@ -76,7 +94,7 @@
         <span class="drive-version">
           <strong>Version {{ version.number }}</strong>
           {% if forloop.first %}<span class="chip">Nyeste</span>{% endif %}
-          <span class="muted">{{ version.created_at|date:"j. M Y H:i" }}{% if version.created_by %} · {{ version.created_by.full_name }}{% endif %} · {{ version.size|filesizeformat }}{% if version.restored_from %} · gendannet fra version {{ version.restored_from }}{% endif %}</span>
+          <span class="muted">{{ version.created_at|date:"j. M Y H:i" }}{% with editors=version.editors.all %}{% if editors %} · redigeret af {% for editor in editors %}{{ editor.full_name }}{% if not forloop.last %}, {% endif %}{% endfor %}{% elif version.created_by %} · {{ version.created_by.full_name }}{% endif %}{% endwith %} · {{ version.size|filesizeformat }}{% if version.restored_from %} · gendannet fra version {{ version.restored_from }}{% endif %}</span>
         </span>
         <a class="drive-download" href="{% url 'drive:download_version' file.uuid version.number %}">Hent</a>
         {% if can_change and not forloop.first %}

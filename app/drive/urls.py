@@ -4,6 +4,7 @@ from . import (
     views,
     views_items,
     views_locks,
+    views_office,
     views_preview,
     views_search,
     views_shared,
@@ -16,6 +17,12 @@ app_name = "drive"
 urlpatterns = [
     path("", views.home, name="home"),
     path("search/", views_search.search_page, name="search"),
+    path("file/<uuid:uuid>/office", views_office.editor, name="office"),
+    path("file/<uuid:uuid>/office/copy", views_office.convert, name="office_convert"),
+    path("folder/<uuid:uuid>/new-document", views_office.new_document, name="office_new"),
+    # Called by the Document Server, not by a browser: no login, a signed token instead.
+    path("office/fetch/<str:token>", views_office.fetch, name="office_fetch"),
+    path("office/callback/<str:token>", views_office.callback, name="office_callback"),
     path("folder/<uuid:uuid>/zip", views_search.request_zip, name="request_zip"),
     path("zip/<uuid:token>/", views_search.zip_page, name="zip"),
     path("zip/<uuid:token>/download", views_search.fetch_zip, name="fetch_zip"),
