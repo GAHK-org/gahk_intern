@@ -1256,6 +1256,21 @@
      space in it. Without this a long one pushes the card wider than the column on a phone. */
   .prose-gahk a { @apply text-gahk-green-700 underline; overflow-wrap:anywhere; }
   .prose-gahk img { @apply max-w-full h-auto rounded my-3; }
+  /* A picture's layout from the Hjemmeside editor (frontend/src/cms-image-layout.ts), as gahk.dk
+     draws it (gahk_web styles/site.css): a placement and a share of the text column's width. On a
+     phone nothing floats beside a sliver of text; pictures stack, small ones at half the width. */
+  .prose-gahk img.img-left { float: left; margin: .25rem 1.25rem .75rem 0; }
+  .prose-gahk img.img-right { float: right; margin: .25rem 0 .75rem 1.25rem; }
+  .prose-gahk img.img-center { display: block; margin: .75rem auto; }
+  .prose-gahk img.img-small { width: 33%; }
+  .prose-gahk img.img-medium { width: 50%; }
+  .prose-gahk img.img-large { width: 75%; }
+  .prose-gahk img.img-full { width: 100%; }
+  @media (max-width: 639px) {
+    .prose-gahk img.img-left, .prose-gahk img.img-right { float: none; display: block; margin: .75rem auto; }
+    .prose-gahk img.img-small { width: 50%; }
+    .prose-gahk img.img-medium, .prose-gahk img.img-large { width: 100%; }
+  }
   .prose-gahk blockquote { @apply border-l-4 border-gahk-green-700 pl-4 my-4 italic text-muted; }
   /* Added for rendered Markdown (opslagstavlen). Migrated CMS pages get them too, which is a bonus
      rather than a coincidence: they were always allowed by cms/sanitize.py and simply unstyled. */

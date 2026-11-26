@@ -9,6 +9,7 @@
 //
 // Imports nothing from the main bundle (see cms-loader.ts).
 import type * as EditorModule from "./cms-editor";
+import { DEFAULT_LAYOUT, PLACEMENTS, SIZES, fitLayout, type ImageLayout } from "./cms-image-layout";
 
 export interface CmsDeps {
   csrfToken: () => string;
@@ -22,12 +23,10 @@ export interface LibraryImage {
   name: string;
 }
 
-export type Placement = "inline" | "left" | "right";
-
 export interface PickedImage {
   url: string;
   alt: string;
-  placement: Placement;
+  layout: ImageLayout;
 }
 
 export function start(root: HTMLElement, deps: CmsDeps): void {
@@ -226,6 +225,9 @@ class LibraryPicker {
   private insert = document.createElement("button");
   private message = document.createElement("p");
   private placement = document.createElement("fieldset");
+  private size = document.createElement("fieldset");
+  // The last layout picked, offered again for the next picture on this page.
+  private layout: ImageLayout = DEFAULT_LAYOUT;
 
   constructor(
     private listUrl: string,
@@ -237,7 +239,7 @@ class LibraryPicker {
     const parts = this.parts ?? this.build();
     this.selected = null;
     this.alt.value = "";
-    this.placement.querySelector<HTMLInputElement>('input[value="inline"]')!.checked = true;
+    this.showLayout();
     this.updateSelection();
     void this.load();
     if (!parts.dialog.open) parts.dialog.showModal();
@@ -283,39 +285,60 @@ class LibraryPicker {
     this.alt.type = "text";
     this.alt.maxLength = 255;
     altLabel.append(this.alt);
-    this.placement.className = "cms-placement";
-    const legend = document.createElement("legend");
-    legend.textContent = "Placering";
-    this.placement.append(legend);
-    for (const [value, text] of [
-      ["inline", "I teksten"],
-      ["left", "Til venstre"],
-      ["right", "Til højre"],
-    ] as const) {
-      const option = document.createElement("label");
-      const radio = document.createElement("input");
-      radio.type = "radio";
-      radio.name = "cms-placement";
-      radio.value = value;
-      option.append(radio, ` ${text}`);
-      this.placement.append(option);
-    }
+    this.fillChoices(this.placement, "Placering", "placement", PLACEMENTS);
+    this.fillChoices(this.size, "Størrelse", "size", SIZES);
     this.insert.type = "button";
     this.insert.className = "btn";
     this.insert.textContent = "Indsæt";
     this.insert.addEventListener("click", () => {
       if (!this.selected) return;
-      const checked = this.placement.querySelector<HTMLInputElement>("input:checked");
-      this.finish({
-        url: this.selected.url,
-        alt: this.alt.value.trim(),
-        placement: (checked?.value ?? "inline") as Placement,
-      });
+      this.finish({ url: this.selected.url, alt: this.alt.value.trim(), layout: this.layout });
       parts.dialog.close();
     });
-    foot.append(altLabel, this.placement, this.insert);
+    foot.append(altLabel, this.placement, this.size, this.insert);
     parts.body.append(tools, this.message, this.grid, foot);
     return parts;
+  }
+
+  /** A row of radio buttons drawn as buttons (with a pictogram where there is one). */
+  private fillChoices<K extends keyof ImageLayout>(
+    fieldset: HTMLFieldSetElement,
+    title: string,
+    key: K,
+    choices: { value: ImageLayout[K]; label: string; title: string; icon?: string }[],
+  ): void {
+    fieldset.className = "cms-choices";
+    const legend = document.createElement("legend");
+    legend.textContent = title;
+    fieldset.append(legend);
+    for (const choice of choices) {
+      const option = document.createElement("label");
+      option.className = "cms-choice";
+      option.title = choice.title;
+      const radio = document.createElement("input");
+      radio.type = "radio";
+      radio.name = `cms-image-${key}`;
+      radio.value = choice.value;
+      radio.addEventListener("change", () => {
+        this.layout = fitLayout({ ...this.layout, [key]: choice.value }, key);
+        this.showLayout();
+      });
+      option.append(radio);
+      if (choice.icon) option.insertAdjacentHTML("beforeend", choice.icon);
+      option.append(choice.label);
+      fieldset.append(option);
+    }
+  }
+
+  private showLayout(): void {
+    for (const [fieldset, value] of [
+      [this.placement, this.layout.placement],
+      [this.size, this.layout.size],
+    ] as const) {
+      fieldset.querySelectorAll<HTMLInputElement>("input").forEach((radio) => {
+        radio.checked = radio.value === value;
+      });
+    }
   }
 
   private finish(picked: PickedImage | null): void {

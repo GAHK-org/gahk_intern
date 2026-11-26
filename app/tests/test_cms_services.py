@@ -208,6 +208,16 @@ def test_restore_sanitizes_again(editor: Resident) -> None:
 
 
 @pytest.mark.django_db
+def test_a_pictures_layout_classes_survive_saving(editor: Resident) -> None:
+    """The editor's picture bar lays a picture out with two classes; gahk.dk's stylesheet reads them."""
+    body = '<p><img src="/media/cms/x.png" alt="Gården" class="img-left img-small">Tekst</p>'
+
+    page = services.save_page(None, {"header": "P", "body": body}, editor)
+
+    assert 'class="img-left img-small"' in page.body
+
+
+@pytest.mark.django_db
 def test_deleting_a_page_keeps_its_history_and_the_front_page_cannot_go(editor: Resident) -> None:
     front = Page.put_front_page(slug="velkommen", header="Velkommen")
     page = services.save_page(None, {"header": "Væk", "slug": "vaek", "body": "<p>tekst</p>"}, editor)

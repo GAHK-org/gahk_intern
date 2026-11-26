@@ -256,6 +256,40 @@ def test_seed_demo_writes_weeks_of_audit_history(settings: Any) -> None:  # noqa
 
 
 @pytest.mark.django_db
+def test_seed_demo_puts_pictures_in_every_layout_into_the_pages() -> None:
+    """The Hjemmeside editor's picture layouts need pictures to show: every placement and size on
+    Faciliteter, an old-style inline-sized picture on Historie, and one in a news item, all from the
+    library, as the editor writes them and as the sanitizer keeps them."""
+    from django.test import Client
+    from django.urls import reverse
+
+    from cms.models import CmsImage, NewsItem, Page
+    from cms.sanitize import clean_html
+    from cms.services import usage_map
+
+    call_command("seed_demo", "--fresh", "--force", "--residents", "12", verbosity=0)
+    library = list(CmsImage.objects.all())
+    faciliteter = Page.objects.get(slug="faciliteter")
+    historie = Page.objects.get(slug="kollegielivet/historie")
+
+    assert library and all(image.sha256 and image.content_type == "image/jpeg" for image in library)
+    for placement in ("left", "center", "right"):
+        assert f"img-{placement} " in faciliteter.body
+    for size in ("small", "medium", "large", "full"):
+        assert f' img-{size}"' in faciliteter.body
+    assert "float: right; width: 300px" in historie.body and "img-" not in historie.body
+    assert NewsItem.objects.filter(body__contains='class="img-right img-small"').exists()
+    for body in (faciliteter.body, historie.body):
+        assert clean_html(body) == body, "the seed writes what saving in the editor would keep"
+    assert all(usage_map(library).values()), "every seeded picture is in use somewhere"
+
+    editor = Client()
+    editor.force_login(Resident.objects.get(email="formand@gahk.dk"))
+    page = editor.get(reverse("cms:page_edit", args=[faciliteter.pk])).content.decode()
+    assert "img-left img-small" in page
+
+
+@pytest.mark.django_db
 def test_seed_demo_fills_the_outbox_with_every_kind_and_status(settings: object) -> None:
     """The mail page needs a mail in every state, and seeding must send none of them (core.demo)."""
     from datetime import timedelta

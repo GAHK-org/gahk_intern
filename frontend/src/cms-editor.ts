@@ -10,6 +10,8 @@
 //   * Images keep their size and float. Those pages place pictures with inline styles
 //     (`style="width: 420px; height: 280px; float: right"`), which Tiptap's own image node would
 //     drop; the node here keeps width, height, style (layout properties only), class and title.
+//     A picture is laid out with the picture bar (placement and size, cms-image-layout.ts), which
+//     replaces such inline sizes with classes the moment somebody uses it.
 //   * The textarea is written only when the editor changes something, so opening a page and saving
 //     it untouched sends back exactly what was stored. And a body with structure the editor cannot
 //     hold (tables and the like) opens as HTML, saying why, instead of losing it on the first keystroke.
@@ -18,7 +20,17 @@ import Image from "@tiptap/extension-image";
 import Link from "@tiptap/extension-link";
 import StarterKit from "@tiptap/starter-kit";
 
-import type { Placement, PickedImage } from "./cms";
+import type { PickedImage } from "./cms";
+import {
+  DEFAULT_LAYOUT,
+  PLACEMENTS,
+  SIZES,
+  fitLayout,
+  layoutAttributes,
+  layoutOf,
+  type ImageAttributes,
+  type ImageLayout,
+} from "./cms-image-layout";
 
 export interface EditorOptions {
   pickImage: () => Promise<PickedImage | null>;
@@ -48,36 +60,6 @@ function styleString(map: Map<string, string>): string | null {
 export function cleanImageStyle(style: string | null): string | null {
   const kept = new Map(Array.from(styleMap(style)).filter(([property]) => IMAGE_STYLE_PROPERTIES.test(property)));
   return styleString(kept);
-}
-
-const PLACEMENT_STYLES: Record<Placement, [string, string][]> = {
-  inline: [],
-  left: [
-    ["float", "left"],
-    ["margin", "0 1em 1em 0"],
-    ["max-width", "50%"],
-  ],
-  right: [
-    ["float", "right"],
-    ["margin", "0 0 1em 1em"],
-    ["max-width", "50%"],
-  ],
-};
-
-/** `style` with its float/margin replaced by `placement`'s. A fixed height goes too, so a picture
- * narrowed by max-width keeps its proportions. */
-export function placeStyle(style: string | null, placement: Placement): string | null {
-  const map = styleMap(style);
-  for (const property of Array.from(map.keys())) {
-    if (/^(float|margin|max-width|height)/.test(property)) map.delete(property);
-  }
-  for (const [property, value] of PLACEMENT_STYLES[placement]) map.set(property, value);
-  return styleString(map);
-}
-
-function placementOf(style: string | null): Placement {
-  const float = styleMap(style).get("float");
-  return float === "left" || float === "right" ? float : "inline";
 }
 
 function keep(name: string, clean: (value: string | null) => string | null = (value) => value): Attributes[string] {
@@ -150,7 +132,8 @@ interface ToolButton {
   title: string;
   run: (editor: Editor) => void;
   active?: (editor: Editor) => boolean;
-  imageOnly?: boolean;
+  /** The icon with the label beside it, rather than the icon alone. */
+  labelled?: boolean;
 }
 
 export function mountEditor(textarea: HTMLTextAreaElement, options: EditorOptions): void {
@@ -162,19 +145,21 @@ export function mountEditor(textarea: HTMLTextAreaElement, options: EditorOption
   toolbar.setAttribute("aria-label", "Formatering");
   const surface = document.createElement("div");
   surface.className = "cms-editor-surface";
-  // Shown under the toolbar while a picture is selected: where it sits, and its alt text.
+  // Shown under the toolbar while a picture is selected: where it sits, how big, and its alt text.
   const imageBar = document.createElement("div");
   imageBar.className = "cms-image-bar";
+  imageBar.setAttribute("role", "toolbar");
+  imageBar.setAttribute("aria-label", "Billedet");
   imageBar.hidden = true;
-  const imageBarLabel = document.createElement("span");
-  imageBarLabel.className = "cms-image-bar-label";
-  imageBarLabel.textContent = "Billedet:";
-  imageBar.append(imageBarLabel);
   const notice = document.createElement("p");
   notice.className = "cms-note cms-note-warn";
   notice.hidden = true;
+  // One sticky header for both bars, so the picture bar is in view wherever the picture is.
+  const bars = document.createElement("div");
+  bars.className = "cms-editor-bars";
+  bars.append(toolbar, imageBar);
   textarea.before(wrapper);
-  wrapper.append(toolbar, imageBar, notice, surface, textarea);
+  wrapper.append(bars, notice, surface, textarea);
   textarea.classList.add("cms-source");
 
   const label = textarea.id ? document.querySelector(`label[for="${textarea.id}"]`)?.textContent?.trim() : "";
@@ -305,38 +290,87 @@ export function mountEditor(textarea: HTMLTextAreaElement, options: EditorOption
     "|",
     { label: "Fortryd", icon: UNDO_ICON, title: "Fortryd (Ctrl+Z)", run: (e) => e.chain().focus().undo().run() },
     { label: "Gentag", icon: REDO_ICON, title: "Gentag (Ctrl+Shift+Z)", run: (e) => e.chain().focus().redo().run() },
-    { label: "Til venstre", title: "Billedet til venstre for teksten", run: (e) => placeImage(e, "left"), imageOnly: true, active: (e) => isPlaced(e, "left") },
-    { label: "I teksten", title: "Billedet i teksten", run: (e) => placeImage(e, "inline"), imageOnly: true, active: (e) => isPlaced(e, "inline") },
-    { label: "Til højre", title: "Billedet til højre for teksten", run: (e) => placeImage(e, "right"), imageOnly: true, active: (e) => isPlaced(e, "right") },
-    { label: "Alt-tekst", title: "Beskriv billedet for dem, der ikke kan se det", run: editAlt, imageOnly: true },
   ];
 
   const buttons: [HTMLButtonElement, ToolButton][] = [];
+  const makeButton = (tool: ToolButton, into: HTMLElement): void => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "cms-tool";
+    if (tool.icon) {
+      button.innerHTML = tool.icon;
+      if (tool.labelled) button.append(tool.label);
+    } else {
+      button.textContent = tool.label;
+    }
+    button.title = tool.title;
+    button.setAttribute("aria-label", tool.labelled ? tool.label : tool.title);
+    // mousedown would move the focus (and the selection) out of the editor before the click.
+    button.addEventListener("mousedown", (event) => event.preventDefault());
+    button.addEventListener("click", () => tool.run(editor));
+    into.append(button);
+    buttons.push([button, tool]);
+  };
   for (const tool of tools) {
     if (tool === "|") {
       const separator = document.createElement("span");
       separator.className = "cms-tool-sep";
       separator.setAttribute("aria-hidden", "true");
       toolbar.append(separator);
-      continue;
-    }
-    const button = document.createElement("button");
-    button.type = "button";
-    button.className = "cms-tool";
-    if (tool.icon) {
-      button.innerHTML = tool.icon;
     } else {
-      button.textContent = tool.label;
+      makeButton(tool, toolbar);
     }
-    button.title = tool.title;
-    button.setAttribute("aria-label", tool.title);
-    // mousedown would move the focus (and the selection) out of the editor before the click.
-    button.addEventListener("mousedown", (event) => event.preventDefault());
-    button.addEventListener("click", () => tool.run(editor));
-    (tool.imageOnly ? imageBar : toolbar).append(button);
-    buttons.push([button, tool]);
   }
   toolbar.append(sourceButton);
+
+  // ------------------------------------------------------------------------- the picture bar
+  const imageGroup = (label: string): HTMLElement => {
+    const group = document.createElement("span");
+    group.className = "cms-image-group";
+    if (label) {
+      group.setAttribute("role", "group");
+      group.setAttribute("aria-label", label);
+      const text = document.createElement("span");
+      text.className = "cms-image-bar-label";
+      text.setAttribute("aria-hidden", "true");
+      text.textContent = label;
+      group.append(text);
+    }
+    imageBar.append(group);
+    return group;
+  };
+  const placementGroup = imageGroup("Placering");
+  for (const placement of PLACEMENTS) {
+    makeButton(
+      {
+        label: placement.label,
+        icon: placement.icon,
+        labelled: true,
+        title: placement.title,
+        run: (e) => setLayout(e, { placement: placement.value }, "placement"),
+        active: (e) => hasLayout(e, "placement", placement.value),
+      },
+      placementGroup,
+    );
+  }
+  const sizeGroup = imageGroup("Størrelse");
+  for (const size of SIZES) {
+    makeButton(
+      {
+        label: size.label,
+        title: size.title,
+        run: (e) => setLayout(e, { size: size.value }, "size"),
+        active: (e) => hasLayout(e, "size", size.value),
+      },
+      sizeGroup,
+    );
+  }
+  const otherGroup = imageGroup("");
+  makeButton({ label: "Alt-tekst", title: "Beskriv billedet for dem, der ikke kan se det", run: editAlt }, otherGroup);
+  makeButton(
+    { label: "Fjern", title: "Fjern billedet fra teksten", run: (e) => e.chain().focus().deleteSelection().run() },
+    otherGroup,
+  );
 
   function updateButtons(): void {
     imageBar.hidden = sourceMode || !editor.isActive("image");
@@ -392,28 +426,44 @@ async function insertImage(editor: Editor, options: EditorOptions): Promise<void
     editor.commands.focus();
     return;
   }
+  // Selected once it is in, so its picture bar shows at once for adjusting what was picked.
+  const at = editor.state.selection.from;
   editor
     .chain()
     .focus()
     .insertContent({
       type: "image",
-      attrs: { src: picked.url, alt: picked.alt, style: placeStyle(null, picked.placement) },
+      attrs: { src: picked.url, alt: picked.alt, ...layoutAttributes({}, picked.layout) },
     })
+    .setNodeSelection(at)
     .run();
 }
 
-function placeImage(editor: Editor, placement: Placement): void {
-  const style = (editor.getAttributes("image").style as string | null) ?? null;
-  editor.chain().focus().updateAttributes("image", { style: placeStyle(style, placement), height: null }).run();
+/** Give the selected picture `pick` (a placement or a size), keeping the other half of its layout.
+ * An old picture without one gets the default for its side: medium beside the text, else large. */
+function setLayout(editor: Editor, pick: Partial<ImageLayout>, changed: "placement" | "size"): void {
+  const attributes = editor.getAttributes("image") as ImageAttributes;
+  const now = layoutOf(attributes);
+  const placement = now.placement ?? DEFAULT_LAYOUT.placement;
+  const size = now.size ?? (placement === "center" ? DEFAULT_LAYOUT.size : "medium");
+  const layout = fitLayout({ placement, size, ...pick }, changed);
+  updatePicture(editor, layoutAttributes(attributes, layout));
 }
 
-function isPlaced(editor: Editor, placement: Placement): boolean {
-  return editor.isActive("image") && placementOf((editor.getAttributes("image").style as string | null) ?? null) === placement;
+/** Change the selected picture and keep it selected (and its bar shown): updating an inline node's
+ * attributes would otherwise leave the cursor beside it. */
+function updatePicture(editor: Editor, attributes: Record<string, unknown>): void {
+  const at = editor.state.selection.from;
+  editor.chain().focus().updateAttributes("image", attributes).setNodeSelection(at).run();
+}
+
+function hasLayout<K extends keyof ImageLayout>(editor: Editor, key: K, value: ImageLayout[K]): boolean {
+  return editor.isActive("image") && layoutOf(editor.getAttributes("image") as ImageAttributes)[key] === value;
 }
 
 function editAlt(editor: Editor): void {
   const current = (editor.getAttributes("image").alt as string | undefined) ?? "";
   const answer = window.prompt("Alt-tekst: hvad viser billedet?", current);
   if (answer === null) return;
-  editor.chain().focus().updateAttributes("image", { alt: answer.trim() }).run();
+  updatePicture(editor, { alt: answer.trim() });
 }
